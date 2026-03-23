@@ -661,6 +661,22 @@ button.danger {
   margin-top: 0.45rem;
 }
 
+[data-testid="sessions-list"] button,
+[data-testid="windows-list"] button {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.item-context {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .drawer button.active {
   background: var(--active-btn-bg);
   border-color: var(--border-active);

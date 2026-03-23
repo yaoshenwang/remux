@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
+import { deriveContext, formatContext } from "./context-label";
 import type {
   ControlServerMessage,
   TmuxPaneState,
@@ -1155,7 +1156,12 @@ export const App = () => {
                       }}
                       className={session.name === (attachedSession || activeSession?.name) ? "active" : ""}
                     >
-                      {session.name} {session.attached ? "*" : ""}
+                      <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
+                      {(() => {
+                        const aw = session.windowStates.find((w) => w.active) ?? session.windowStates[0];
+                        const label = aw ? formatContext(deriveContext(aw.panes)) : "";
+                        return label ? <span className="item-context">{label}</span> : null;
+                      })()}
                     </button>
                   )}
                 </li>
@@ -1212,8 +1218,14 @@ export const App = () => {
                           }}
                           className={windowState.index === activeWindow?.index ? "active" : ""}
                         >
-                          {windowState.index}: {windowState.name}
-                          {windowState.index === activeWindow?.index ? " *" : ""}
+                          <span className="item-name">
+                            {windowState.index}: {windowState.name}
+                            {windowState.index === activeWindow?.index ? " *" : ""}
+                          </span>
+                          {(() => {
+                            const label = formatContext(deriveContext(windowState.panes));
+                            return label ? <span className="item-context">{label}</span> : null;
+                          })()}
                         </button>
                       )}
                     </li>
