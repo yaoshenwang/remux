@@ -351,12 +351,17 @@ input {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.4rem;
   padding: 0.45rem 0.5rem;
   background: var(--bg-topbar);
   backdrop-filter: var(--topbar-blur);
   -webkit-backdrop-filter: var(--topbar-blur);
   border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.top-actions {
+  flex-shrink: 0;
 }
 
 .icon-btn,
@@ -487,11 +492,11 @@ input {
   min-width: 0;
   height: 100%;
   overflow-y: auto;
-  overflow-x: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   white-space: pre;
   font-family: 'MesloLGS NF', 'MesloLGM NF', 'Hack Nerd Font', Menlo, Monaco, 'Courier New', monospace;
-  font-size: 12px; /* overridden dynamically by JS to fit terminal columns */
+  font-size: 12px;
   line-height: 1.3;
   background: var(--bg-terminal);
   border-radius: 10px;
@@ -499,6 +504,14 @@ input {
   padding: 0.5rem;
   color: var(--text-primary);
   user-select: text;
+}
+
+@media (max-width: 768px) {
+  .scrollback-main {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 11px;
+  }
 }
 
 .scrollback-wrap {

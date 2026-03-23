@@ -704,14 +704,13 @@ export const App = () => {
     }
   }, [viewMode]);
 
-  // Adjust scrollback font-size so captured content fits the container width
+  // On desktop, fit font-size so terminal columns fill the container width
   useEffect(() => {
-    if (viewMode !== "scroll") return;
+    if (viewMode !== "scroll" || window.innerWidth < 768) return;
     const el = scrollbackContentRef.current;
     if (!el || !scrollbackText) return;
 
     const fitFont = (): void => {
-      // Find the longest visible line (strip ANSI escapes)
       const stripped = scrollbackText.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
       const lines = stripped.split("\n");
       let maxCols = 0;
@@ -720,7 +719,6 @@ export const App = () => {
       }
       if (maxCols < 10) return;
 
-      // Measure actual monospace char width at a reference font-size
       const probe = document.createElement("span");
       probe.style.cssText = `font-family:${getComputedStyle(el).fontFamily};font-size:100px;position:absolute;visibility:hidden;white-space:pre`;
       probe.textContent = "M";
@@ -731,10 +729,7 @@ export const App = () => {
 
       const containerWidth = el.clientWidth - 16;
       const targetFontSize = (containerWidth / maxCols) * (100 / charWidthAt100);
-      // On mobile (narrow screens), enforce readable minimum font size
-      const isMobile = window.innerWidth < 768;
-      const minSize = isMobile ? 10 : 7;
-      el.style.fontSize = `${Math.max(minSize, Math.min(16, targetFontSize)).toFixed(1)}px`;
+      el.style.fontSize = `${Math.max(7, Math.min(16, targetFontSize)).toFixed(1)}px`;
     };
 
     fitFont();
