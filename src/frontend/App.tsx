@@ -758,6 +758,7 @@ export const App = () => {
             value={composeText}
             onChange={(event) => setComposeText(event.target.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === "Enter") {
                 sendControl({ type: "send_compose", text: composeText });
                 setComposeText("");

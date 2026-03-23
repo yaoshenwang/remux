@@ -107,10 +107,10 @@ describe("tmux mobile server", () => {
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     const { attachedSession } = await authControl(control);
 
-    expect(attachedSession).toMatch(/^remux-client-/);
+    expect(attachedSession).toBe("main");
     expect(tmux.calls).toContain("createSession:main");
-    expect(tmux.calls).toContain(`createGroupedSession:${attachedSession}:main`);
-    expect(ptyFactory.lastSpawnedSession).toBe(attachedSession);
+    expect(tmux.calls.some((c) => c.startsWith("createGroupedSession:") && c.endsWith(":main"))).toBe(true);
+    expect(ptyFactory.lastSpawnedSession).toMatch(/^remux-client-/);
 
     control.close();
   });
@@ -162,9 +162,9 @@ describe("tmux mobile server", () => {
       (msg) => msg.type === "attached"
     );
 
-    expect(attached.session).toMatch(/^remux-client-/);
-    expect(tmux.calls).toContain(`createGroupedSession:${attached.session}:dev`);
-    expect(ptyFactory.lastSpawnedSession).toBe(attached.session);
+    expect(attached.session).toBe("dev");
+    expect(tmux.calls.some((c) => c.startsWith("createGroupedSession:") && c.endsWith(":dev"))).toBe(true);
+    expect(ptyFactory.lastSpawnedSession).toMatch(/^remux-client-/);
     expect(tmux.calls.some((call) => call.startsWith("switchClient:"))).toBe(false);
     control.close();
   });
@@ -348,14 +348,14 @@ describe("tmux mobile server", () => {
     const { attachedSession } = await authControl(control);
 
     control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call === `newWindow:${attachedSession}`);
+    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
 
     tmux.calls.length = 0;
 
     control.send(JSON.stringify({ type: "select_window", session: attachedSession, windowIndex: 0, stickyZoom: true }));
-    await waitForTmuxCall((call) => call === `selectWindow:${attachedSession}:0`);
+    await waitForTmuxCall((call) => call.startsWith("selectWindow:remux-client-") && call.endsWith(":0"));
 
-    expect(tmux.calls).toContain(`selectWindow:${attachedSession}:0`);
+    expect(tmux.calls.some((c) => c.startsWith("selectWindow:remux-client-") && c.endsWith(":0"))).toBe(true);
     expect(tmux.calls.some((call) => call.startsWith("zoomPane:"))).toBe(true);
 
     control.close();

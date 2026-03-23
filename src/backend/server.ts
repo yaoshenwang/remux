@@ -241,7 +241,7 @@ export const createRemuxServer = (
     context.baseSession = baseSession;
     context.attachedSession = mobileSession;
     runtime.attachToSession(mobileSession);
-    sendJson(context.socket, { type: "attached", session: mobileSession });
+    sendJson(context.socket, { type: "attached", session: baseSession });
   };
 
   const ensureAttachedSession = async (
