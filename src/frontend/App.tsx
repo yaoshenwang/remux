@@ -107,6 +107,7 @@ export const App = () => {
 
   const [snapshot, setSnapshot] = useState<TmuxStateSnapshot>({ sessions: [], capturedAt: "" });
   const [attachedSession, setAttachedSession] = useState<string>("");
+  const attachedSessionRef = useRef("");
   const [sessionChoices, setSessionChoices] = useState<TmuxSessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeEnabled, setComposeEnabled] = useState(true);
@@ -422,7 +423,7 @@ export const App = () => {
         type: "auth",
         token,
         password: passwordValue || undefined,
-        ...(attachedSession ? { session: attachedSession } : {})
+        ...(attachedSessionRef.current ? { session: attachedSessionRef.current } : {})
       }));
     };
 
@@ -470,6 +471,7 @@ export const App = () => {
         case "attached":
           debugLog("control_socket.attached", { session: message.session });
           setAttachedSession(message.session);
+          attachedSessionRef.current = message.session;
           setSelectedWindowIndex(null);
           setSelectedPaneId(null);
           setSessionChoices(null);
