@@ -9,7 +9,7 @@ import type {
   TmuxSessionSummary,
   TmuxStateSnapshot,
   TmuxWindowState
-} from "./types/protocol";
+} from "../shared/protocol";
 
 interface ServerConfig {
   passwordRequired: boolean;

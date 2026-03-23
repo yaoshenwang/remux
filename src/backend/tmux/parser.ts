@@ -2,7 +2,7 @@ import type {
   TmuxPaneState,
   TmuxSessionSummary,
   TmuxWindowState
-} from "../types/protocol.js";
+} from "../../shared/protocol.js";
 
 const splitLine = (line: string): string[] => line.split("\t").map((item) => item.trim());
 

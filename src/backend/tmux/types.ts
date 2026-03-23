@@ -4,7 +4,7 @@ import type {
   TmuxSessionSummary,
   TmuxStateSnapshot,
   TmuxWindowState
-} from "../types/protocol.js";
+} from "../../shared/protocol.js";
 
 export interface TmuxGateway {
   listSessions(): Promise<TmuxSessionSummary[]>;

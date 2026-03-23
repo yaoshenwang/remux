@@ -8,7 +8,7 @@ import type {
   ControlServerMessage,
   TmuxSessionSummary,
   TmuxStateSnapshot
-} from "./types/protocol.js";
+} from "../shared/protocol.js";
 import { randomToken } from "./util/random.js";
 import { AuthService } from "./auth/auth-service.js";
 import type { TmuxGateway } from "./tmux/types.js";
