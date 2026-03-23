@@ -1,0 +1,612 @@
+import http from "node:http";
+import path from "node:path";
+import express from "express";
+import { WebSocketServer, type WebSocket } from "ws";
+import type { RuntimeConfig } from "./config.js";
+import type {
+  ControlClientMessage,
+  ControlServerMessage,
+  TmuxSessionSummary,
+  TmuxStateSnapshot
+} from "./types/protocol.js";
+import { randomToken } from "./util/random.js";
+import { AuthService } from "./auth/auth-service.js";
+import type { TmuxGateway } from "./tmux/types.js";
+import { TerminalRuntime } from "./pty/terminal-runtime.js";
+import type { PtyFactory } from "./pty/pty-adapter.js";
+import { TmuxStateMonitor } from "./state/state-monitor.js";
+
+interface ControlContext {
+  socket: WebSocket;
+  authed: boolean;
+  clientId: string;
+  runtime?: TerminalRuntime;
+  attachedSession?: string;
+  baseSession?: string;
+  terminalClients: Set<DataContext>;
+}
+
+interface DataContext {
+  socket: WebSocket;
+  authed: boolean;
+  controlClientId?: string;
+  controlContext?: ControlContext;
+}
+
+export interface ServerDependencies {
+  tmux: TmuxGateway;
+  ptyFactory: PtyFactory;
+  authService?: AuthService;
+  logger?: Pick<Console, "log" | "error">;
+}
+
+export interface RunningServer {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  server: http.Server;
+  config: RuntimeConfig;
+}
+
+export const frontendFallbackRoute = "/{*path}";
+
+export const isWebSocketPath = (requestPath: string): boolean => requestPath.startsWith("/ws/");
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const parseClientMessage = (raw: string): ControlClientMessage | null => {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isObject(parsed) || typeof parsed.type !== "string") {
+      return null;
+    }
+    return parsed as ControlClientMessage;
+  } catch {
+    return null;
+  }
+};
+
+const sendJson = (socket: WebSocket, payload: ControlServerMessage): void => {
+  if (socket.readyState === socket.OPEN) {
+    socket.send(JSON.stringify(payload));
+  }
+};
+
+const summarizeClientMessage = (message: ControlClientMessage): string => {
+  if (message.type === "auth") {
+    return JSON.stringify({
+      type: message.type,
+      tokenPresent: Boolean(message.token),
+      passwordPresent: Boolean(message.password),
+      clientIdPresent: Boolean(message.clientId)
+    });
+  }
+  if (message.type === "send_compose") {
+    return JSON.stringify({
+      type: message.type,
+      textLength: message.text.length
+    });
+  }
+  return JSON.stringify({ type: message.type });
+};
+
+const summarizeState = (state: TmuxStateSnapshot): string => {
+  const sessions = state.sessions.map((session) => {
+    const activeWindow =
+      session.windowStates.find((windowState) => windowState.active) ?? session.windowStates[0];
+    const activePane = activeWindow?.panes.find((pane) => pane.active) ?? activeWindow?.panes[0];
+    return `${session.name}[attached=${session.attached}]` +
+      `{window=${activeWindow ? `${activeWindow.index}:${activeWindow.name}` : "none"},` +
+      `pane=${activePane ? `${activePane.id}:zoom=${activePane.zoomed}` : "none"},` +
+      `windows=${session.windowStates.length}}`;
+  });
+  return `capturedAt=${state.capturedAt}; sessions=${sessions.join(" | ")}`;
+};
+
+const MOBILE_SESSION_PREFIX = "tmux-mobile-client-";
+
+const isManagedMobileSession = (name: string): boolean => name.startsWith(MOBILE_SESSION_PREFIX);
+
+const buildMobileSessionName = (clientId: string): string => `${MOBILE_SESSION_PREFIX}${clientId}`;
+
+export const createTmuxMobileServer = (
+  config: RuntimeConfig,
+  deps: ServerDependencies
+): RunningServer => {
+  const logger = deps.logger ?? console;
+  const verboseDebug = process.env.TMUX_MOBILE_VERBOSE_DEBUG === "1";
+  const verboseLog = (...args: unknown[]): void => {
+    if (verboseDebug) {
+      logger.log(...args);
+    }
+  };
+  const authService = deps.authService ?? new AuthService(config.password, config.token);
+
+  const app = express();
+  app.use(express.json());
+
+  app.get("/api/config", (_req, res) => {
+    res.json({
+      passwordRequired: authService.requiresPassword(),
+      scrollbackLines: config.scrollbackLines,
+      pollIntervalMs: config.pollIntervalMs
+    });
+  });
+
+  app.use(express.static(config.frontendDir));
+  app.get(frontendFallbackRoute, (req, res) => {
+    if (isWebSocketPath(req.path)) {
+      res.status(404).end();
+      return;
+    }
+
+    res.sendFile(path.join(config.frontendDir, "index.html"), (error) => {
+      if (error) {
+        res.status(500).send("Frontend not built. Run npm run build:frontend");
+      }
+    });
+  });
+
+  const server = http.createServer(app);
+  const controlWss = new WebSocketServer({ noServer: true });
+  const terminalWss = new WebSocketServer({ noServer: true });
+  const controlClients = new Set<ControlContext>();
+  const terminalClients = new Set<DataContext>();
+
+  let monitor: TmuxStateMonitor | undefined;
+  let started = false;
+  let stopPromise: Promise<void> | null = null;
+
+  const broadcastState = (state: TmuxStateSnapshot): void => {
+    verboseLog(
+      "broadcast tmux_state",
+      `authedControlClients=${[...controlClients].filter((client) => client.authed).length}`,
+      summarizeState(state)
+    );
+    for (const client of controlClients) {
+      if (client.authed) {
+        sendJson(client.socket, { type: "tmux_state", state });
+      }
+    }
+  };
+
+  const getControlContext = (clientId: string): ControlContext | undefined =>
+    Array.from(controlClients).find((candidate) => candidate.clientId === clientId);
+
+  const getOrCreateRuntime = (context: ControlContext): TerminalRuntime => {
+    if (context.runtime) {
+      return context.runtime;
+    }
+
+    const runtime = new TerminalRuntime(deps.ptyFactory);
+    runtime.on("data", (chunk) => {
+      verboseLog("runtime data chunk", context.clientId, `bytes=${Buffer.byteLength(chunk, "utf8")}`);
+      for (const terminalClient of context.terminalClients) {
+        if (terminalClient.authed && terminalClient.socket.readyState === terminalClient.socket.OPEN) {
+          terminalClient.socket.send(chunk);
+        }
+      }
+    });
+    runtime.on("attach", (session) => {
+      verboseLog("runtime attached session", context.clientId, session);
+    });
+    runtime.on("exit", (code) => {
+      logger.log(`tmux PTY exited with code ${code} (${context.clientId})`);
+      sendJson(context.socket, { type: "info", message: "tmux client exited" });
+    });
+    context.runtime = runtime;
+    return runtime;
+  };
+
+  const attachControlToBaseSession = async (
+    context: ControlContext,
+    baseSession: string
+  ): Promise<void> => {
+    const runtime = getOrCreateRuntime(context);
+    const mobileSession = buildMobileSessionName(context.clientId);
+    const sessions = await deps.tmux.listSessions();
+    const hasMobileSession = sessions.some((session) => session.name === mobileSession);
+    const needsRecreate = hasMobileSession && context.baseSession && context.baseSession !== baseSession;
+
+    if (needsRecreate) {
+      await deps.tmux.killSession(mobileSession);
+    }
+    if (!hasMobileSession || needsRecreate) {
+      await deps.tmux.createGroupedSession(mobileSession, baseSession);
+    }
+
+    context.baseSession = baseSession;
+    context.attachedSession = mobileSession;
+    runtime.attachToSession(mobileSession);
+    sendJson(context.socket, { type: "attached", session: mobileSession });
+  };
+
+  const ensureAttachedSession = async (
+    context: ControlContext,
+    forceSession?: string
+  ): Promise<void> => {
+    if (forceSession) {
+      logger.log("attach session (forced)", forceSession);
+      await attachControlToBaseSession(context, forceSession);
+      return;
+    }
+
+    const sessions = (await deps.tmux.listSessions()).filter(
+      (session) => !isManagedMobileSession(session.name)
+    );
+    logger.log(
+      "sessions discovered",
+      sessions.map((session) => `${session.name}:${session.attached ? "attached" : "detached"}`).join(",")
+    );
+    if (sessions.length === 0) {
+      await deps.tmux.createSession(config.defaultSession);
+      logger.log("created default session", config.defaultSession);
+      await attachControlToBaseSession(context, config.defaultSession);
+      return;
+    }
+
+    if (sessions.length === 1) {
+      logger.log("attach only session", sessions[0].name);
+      await attachControlToBaseSession(context, sessions[0].name);
+      return;
+    }
+
+    logger.log("show session picker", sessions.length);
+    sendJson(context.socket, { type: "session_picker", sessions });
+  };
+
+  const runControlMutation = async (
+    message: ControlClientMessage,
+    context: ControlContext
+  ): Promise<void> => {
+    const attachedSession = context.attachedSession;
+    switch (message.type) {
+      case "select_session":
+        await attachControlToBaseSession(context, message.session);
+        return;
+      case "new_session":
+        await deps.tmux.createSession(message.name);
+        await attachControlToBaseSession(context, message.name);
+        return;
+      case "new_window":
+        if (!attachedSession) {
+          throw new Error("no attached session");
+        }
+        await deps.tmux.newWindow(attachedSession);
+        return;
+      case "select_window":
+        if (!attachedSession) {
+          throw new Error("no attached session");
+        }
+        await deps.tmux.selectWindow(attachedSession, message.windowIndex);
+        if (message.stickyZoom === true) {
+          const panes = await deps.tmux.listPanes(attachedSession, message.windowIndex);
+          const activePane = panes.find((pane) => pane.active) ?? panes[0];
+          if (activePane && !(await deps.tmux.isPaneZoomed(activePane.id))) {
+            await deps.tmux.zoomPane(activePane.id);
+          }
+        }
+        return;
+      case "kill_window":
+        if (!attachedSession) {
+          throw new Error("no attached session");
+        }
+        await deps.tmux.killWindow(attachedSession, message.windowIndex);
+        return;
+      case "select_pane":
+        await deps.tmux.selectPane(message.paneId);
+        if (message.stickyZoom === true && !(await deps.tmux.isPaneZoomed(message.paneId))) {
+          await deps.tmux.zoomPane(message.paneId);
+        }
+        return;
+      case "split_pane":
+        await deps.tmux.splitWindow(message.paneId, message.orientation);
+        return;
+      case "kill_pane":
+        await deps.tmux.killPane(message.paneId);
+        return;
+      case "zoom_pane":
+        await deps.tmux.zoomPane(message.paneId);
+        return;
+      case "capture_scrollback": {
+        const lines = message.lines ?? config.scrollbackLines;
+        const output = await deps.tmux.capturePane(message.paneId, lines);
+        sendJson(context.socket, {
+          type: "scrollback",
+          paneId: message.paneId,
+          lines,
+          text: output
+        });
+        return;
+      }
+      case "send_compose":
+        context.runtime?.write(`${message.text}\r`);
+        return;
+      case "auth":
+        return;
+      default: {
+        const _: never = message;
+        return _;
+      }
+    }
+  };
+
+  const shutdownControlContext = async (context: ControlContext): Promise<void> => {
+    for (const terminalClient of context.terminalClients) {
+      if (terminalClient.socket.readyState === terminalClient.socket.OPEN) {
+        terminalClient.socket.close();
+      }
+    }
+    context.terminalClients.clear();
+    context.runtime?.shutdown();
+    context.runtime = undefined;
+    if (context.attachedSession) {
+      try {
+        await deps.tmux.killSession(context.attachedSession);
+      } catch (error) {
+        logger.error("failed to cleanup mobile session", context.attachedSession, error);
+      }
+      context.attachedSession = undefined;
+    }
+  };
+
+  controlWss.on("connection", (socket) => {
+    const context: ControlContext = {
+      socket,
+      authed: false,
+      clientId: randomToken(12),
+      terminalClients: new Set<DataContext>()
+    };
+    controlClients.add(context);
+    logger.log("control ws connected", context.clientId);
+
+    socket.on("message", async (rawData) => {
+      const message = parseClientMessage(rawData.toString("utf8"));
+      if (!message) {
+        sendJson(socket, { type: "error", message: "invalid message format" });
+        return;
+      }
+      logger.log("control ws message", context.clientId, message.type);
+      verboseLog("control ws payload", context.clientId, summarizeClientMessage(message));
+
+      try {
+        if (!context.authed) {
+          if (message.type !== "auth") {
+            sendJson(socket, { type: "auth_error", reason: "auth required" });
+            return;
+          }
+
+          const authResult = authService.verify({
+            token: message.token,
+            password: message.password
+          });
+          if (!authResult.ok) {
+            logger.log("control ws auth failed", context.clientId, authResult.reason ?? "unknown");
+            sendJson(socket, {
+              type: "auth_error",
+              reason: authResult.reason ?? "unauthorized"
+            });
+            return;
+          }
+
+          context.authed = true;
+          logger.log("control ws auth ok", context.clientId);
+          sendJson(socket, {
+            type: "auth_ok",
+            clientId: context.clientId,
+            requiresPassword: authService.requiresPassword()
+          });
+          try {
+            await ensureAttachedSession(context);
+          } catch (error) {
+            logger.error("initial attach failed", error);
+            sendJson(socket, {
+              type: "error",
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+          await monitor?.forcePublish();
+          return;
+        }
+
+        try {
+          verboseLog("control mutation start", context.clientId, message.type);
+          await runControlMutation(message, context);
+          verboseLog("control mutation done", context.clientId, message.type);
+        } finally {
+          verboseLog("force publish start", context.clientId, message.type);
+          await monitor?.forcePublish();
+          verboseLog("force publish done", context.clientId, message.type);
+        }
+      } catch (error) {
+        logger.error("control ws error", context.clientId, error);
+        sendJson(socket, {
+          type: "error",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    });
+
+    socket.on("close", () => {
+      controlClients.delete(context);
+      void shutdownControlContext(context);
+      logger.log("control ws closed", context.clientId);
+    });
+  });
+
+  terminalWss.on("connection", (socket) => {
+    const ctx: DataContext = { socket, authed: false };
+    terminalClients.add(ctx);
+    logger.log("terminal ws connected");
+
+    socket.on("message", (rawData, isBinary) => {
+      if (!ctx.authed) {
+        if (isBinary) {
+          socket.close(4001, "auth required");
+          return;
+        }
+
+        const authMessage = parseClientMessage(rawData.toString("utf8"));
+        if (!authMessage || authMessage.type !== "auth") {
+          socket.close(4001, "auth required");
+          return;
+        }
+        const clientId = authMessage.clientId;
+        if (!clientId) {
+          socket.close(4001, "unauthorized");
+          return;
+        }
+
+        const authResult = authService.verify({
+          token: authMessage.token,
+          password: authMessage.password
+        });
+        if (!authResult.ok) {
+          logger.log("terminal ws auth failed", authResult.reason ?? "unknown");
+          socket.close(4001, "unauthorized");
+          return;
+        }
+        const controlContext = getControlContext(clientId);
+        if (!controlContext || !controlContext.authed) {
+          socket.close(4001, "unauthorized");
+          return;
+        }
+
+        ctx.authed = true;
+        ctx.controlClientId = clientId;
+        ctx.controlContext = controlContext;
+        controlContext.terminalClients.add(ctx);
+        logger.log("terminal ws auth ok");
+        return;
+      }
+
+      if (isBinary) {
+        const binaryBytes =
+          typeof rawData === "string"
+            ? Buffer.byteLength(rawData, "utf8")
+            : rawData instanceof ArrayBuffer
+              ? rawData.byteLength
+              : Array.isArray(rawData)
+                ? rawData.reduce((sum, chunk) => sum + chunk.length, 0)
+                : rawData.length;
+        verboseLog("terminal ws binary input", `bytes=${binaryBytes}`);
+        ctx.controlContext?.runtime?.write(rawData.toString());
+        return;
+      }
+
+      const text = rawData.toString("utf8");
+      if (text.startsWith("{")) {
+        try {
+          const payload = JSON.parse(text) as unknown;
+          if (
+            isObject(payload) &&
+            payload.type === "resize" &&
+            typeof payload.cols === "number" &&
+            typeof payload.rows === "number"
+          ) {
+            ctx.controlContext?.runtime?.resize(payload.cols, payload.rows);
+            verboseLog("terminal ws resize", `${payload.cols}x${payload.rows}`);
+            return;
+          }
+        } catch {
+          // fall through and treat as terminal input
+        }
+      }
+
+      ctx.controlContext?.runtime?.write(text);
+      verboseLog("terminal ws text input", `bytes=${Buffer.byteLength(text, "utf8")}`);
+    });
+
+    socket.on("close", () => {
+      terminalClients.delete(ctx);
+      ctx.controlContext?.terminalClients.delete(ctx);
+      logger.log("terminal ws closed");
+    });
+  });
+
+  server.on("upgrade", (request, socket, head) => {
+    const url = new URL(request.url ?? "/", "http://localhost");
+
+    if (url.pathname === "/ws/control") {
+      controlWss.handleUpgrade(request, socket, head, (websocket) => {
+        controlWss.emit("connection", websocket, request);
+      });
+      return;
+    }
+
+    if (url.pathname === "/ws/terminal") {
+      terminalWss.handleUpgrade(request, socket, head, (websocket) => {
+        terminalWss.emit("connection", websocket, request);
+      });
+      return;
+    }
+
+    socket.destroy();
+  });
+
+  return {
+    config,
+    server,
+    async start() {
+      if (started) {
+        return;
+      }
+      logger.log("server start requested", `${config.host}:${config.port}`);
+      monitor = new TmuxStateMonitor(
+        deps.tmux,
+        config.pollIntervalMs,
+        broadcastState,
+        (error) => logger.error(error)
+      );
+      await monitor.start();
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error): void => {
+          server.off("error", onError);
+          reject(error);
+        };
+
+        server.once("error", onError);
+        server.listen(config.port, config.host, () => {
+          server.off("error", onError);
+          started = true;
+          logger.log("server listening", `${config.host}:${(server.address() as { port: number }).port}`);
+          resolve();
+        });
+      });
+    },
+    async stop() {
+      if (!started) {
+        return;
+      }
+      if (stopPromise) {
+        await stopPromise;
+        return;
+      }
+
+      stopPromise = (async () => {
+        logger.log("server shutdown begin");
+        monitor?.stop();
+        await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
+        controlWss.close();
+        terminalWss.close();
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        });
+        logger.log("server shutdown complete");
+      })();
+
+      try {
+        await stopPromise;
+      } finally {
+        started = false;
+        stopPromise = null;
+      }
+    }
+  };
+};

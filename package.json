@@ -1,0 +1,86 @@
+{
+  "name": "remux",
+  "version": "0.1.0",
+  "description": "Remote tmux web client — monitor and control terminal sessions from any device",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yaoshenwang/remux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yaoshenwang/remux/issues"
+  },
+  "homepage": "https://github.com/yaoshenwang/remux#readme",
+  "keywords": [
+    "tmux",
+    "terminal",
+    "remote",
+    "mobile",
+    "websocket",
+    "cloudflared",
+    "web-terminal"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "remux": "dist/backend/cli.js"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "VITE_DEV_MODE=1 tsx watch src/backend/cli.ts",
+    "dev:frontend": "vite --config vite.config.ts",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:frontend": "vite build --config vite.config.ts",
+    "start": "npm run build && node dist/backend/cli.js",
+    "typecheck": "tsc -p tsconfig.backend.json --noEmit && tsc -p tsconfig.frontend.json --noEmit",
+    "test:smoke": "REAL_TMUX_SMOKE=1 vitest run tests/smoke/real-tmux.test.ts",
+    "test:e2e": "npm run build && playwright test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "express": "^5.2.1",
+    "node-pty": "^1.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "ws": "^8.18.3",
+    "yargs": "^17.7.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.1",
+    "@testing-library/react": "^16.2.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.3",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/supertest": "^6.0.2",
+    "@types/ws": "^8.5.13",
+    "@types/yargs": "^17.0.35",
+    "@vitejs/plugin-react": "^5.1.4",
+    "concurrently": "^9.1.2",
+    "jsdom": "^25.0.1",
+    "supertest": "^7.1.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  }
+}
