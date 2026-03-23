@@ -68,7 +68,7 @@ describe("tmux mobile server", () => {
       failSwitchClient: options.failSwitchClient
     });
     ptyFactory = new FakePtyFactory();
-    const auth = new AuthService(options.password, "test-token");
+    const auth = new AuthService({ password: options.password, token: "test-token" });
 
     runningServer = createRemuxServer(buildConfig("test-token"), {
       tmux,
