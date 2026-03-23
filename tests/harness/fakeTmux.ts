@@ -268,9 +268,9 @@ export class FakeTmuxGateway implements TmuxGateway {
     return window.zoomed && pane.active;
   }
 
-  public async capturePane(paneId: string, lines: number): Promise<string> {
+  public async capturePane(paneId: string, lines: number): Promise<{ text: string; paneWidth: number }> {
     this.calls.push(`capturePane:${paneId}:${lines}`);
-    return `captured ${lines} lines for ${paneId}`;
+    return { text: `captured ${lines} lines for ${paneId}`, paneWidth: 80 };
   }
 
   public async renameSession(name: string, newName: string): Promise<void> {

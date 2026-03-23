@@ -58,7 +58,8 @@ describe.skipIf(!canRunIsolatedTmux)("real tmux smoke", () => {
     expect(panes.length).toBeGreaterThan(0);
 
     const capture = await tmux.capturePane(panes[0].id, 25);
-    expect(typeof capture).toBe("string");
+    expect(typeof capture.text).toBe("string");
+    expect(capture.paneWidth).toBeGreaterThan(0);
 
     await tmux.killSession(sessionName);
     await safeCleanup(sockPath);

@@ -116,6 +116,7 @@ export const App = () => {
   const [composeText, setComposeText] = useState("");
 
   const [scrollbackText, setScrollbackText] = useState("");
+  const [scrollbackPaneWidth, setScrollbackPaneWidth] = useState(80);
   const [scrollbackLines, setScrollbackLines] = useState(1000);
   const scrollbackContentRef = useRef<HTMLDivElement | null>(null);
   const scrollbackRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -527,6 +528,7 @@ export const App = () => {
             bytes: message.text.length
           });
           setScrollbackText(message.text);
+          setScrollbackPaneWidth(message.paneWidth);
           return;
         case "error":
           debugLog("control_socket.error", { message: message.message });
@@ -705,8 +707,7 @@ export const App = () => {
     lastScrollbackHashRef.current = hash;
 
     const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
-    const cols = terminalRef.current?.cols ?? 80;
-    el.innerHTML = ansiToHtml(reflowText(scrollbackText, cols));
+    el.innerHTML = ansiToHtml(reflowText(scrollbackText, scrollbackPaneWidth));
     if (isAtBottom) {
       requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight;
@@ -721,7 +722,7 @@ export const App = () => {
     scrollbackRefreshRef.current = setTimeout(() => {
       requestScrollback(scrollbackLines);
     }, delay);
-  }, [scrollbackText]);
+  }, [scrollbackText, scrollbackPaneWidth]);
 
   // Re-fit terminal when switching to terminal mode
   useEffect(() => {

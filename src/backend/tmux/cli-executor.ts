@@ -158,8 +158,12 @@ export class TmuxCliExecutor implements TmuxGateway {
     return output === "1";
   }
 
-  public async capturePane(paneId: string, lines: number): Promise<string> {
-    return this.runTmux(["capture-pane", "-t", paneId, "-p", "-e", "-J", "-S", `-${lines}`]);
+  public async capturePane(paneId: string, lines: number): Promise<{ text: string; paneWidth: number }> {
+    const [text, widthStr] = await Promise.all([
+      this.runTmux(["capture-pane", "-t", paneId, "-p", "-e", "-J", "-S", `-${lines}`]),
+      this.runTmux(["display-message", "-p", "-t", paneId, "#{pane_width}"])
+    ]);
+    return { text, paneWidth: parseInt(widthStr, 10) || 80 };
   }
 
   public async renameSession(name: string, newName: string): Promise<void> {

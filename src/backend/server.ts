@@ -478,12 +478,13 @@ export const createRemuxServer = (
         return;
       case "capture_scrollback": {
         const lines = message.lines ?? config.scrollbackLines;
-        const output = await deps.tmux.capturePane(message.paneId, lines);
+        const { text, paneWidth } = await deps.tmux.capturePane(message.paneId, lines);
         sendJson(context.socket, {
           type: "scrollback",
           paneId: message.paneId,
           lines,
-          text: output
+          text,
+          paneWidth
         });
         return;
       }

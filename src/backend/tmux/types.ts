@@ -22,7 +22,7 @@ export interface TmuxGateway {
   selectPane(paneId: string): Promise<void>;
   zoomPane(paneId: string): Promise<void>;
   isPaneZoomed(paneId: string): Promise<boolean>;
-  capturePane(paneId: string, lines: number): Promise<string>;
+  capturePane(paneId: string, lines: number): Promise<{ text: string; paneWidth: number }>;
   renameSession(name: string, newName: string): Promise<void>;
   renameWindow(session: string, windowIndex: number, newName: string): Promise<void>;
 }
