@@ -709,15 +709,14 @@ button.danger {
   gap: 0.5rem;
 }
 
-.scrollback-text {
-  margin: 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  user-select: text;
-  background: var(--scrollback-bg);
-  border: 1px solid var(--scrollback-border);
+.scrollback-terminal {
+  overflow: hidden;
   border-radius: 8px;
-  padding: 0.65rem;
+  border: 1px solid var(--scrollback-border);
+}
+
+.scrollback-terminal .xterm-viewport {
+  overflow-x: hidden !important;
 }
 
 .upload-overlay {

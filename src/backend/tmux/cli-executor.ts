@@ -159,6 +159,6 @@ export class TmuxCliExecutor implements TmuxGateway {
   }
 
   public async capturePane(paneId: string, lines: number): Promise<string> {
-    return this.runTmux(["capture-pane", "-t", paneId, "-p", "-S", `-${lines}`]);
+    return this.runTmux(["capture-pane", "-t", paneId, "-p", "-e", "-S", `-${lines}`]);
   }
 }
