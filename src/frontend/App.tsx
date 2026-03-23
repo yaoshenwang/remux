@@ -151,7 +151,7 @@ export const App = () => {
     if (statusMessage.toLowerCase().includes("disconnected")) {
       return { kind: "warn", label: statusMessage };
     }
-    if (statusMessage.toLowerCase().includes("connected")) {
+    if (statusMessage.toLowerCase().includes("connected") || statusMessage.startsWith("attached:")) {
       return { kind: "ok", label: statusMessage };
     }
     if (statusMessage) {
@@ -435,6 +435,8 @@ export const App = () => {
     socket.onclose = () => {
       debugLog("control_socket.onclose");
       setAuthReady(false);
+      setStatusMessage("control disconnected");
+      setErrorMessage("");
     };
 
     controlSocketRef.current = socket;
