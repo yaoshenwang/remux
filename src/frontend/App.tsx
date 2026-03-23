@@ -788,8 +788,9 @@ export const App = () => {
       // Text paste: let xterm.js handle it normally
     };
 
-    document.addEventListener("paste", handlePaste);
-    return () => document.removeEventListener("paste", handlePaste);
+    // Use capture phase so we intercept before xterm.js's internal paste handler
+    document.addEventListener("paste", handlePaste, true);
+    return () => document.removeEventListener("paste", handlePaste, true);
   }, [activePane, serverConfig, password]);
 
   const submitPassword = (): void => {
