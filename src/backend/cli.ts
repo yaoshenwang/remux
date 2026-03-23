@@ -106,7 +106,7 @@ const printConnectionInfo = (
 const main = async (): Promise<void> => {
   const args = await parseCliArgs();
   const effectivePassword = args.requirePassword ? args.password ?? randomToken(16) : undefined;
-  const authService = new AuthService(effectivePassword);
+  const authService = new AuthService(effectivePassword, process.env.REMUX_TOKEN || undefined);
   const debugLogPath = args.debugLog ?? process.env.REMUX_DEBUG_LOG;
   const logger = createLogger(debugLogPath);
   const cliDir = path.dirname(fileURLToPath(import.meta.url));
