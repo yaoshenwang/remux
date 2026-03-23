@@ -374,11 +374,17 @@ export const App = () => {
         JSON.stringify({ type: "auth", token, password: passwordValue || undefined, clientId })
       );
       setStatusMessage("terminal connected");
-      // Delay fit to ensure CSS layout is settled, then send resize + auto-switch
-      setTimeout(() => {
+      // Retry fit until cols are reasonable — layout may not be settled on first try
+      let retries = 0;
+      const tryFit = () => {
         if (fitAddonRef.current && terminalRef.current) {
           fitAddonRef.current.fit();
-          // Fallback: if cols is unreasonably small, force a minimum
+          if (terminalRef.current.cols < 20 && retries < 5) {
+            retries++;
+            setTimeout(tryFit, 200);
+            return;
+          }
+          // Final fallback: if still too narrow, force 80x24
           if (terminalRef.current.cols < 20) {
             terminalRef.current.resize(80, 24);
           }
@@ -388,7 +394,8 @@ export const App = () => {
           hasAutoSwitchedRef.current = true;
           setTimeout(() => setViewMode("scroll"), 200);
         }
-      }, 300);
+      };
+      setTimeout(tryFit, 300);
     };
 
     socket.onmessage = (event) => {
@@ -727,10 +734,14 @@ export const App = () => {
   // Re-fit terminal when switching to terminal mode
   useEffect(() => {
     if (viewMode === "terminal" && fitAddonRef.current) {
-      requestAnimationFrame(() => {
+      // Double-fit: once immediately, once after CSS settles
+      const doFit = () => {
         fitAddonRef.current?.fit();
         sendTerminalResize();
-      });
+      };
+      requestAnimationFrame(doFit);
+      const timer = setTimeout(doFit, 150);
+      return () => clearTimeout(timer);
     }
   }, [viewMode]);
 

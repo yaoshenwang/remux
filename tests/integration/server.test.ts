@@ -439,6 +439,32 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("kill_window refuses to kill the last window", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    const { attachedSession } = await authControl(control);
+
+    // Session has only one window — kill should be rejected
+    tmux.calls.length = 0;
+    control.send(
+      JSON.stringify({ type: "kill_window", session: attachedSession, windowIndex: 0 })
+    );
+
+    // Should receive an info message instead of killing
+    const infoMsg = await waitForMessage<{ type: string; message: string }>(
+      control,
+      (msg) => msg.type === "info" && msg.message.includes("last window")
+    );
+    expect(infoMsg.message).toContain("last window");
+
+    // killWindow should NOT have been called
+    expect(tmux.calls.some((c) => c.includes("killWindow:"))).toBe(false);
+
+    control.close();
+  });
+
   test("rename_session renames via tmux gateway", async () => {
     await runningServer.stop();
     await startWithSessions(["alpha"]);

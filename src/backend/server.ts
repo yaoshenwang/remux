@@ -455,12 +455,22 @@ export const createRemuxServer = (
           }
         }
         return;
-      case "kill_window":
+      case "kill_window": {
         if (!attachedSession) {
           throw new Error("no attached session");
         }
+        // Prevent killing the last window — tmux destroys the entire session group
+        const windows = await deps.tmux.listWindows(attachedSession);
+        if (windows.length <= 1) {
+          sendJson(context.socket, {
+            type: "info",
+            message: "cannot kill the last window"
+          });
+          return;
+        }
         await deps.tmux.killWindow(attachedSession, message.windowIndex);
         return;
+      }
       case "select_pane":
         await deps.tmux.selectPane(message.paneId);
         if (message.stickyZoom === true && !(await deps.tmux.isPaneZoomed(message.paneId))) {
