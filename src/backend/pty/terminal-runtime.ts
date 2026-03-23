@@ -67,10 +67,22 @@ export class TerminalRuntime {
     return () => this.events.off(event, handler as (...args: unknown[]) => void);
   }
 
-  public shutdown(): void {
-    if (this.process) {
-      this.process.kill();
-      this.process = undefined;
+  public shutdown(): Promise<void> {
+    if (!this.process) {
+      return Promise.resolve();
     }
+    return new Promise<void>((resolve) => {
+      const proc = this.process!;
+      const timeout = setTimeout(() => {
+        this.process = undefined;
+        resolve();
+      }, 500);
+      proc.onExit(() => {
+        clearTimeout(timeout);
+        this.process = undefined;
+        resolve();
+      });
+      proc.kill();
+    });
   }
 }
