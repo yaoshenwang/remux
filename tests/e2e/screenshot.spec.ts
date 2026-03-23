@@ -17,7 +17,8 @@ test("capture UI screenshot for PR preview", async ({ page }) => {
   await page.goto(`${server.baseUrl}/?token=${server.token}`);
   await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
 
-  // Wait for terminal to be fully rendered
+  // Switch to terminal mode and wait for terminal to render
+  await page.getByRole("button", { name: "Terminal" }).click();
   await expect(page.getByTestId("terminal-host")).toBeVisible();
 
   // Emit some sample content so the terminal isn't blank

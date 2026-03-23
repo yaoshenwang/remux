@@ -23,6 +23,8 @@ test.describe("remux browser behavior", () => {
       await expect.poll(() => server.ptyFactory.processes.length).toBeGreaterThan(0);
       server.ptyFactory.latestProcess().emitData("hello from e2e\r\n");
 
+      // Switch to terminal mode (default is scroll mode)
+      await page.getByRole("button", { name: "Terminal" }).click();
       await expect(page.getByTestId("terminal-host")).toBeVisible();
       const hostBox = await page.getByTestId("terminal-host").boundingBox();
       expect(hostBox?.height ?? 0).toBeGreaterThan(120);

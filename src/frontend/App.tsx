@@ -118,6 +118,8 @@ export const App = () => {
   const scrollbackContentRef = useRef<HTMLDivElement | null>(null);
   const scrollbackRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [viewMode, setViewMode] = useState<"scroll" | "terminal">("scroll");
+
   const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
     ctrl: "off",
     alt: "off",
@@ -622,9 +624,11 @@ export const App = () => {
     };
   }, []);
 
+  const scrollViewActive = scrollbackVisible || viewMode === "scroll";
+
   // Scrollback auto-refresh and scroll-to-bottom
   useEffect(() => {
-    if (!scrollbackVisible) {
+    if (!scrollViewActive || !authReady) {
       if (scrollbackRefreshRef.current) {
         clearInterval(scrollbackRefreshRef.current);
         scrollbackRefreshRef.current = null;
@@ -632,7 +636,8 @@ export const App = () => {
       return;
     }
 
-    // Scroll to bottom on first open
+    // Initial fetch + scroll to bottom
+    requestScrollback(scrollbackLines);
     requestAnimationFrame(() => {
       const el = scrollbackContentRef.current;
       if (el) {
@@ -651,12 +656,12 @@ export const App = () => {
         scrollbackRefreshRef.current = null;
       }
     };
-  }, [scrollbackVisible]);
+  }, [scrollViewActive, authReady, activePane?.id]);
 
   // Scroll to bottom when new scrollback text arrives (only if already at bottom)
   useEffect(() => {
     const el = scrollbackContentRef.current;
-    if (!el || !scrollbackVisible || !scrollbackText) {
+    if (!el || !scrollViewActive || !scrollbackText) {
       return;
     }
     const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
@@ -668,6 +673,16 @@ export const App = () => {
       });
     }
   }, [scrollbackText]);
+
+  // Re-fit terminal when switching to terminal mode
+  useEffect(() => {
+    if (viewMode === "terminal" && fitAddonRef.current) {
+      requestAnimationFrame(() => {
+        fitAddonRef.current?.fit();
+        sendTerminalResize();
+      });
+    }
+  }, [viewMode]);
 
   // Persist toolbar expanded state
   useEffect(() => {
@@ -849,8 +864,13 @@ export const App = () => {
           >
             🔍
           </button>
-          <button className="top-btn" onClick={() => requestScrollback(serverConfig?.scrollbackLines ?? 1000)}>
-            Scroll
+          <button
+            className={`top-btn${viewMode === "terminal" ? " active" : ""}`}
+            onClick={() => {
+              setViewMode((m) => m === "scroll" ? "terminal" : "scroll");
+            }}
+          >
+            {viewMode === "scroll" ? "Terminal" : "Scroll"}
           </button>
           <button className="top-btn" onClick={() => setComposeEnabled((value) => !value)}>
             {composeEnabled ? "Compose On" : "Compose Off"}
@@ -863,6 +883,7 @@ export const App = () => {
           className="terminal-host"
           ref={terminalContainerRef}
           data-testid="terminal-host"
+          style={viewMode !== "terminal" ? { display: "none" } : undefined}
           onContextMenu={(event) => event.preventDefault()}
           onDragOver={(event) => {
             event.preventDefault();
@@ -884,9 +905,26 @@ export const App = () => {
             </div>
           )}
         </div>
+        {viewMode === "scroll" && (
+          <div className="scrollback-wrap">
+            <div className="scrollback-bar">
+              <button onClick={() => requestScrollback(scrollbackLines + 1000)}>More</button>
+              <button onClick={() => void copySelection()}>Copy</button>
+              <button onClick={() => {
+                const el = scrollbackContentRef.current;
+                if (el) el.scrollTop = el.scrollHeight;
+              }}>↓ Bottom</button>
+            </div>
+            <div
+              className="scrollback-main"
+              ref={scrollbackContentRef}
+              data-testid="scrollback-main"
+            />
+          </div>
+        )}
       </main>
 
-      <section className="toolbar" onMouseUp={focusTerminal}>
+      {viewMode === "terminal" && <section className="toolbar" onMouseUp={focusTerminal}>
         {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
         <div className="toolbar-main">
           <button onClick={() => sendTerminal("\u001b")}>Esc</button>
@@ -985,7 +1023,7 @@ export const App = () => {
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
       {composeEnabled && (
         <section className="compose-bar">
@@ -1208,18 +1246,7 @@ export const App = () => {
         </div>
       )}
 
-      {scrollbackVisible && (
-        <div className="overlay">
-          <div className="card scrollback-card">
-            <div className="scrollback-actions">
-              <button onClick={() => setScrollbackVisible(false)}>Close</button>
-              <button onClick={() => requestScrollback(scrollbackLines + 1000)}>Load More</button>
-              <button onClick={() => void copySelection()}>Copy</button>
-            </div>
-            <div className="scrollback-content" ref={scrollbackContentRef} />
-          </div>
-        </div>
-      )}
+      {/* Legacy overlay scrollback removed — now inline in scroll viewMode */}
 
       {needsPasswordInput && (
         <div className="overlay">

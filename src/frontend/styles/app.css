@@ -462,6 +462,43 @@ input {
   height: 100% !important;
 }
 
+.scrollback-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0.25rem;
+}
+
+.scrollback-bar {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.scrollback-bar button {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.scrollback-main {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'MesloLGS NF', 'MesloLGM NF', 'Hack Nerd Font', Menlo, Monaco, 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  background: var(--bg-terminal);
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  padding: 0.5rem;
+  color: var(--text-primary);
+  user-select: text;
+}
+
 .toolbar {
   display: grid;
   gap: 0.3rem;
