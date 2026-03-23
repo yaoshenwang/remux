@@ -16,6 +16,7 @@ export interface CliArgs {
   password?: string;
   requirePassword: boolean;
   tunnel: boolean;
+  tunnelProvider: "auto" | "devtunnel" | "cloudflare";
   session: string;
   scrollback: number;
   debugLog?: string;
