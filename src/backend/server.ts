@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -150,8 +151,12 @@ export const createRemuxServer = (
 
   const UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
+  const require = createRequire(import.meta.url);
+  const pkgVersion: string = (require("../../package.json") as { version: string }).version;
+
   app.get("/api/config", (_req, res) => {
     res.json({
+      version: pkgVersion,
       passwordRequired: authService.requiresPassword(),
       scrollbackLines: config.scrollbackLines,
       pollIntervalMs: config.pollIntervalMs,
