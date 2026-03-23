@@ -63,31 +63,32 @@ export class CloudflaredManager {
 
     return new Promise<CloudflaredResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        this.stop();
         reject(new Error("Timed out waiting for cloudflared URL"));
       }, 30_000);
 
-      const onData = (chunk: Buffer): void => {
-        const text = chunk.toString("utf8");
-        const match = text.match(URL_REGEX);
-        if (!match) {
-          return;
-        }
-
-        clearTimeout(timeout);
-        resolve({ publicUrl: match[0] });
-      };
-
-      const onError = (chunk: Buffer): void => {
+      const onStderr = (chunk: Buffer): void => {
         const text = chunk.toString("utf8");
         if (text.toLowerCase().includes("error")) {
           clearTimeout(timeout);
           reject(new Error(`cloudflared error: ${text.trim()}`));
+          return;
+        }
+        const match = text.match(URL_REGEX);
+        if (match) {
+          clearTimeout(timeout);
+          resolve({ publicUrl: match[0] });
         }
       };
 
-      this.process?.stdout?.on("data", onData);
-      this.process?.stderr?.on("data", onData);
-      this.process?.stderr?.on("data", onError);
+      this.process?.stdout?.on("data", (chunk: Buffer) => {
+        const match = chunk.toString("utf8").match(URL_REGEX);
+        if (match) {
+          clearTimeout(timeout);
+          resolve({ publicUrl: match[0] });
+        }
+      });
+      this.process?.stderr?.on("data", onStderr);
       this.process?.on("exit", (code) => {
         clearTimeout(timeout);
         if (code !== 0) {

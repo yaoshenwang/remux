@@ -29,17 +29,19 @@ export const buildSnapshot = async (
   tmux: TmuxGateway
 ): Promise<TmuxStateSnapshot> => {
   const sessions = await tmux.listSessions();
-  const sessionStates: TmuxSessionState[] = [];
 
-  for (const session of sessions) {
-    const windows = await tmux.listWindows(session.name);
-    const withPanes: TmuxWindowState[] = [];
-    for (const window of windows) {
-      const panes = await tmux.listPanes(session.name, window.index);
-      withPanes.push({ ...window, panes });
-    }
-    sessionStates.push({ ...session, windowStates: withPanes });
-  }
+  const sessionStates: TmuxSessionState[] = await Promise.all(
+    sessions.map(async (session) => {
+      const windows = await tmux.listWindows(session.name);
+      const withPanes: TmuxWindowState[] = await Promise.all(
+        windows.map(async (window) => {
+          const panes = await tmux.listPanes(session.name, window.index);
+          return { ...window, panes };
+        })
+      );
+      return { ...session, windowStates: withPanes };
+    })
+  );
 
   return {
     sessions: sessionStates,
