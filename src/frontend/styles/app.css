@@ -447,7 +447,9 @@ input {
 
 .terminal-wrap {
   min-height: 0;
+  min-width: 0;
   padding: 0.3rem;
+  overflow: hidden;
 }
 
 .terminal-host {
