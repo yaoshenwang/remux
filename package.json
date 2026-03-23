@@ -71,7 +71,7 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/supertest": "^6.0.2",
+    "@types/supertest": "^7.2.0",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
     "@vitejs/plugin-react": "^5.1.4",
