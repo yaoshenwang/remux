@@ -722,7 +722,7 @@ export const App = () => {
     scrollbackRefreshRef.current = setTimeout(() => {
       requestScrollback(scrollbackLines);
     }, delay);
-  }, [scrollbackText, scrollbackPaneWidth]);
+  }, [scrollbackText, scrollbackPaneWidth, scrollViewActive]);
 
   // Re-fit terminal when switching to terminal mode
   useEffect(() => {
