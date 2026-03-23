@@ -273,6 +273,24 @@ export class FakeTmuxGateway implements TmuxGateway {
     return `captured ${lines} lines for ${paneId}`;
   }
 
+  public async renameSession(name: string, newName: string): Promise<void> {
+    this.calls.push(`renameSession:${name}:${newName}`);
+    const session = this.findSession(name);
+    session.name = newName;
+    // Update groupTarget references
+    for (const s of this.sessions) {
+      if (s.groupTarget === name) {
+        s.groupTarget = newName;
+      }
+    }
+  }
+
+  public async renameWindow(sessionName: string, windowIndex: number, newName: string): Promise<void> {
+    this.calls.push(`renameWindow:${sessionName}:${windowIndex}:${newName}`);
+    const window = this.findWindow(sessionName, windowIndex);
+    window.name = newName;
+  }
+
   public setFailSwitchClient(value: boolean): void {
     this.failSwitchClient = value;
   }
