@@ -14,7 +14,7 @@ describe("tmux parser", () => {
     const windows = parseWindows("0\tbash\t1\t2");
     expect(windows[0]).toEqual({ index: 0, name: "bash", active: true, paneCount: 2 });
 
-    const panes = parsePanes("0\t%1\tbash\t1\t120x30\t1");
+    const panes = parsePanes("0\t%1\tbash\t1\t120x30\t1\t/home/user");
     expect(panes[0]).toEqual({
       index: 0,
       id: "%1",
@@ -22,7 +22,8 @@ describe("tmux parser", () => {
       active: true,
       width: 120,
       height: 30,
-      zoomed: true
+      zoomed: true,
+      currentPath: "/home/user"
     });
   });
 });

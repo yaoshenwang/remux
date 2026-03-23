@@ -15,6 +15,7 @@ interface ServerConfig {
   passwordRequired: boolean;
   scrollbackLines: number;
   pollIntervalMs: number;
+  uploadMaxSize?: number;
 }
 
 type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
@@ -128,6 +129,10 @@ export const App = () => {
   );
   const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
+
+  const [dragOver, setDragOver] = useState(false);
+  const [uploadToast, setUploadToast] = useState<{ path: string; filename: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Local selection state for instant UI feedback before server snapshot arrives
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
@@ -654,6 +659,29 @@ export const App = () => {
     debugLog("derived_state", derived);
   }, [attachedSession, activeSession, activeWindow, activePane, snapshot, topStatus]);
 
+  // Handle paste events for non-text content (images, files)
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent): void => {
+      const items = event.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.kind === "file") {
+          event.preventDefault();
+          const file = item.getAsFile();
+          if (file) {
+            uploadFile(file);
+          }
+          return;
+        }
+      }
+      // Text paste: let xterm.js handle it normally
+    };
+
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [activePane, serverConfig, password]);
+
   const submitPassword = (): void => {
     setPasswordErrorMessage("");
     openControlSocket(password);
@@ -671,6 +699,56 @@ export const App = () => {
     const selected = window.getSelection()?.toString() || scrollbackText;
     await navigator.clipboard.writeText(selected);
     setStatusMessage("Copied to clipboard");
+  };
+
+  const uploadFile = (file: File): void => {
+    const maxSize = serverConfig?.uploadMaxSize ?? 50 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setStatusMessage(`file too large (max ${Math.round(maxSize / 1024 / 1024)}MB)`);
+      return;
+    }
+
+    setStatusMessage(`uploading ${file.name}...`);
+    const paneCwd = activePane?.currentPath ?? "";
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload");
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-Filename", file.name);
+    if (paneCwd) {
+      xhr.setRequestHeader("X-Pane-Cwd", paneCwd);
+    }
+    if (password) {
+      xhr.setRequestHeader("X-Password", password);
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const pct = Math.round((event.loaded / event.total) * 100);
+        setStatusMessage(`uploading ${file.name}... ${pct}%`);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        try {
+          const result = JSON.parse(xhr.responseText) as { ok: boolean; path: string; filename: string };
+          if (result.ok) {
+            setStatusMessage(`uploaded: ${result.filename}`);
+            setUploadToast({ path: result.path, filename: result.filename });
+            return;
+          }
+        } catch { /* fall through */ }
+      }
+      setStatusMessage(`upload failed (${xhr.status})`);
+    };
+
+    xhr.onerror = () => {
+      setStatusMessage("upload failed (network error)");
+    };
+
+    xhr.send(file);
   };
 
   const focusTerminal = (): void => {
@@ -736,7 +814,26 @@ export const App = () => {
           ref={terminalContainerRef}
           data-testid="terminal-host"
           onContextMenu={(event) => event.preventDefault()}
-        />
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragOver(false);
+            const file = event.dataTransfer.files[0];
+            if (file) {
+              uploadFile(file);
+            }
+          }}
+        >
+          {dragOver && (
+            <div className="upload-overlay">
+              <span>Drop file to upload</span>
+            </div>
+          )}
+        </div>
       </main>
 
       <section className="toolbar" onMouseUp={focusTerminal}>
@@ -793,6 +890,23 @@ export const App = () => {
           >
             Paste
           </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: "none" }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                uploadFile(file);
+              }
+              event.target.value = "";
+            }}
+          />
           <button onClick={() => sendTerminal("\u001b[3~")}>Del</button>
           <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
           <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>
@@ -1079,6 +1193,23 @@ export const App = () => {
             )}
             <button onClick={submitPassword}>Connect</button>
           </div>
+        </div>
+      )}
+
+      {uploadToast && (
+        <div className="upload-toast">
+          <span className="upload-toast-path">{uploadToast.path}</span>
+          <button
+            onClick={() => {
+              // Shell-quote the path to handle spaces and metacharacters
+              const quoted = `'${uploadToast.path.replace(/'/g, "'\\''")}'`;
+              sendTerminal(quoted, false);
+              setUploadToast(null);
+            }}
+          >
+            Insert
+          </button>
+          <button onClick={() => setUploadToast(null)}>×</button>
         </div>
       )}
 

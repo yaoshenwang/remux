@@ -10,7 +10,7 @@ const SESSION_FMT = "#{session_name}\t#{session_attached}\t#{session_windows}";
 const WINDOW_FMT = "#{window_index}\t#{window_name}\t#{window_active}\t#{window_panes}";
 const ACTIVE_PANE_ZOOM_FMT = "#{?#{&&:#{window_zoomed_flag},#{pane_active}},1,0}";
 const PANE_FMT =
-  `#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}\t#{pane_width}x#{pane_height}\t${ACTIVE_PANE_ZOOM_FMT}`;
+  `#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}\t#{pane_width}x#{pane_height}\t${ACTIVE_PANE_ZOOM_FMT}\t#{pane_current_path}`;
 
 interface TmuxCliExecutorOptions {
   socketName?: string;

@@ -26,6 +26,7 @@ export interface TmuxPaneState {
   width: number;
   height: number;
   zoomed: boolean;
+  currentPath: string;
 }
 
 export interface TmuxWindowState {

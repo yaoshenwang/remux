@@ -108,7 +108,8 @@ export class FakeTmuxGateway implements TmuxGateway {
         active: pane.active,
         width: pane.width,
         height: pane.height,
-        zoomed: window.zoomed && pane.active
+        zoomed: window.zoomed && pane.active,
+        currentPath: "/tmp"
       }))
     );
   }

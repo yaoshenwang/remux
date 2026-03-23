@@ -720,6 +720,62 @@ button.danger {
   padding: 0.65rem;
 }
 
+.upload-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(147, 197, 253, 0.12);
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  z-index: 10;
+  pointer-events: none;
+  font-size: 1.1rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.terminal-host {
+  position: relative;
+}
+
+.upload-toast {
+  position: fixed;
+  bottom: 5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border-active);
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  z-index: 50;
+  max-width: 90vw;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.upload-toast-path {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55vw;
+}
+
+.upload-toast button {
+  background: var(--btn-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--btn-border);
+  border-radius: 8px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
 @media (orientation: landscape) {
   .toolbar-row-deep-fkeys {
     grid-template-columns: repeat(12, minmax(0, 1fr));
