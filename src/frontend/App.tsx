@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
+import { reflowText } from "./reflow-text";
 import { deriveContext, formatContext } from "./context-label";
 import type {
   ControlServerMessage,
@@ -704,7 +705,8 @@ export const App = () => {
     lastScrollbackHashRef.current = hash;
 
     const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
-    el.innerHTML = ansiToHtml(scrollbackText);
+    const cols = terminalRef.current?.cols ?? 80;
+    el.innerHTML = ansiToHtml(reflowText(scrollbackText, cols));
     if (isAtBottom) {
       requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight;
