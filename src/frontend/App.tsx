@@ -114,7 +114,6 @@ export const App = () => {
   const [composeEnabled, setComposeEnabled] = useState(true);
   const [composeText, setComposeText] = useState("");
 
-  const [scrollbackVisible, setScrollbackVisible] = useState(false);
   const [scrollbackText, setScrollbackText] = useState("");
   const [scrollbackLines, setScrollbackLines] = useState(1000);
   const scrollbackContentRef = useRef<HTMLDivElement | null>(null);
@@ -527,7 +526,6 @@ export const App = () => {
             bytes: message.text.length
           });
           setScrollbackText(message.text);
-          setScrollbackVisible(true);
           return;
         case "error":
           debugLog("control_socket.error", { message: message.message });
@@ -627,6 +625,12 @@ export const App = () => {
     fitAddonRef.current = fitAddon;
 
     const fitAndNotifyResize = () => {
+      // Skip resize when container is hidden (e.g. scroll mode sets display:none)
+      // to avoid shrinking the tmux pane to near-zero columns
+      const container = terminalContainerRef.current;
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
+        return;
+      }
       const preferredFontSize = getPreferredTerminalFontSize();
       if (terminal.options.fontSize !== preferredFontSize) {
         terminal.options.fontSize = preferredFontSize;
@@ -656,7 +660,7 @@ export const App = () => {
     };
   }, []);
 
-  const scrollViewActive = scrollbackVisible || viewMode === "scroll";
+  const scrollViewActive = viewMode === "scroll";
 
   // Scrollback auto-refresh and scroll-to-bottom
   useEffect(() => {
