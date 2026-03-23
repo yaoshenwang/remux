@@ -15,7 +15,7 @@ test('toolbar layout: unified rows with balanced button distribution', async ({ 
   await page.goto(`${server.baseUrl}/?token=${server.token}`);
 
   // Switch to terminal mode to show toolbar
-  await page.getByRole('button', { name: 'Terminal' }).click();
+  await page.getByRole('button', { name: 'Term' }).click();
   await expect(page.getByTestId('terminal-host')).toBeVisible();
 
   const mainRows = await page.locator('.toolbar-main').all();

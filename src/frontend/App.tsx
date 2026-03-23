@@ -920,6 +920,7 @@ export const App = () => {
             data-testid="top-zoom-indicator"
             onClick={() => activePane && sendControl({ type: "zoom_pane", paneId: activePane.id })}
             disabled={!activePane || !activeWindow || activeWindow.paneCount <= 1}
+            style={viewMode !== "terminal" ? { display: "none" } : undefined}
           >
             🔍
           </button>
@@ -929,10 +930,7 @@ export const App = () => {
               setViewMode((m) => m === "scroll" ? "terminal" : "scroll");
             }}
           >
-            {viewMode === "scroll" ? "Terminal" : "Scroll"}
-          </button>
-          <button className="top-btn" onClick={() => setComposeEnabled((value) => !value)}>
-            {composeEnabled ? "Compose On" : "Compose Off"}
+            {viewMode === "scroll" ? "Term" : "Scroll"}
           </button>
         </div>
       </header>
@@ -965,22 +963,11 @@ export const App = () => {
           )}
         </div>
         {viewMode === "scroll" && (
-          <div className="scrollback-wrap">
-            <div className="scrollback-bar">
-              <button onClick={() => requestScrollback(scrollbackLines + 1000)}>More</button>
-              <button onClick={() => void copySelection()}>Copy</button>
-              <button onClick={() => fileInputRef.current?.click()}>Upload</button>
-              <button onClick={() => {
-                const el = scrollbackContentRef.current;
-                if (el) el.scrollTop = el.scrollHeight;
-              }}>↓ Bottom</button>
-            </div>
-            <div
-              className="scrollback-main"
-              ref={scrollbackContentRef}
-              data-testid="scrollback-main"
-            />
-          </div>
+          <div
+            className="scrollback-main"
+            ref={scrollbackContentRef}
+            data-testid="scrollback-main"
+          />
         )}
       </main>
 

@@ -469,24 +469,6 @@ input {
   height: 100% !important;
 }
 
-.scrollback-wrap {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  gap: 0.25rem;
-}
-
-.scrollback-bar {
-  display: flex;
-  gap: 0.3rem;
-  flex-shrink: 0;
-}
-
-.scrollback-bar button {
-  font-size: 0.75rem;
-  padding: 0.2rem 0.5rem;
-}
-
 .scrollback-main {
   width: 100%;
   min-width: 0;
@@ -512,10 +494,6 @@ input {
     word-break: break-word;
     font-size: 11px;
   }
-}
-
-.scrollback-wrap {
-  min-width: 0;
 }
 
 .toolbar {
