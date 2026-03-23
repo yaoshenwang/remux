@@ -9,7 +9,7 @@ import type {
   TmuxSessionSummary,
   TmuxStateSnapshot,
   TmuxWindowState
-} from "./types/protocol";
+} from "../shared/protocol";
 
 interface ServerConfig {
   passwordRequired: boolean;
@@ -22,12 +22,12 @@ type ModifierMode = "off" | "sticky" | "locked";
 
 declare global {
   interface Window {
-    __tmuxMobileDebugEvents?: Array<{
+    __remuxDebugEvents?: Array<{
       at: string;
       event: string;
       payload?: unknown;
     }>;
-    __tmuxMobileDebugState?: unknown;
+    __remuxDebugState?: unknown;
   }
 }
 
@@ -45,7 +45,7 @@ const getPreferredTerminalFontSize = (): number => {
 };
 
 const getInitialStickyZoom = (): boolean => {
-  const stored = localStorage.getItem("tmux-mobile-sticky-zoom");
+  const stored = localStorage.getItem("remux-sticky-zoom");
   if (stored === "true") {
     return true;
   }
@@ -72,13 +72,13 @@ const debugLog = (event: string, payload?: unknown): void => {
     event,
     payload
   };
-  const current = window.__tmuxMobileDebugEvents ?? [];
+  const current = window.__remuxDebugEvents ?? [];
   current.push(entry);
   if (current.length > 500) {
     current.splice(0, current.length - 500);
   }
-  window.__tmuxMobileDebugEvents = current;
-  console.log("[tmux-mobile-debug]", entry.at, event, payload ?? "");
+  window.__remuxDebugEvents = current;
+  console.log("[remux-debug]", entry.at, event, payload ?? "");
 };
 
 export const App = () => {
@@ -91,7 +91,7 @@ export const App = () => {
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [statusMessage, setStatusMessage] = useState<string>("");
-  const [password, setPassword] = useState(localStorage.getItem("tmux-mobile-password") ?? "");
+  const [password, setPassword] = useState(sessionStorage.getItem("remux-password") ?? "");
   const [needsPasswordInput, setNeedsPasswordInput] = useState(false);
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [authReady, setAuthReady] = useState(false);
@@ -115,9 +115,9 @@ export const App = () => {
   });
   const modifierTapRef = useRef<{ key: ModifierKey; at: number } | null>(null);
 
-  const [theme, setTheme] = useState(localStorage.getItem("tmux-mobile-theme") ?? "midnight");
+  const [theme, setTheme] = useState(localStorage.getItem("remux-theme") ?? "midnight");
   const [toolbarExpanded, setToolbarExpanded] = useState(
-    localStorage.getItem("tmux-mobile-toolbar-expanded") === "true"
+    localStorage.getItem("remux-toolbar-expanded") === "true"
   );
   const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
@@ -151,7 +151,7 @@ export const App = () => {
     if (statusMessage.toLowerCase().includes("disconnected")) {
       return { kind: "warn", label: statusMessage };
     }
-    if (statusMessage.toLowerCase().includes("connected")) {
+    if (statusMessage.toLowerCase().includes("connected") || statusMessage.startsWith("attached:")) {
       return { kind: "ok", label: statusMessage };
     }
     if (statusMessage) {
@@ -354,9 +354,9 @@ export const App = () => {
           setAuthReady(true);
           setNeedsPasswordInput(false);
           if (message.requiresPassword && passwordValue) {
-            localStorage.setItem("tmux-mobile-password", passwordValue);
+            sessionStorage.setItem("remux-password", passwordValue);
           } else {
-            localStorage.removeItem("tmux-mobile-password");
+            sessionStorage.removeItem("remux-password");
           }
           openTerminalSocket(passwordValue, message.clientId);
           return;
@@ -369,7 +369,7 @@ export const App = () => {
           if (passwordAuthFailed) {
             setNeedsPasswordInput(true);
             setPasswordErrorMessage(formatPasswordError(message.reason));
-            localStorage.removeItem("tmux-mobile-password");
+            sessionStorage.removeItem("remux-password");
           }
           return;
         case "attached":
@@ -435,6 +435,8 @@ export const App = () => {
     socket.onclose = () => {
       debugLog("control_socket.onclose");
       setAuthReady(false);
+      setStatusMessage("control disconnected");
+      setErrorMessage("");
     };
 
     controlSocketRef.current = socket;
@@ -474,7 +476,7 @@ export const App = () => {
   // Theme effect: apply data-theme attribute, persist, update xterm theme
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("tmux-mobile-theme", theme);
+    localStorage.setItem("remux-theme", theme);
     const themeConfig = themes[theme];
     if (themeConfig && terminalRef.current) {
       terminalRef.current.options.theme = themeConfig.xterm;
@@ -522,18 +524,12 @@ export const App = () => {
       sendTerminalResize();
     };
 
-    const onResize = () => {
-      fitAndNotifyResize();
-    };
-
-    window.addEventListener("resize", onResize);
     const resizeObserver = new ResizeObserver(() => {
       fitAndNotifyResize();
     });
     resizeObserver.observe(terminalContainerRef.current);
 
     return () => {
-      window.removeEventListener("resize", onResize);
       resizeObserver.disconnect();
       disposable.dispose();
       terminal.dispose();
@@ -551,12 +547,12 @@ export const App = () => {
 
   // Persist toolbar expanded state
   useEffect(() => {
-    localStorage.setItem("tmux-mobile-toolbar-expanded", toolbarExpanded ? "true" : "false");
+    localStorage.setItem("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
   }, [toolbarExpanded]);
 
   // Persist sticky zoom state
   useEffect(() => {
-    localStorage.setItem("tmux-mobile-sticky-zoom", stickyZoom ? "true" : "false");
+    localStorage.setItem("remux-sticky-zoom", stickyZoom ? "true" : "false");
   }, [stickyZoom]);
 
   useEffect(() => {
@@ -585,7 +581,7 @@ export const App = () => {
       snapshotCapturedAt: snapshot.capturedAt,
       sessions: sessionSummary
     };
-    window.__tmuxMobileDebugState = derived;
+    window.__remuxDebugState = derived;
     debugLog("derived_state", derived);
   }, [attachedSession, activeSession, activeWindow, activePane, snapshot, topStatus]);
 
@@ -673,13 +669,12 @@ export const App = () => {
       </main>
 
       <section className="toolbar" onMouseUp={focusTerminal}>
-        {/* Row 1: Esc, Ctrl, Alt, Cmd, Meta, /, @, Hm, ↑, Ed */}
+        {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
         <div className="toolbar-main">
           <button onClick={() => sendTerminal("\u001b")}>Esc</button>
           <button className={`modifier ${modifiers.ctrl}`} onClick={() => toggleModifier("ctrl")}>Ctrl</button>
           <button className={`modifier ${modifiers.alt}`} onClick={() => toggleModifier("alt")}>Alt</button>
           <button className={`modifier ${modifiers.meta}`} onClick={() => toggleModifier("meta")}>Cmd</button>
-          <button onClick={() => sendTerminal("\u001b")}>Meta</button>
           <button onClick={() => sendTerminal("/")}>/</button>
           <button onClick={() => sendTerminal("@")}>@</button>
           <button onClick={() => sendTerminal("\u001b[H")}>Hm</button>
@@ -717,8 +712,12 @@ export const App = () => {
           <button onClick={() => sendTerminal("\u000c", false)}>^L</button>
           <button
             onClick={async () => {
-              const clip = await navigator.clipboard.readText();
-              sendTerminal(clip, false);
+              try {
+                const clip = await navigator.clipboard.readText();
+                sendTerminal(clip, false);
+              } catch {
+                setStatusMessage("clipboard read failed");
+              }
             }}
           >
             Paste
@@ -727,7 +726,6 @@ export const App = () => {
           <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
           <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>
           <button onClick={() => sendTerminal("\u001b[6~")}>PgDn</button>
-          <button onClick={() => sendTerminal("")}>CapsLk</button>
           <button
             className="toolbar-expand-btn"
             onClick={() => setToolbarDeepExpanded((v) => !v)}

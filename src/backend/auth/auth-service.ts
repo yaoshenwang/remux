@@ -1,9 +1,19 @@
+import crypto from "node:crypto";
 import { randomToken } from "../util/random.js";
 
 export interface AuthPayload {
   token?: string;
   password?: string;
 }
+
+const safeEqual = (a: string, b: string): boolean => {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+};
 
 export class AuthService {
   public readonly token: string;
@@ -19,11 +29,11 @@ export class AuthService {
   }
 
   public verify(payload: AuthPayload): { ok: boolean; reason?: string } {
-    if (!payload.token || payload.token !== this.token) {
+    if (!payload.token || !safeEqual(payload.token, this.token)) {
       return { ok: false, reason: "invalid token" };
     }
 
-    if (this.password && payload.password !== this.password) {
+    if (this.password && (!payload.password || !safeEqual(payload.password, this.password))) {
       return { ok: false, reason: "invalid password" };
     }
 

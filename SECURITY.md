@@ -1,6 +1,6 @@
-# tmux-mobile Security Architecture
+# Remux Security Architecture
 
-This document describes the security model of `tmux-mobile` as it exists today, including what it protects well, what it does not protect well, and how to operate it safely.
+This document describes the security model of `remux` as it exists today, including what it protects well, what it does not protect well, and how to operate it safely.
 
 It is intended to serve two audiences:
 - maintainers changing authentication, transport, or command execution code
@@ -8,7 +8,7 @@ It is intended to serve two audiences:
 
 ## Scope And Security Posture
 
-`tmux-mobile` is a remote control surface for a live tmux session. Anyone who successfully authenticates can run commands as the same OS user that launched `tmux-mobile`.
+`remux` is a remote control surface for a live tmux session. Anyone who successfully authenticates can run commands as the same OS user that launched `remux`.
 
 Current posture:
 - Good for trusted personal workflows and small-team use with careful sharing hygiene.
@@ -81,7 +81,7 @@ Current posture:
 - All-or-nothing.
 - Once authenticated, client can issue all control operations and terminal input.
 - No role separation (read-only vs control).
-- tmux-mobile creates a dedicated grouped tmux session per authenticated control client to isolate window focus.
+- remux creates a dedicated grouped tmux session per authenticated control client to isolate window focus.
 - Pane focus inside the same shared window remains shared by tmux semantics.
 
 ## Credential Lifecycle And Storage
@@ -94,7 +94,7 @@ Current posture:
 
 ### Client Side
 
-- Password is stored in browser `localStorage` under `tmux-mobile-password` on successful auth when password is required (`src/frontend/App.tsx`).
+- Password is stored in browser `localStorage` under `remux-password` on successful auth when password is required (`src/frontend/App.tsx`).
 - Saved password is removed on auth failures and when password protection is not required.
 - Token is read from URL query string on page load (`src/frontend/App.tsx`).
 
@@ -112,7 +112,7 @@ Implication: browser compromise on that origin can expose saved password and URL
 - With tunnel enabled, cloudflared publishes an HTTPS `*.trycloudflare.com` URL.
 - Browser uses `wss://` because page protocol is HTTPS.
 - Backend itself still serves local HTTP, with cloudflared proxying to localhost.
-- Security of public access depends on both tmux-mobile secrets and Cloudflare tunnel behavior.
+- Security of public access depends on both remux secrets and Cloudflare tunnel behavior.
 
 ## Input Handling And Command Execution
 
@@ -129,7 +129,7 @@ Implication: browser compromise on that origin can expose saved password and URL
 
 ## Logging And Diagnostics
 
-- Optional file logging via `--debug-log` or `TMUX_MOBILE_DEBUG_LOG` (`src/backend/cli.ts`, `src/backend/util/file-logger.ts`).
+- Optional file logging via `--debug-log` or `REMUX_DEBUG_LOG` (`src/backend/cli.ts`, `src/backend/util/file-logger.ts`).
 - Logs include auth success/failure events and message types.
 - Logs do not intentionally print token/password values from auth payloads.
 - CLI output prints URLs (with token) and password to terminal at startup by design.
@@ -162,10 +162,10 @@ If your environment has strict supply-chain requirements, pre-install and manage
 1. Keep password protection enabled (default).
 2. Prefer tunnel HTTPS URLs over exposing plain HTTP on shared networks.
 3. Share token URL and password through separate channels.
-4. Rotate quickly: stop/restart tmux-mobile after sharing incidents.
+4. Rotate quickly: stop/restart remux after sharing incidents.
 5. Avoid storing credentials in screenshots, chat logs, and shell logs.
 6. Run under a dedicated low-privilege OS user where possible.
-7. Use isolated tmux socket (`TMUX_MOBILE_SOCKET_NAME` or `TMUX_MOBILE_SOCKET_PATH`) for blast-radius control.
+7. Use isolated tmux socket (`REMUX_SOCKET_NAME` or `REMUX_SOCKET_PATH`) for blast-radius control.
 8. Disable tunnel (`--no-tunnel`) for local-only workflows.
 9. Clear browser storage on shared/untrusted devices.
 10. Keep dependencies and cloudflared updated.
@@ -174,7 +174,7 @@ If your environment has strict supply-chain requirements, pre-install and manage
 
 ### "If someone gets the URL, are we compromised?"
 
-Not automatically if password is enabled. The URL token is required but not sufficient when password is required. If both leak, assume full compromise and rotate immediately by restarting tmux-mobile.
+Not automatically if password is enabled. The URL token is required but not sufficient when password is required. If both leak, assume full compromise and rotate immediately by restarting remux.
 
 ### "Is this safe for exposing production servers to the internet?"
 

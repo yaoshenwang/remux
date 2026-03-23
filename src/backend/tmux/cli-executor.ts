@@ -45,7 +45,7 @@ export class TmuxCliExecutor implements TmuxGateway {
         : [];
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.logger = options.logger;
-    this.traceTmux = process.env.TMUX_MOBILE_TRACE_TMUX === "1";
+    this.traceTmux = process.env.REMUX_TRACE_TMUX === "1";
   }
 
   private async runTmux(args: string[]): Promise<string> {

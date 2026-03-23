@@ -1,11 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "src/backend",
-    "outDir": "dist/backend",
+    "rootDir": "src",
+    "outDir": "dist",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/backend/**/*.ts"]
+  "include": ["src/backend/**/*.ts", "src/shared/**/*.ts"]
 }

@@ -2,7 +2,7 @@ import type {
   TmuxPaneState,
   TmuxSessionSummary,
   TmuxWindowState
-} from "../../src/backend/types/protocol.js";
+} from "../../src/shared/protocol.js";
 import type { TmuxGateway } from "../../src/backend/tmux/types.js";
 
 interface SessionNode {

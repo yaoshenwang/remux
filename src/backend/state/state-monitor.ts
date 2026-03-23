@@ -1,5 +1,5 @@
 import { buildSnapshot } from "../tmux/types.js";
-import type { TmuxStateSnapshot } from "../types/protocol.js";
+import type { TmuxStateSnapshot } from "../../shared/protocol.js";
 import type { TmuxGateway } from "../tmux/types.js";
 
 export class TmuxStateMonitor {

@@ -93,7 +93,7 @@ export class NodePtyFactory implements PtyFactory {
   private readonly forceScriptFallback: boolean;
 
   public constructor(private readonly logger?: Pick<Console, "log" | "error">) {
-    this.forceScriptFallback = process.env.TMUX_MOBILE_FORCE_SCRIPT_PTY === "1";
+    this.forceScriptFallback = process.env.REMUX_FORCE_SCRIPT_PTY === "1";
     ensureNodePtySpawnHelperExecutable(this.logger);
   }
 

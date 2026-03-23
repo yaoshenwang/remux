@@ -22,7 +22,7 @@ test("capture UI screenshot for PR preview", async ({ page }) => {
 
   // Emit some sample content so the terminal isn't blank
   await expect.poll(() => server.ptyFactory.processes.length).toBeGreaterThan(0);
-  server.ptyFactory.latestProcess().emitData("$ tmux-mobile running\r\n");
+  server.ptyFactory.latestProcess().emitData("$ remux running\r\n");
 
   // Small delay for render
   await page.waitForTimeout(500);

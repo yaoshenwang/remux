@@ -2,7 +2,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { AuthService } from "../../../src/backend/auth/auth-service.js";
 import type { RuntimeConfig } from "../../../src/backend/config.js";
-import { createTmuxMobileServer, type RunningServer } from "../../../src/backend/server.js";
+import { createRemuxServer, type RunningServer } from "../../../src/backend/server.js";
 import { FakePtyFactory } from "../../harness/fakePty.js";
 import { FakeTmuxGateway } from "../../harness/fakeTmux.js";
 
@@ -25,7 +25,7 @@ export interface StartedE2EServer {
 export const startE2EServer = async (
   options: E2EServerOptions
 ): Promise<StartedE2EServer> => {
-  process.env.TMUX_MOBILE_VERBOSE_DEBUG = "1";
+  process.env.REMUX_VERBOSE_DEBUG = "1";
 
   const formatLogPart = (value: unknown): string => {
     if (typeof value === "string") {
@@ -66,7 +66,7 @@ export const startE2EServer = async (
     frontendDir: path.resolve(process.cwd(), "dist/frontend")
   };
 
-  const server: RunningServer = createTmuxMobileServer(config, {
+  const server: RunningServer = createRemuxServer(config, {
     tmux,
     ptyFactory,
     authService,

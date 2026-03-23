@@ -19,6 +19,10 @@ export class TerminalRuntime {
     return this.session;
   }
 
+  public isAlive(): boolean {
+    return this.process !== undefined;
+  }
+
   public attachToSession(session: string): void {
     if (this.session === session && this.process) {
       return;

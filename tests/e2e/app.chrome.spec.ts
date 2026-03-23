@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { startE2EServer, type StartedE2EServer } from "./harness/test-server.js";
 
-test.describe("tmux-mobile browser behavior", () => {
+test.describe("remux browser behavior", () => {
   test.describe("auto attach + drawer + terminal", () => {
     let server: StartedE2EServer;
 
@@ -116,7 +116,7 @@ test.describe("tmux-mobile browser behavior", () => {
       await expect(page.locator(".top-title")).toContainText("Window: 0: shell");
 
       await expect
-        .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("tmux-mobile-client-") ?? false)
+        .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("remux-client-") ?? false)
         .toBe(true);
     });
   });
@@ -157,7 +157,7 @@ test.describe("tmux-mobile browser behavior", () => {
 
     test("shows feedback when saved password is wrong", async ({ page }) => {
       await page.addInitScript(() => {
-        localStorage.setItem("tmux-mobile-password", "wrong-password");
+        localStorage.setItem("remux-password", "wrong-password");
       });
 
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
@@ -210,7 +210,7 @@ test.describe("tmux-mobile browser behavior", () => {
 
     test("defaults on for narrow screens when no sticky zoom preference is stored", async ({ page }) => {
       await page.addInitScript(() => {
-        localStorage.removeItem("tmux-mobile-sticky-zoom");
+        localStorage.removeItem("remux-sticky-zoom");
       });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
@@ -224,7 +224,7 @@ test.describe("tmux-mobile browser behavior", () => {
     test("sticky zoom state persists across page reloads", async ({ page }) => {
       // Set sticky zoom on via localStorage
       await page.addInitScript(() => {
-        localStorage.setItem("tmux-mobile-sticky-zoom", "true");
+        localStorage.setItem("remux-sticky-zoom", "true");
       });
 
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
@@ -330,12 +330,12 @@ test.describe("tmux-mobile browser behavior", () => {
 
         const browserDebug = await page.evaluate(() => {
           const debugWindow = window as Window & {
-            __tmuxMobileDebugState?: unknown;
-            __tmuxMobileDebugEvents?: unknown[];
+            __remuxDebugState?: unknown;
+            __remuxDebugEvents?: unknown[];
           };
           return {
-            state: debugWindow.__tmuxMobileDebugState ?? null,
-            events: (debugWindow.__tmuxMobileDebugEvents ?? []).slice(-200)
+            state: debugWindow.__remuxDebugState ?? null,
+            events: (debugWindow.__remuxDebugEvents ?? []).slice(-200)
           };
         });
 
@@ -471,7 +471,7 @@ test.describe("tmux-mobile browser behavior", () => {
       await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
       await expect(page.locator(".top-title")).toContainText("Window: 0: shell");
       await expect
-        .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("tmux-mobile-client-") ?? false)
+        .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("remux-client-") ?? false)
         .toBe(true);
     });
   });

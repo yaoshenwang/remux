@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { WebSocket, type RawData } from "ws";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
 import type { RuntimeConfig } from "../../src/backend/config.js";
-import { createTmuxMobileServer, type RunningServer } from "../../src/backend/server.js";
+import { createRemuxServer, type RunningServer } from "../../src/backend/server.js";
 import { buildSnapshot } from "../../src/backend/tmux/types.js";
 import { FakePtyFactory } from "../harness/fakePty.js";
 import { FakeTmuxGateway } from "../harness/fakeTmux.js";
@@ -70,7 +70,7 @@ describe("tmux mobile server", () => {
     ptyFactory = new FakePtyFactory();
     const auth = new AuthService(options.password, "test-token");
 
-    runningServer = createTmuxMobileServer(buildConfig("test-token"), {
+    runningServer = createRemuxServer(buildConfig("test-token"), {
       tmux,
       ptyFactory,
       authService: auth,
@@ -107,7 +107,7 @@ describe("tmux mobile server", () => {
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     const { attachedSession } = await authControl(control);
 
-    expect(attachedSession).toMatch(/^tmux-mobile-client-/);
+    expect(attachedSession).toMatch(/^remux-client-/);
     expect(tmux.calls).toContain("createSession:main");
     expect(tmux.calls).toContain(`createGroupedSession:${attachedSession}:main`);
     expect(ptyFactory.lastSpawnedSession).toBe(attachedSession);
@@ -162,7 +162,7 @@ describe("tmux mobile server", () => {
       (msg) => msg.type === "attached"
     );
 
-    expect(attached.session).toMatch(/^tmux-mobile-client-/);
+    expect(attached.session).toMatch(/^remux-client-/);
     expect(tmux.calls).toContain(`createGroupedSession:${attached.session}:dev`);
     expect(ptyFactory.lastSpawnedSession).toBe(attached.session);
     expect(tmux.calls.some((call) => call.startsWith("switchClient:"))).toBe(false);

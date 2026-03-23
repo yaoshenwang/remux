@@ -2,13 +2,14 @@ import http from "node:http";
 import path from "node:path";
 import express from "express";
 import { WebSocketServer, type WebSocket } from "ws";
+import { z } from "zod";
 import type { RuntimeConfig } from "./config.js";
 import type {
   ControlClientMessage,
   ControlServerMessage,
   TmuxSessionSummary,
   TmuxStateSnapshot
-} from "./types/protocol.js";
+} from "../shared/protocol.js";
 import { randomToken } from "./util/random.js";
 import { AuthService } from "./auth/auth-service.js";
 import type { TmuxGateway } from "./tmux/types.js";
@@ -54,13 +55,29 @@ export const isWebSocketPath = (requestPath: string): boolean => requestPath.sta
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+const controlClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("auth"), token: z.string().optional(), password: z.string().optional(), clientId: z.string().optional() }),
+  z.object({ type: z.literal("select_session"), session: z.string() }),
+  z.object({ type: z.literal("new_session"), name: z.string() }),
+  z.object({ type: z.literal("new_window"), session: z.string() }),
+  z.object({ type: z.literal("select_window"), session: z.string(), windowIndex: z.number(), stickyZoom: z.boolean().optional() }),
+  z.object({ type: z.literal("kill_window"), session: z.string(), windowIndex: z.number() }),
+  z.object({ type: z.literal("select_pane"), paneId: z.string(), stickyZoom: z.boolean().optional() }),
+  z.object({ type: z.literal("split_pane"), paneId: z.string(), orientation: z.enum(["h", "v"]) }),
+  z.object({ type: z.literal("kill_pane"), paneId: z.string() }),
+  z.object({ type: z.literal("zoom_pane"), paneId: z.string() }),
+  z.object({ type: z.literal("capture_scrollback"), paneId: z.string(), lines: z.number().optional() }),
+  z.object({ type: z.literal("send_compose"), text: z.string() })
+]);
+
 const parseClientMessage = (raw: string): ControlClientMessage | null => {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!isObject(parsed) || typeof parsed.type !== "string") {
+    const result = controlClientMessageSchema.safeParse(parsed);
+    if (!result.success) {
       return null;
     }
-    return parsed as ControlClientMessage;
+    return result.data as ControlClientMessage;
   } catch {
     return null;
   }
@@ -103,18 +120,18 @@ const summarizeState = (state: TmuxStateSnapshot): string => {
   return `capturedAt=${state.capturedAt}; sessions=${sessions.join(" | ")}`;
 };
 
-const MOBILE_SESSION_PREFIX = "tmux-mobile-client-";
+const REMUX_SESSION_PREFIX = "remux-client-";
 
-const isManagedMobileSession = (name: string): boolean => name.startsWith(MOBILE_SESSION_PREFIX);
+const isManagedMobileSession = (name: string): boolean => name.startsWith(REMUX_SESSION_PREFIX);
 
-const buildMobileSessionName = (clientId: string): string => `${MOBILE_SESSION_PREFIX}${clientId}`;
+const buildMobileSessionName = (clientId: string): string => `${REMUX_SESSION_PREFIX}${clientId}`;
 
-export const createTmuxMobileServer = (
+export const createRemuxServer = (
   config: RuntimeConfig,
   deps: ServerDependencies
 ): RunningServer => {
   const logger = deps.logger ?? console;
-  const verboseDebug = process.env.TMUX_MOBILE_VERBOSE_DEBUG === "1";
+  const verboseDebug = process.env.REMUX_VERBOSE_DEBUG === "1";
   const verboseLog = (...args: unknown[]): void => {
     if (verboseDebug) {
       logger.log(...args);
@@ -158,14 +175,20 @@ export const createTmuxMobileServer = (
   let stopPromise: Promise<void> | null = null;
 
   const broadcastState = (state: TmuxStateSnapshot): void => {
+    const filteredState: TmuxStateSnapshot = {
+      ...state,
+      sessions: state.sessions.filter(
+        (session) => !isManagedMobileSession(session.name)
+      )
+    };
     verboseLog(
       "broadcast tmux_state",
       `authedControlClients=${[...controlClients].filter((client) => client.authed).length}`,
-      summarizeState(state)
+      summarizeState(filteredState)
     );
     for (const client of controlClients) {
       if (client.authed) {
-        sendJson(client.socket, { type: "tmux_state", state });
+        sendJson(client.socket, { type: "tmux_state", state: filteredState });
       }
     }
   };
@@ -481,16 +504,18 @@ export const createTmuxMobileServer = (
       }
 
       if (isBinary) {
-        const binaryBytes =
-          typeof rawData === "string"
-            ? Buffer.byteLength(rawData, "utf8")
-            : rawData instanceof ArrayBuffer
-              ? rawData.byteLength
-              : Array.isArray(rawData)
-                ? rawData.reduce((sum, chunk) => sum + chunk.length, 0)
-                : rawData.length;
-        verboseLog("terminal ws binary input", `bytes=${binaryBytes}`);
-        ctx.controlContext?.runtime?.write(rawData.toString());
+        let buf: Buffer;
+        if (Buffer.isBuffer(rawData)) {
+          buf = rawData;
+        } else if (rawData instanceof ArrayBuffer) {
+          buf = Buffer.from(rawData);
+        } else if (Array.isArray(rawData)) {
+          buf = Buffer.concat(rawData);
+        } else {
+          buf = Buffer.from(rawData);
+        }
+        verboseLog("terminal ws binary input", `bytes=${buf.length}`);
+        ctx.controlContext?.runtime?.write(buf.toString("utf8"));
         return;
       }
 

@@ -6,5 +6,5 @@
     "types": ["vite/client"],
     "baseUrl": "."
   },
-  "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx"]
+  "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx", "src/shared/**/*.ts"]
 }

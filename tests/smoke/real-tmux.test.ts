@@ -22,7 +22,7 @@ const canRunIsolatedTmux = (() => {
     return false;
   }
 
-  const sockPath = socketPath(`tmux-mobile-preflight-${process.pid}`);
+  const sockPath = socketPath(`remux-preflight-${process.pid}`);
   const create = spawnSync("tmux", ["-S", sockPath, "new-session", "-d", "-s", "preflight"], {
     encoding: "utf8"
   });
@@ -38,7 +38,7 @@ const canRunIsolatedTmux = (() => {
 
 describe.skipIf(!canRunIsolatedTmux)("real tmux smoke", () => {
   test("creates and inspects an isolated tmux session", async () => {
-    const sockPath = socketPath(`tmux-mobile-smoke-${process.pid}-${Date.now()}`);
+    const sockPath = socketPath(`remux-smoke-${process.pid}-${Date.now()}`);
     const sessionName = "smoke-main";
     const tmux = new TmuxCliExecutor({ socketPath: sockPath });
 
