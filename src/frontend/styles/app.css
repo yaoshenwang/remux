@@ -458,7 +458,6 @@ input {
   padding: 0.25rem;
 }
 
-.terminal-host .xterm-viewport,
 .terminal-host .xterm-screen {
   height: 100% !important;
 }
