@@ -348,7 +348,7 @@ describe("tmux mobile server", () => {
     const { attachedSession } = await authControl(control);
 
     control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call === "newWindow:main");
+    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
 
     tmux.calls.length = 0;
 
@@ -370,7 +370,7 @@ describe("tmux mobile server", () => {
 
     // Create a second window (structural ops now target base session "main")
     control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call === "newWindow:main");
+    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
 
     // Drain any pending tmux_state messages from new_window
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -414,7 +414,7 @@ describe("tmux mobile server", () => {
 
     // Create window 1 (structural ops now target base session "main")
     control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call === "newWindow:main");
+    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
 
     // Select window 1 on mobile session
     control.send(

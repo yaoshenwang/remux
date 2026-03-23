@@ -436,16 +436,14 @@ export const createRemuxServer = (
         await deps.tmux.createSession(message.name);
         await attachControlToBaseSession(context, message.name);
         return;
-      case "new_window": {
-        // Structural operations target the base session, not the grouped mobile session.
-        // Operating on the mobile session would affect the entire session group.
-        const baseForNew = context.baseSession;
-        if (!baseForNew) {
+      case "new_window":
+        // new_window is additive (no session-group destruction risk),
+        // so target the mobile session to auto-switch the client's active window.
+        if (!attachedSession) {
           throw new Error("no attached session");
         }
-        await deps.tmux.newWindow(baseForNew);
+        await deps.tmux.newWindow(attachedSession);
         return;
-      }
       case "select_window":
         if (!attachedSession) {
           throw new Error("no attached session");

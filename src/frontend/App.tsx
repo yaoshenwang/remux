@@ -814,8 +814,13 @@ export const App = () => {
   };
 
   const copySelection = async (): Promise<void> => {
-    const selected = window.getSelection()?.toString() || readTerminalBuffer();
-    await navigator.clipboard.writeText(selected);
+    let text = window.getSelection()?.toString() || "";
+    if (!text) {
+      // Fallback: copy terminal buffer with ANSI codes stripped
+      const raw = readTerminalBuffer();
+      text = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+    }
+    await navigator.clipboard.writeText(text);
     setStatusMessage("Copied to clipboard");
   };
 
