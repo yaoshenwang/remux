@@ -433,6 +433,10 @@ export const App = () => {
             })
           });
           setSnapshot(message.state);
+          // Clear local selections — the server now sends per-client active state,
+          // so the snapshot already reflects this client's active window/pane.
+          setSelectedWindowIndex(null);
+          setSelectedPaneId(null);
           return;
         case "scrollback":
           debugLog("control_socket.scrollback", {
