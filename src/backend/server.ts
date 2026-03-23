@@ -69,7 +69,9 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("kill_pane"), paneId: z.string() }),
   z.object({ type: z.literal("zoom_pane"), paneId: z.string() }),
   z.object({ type: z.literal("capture_scrollback"), paneId: z.string(), lines: z.number().optional() }),
-  z.object({ type: z.literal("send_compose"), text: z.string() })
+  z.object({ type: z.literal("send_compose"), text: z.string() }),
+  z.object({ type: z.literal("rename_session"), session: z.string(), newName: z.string() }),
+  z.object({ type: z.literal("rename_window"), session: z.string(), windowIndex: z.number(), newName: z.string() })
 ]);
 
 const parseClientMessage = (raw: string): ControlClientMessage | null => {
@@ -482,6 +484,22 @@ export const createRemuxServer = (
       case "send_compose":
         context.runtime?.write(`${message.text}\r`);
         return;
+      case "rename_session": {
+        await deps.tmux.renameSession(message.session, message.newName);
+        // Update baseSession reference and notify client if attached to the renamed session
+        if (context.baseSession === message.session) {
+          context.baseSession = message.newName;
+          sendJson(context.socket, { type: "attached", session: message.newName });
+        }
+        return;
+      }
+      case "rename_window": {
+        if (!attachedSession) {
+          throw new Error("no attached session");
+        }
+        await deps.tmux.renameWindow(attachedSession, message.windowIndex, message.newName);
+        return;
+      }
       case "auth":
         return;
       default: {

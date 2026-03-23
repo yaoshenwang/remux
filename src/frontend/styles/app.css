@@ -674,6 +674,18 @@ button.danger {
   border-color: var(--border-active);
 }
 
+.rename-input {
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-active);
+  border-radius: 6px;
+  outline: none;
+  box-sizing: border-box;
+}
+
 .pane-zoom-indicator {
   display: inline-flex;
   align-items: center;

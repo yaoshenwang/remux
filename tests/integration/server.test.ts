@@ -439,6 +439,43 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("rename_session renames via tmux gateway", async () => {
+    await runningServer.stop();
+    await startWithSessions(["alpha"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    const { attachedSession } = await authControl(control);
+    expect(attachedSession).toBe("alpha");
+
+    control.send(
+      JSON.stringify({ type: "rename_session", session: "alpha", newName: "beta" })
+    );
+    await waitForTmuxCall((call) => call === "renameSession:alpha:beta");
+
+    expect(tmux.calls).toContain("renameSession:alpha:beta");
+
+    control.close();
+  });
+
+  test("rename_window renames via tmux gateway", async () => {
+    await runningServer.stop();
+    await startWithSessions(["work"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    await authControl(control);
+
+    control.send(
+      JSON.stringify({ type: "rename_window", session: "work", windowIndex: 0, newName: "editor" })
+    );
+    await waitForTmuxCall((call) => call.includes("renameWindow:") && call.endsWith(":0:editor"));
+
+    expect(
+      tmux.calls.some((c) => c.startsWith("renameWindow:remux-client-") && c.endsWith(":0:editor"))
+    ).toBe(true);
+
+    control.close();
+  });
+
   test("stop is idempotent when called repeatedly", async () => {
     await runningServer.stop();
     await runningServer.stop();

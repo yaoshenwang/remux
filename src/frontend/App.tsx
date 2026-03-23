@@ -135,6 +135,12 @@ export const App = () => {
   const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
 
+  const [renamingSession, setRenamingSession] = useState<string | null>(null);
+  const [renameSessionValue, setRenameSessionValue] = useState("");
+  const [renamingWindow, setRenamingWindow] = useState<{ session: string; index: number } | null>(null);
+  const [renameWindowValue, setRenameWindowValue] = useState("");
+  const renameHandledByKeyRef = useRef(false);
+
   const [dragOver, setDragOver] = useState(false);
   const [uploadToast, setUploadToast] = useState<{ path: string; filename: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1070,12 +1076,47 @@ export const App = () => {
             <ul data-testid="sessions-list">
               {snapshot.sessions.map((session) => (
                 <li key={session.name}>
-                  <button
-                    onClick={() => sendControl({ type: "select_session", session: session.name })}
-                    className={session.name === (attachedSession || activeSession?.name) ? "active" : ""}
-                  >
-                    {session.name} {session.attached ? "*" : ""}
-                  </button>
+                  {renamingSession === session.name ? (
+                    <input
+                      className="rename-input"
+                      value={renameSessionValue}
+                      onChange={(e) => setRenameSessionValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && renameSessionValue.trim()) {
+                          renameHandledByKeyRef.current = true;
+                          sendControl({ type: "rename_session", session: session.name, newName: renameSessionValue.trim() });
+                          setRenamingSession(null);
+                        } else if (e.key === "Escape") {
+                          renameHandledByKeyRef.current = true;
+                          setRenamingSession(null);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (renameHandledByKeyRef.current) {
+                          renameHandledByKeyRef.current = false;
+                          return;
+                        }
+                        if (renameSessionValue.trim() && renameSessionValue.trim() !== session.name) {
+                          sendControl({ type: "rename_session", session: session.name, newName: renameSessionValue.trim() });
+                        }
+                        setRenamingSession(null);
+                      }}
+                      autoFocus
+                      data-testid="rename-session-input"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => sendControl({ type: "select_session", session: session.name })}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        setRenamingSession(session.name);
+                        setRenameSessionValue(session.name);
+                      }}
+                      className={session.name === (attachedSession || activeSession?.name) ? "active" : ""}
+                    >
+                      {session.name} {session.attached ? "*" : ""}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1092,13 +1133,48 @@ export const App = () => {
               {activeSession
                 ? activeSession.windowStates.map((windowState) => (
                     <li key={`${activeSession.name}-${windowState.index}`}>
-                      <button
-                        onClick={() => selectWindow(windowState)}
-                        className={windowState.index === activeWindow?.index ? "active" : ""}
-                      >
-                        {windowState.index}: {windowState.name}
-                        {windowState.index === activeWindow?.index ? " *" : ""}
-                      </button>
+                      {renamingWindow?.session === activeSession.name && renamingWindow?.index === windowState.index ? (
+                        <input
+                          className="rename-input"
+                          value={renameWindowValue}
+                          onChange={(e) => setRenameWindowValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && renameWindowValue.trim()) {
+                              renameHandledByKeyRef.current = true;
+                              sendControl({ type: "rename_window", session: activeSession.name, windowIndex: windowState.index, newName: renameWindowValue.trim() });
+                              setRenamingWindow(null);
+                            } else if (e.key === "Escape") {
+                              renameHandledByKeyRef.current = true;
+                              setRenamingWindow(null);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (renameHandledByKeyRef.current) {
+                              renameHandledByKeyRef.current = false;
+                              return;
+                            }
+                            if (renameWindowValue.trim() && renameWindowValue.trim() !== windowState.name) {
+                              sendControl({ type: "rename_window", session: activeSession.name, windowIndex: windowState.index, newName: renameWindowValue.trim() });
+                            }
+                            setRenamingWindow(null);
+                          }}
+                          autoFocus
+                          data-testid="rename-window-input"
+                        />
+                      ) : (
+                        <button
+                          onClick={() => selectWindow(windowState)}
+                          onDoubleClick={(e) => {
+                            e.preventDefault();
+                            setRenamingWindow({ session: activeSession.name, index: windowState.index });
+                            setRenameWindowValue(windowState.name);
+                          }}
+                          className={windowState.index === activeWindow?.index ? "active" : ""}
+                        >
+                          {windowState.index}: {windowState.name}
+                          {windowState.index === activeWindow?.index ? " *" : ""}
+                        </button>
+                      )}
                     </li>
                   ))
                 : null}

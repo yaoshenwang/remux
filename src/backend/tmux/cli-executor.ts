@@ -161,4 +161,12 @@ export class TmuxCliExecutor implements TmuxGateway {
   public async capturePane(paneId: string, lines: number): Promise<string> {
     return this.runTmux(["capture-pane", "-t", paneId, "-p", "-e", "-S", `-${lines}`]);
   }
+
+  public async renameSession(name: string, newName: string): Promise<void> {
+    await this.runTmux(["rename-session", "-t", name, newName]);
+  }
+
+  public async renameWindow(session: string, windowIndex: number, newName: string): Promise<void> {
+    await this.runTmux(["rename-window", "-t", `${session}:${windowIndex}`, newName]);
+  }
 }
