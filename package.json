@@ -36,7 +36,7 @@
     "dev": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "VITE_DEV_MODE=1 tsx watch src/backend/cli.ts",
     "dev:frontend": "vite --config vite.config.ts",
-    "build": "npm run build:frontend && npm run build:backend",
+    "build": "npm run build:frontend && npm run build:backend && touch dist/backend/cli.js",
     "build:backend": "tsc -p tsconfig.backend.json",
     "build:frontend": "vite build --config vite.config.ts",
     "start": "npm run build && node dist/backend/cli.js",
