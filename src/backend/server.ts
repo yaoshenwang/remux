@@ -280,6 +280,10 @@ export const createRemuxServer = (
     const needsRecreate = hasMobileSession && context.baseSession && context.baseSession !== baseSession;
 
     if (needsRecreate) {
+      // Shutdown PTY first and wait for the old tmux client to fully exit before
+      // killing the session. This avoids a race where the new tmux attach spawns
+      // before the old one fully exits.
+      await runtime.shutdown();
       await deps.tmux.killSession(mobileSession);
     }
     if (!hasMobileSession || needsRecreate) {
@@ -288,8 +292,7 @@ export const createRemuxServer = (
 
     context.baseSession = baseSession;
     context.attachedSession = mobileSession;
-    // Force re-attach when the mobile session was recreated (same name, different target)
-    runtime.attachToSession(mobileSession, needsRecreate === true);
+    runtime.attachToSession(mobileSession);
     sendJson(context.socket, { type: "attached", session: baseSession });
   };
 
@@ -410,7 +413,7 @@ export const createRemuxServer = (
       }
     }
     context.terminalClients.clear();
-    context.runtime?.shutdown();
+    await context.runtime?.shutdown();
     context.runtime = undefined;
     if (context.attachedSession) {
       try {
