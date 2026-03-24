@@ -12,7 +12,8 @@ const execFileAsync = promisify(execFile);
  * Output model:
  * - Viewport snapshots from subscribe are diffed and sent as cursor-addressed
  *   terminal updates — this is a viewport viewer, not a full PTY stream.
- * - No server-side reflow: raw viewport lines are sent to the client.
+ * - Wide viewport lines are reflowed to the client's column width so that
+ *   narrow mobile screens can see the full content.
  *
  * Input model:
  * - Batched `zellij action write/write-chars` for keystroke delivery.
@@ -30,6 +31,8 @@ export class ZellijPaneIO implements PtyProcess {
 
   /** Previous viewport for diffing (avoid sending unchanged lines). */
   private prevViewport: string[] = [];
+  /** Client terminal column count for reflowing wide viewport lines. */
+  private clientCols = 0;
 
   /** Write buffer for batching keystrokes into fewer process spawns. */
   private writeBuf = "";
@@ -110,7 +113,10 @@ export class ZellijPaneIO implements PtyProcess {
 
     if (event.event !== "pane_update") return;
 
-    const viewport = event.viewport ?? [];
+    let viewport = event.viewport ?? [];
+    if (this.clientCols > 0) {
+      viewport = reflowViewport(viewport, this.clientCols);
+    }
     const output = this.renderViewport(viewport, event.scrollback, event.is_initial);
     if (output) {
       for (const h of this.dataHandlers) h(output);
@@ -210,8 +216,10 @@ export class ZellijPaneIO implements PtyProcess {
       });
   }
 
-  resize(_cols: number, _rows: number): void {
-    // Zellij pane sizes can't be set from CLI — no-op
+  resize(cols: number, _rows: number): void {
+    // Zellij pane sizes can't be set from CLI, but we track client columns
+    // to reflow wide viewport lines for narrow screens.
+    if (cols > 0) this.clientCols = cols;
   }
 
   onData(handler: (data: string) => void): void {
@@ -235,6 +243,77 @@ export class ZellijPaneIO implements PtyProcess {
     this.dataHandlers = [];
     this.exitHandlers = [];
   }
+}
+
+// ── ANSI-aware line wrapping ──
+
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * Measure visible (non-ANSI) character width of a string.
+ * Note: does not handle CJK full-width or emoji — treats every
+ * non-escape character as width 1. Sufficient for basic reflow.
+ */
+function visibleLength(s: string): number {
+  return s.replace(ANSI_RE, "").length;
+}
+
+/**
+ * Wrap a single ANSI-styled line to `cols` visible characters.
+ * Preserves ANSI escape sequences across wrap boundaries by tracking
+ * active SGR state and re-emitting it at the start of continuation lines.
+ */
+function wrapAnsiLine(line: string, cols: number): string[] {
+  if (cols <= 0 || visibleLength(line) <= cols) return [line];
+
+  const result: string[] = [];
+  let current = "";
+  let visCount = 0;
+  let i = 0;
+  let activeSgr = "";
+
+  while (i < line.length) {
+    const remaining = line.slice(i);
+    const ansiMatch = remaining.match(/^\x1b\[[0-9;]*[A-Za-z]/);
+    if (ansiMatch) {
+      const seq = ansiMatch[0];
+      current += seq;
+      if (seq.endsWith("m")) {
+        if (seq === "\x1b[m" || seq === "\x1b[0m") {
+          activeSgr = "";
+        } else {
+          activeSgr += seq;
+        }
+      }
+      i += seq.length;
+      continue;
+    }
+
+    current += line[i];
+    visCount++;
+    i++;
+
+    if (visCount >= cols) {
+      result.push(current);
+      current = activeSgr;
+      visCount = 0;
+    }
+  }
+
+  if (current && current !== activeSgr) result.push(current);
+  return result;
+}
+
+/**
+ * Reflow viewport lines to target column width.
+ */
+function reflowViewport(viewport: string[], targetCols: number): string[] {
+  if (targetCols <= 0) return viewport;
+  const result: string[] = [];
+  for (const line of viewport) {
+    result.push(...wrapAnsiLine(line, targetCols));
+  }
+  return result;
 }
 
 /**
