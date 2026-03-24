@@ -264,7 +264,7 @@ export const App = () => {
     return colorMap;
   }, [snapshot.sessions]);
 
-  // Build flat tab list: one tab per window across all sessions.
+  // Build flat tab list: one tab per tab across all sessions.
   const tabs = useMemo(() => {
     const result: Array<{
       key: string;
@@ -277,17 +277,17 @@ export const App = () => {
     }> = [];
 
     for (const session of snapshot.sessions) {
-      for (const win of session.windowStates) {
+      for (const tab of session.tabs) {
         const isActive =
           session.name === (attachedSession || activeSession?.name) &&
-          win.index === activeWindow?.index;
+          tab.index === activeTab?.index;
         result.push({
-          key: `${session.name}:${win.index}`,
-          label: session.windowStates.length > 1
-            ? `${session.name}/${win.name}`
+          key: `${session.name}:${tab.index}`,
+          label: session.tabs.length > 1
+            ? `${session.name}/${tab.name}`
             : session.name,
           sessionName: session.name,
-          windowIndex: win.index,
+          windowIndex: tab.index,
           isActive,
           hasBell: bellSessions.has(session.name) && !isActive,
           color: sessionColors.get(session.name) ?? "#3b82f6",
@@ -295,7 +295,7 @@ export const App = () => {
       }
     }
     return result;
-  }, [snapshot.sessions, attachedSession, activeSession, activeWindow, bellSessions, sessionColors]);
+  }, [snapshot.sessions, attachedSession, activeSession, activeTab, bellSessions, sessionColors]);
 
   const sendControl = (payload: Record<string, unknown>): void => {
     if (controlSocketRef.current?.readyState !== WebSocket.OPEN) {

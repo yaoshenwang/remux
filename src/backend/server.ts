@@ -5,6 +5,7 @@ import path from "node:path";
 import express from "express";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
+import type { RequestHandler } from "express";
 import type { RuntimeConfig } from "./config.js";
 import type {
   ControlClientMessage,
@@ -63,6 +64,9 @@ export const isWebSocketPath = (requestPath: string): boolean => requestPath.sta
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const getSingleParam = (value: string | string[] | undefined): string =>
+  Array.isArray(value) ? value.join("/") : (value ?? "");
 
 const controlClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("auth"), token: z.string().optional(), password: z.string().optional(), clientId: z.string().optional(), session: z.string().optional() }),
@@ -156,6 +160,23 @@ export const createRemuxServer = (
   const app = express();
   app.use(express.json());
 
+  const readAuthHeaders = (req: express.Request): { token?: string; password?: string } => {
+    const authHeader = req.headers.authorization;
+    return {
+      token: authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined,
+      password: req.headers["x-password"] as string | undefined
+    };
+  };
+
+  const requireApiAuth: RequestHandler = (req, res, next) => {
+    const authResult = authService.verify(readAuthHeaders(req));
+    if (!authResult.ok) {
+      res.status(401).json({ ok: false, error: "unauthorized" });
+      return;
+    }
+    next();
+  };
+
   const UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
   const require = createRequire(import.meta.url);
@@ -173,10 +194,7 @@ export const createRemuxServer = (
   });
 
   app.post("/api/switch-backend", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const switchToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-    const switchPassword = req.headers["x-password"] as string | undefined;
-    const authResult = authService.verify({ token: switchToken, password: switchPassword });
+    const authResult = authService.verify(readAuthHeaders(req));
     if (!authResult.ok) {
       res.status(401).json({ ok: false, error: "unauthorized" });
       return;
@@ -253,10 +271,7 @@ export const createRemuxServer = (
     express.raw({ limit: UPLOAD_MAX_BYTES, type: "application/octet-stream" }),
     async (req, res) => {
       // Auth check
-      const authHeader = req.headers.authorization;
-      const uploadToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-      const uploadPassword = req.headers["x-password"] as string | undefined;
-      const authResult = authService.verify({ token: uploadToken, password: uploadPassword });
+      const authResult = authService.verify(readAuthHeaders(req));
       if (!authResult.ok) {
         res.status(401).json({ ok: false, error: "unauthorized" });
         return;
@@ -321,10 +336,10 @@ export const createRemuxServer = (
 
   // Extension routes: push notifications + state API.
   if (deps.extensions) {
-    app.use(deps.extensions.notificationRoutes);
+    app.use(requireApiAuth, deps.extensions.notificationRoutes);
 
-    app.get("/api/state/:session", (req, res) => {
-      const snapshot = deps.extensions!.getSnapshot(req.params.session);
+    app.get("/api/state/:session", requireApiAuth, (req, res) => {
+      const snapshot = deps.extensions!.getSnapshot(getSingleParam(req.params.session));
       if (snapshot) {
         res.json(snapshot);
       } else {
@@ -332,24 +347,25 @@ export const createRemuxServer = (
       }
     });
 
-    app.get("/api/scrollback/:session", (req, res) => {
+    app.get("/api/scrollback/:session", requireApiAuth, (req, res) => {
+      const sessionName = getSingleParam(req.params.session);
       const from = parseInt(req.query.from as string) || 0;
       const count = parseInt(req.query.count as string) || 100;
-      const lines = deps.extensions!.getScrollback(req.params.session, from, count);
+      const lines = deps.extensions!.getScrollback(sessionName, from, count);
       res.json({ from, count: lines.length, lines });
     });
 
-    app.get("/api/gastown/:session", (req, res) => {
-      const info = deps.extensions!.getGastownInfo(req.params.session);
+    app.get("/api/gastown/:session", requireApiAuth, (req, res) => {
+      const info = deps.extensions!.getGastownInfo(getSingleParam(req.params.session));
       res.json(info);
     });
 
-    app.get("/api/stats/bandwidth", (_req, res) => {
+    app.get("/api/stats/bandwidth", requireApiAuth, (_req, res) => {
       res.json(deps.extensions!.getBandwidthStats());
     });
 
     // File browser API: list and read files in the working directory.
-    app.get("/api/files", (_req, res) => {
+    app.get("/api/files", requireApiAuth, (_req, res) => {
       try {
         const cwd = process.cwd();
         const entries = fs.readdirSync(cwd, { withFileTypes: true })
@@ -364,7 +380,7 @@ export const createRemuxServer = (
       }
     });
 
-    app.get("/api/files/*filePath", (req, res) => {
+    app.get("/api/files/*filePath", requireApiAuth, (req, res) => {
       const rawPath = Array.isArray(req.params.filePath)
         ? req.params.filePath.join("/")
         : String(req.params.filePath ?? "");
