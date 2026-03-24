@@ -726,10 +726,25 @@ export const App = () => {
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
 
-  // Persist sticky zoom state
+  // Persist sticky zoom state (skip initial render to avoid overwriting defaults)
+  const stickyZoomMountedRef = useRef(false);
   useEffect(() => {
+    if (!stickyZoomMountedRef.current) {
+      stickyZoomMountedRef.current = true;
+      return;
+    }
     localStorage.setItem("remux-sticky-zoom", stickyZoom ? "true" : "false");
   }, [stickyZoom]);
+
+  // Default sticky zoom OFF for zellij when user has no stored preference
+  useEffect(() => {
+    if (!serverConfig) return;
+    const stored = localStorage.getItem("remux-sticky-zoom");
+    if (stored !== null) return;
+    if (serverConfig.backendKind === "zellij") {
+      setStickyZoom(false);
+    }
+  }, [serverConfig]);
 
   useEffect(() => {
     if (!debugMode) {
