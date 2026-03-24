@@ -3,6 +3,13 @@ import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } fr
 type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
 type ModifierMode = "off" | "sticky" | "locked";
 
+export interface Snippet {
+  id: string;
+  label: string;
+  command: string;
+  autoEnter: boolean;
+}
+
 export interface ToolbarHandle {
   applyModifiersAndClear: (input: string) => string;
 }
@@ -12,11 +19,12 @@ export interface ToolbarProps {
   onFocusTerminal: () => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   setStatusMessage: (msg: string) => void;
+  snippets: Snippet[];
   hidden?: boolean;
 }
 
 export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
-  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, setStatusMessage, hidden }, ref) {
+  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, setStatusMessage, snippets, hidden }, ref) {
     const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
       ctrl: "off",
       alt: "off",
@@ -29,6 +37,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
       localStorage.getItem("remux-toolbar-expanded") === "true"
     );
     const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
+    const [snippetsExpanded, setSnippetsExpanded] = useState(false);
 
     // We need a ref to always have access to the latest modifiers in the imperative handle
     const modifiersRef = useRef(modifiers);
@@ -133,6 +142,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
               setToolbarExpanded((v) => !v);
               if (toolbarExpanded) {
                 setToolbarDeepExpanded(false);
+                setSnippetsExpanded(false);
               }
             }}
           >
@@ -175,6 +185,14 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
           >
             {toolbarDeepExpanded ? "F-Keys ▲" : "F-Keys ▼"}
           </button>
+          {snippets.length > 0 && (
+            <button
+              className="toolbar-expand-btn"
+              onClick={() => setSnippetsExpanded((v) => !v)}
+            >
+              {snippetsExpanded ? "Snip ▲" : "Snip ▼"}
+            </button>
+          )}
         </div>
 
         {/* F-keys row (collapsible from within expanded) */}
@@ -188,6 +206,22 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
               ].map((seq, i) => (
                 <button key={`f${i + 1}`} onClick={() => sendTerminal(seq, false)}>
                   F{i + 1}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Snippets row (collapsible from within expanded) */}
+        {toolbarExpanded && snippets.length > 0 && (
+          <div className={`toolbar-row-deep ${snippetsExpanded ? "expanded" : ""}`}>
+            <div className="toolbar-row-snippets">
+              {snippets.map((s) => (
+                <button key={s.id} onClick={() => {
+                  clearStickyModifiers();
+                  sendRaw(s.command + (s.autoEnter ? "\r" : ""));
+                }}>
+                  {s.label}
                 </button>
               ))}
             </div>

@@ -5,7 +5,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
 import { deriveContext, formatContext } from "./context-label";
-import { Toolbar, type ToolbarHandle } from "./components/Toolbar";
+import { Toolbar, type ToolbarHandle, type Snippet } from "./components/Toolbar";
 import type {
   ControlServerMessage,
   TmuxPaneState,
@@ -124,6 +124,18 @@ export const App = () => {
   );
 
   const toolbarRef = useRef<ToolbarHandle>(null);
+
+  const [snippets, setSnippets] = useState<Snippet[]>(() => {
+    try {
+      const stored = localStorage.getItem("remux-snippets");
+      if (!stored) return [];
+      const parsed: unknown = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed as Snippet[] : [];
+    } catch {
+      return [];
+    }
+  });
+  const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
 
   const [theme, setTheme] = useState(localStorage.getItem("remux-theme") ?? "midnight");
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
@@ -899,6 +911,7 @@ export const App = () => {
         onFocusTerminal={focusTerminal}
         fileInputRef={fileInputRef}
         setStatusMessage={setStatusMessage}
+        snippets={snippets}
         hidden={viewMode !== "terminal"}
       />
 
@@ -1215,6 +1228,64 @@ export const App = () => {
               setScrollFontSize(0);
               localStorage.removeItem("remux-scroll-font-size");
             }}>Reset to Auto</button>
+
+            <h3>Snippets</h3>
+            <div className="snippet-list">
+              {snippets.map((s) => (
+                <div className="snippet-item" key={s.id}>
+                  <span className="snippet-label">{s.label}</span>
+                  <span className="snippet-cmd">{s.command}{s.autoEnter ? " ↵" : ""}</span>
+                  <button onClick={() => setEditingSnippet({ ...s })}>&#x270E;</button>
+                  <button onClick={() => {
+                    const next = snippets.filter((x) => x.id !== s.id);
+                    setSnippets(next);
+                    localStorage.setItem("remux-snippets", JSON.stringify(next));
+                  }}>&times;</button>
+                </div>
+              ))}
+            </div>
+            {editingSnippet ? (
+              <div className="snippet-form">
+                <input
+                  placeholder="Label (button text)"
+                  value={editingSnippet.label}
+                  onChange={(e) => setEditingSnippet({ ...editingSnippet, label: e.target.value })}
+                />
+                <input
+                  placeholder="Command"
+                  value={editingSnippet.command}
+                  onChange={(e) => setEditingSnippet({ ...editingSnippet, command: e.target.value })}
+                />
+                <label className="snippet-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={editingSnippet.autoEnter}
+                    onChange={(e) => setEditingSnippet({ ...editingSnippet, autoEnter: e.target.checked })}
+                  />
+                  Auto Enter
+                </label>
+                <div className="snippet-form-actions">
+                  <button onClick={() => {
+                    if (!editingSnippet.label.trim() || !editingSnippet.command.trim()) return;
+                    const exists = snippets.some((s) => s.id === editingSnippet.id);
+                    const next = exists
+                      ? snippets.map((s) => s.id === editingSnippet.id ? editingSnippet : s)
+                      : [...snippets, editingSnippet];
+                    setSnippets(next);
+                    localStorage.setItem("remux-snippets", JSON.stringify(next));
+                    setEditingSnippet(null);
+                  }}>Save</button>
+                  <button onClick={() => setEditingSnippet(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button className="drawer-section-action" onClick={() => setEditingSnippet({
+                id: crypto.randomUUID(),
+                label: "",
+                command: "",
+                autoEnter: true
+              })}>+ Add Snippet</button>
+            )}
 
             {serverConfig?.version && (
               <p className="drawer-version">v{serverConfig.version}</p>
