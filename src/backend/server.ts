@@ -409,6 +409,28 @@ export const createRemuxServer = (
       }
     }
 
+    // For tmux: sync ClientViewStore from the grouped mobile session's
+    // real active tab/pane (user may switch via tmux keybinds directly)
+    if (deps.backend.createGroupedSession) {
+      for (const client of controlClients) {
+        if (!client.authed) continue;
+        const view = viewStore.getView(client.clientId);
+        if (!view) continue;
+        const mobileSession = state.sessions.find(
+          (s) => s.name === buildMobileSessionName(client.clientId)
+        );
+        if (!mobileSession) continue;
+        const activeTab = mobileSession.tabs.find((t) => t.active);
+        const activePane = activeTab?.panes.find((p) => p.active);
+        if (activeTab && activeTab.index !== view.tabIndex) {
+          viewStore.selectTab(client.clientId, activeTab.index, baseSessions);
+        }
+        if (activePane && activePane.id !== view.paneId) {
+          viewStore.selectPane(client.clientId, activePane.id);
+        }
+      }
+    }
+
     // Reconcile all client views
     viewStore.reconcile(baseSessions);
 

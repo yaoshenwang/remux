@@ -54,7 +54,7 @@ export const buildSnapshot = async (
           return { ...tab, panes };
         })
       );
-      return { ...session, tabs: withPanes };
+      return { ...session, tabs: withPanes, tabCount: withPanes.length };
     })
   );
 

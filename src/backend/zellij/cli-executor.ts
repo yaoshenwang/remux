@@ -237,10 +237,10 @@ export class ZellijCliExecutor implements MultiplexerBackend {
 
   public async capturePane(
     paneId: string,
-    _options?: { lines?: number }
+    options?: { lines?: number }
   ): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
     const session = this.paneSessionMap.get(paneId);
-    const [text, json] = await Promise.all([
+    const [rawText, json] = await Promise.all([
       this.runZellij(
         ["action", "dump-screen", "--pane-id", paneId, "--full", "--ansi"],
         session,
@@ -251,6 +251,14 @@ export class ZellijCliExecutor implements MultiplexerBackend {
         session
       )
     ]);
+    // dump-screen --full returns the entire screen; trim to requested lines
+    let text = rawText;
+    if (options?.lines && options.lines > 0) {
+      const allLines = text.split("\n");
+      if (allLines.length > options.lines) {
+        text = allLines.slice(-options.lines).join("\n");
+      }
+    }
     let panes: Array<{ id: number; is_plugin: boolean; pane_content_columns: number }>;
     try { panes = JSON.parse(json); } catch { return { text, paneWidth: 80, isApproximate: true }; }
     if (!Array.isArray(panes)) return { text, paneWidth: 80, isApproximate: true };
