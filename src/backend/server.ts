@@ -52,6 +52,8 @@ export interface ServerDependencies {
   backendKind?: "tmux" | "zellij" | "conpty";
   authService?: AuthService;
   logger?: Pick<Console, "log" | "error">;
+  /** Callback to switch the backend at runtime. Returns the new deps. */
+  onSwitchBackend?: (kind: "tmux" | "zellij" | "conpty") => ServerDependencies | null;
 }
 
 export interface RunningServer {
@@ -152,7 +154,8 @@ export const createRemuxServer = (
       logger.log(...args);
     }
   };
-  const isZellij = deps.backendKind === "zellij";
+  let isZellij = deps.backendKind === "zellij";
+  let currentBackendKind = deps.backendKind ?? "tmux";
   const authService = deps.authService ?? new AuthService({ password: config.password, token: config.token });
 
   const app = express();
@@ -169,8 +172,78 @@ export const createRemuxServer = (
       passwordRequired: authService.requiresPassword(),
       scrollbackLines: config.scrollbackLines,
       pollIntervalMs: config.pollIntervalMs,
-      uploadMaxSize: UPLOAD_MAX_BYTES
+      uploadMaxSize: UPLOAD_MAX_BYTES,
+      backendKind: currentBackendKind
     });
+  });
+
+  app.post("/api/switch-backend", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const switchToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+    const switchPassword = req.headers["x-password"] as string | undefined;
+    const authResult = authService.verify({ token: switchToken, password: switchPassword });
+    if (!authResult.ok) {
+      res.status(401).json({ ok: false, error: "unauthorized" });
+      return;
+    }
+
+    const body = req.body as { backend?: string };
+    const newKind = body?.backend;
+    if (newKind !== "tmux" && newKind !== "zellij" && newKind !== "conpty") {
+      res.status(400).json({ ok: false, error: "invalid backend, must be tmux|zellij|conpty" });
+      return;
+    }
+
+    if (newKind === currentBackendKind) {
+      res.json({ ok: true, backend: currentBackendKind });
+      return;
+    }
+
+    if (!deps.onSwitchBackend) {
+      res.status(501).json({ ok: false, error: "backend switching not supported" });
+      return;
+    }
+
+    const newDeps = deps.onSwitchBackend(newKind);
+    if (!newDeps) {
+      res.status(400).json({ ok: false, error: `backend '${newKind}' is not available` });
+      return;
+    }
+
+    logger.log(`switching backend: ${currentBackendKind} → ${newKind}`);
+
+    // Disconnect all clients — close control sockets so they trigger full reconnect
+    monitor?.stop();
+    await Promise.all(Array.from(controlClients).map((ctx) => shutdownControlContext(ctx)));
+    for (const ctx of controlClients) {
+      if (ctx.socket.readyState === ctx.socket.OPEN) {
+        ctx.socket.close(4000, "backend switching");
+      }
+    }
+    controlClients.clear();
+
+    // Swap the backend
+    deps.tmux = newDeps.tmux;
+    deps.ptyFactory = newDeps.ptyFactory;
+    deps.backendKind = newDeps.backendKind;
+    currentBackendKind = newDeps.backendKind ?? newKind;
+    isZellij = currentBackendKind === "zellij";
+
+    // Restart state monitor
+    monitor = new TmuxStateMonitor(
+      deps.tmux,
+      config.pollIntervalMs,
+      broadcastState,
+      (error) => logger.error(error)
+    );
+    try {
+      await monitor.start();
+    } catch (error) {
+      logger.error("monitor restart failed after backend switch", error);
+    }
+
+    logger.log(`backend switched to ${currentBackendKind}`);
+    res.json({ ok: true, backend: currentBackendKind });
   });
 
   const sanitizeFilename = (raw: string): string => {

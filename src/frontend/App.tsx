@@ -21,6 +21,7 @@ interface ServerConfig {
   scrollbackLines: number;
   pollIntervalMs: number;
   uploadMaxSize?: number;
+  backendKind?: "tmux" | "zellij" | "conpty";
 }
 
 declare global {
@@ -1288,7 +1289,45 @@ export const App = () => {
             )}
 
             {serverConfig?.version && (
-              <p className="drawer-version">v{serverConfig.version}</p>
+              <div className="drawer-footer-info">
+                <p className="drawer-version">v{serverConfig.version}</p>
+                {serverConfig.backendKind && (
+                  <div className="drawer-backend-switcher">
+                    <span className="drawer-backend-label">Backend:</span>
+                    {(["tmux", "zellij", "conpty"] as const).map((kind) => (
+                      <button
+                        key={kind}
+                        className={`drawer-backend-btn${serverConfig.backendKind === kind ? " active" : ""}`}
+                        disabled={serverConfig.backendKind === kind}
+                        onClick={async () => {
+                          const token = new URLSearchParams(window.location.search).get("token");
+                          try {
+                            const resp = await fetch("/api/switch-backend", {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                                ...(password ? { "X-Password": password } : {})
+                              },
+                              body: JSON.stringify({ backend: kind })
+                            });
+                            if (resp.ok) {
+                              // Refresh config to update backendKind display
+                              const newConfig = await fetch("/api/config").then((r) => r.json());
+                              setServerConfig(newConfig);
+                            } else {
+                              const err = await resp.json().catch(() => ({}));
+                              setErrorMessage(`Switch failed: ${(err as {error?: string}).error ?? resp.statusText}`);
+                            }
+                          } catch {
+                            setErrorMessage("Failed to switch backend");
+                          }
+                        }}
+                      >{kind}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </aside>
         </div>

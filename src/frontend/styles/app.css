@@ -679,11 +679,50 @@ button.danger {
   margin-top: 0.45rem;
 }
 
-.drawer-version {
+.drawer-footer-info {
   margin-top: 1.5rem;
   text-align: center;
+}
+
+.drawer-version {
   font-size: 0.75rem;
   opacity: 0.4;
+}
+
+.drawer-backend-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.drawer-backend-label {
+  font-size: 0.7rem;
+  opacity: 0.5;
+}
+
+.drawer-backend-btn {
+  font-size: 0.65rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.drawer-backend-btn:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.drawer-backend-btn.active {
+  opacity: 1;
+  background: var(--accent);
+  border-color: var(--accent);
+  cursor: default;
 }
 
 .snippet-list {
