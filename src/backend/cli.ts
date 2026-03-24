@@ -56,6 +56,12 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       type: "string",
       describe: "Write debug logs to a file"
     })
+    .option("backend", {
+      type: "string",
+      choices: ["auto", "tmux", "zellij", "conpty"] as const,
+      default: "auto",
+      describe: "Session backend (auto-detect by default)"
+    })
     .strict()
     .help()
     .parseAsync();
@@ -68,7 +74,8 @@ const parseCliArgs = async (): Promise<CliArgs> => {
     tunnel: argv.tunnel,
     session: argv.session,
     scrollback: argv.scrollback,
-    debugLog: argv.debugLog
+    debugLog: argv.debugLog,
+    backend: argv.backend
   };
 };
 
@@ -133,7 +140,11 @@ const main = async (): Promise<void> => {
   };
 
   const tunnelProvider = new CloudflareTunnelProvider();
+  const forceBackend = args.backend !== "auto"
+    ? (args.backend as "tmux" | "zellij" | "conpty")
+    : undefined;
   const backend = detectSessionBackend(logger, {
+    force: forceBackend,
     socketName: process.env.REMUX_SOCKET_NAME,
     socketPath: process.env.REMUX_SOCKET_PATH,
     scrollbackLines: args.scrollback,
