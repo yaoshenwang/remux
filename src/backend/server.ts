@@ -506,6 +506,20 @@ export const createRemuxServer = (
       // ZellijPtyFactory expects "session:paneId" format
       runtime.attachToSession(`${baseSession}:${activePaneId}`);
       sendJson(context.socket, { type: "attached", session: baseSession });
+
+      // Detect if a tmux launcher is running inside the zellij pane and warn the user
+      if (activeWindow) {
+        const panes = await deps.tmux.listPanes(baseSession, activeWindow.index);
+        const activePane = panes.find((p) => p.id === activePaneId);
+        if (activePane?.currentCommand && /\btmux\b/.test(activePane.currentCommand)) {
+          sendJson(context.socket, {
+            type: "info",
+            message: "Detected tmux running inside zellij pane. "
+              + "Add [ -n \"$REMUX\" ] && exit to your tmux launcher script "
+              + "to prevent it from starting inside remux."
+          });
+        }
+      }
       return;
     }
 

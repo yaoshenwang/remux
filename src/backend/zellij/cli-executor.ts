@@ -45,7 +45,7 @@ export class ZellijCliExecutor implements SessionGateway {
   private async runZellij(
     args: string[],
     session?: string,
-    options?: { raw?: boolean }
+    options?: { raw?: boolean; env?: Record<string, string> }
   ): Promise<string> {
     const finalArgs = session
       ? ["--session", session, ...args]
@@ -54,9 +54,13 @@ export class ZellijCliExecutor implements SessionGateway {
       if (this.trace) {
         this.logger?.log("[zellij]", this.binary, finalArgs.join(" "));
       }
-      const { stdout } = await execFileAsync(this.binary, finalArgs, {
+      const execOpts: { timeout: number; env?: NodeJS.ProcessEnv } = {
         timeout: this.timeoutMs
-      });
+      };
+      if (options?.env) {
+        execOpts.env = { ...process.env, ...options.env };
+      }
+      const { stdout } = await execFileAsync(this.binary, finalArgs, execOpts);
       // Strip ANSI escape codes unless raw mode requested (e.g. dump-screen --ansi)
       // Raw mode preserves exact output including leading/trailing whitespace
       return options?.raw ? stdout : stripAnsi(stdout).trim();
@@ -84,7 +88,11 @@ export class ZellijCliExecutor implements SessionGateway {
     // Guard: skip if session already exists (attach -cb blocks on existing sessions)
     const sessions = await this.listSessions();
     if (sessions.some((s) => s.name === name)) return;
-    await this.runZellij(["attach", "-cb", name]);
+    // Set REMUX=1 so the pane's shell profile can detect it's inside remux
+    // and skip launching other multiplexers (e.g. tmux auto-launchers).
+    await this.runZellij(["attach", "-cb", name], undefined, {
+      env: { REMUX: "1" }
+    });
   }
 
   /**
