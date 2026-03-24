@@ -905,6 +905,9 @@ export const App = () => {
         </button>
         <div className="top-title">
           Tab: {activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}
+          {serverConfig?.backendKind === "zellij" && (
+            <span className="experimental-badge" title="Zellij support is experimental">(experimental)</span>
+          )}
         </div>
         <div className="top-actions">
           <span
