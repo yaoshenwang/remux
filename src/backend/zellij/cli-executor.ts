@@ -171,6 +171,9 @@ export class ZellijCliExecutor implements SessionGateway {
   public async splitWindow(paneId: string, orientation: "h" | "v"): Promise<void> {
     const direction = orientation === "h" ? "right" : "down";
     const session = this.paneSessionMap.get(paneId);
+    // LIMITATION: Zellij CLI has no "focus-pane-by-id" action, so new-pane
+    // creates the split relative to whichever pane is currently focused in
+    // the session, not necessarily the pane identified by paneId.
     await this.runZellij(["action", "new-pane", "-d", direction], session);
   }
 
@@ -190,6 +193,8 @@ export class ZellijCliExecutor implements SessionGateway {
 
   public async zoomPane(paneId: string): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
+    // LIMITATION: toggle-fullscreen acts on the focused pane, not on paneId.
+    // Zellij CLI has no "focus-pane-by-id" action.
     await this.runZellij(["action", "toggle-fullscreen"], session);
   }
 

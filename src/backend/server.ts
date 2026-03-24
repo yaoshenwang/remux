@@ -414,24 +414,24 @@ export const createRemuxServer = (
       context.baseSession = baseSession;
       context.attachedSession = baseSession;
 
-      // Initialize virtual view with the first window/pane
+      // Initialize virtual view with the active tab/pane (not necessarily the first)
       const windows = await deps.tmux.listWindows(baseSession);
-      const firstWindow = windows[0];
-      let firstPaneId = "terminal_0";
-      if (firstWindow) {
-        const panes = await deps.tmux.listPanes(baseSession, firstWindow.index);
-        const activePaneInWindow = panes.find((p) => p.active) ?? panes[0];
-        if (activePaneInWindow) firstPaneId = activePaneInWindow.id;
+      const activeWindow = windows.find((w) => w.active) ?? windows[0];
+      let activePaneId = "terminal_0";
+      if (activeWindow) {
+        const panes = await deps.tmux.listPanes(baseSession, activeWindow.index);
+        const activePane = panes.find((p) => p.active) ?? panes[0];
+        if (activePane) activePaneId = activePane.id;
         context.virtualView = {
-          activeWindowIndex: firstWindow.index,
-          activePaneId: firstPaneId
+          activeWindowIndex: activeWindow.index,
+          activePaneId
         };
       } else {
-        context.virtualView = { activeWindowIndex: 0, activePaneId: firstPaneId };
+        context.virtualView = { activeWindowIndex: 0, activePaneId };
       }
 
       // ZellijPtyFactory expects "session:paneId" format
-      runtime.attachToSession(`${baseSession}:${firstPaneId}`);
+      runtime.attachToSession(`${baseSession}:${activePaneId}`);
       sendJson(context.socket, { type: "attached", session: baseSession });
       return;
     }
@@ -617,6 +617,16 @@ export const createRemuxServer = (
         for (const client of controlClients) {
           if (client.authed && client.baseSession === message.session) {
             client.baseSession = message.newName;
+            // For Zellij, attachedSession IS the base session — update it
+            // and reattach the runtime to use the new session name.
+            if (isZellij) {
+              client.attachedSession = message.newName;
+              if (client.virtualView && client.runtime) {
+                client.runtime.attachToSession(
+                  `${message.newName}:${client.virtualView.activePaneId}`
+                );
+              }
+            }
             sendJson(client.socket, { type: "attached", session: message.newName });
           }
         }
