@@ -44,6 +44,7 @@ export interface ServerDependencies {
   ptyFactory: PtyFactory;
   authService?: AuthService;
   logger?: Pick<Console, "log" | "error">;
+  extensions?: import("./extensions.js").Extensions;
 }
 
 export interface RunningServer {
@@ -245,6 +246,86 @@ export const createRemuxServer = (
     }
   );
 
+  // Extension routes: push notifications + state API.
+  if (deps.extensions) {
+    app.use(deps.extensions.notificationRoutes);
+
+    app.get("/api/state/:session", (req, res) => {
+      const snapshot = deps.extensions!.getSnapshot(req.params.session);
+      if (snapshot) {
+        res.json(snapshot);
+      } else {
+        res.status(404).json({ error: "session not found or no state tracked" });
+      }
+    });
+
+    app.get("/api/scrollback/:session", (req, res) => {
+      const from = parseInt(req.query.from as string) || 0;
+      const count = parseInt(req.query.count as string) || 100;
+      const lines = deps.extensions!.getScrollback(req.params.session, from, count);
+      res.json({ from, count: lines.length, lines });
+    });
+
+    app.get("/api/gastown/:session", (req, res) => {
+      const info = deps.extensions!.getGastownInfo(req.params.session);
+      res.json(info);
+    });
+
+    app.get("/api/stats/bandwidth", (_req, res) => {
+      res.json(deps.extensions!.getBandwidthStats());
+    });
+
+    // File browser API: list and read files in the working directory.
+    app.get("/api/files", (_req, res) => {
+      try {
+        const cwd = process.cwd();
+        const entries = fs.readdirSync(cwd, { withFileTypes: true })
+          .filter((e) => !e.name.startsWith("."))
+          .map((e) => ({
+            name: e.name,
+            type: e.isDirectory() ? "directory" : "file",
+          }));
+        res.json({ path: cwd, entries });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get("/api/files/*filePath", (req, res) => {
+      const rawPath = Array.isArray(req.params.filePath)
+        ? req.params.filePath.join("/")
+        : String(req.params.filePath ?? "");
+      const filePath = path.resolve(process.cwd(), rawPath);
+      // Security: ensure the resolved path is within cwd.
+      if (!filePath.startsWith(process.cwd())) {
+        res.status(403).json({ error: "path traversal not allowed" });
+        return;
+      }
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.isDirectory()) {
+          const entries = fs.readdirSync(filePath, { withFileTypes: true })
+            .filter((e) => !e.name.startsWith("."))
+            .map((e) => ({
+              name: e.name,
+              type: e.isDirectory() ? "directory" : "file",
+            }));
+          res.json({ path: filePath, entries });
+        } else {
+          // Limit file reads to 1MB.
+          if (stat.size > 1_048_576) {
+            res.status(413).json({ error: "file too large (>1MB)" });
+            return;
+          }
+          const content = fs.readFileSync(filePath, "utf8");
+          res.json({ path: filePath, content, size: stat.size });
+        }
+      } catch (err) {
+        res.status(404).json({ error: `not found: ${rawPath}` });
+      }
+    });
+  }
+
   app.use(express.static(config.frontendDir));
   app.get(frontendFallbackRoute, (req, res) => {
     if (isWebSocketPath(req.path)) {
@@ -346,6 +427,8 @@ export const createRemuxServer = (
     const runtime = new TerminalRuntime(deps.ptyFactory);
     runtime.on("data", (chunk) => {
       verboseLog("runtime data chunk", context.clientId, `bytes=${Buffer.byteLength(chunk, "utf8")}`);
+      // Feed into extensions (state tracker + notifications).
+      deps.extensions?.onTerminalData(context.baseSession ?? context.clientId, chunk);
       for (const terminalClient of context.terminalClients) {
         if (terminalClient.authed && terminalClient.socket.readyState === terminalClient.socket.OPEN) {
           terminalClient.socket.send(chunk);
@@ -357,6 +440,7 @@ export const createRemuxServer = (
     });
     runtime.on("exit", (code) => {
       logger.log(`tmux PTY exited with code ${code} (${context.clientId})`);
+      deps.extensions?.onSessionExit(context.baseSession ?? context.clientId, code);
       sendJson(context.socket, { type: "info", message: "tmux client exited" });
     });
     context.runtime = runtime;
@@ -390,6 +474,7 @@ export const createRemuxServer = (
 
     context.baseSession = baseSession;
     context.attachedSession = mobileSession;
+    deps.extensions?.onSessionCreated(baseSession);
     runtime.attachToSession(mobileSession);
     sendJson(context.socket, { type: "attached", session: baseSession });
   };
@@ -588,7 +673,20 @@ export const createRemuxServer = (
     logger.log("control ws connected", context.clientId);
 
     socket.on("message", async (rawData) => {
-      const message = parseClientMessage(rawData.toString("utf8"));
+      const raw = rawData.toString("utf8");
+
+      // Handle ping/pong for RTT measurement (bypass zod validation).
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed.type === "ping" && typeof parsed.timestamp === "number") {
+          if (socket.readyState === socket.OPEN) {
+            socket.send(JSON.stringify({ type: "pong", timestamp: parsed.timestamp }));
+          }
+          return;
+        }
+      } catch { /* not JSON or not a ping — continue to normal parsing */ }
+
+      const message = parseClientMessage(raw);
       if (!message) {
         sendJson(socket, { type: "error", message: "invalid message format" });
         return;
@@ -808,6 +906,19 @@ export const createRemuxServer = (
           resolve();
         });
       });
+
+      // Broadcast bandwidth stats every 5 seconds to all authed control clients.
+      if (deps.extensions) {
+        setInterval(() => {
+          const stats = deps.extensions!.getBandwidthStats();
+          const msg = JSON.stringify({ type: "bandwidth_stats", stats });
+          for (const client of controlClients) {
+            if (client.authed && client.socket.readyState === client.socket.OPEN) {
+              client.socket.send(msg);
+            }
+          }
+        }, 5000);
+      }
     },
     async stop() {
       if (!started) {

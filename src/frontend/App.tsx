@@ -45,8 +45,11 @@ const wsOrigin = (() => {
   return `${scheme}://${window.location.host}`;
 })();
 
+const isMobileDevice = (): boolean =>
+  window.matchMedia("(max-width: 768px), (pointer: coarse)").matches;
+
 const getPreferredTerminalFontSize = (): number => {
-  return window.matchMedia("(max-width: 768px), (pointer: coarse)").matches ? 12 : 14;
+  return isMobileDevice() ? 12 : 14;
 };
 
 const getInitialStickyZoom = (): boolean => {
@@ -89,6 +92,12 @@ const debugLog = (event: string, payload?: unknown): void => {
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 8000;
 
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+};
+
 export const App = () => {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -114,7 +123,7 @@ export const App = () => {
   const attachedSessionRef = useRef("");
   const [sessionChoices, setSessionChoices] = useState<TmuxSessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [composeEnabled, setComposeEnabled] = useState(true);
+  const [composeEnabled, setComposeEnabled] = useState(() => isMobileDevice());
   const [composeText, setComposeText] = useState("");
 
   const [scrollbackHtml, setScrollbackHtml] = useState("");
@@ -140,6 +149,23 @@ export const App = () => {
   const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
 
+  // Bandwidth stats
+  const [bandwidthStats, setBandwidthStats] = useState<{
+    rawBytesPerSec: number;
+    compressedBytesPerSec: number;
+    savedPercent: number;
+    fullSnapshotsSent: number;
+    diffUpdatesSent: number;
+    avgChangedRowsPerDiff: number;
+    totalRawBytes: number;
+    totalCompressedBytes: number;
+    totalSavedBytes: number;
+    rttMs: number | null;
+    protocol: string;
+  } | null>(null);
+  const [statsVisible, setStatsVisible] = useState(false);
+  const rttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
   const [renameSessionValue, setRenameSessionValue] = useState("");
   const [renamingWindow, setRenamingWindow] = useState<{ session: string; index: number } | null>(null);
@@ -149,6 +175,9 @@ export const App = () => {
   const [dragOver, setDragOver] = useState(false);
   const [uploadToast, setUploadToast] = useState<{ path: string; filename: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Bell tracking: sessions that have rung the bell since last viewed.
+  const [bellSessions, setBellSessions] = useState<Set<string>>(new Set());
 
   // Local selection state for instant UI feedback before server snapshot arrives
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
@@ -210,6 +239,49 @@ export const App = () => {
     }
     return { kind: "pending", label: "connecting" };
   }, [authReady, errorMessage, statusMessage]);
+
+  // Session color palette for tab bar color-coding.
+  const sessionColors = useMemo(() => {
+    const palette = ["#3b82f6", "#22c55e", "#f59e0b", "#a855f7", "#ec4899", "#06b6d4", "#ef4444", "#84cc16"];
+    const colorMap = new Map<string, string>();
+    snapshot.sessions.forEach((session, i) => {
+      colorMap.set(session.name, palette[i % palette.length]);
+    });
+    return colorMap;
+  }, [snapshot.sessions]);
+
+  // Build flat tab list: one tab per window across all sessions.
+  const tabs = useMemo(() => {
+    const result: Array<{
+      key: string;
+      label: string;
+      sessionName: string;
+      windowIndex: number;
+      isActive: boolean;
+      hasBell: boolean;
+      color: string;
+    }> = [];
+
+    for (const session of snapshot.sessions) {
+      for (const win of session.windowStates) {
+        const isActive =
+          session.name === (attachedSession || activeSession?.name) &&
+          win.index === activeWindow?.index;
+        result.push({
+          key: `${session.name}:${win.index}`,
+          label: session.windowStates.length > 1
+            ? `${session.name}/${win.name}`
+            : session.name,
+          sessionName: session.name,
+          windowIndex: win.index,
+          isActive,
+          hasBell: bellSessions.has(session.name) && !isActive,
+          color: sessionColors.get(session.name) ?? "#3b82f6",
+        });
+      }
+    }
+    return result;
+  }, [snapshot.sessions, attachedSession, activeSession, activeWindow, bellSessions, sessionColors]);
 
   const sendControl = (payload: Record<string, unknown>): void => {
     if (controlSocketRef.current?.readyState !== WebSocket.OPEN) {
@@ -393,7 +465,12 @@ export const App = () => {
         type: typeof event.data,
         bytes: typeof event.data === "string" ? event.data.length : 0
       });
-      terminalRef.current?.write(typeof event.data === "string" ? event.data : "");
+      const data = typeof event.data === "string" ? event.data : "";
+      terminalRef.current?.write(data);
+      // Detect bell character — mark the current session as having a bell.
+      if (data.includes("\x07") && attachedSession) {
+        setBellSessions((prev) => new Set(prev).add(attachedSession));
+      }
     };
 
     socket.onclose = (event) => {
@@ -432,6 +509,21 @@ export const App = () => {
 
     socket.onmessage = (event) => {
       debugLog("control_socket.onmessage.raw", { bytes: String(event.data).length });
+
+      // Handle bandwidth_stats and pong (not in typed protocol).
+      try {
+        const raw = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (raw.type === "bandwidth_stats" && raw.stats) {
+          setBandwidthStats(raw.stats as typeof bandwidthStats & object);
+          return;
+        }
+        if (raw.type === "pong" && typeof raw.timestamp === "number") {
+          const rtt = Math.round(performance.now() - raw.timestamp);
+          setBandwidthStats((prev) => prev ? { ...prev, rttMs: rtt } : null);
+          return;
+        }
+      } catch { /* not our extension message — continue */ }
+
       const message = parseMessage(String(event.data));
       if (!message) {
         debugLog("control_socket.onmessage.parse_error", { raw: String(event.data) });
@@ -457,6 +549,13 @@ export const App = () => {
             sessionStorage.removeItem("remux-password");
           }
           openTerminalSocket(passwordValue, message.clientId);
+          // Start RTT measurement pings.
+          if (rttTimerRef.current) clearInterval(rttTimerRef.current);
+          rttTimerRef.current = setInterval(() => {
+            if (controlSocketRef.current?.readyState === WebSocket.OPEN) {
+              controlSocketRef.current.send(JSON.stringify({ type: "ping", timestamp: performance.now() }));
+            }
+          }, 10_000);
           return;
         case "auth_error":
           debugLog("control_socket.auth_error", { reason: message.reason });
@@ -888,26 +987,80 @@ export const App = () => {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className="tab-bar">
         <button
           onClick={() => setDrawerOpen((value) => !value)}
-          className="icon-btn"
+          className="tab-bar-burger"
           data-testid="drawer-toggle"
+          title="Open sidebar — manage panes, themes, and advanced options"
         >
-          =
+          ☰
         </button>
-        <div className="top-title">
-          Window: {activeWindow ? `${activeWindow.index}: ${activeWindow.name}` : "-"}
+        <div className="tab-list" role="tablist">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              role="tab"
+              aria-selected={tab.isActive}
+              className={`tab${tab.isActive ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
+              style={{
+                borderBottomColor: tab.isActive ? tab.color : "transparent",
+                ["--tab-color" as string]: tab.color,
+              }}
+              title={`Session: ${tab.sessionName}, Window: ${tab.windowIndex}${tab.hasBell ? " (bell)": ""}`}
+              onClick={() => {
+                // Clear bell for this session when switching to it.
+                setBellSessions((prev) => {
+                  const next = new Set(prev);
+                  next.delete(tab.sessionName);
+                  return next;
+                });
+                if (tab.sessionName !== (attachedSession || activeSession?.name)) {
+                  sendControl({ type: "select_session", session: tab.sessionName });
+                } else if (tab.windowIndex !== activeWindow?.index) {
+                  sendControl({
+                    type: "select_window",
+                    session: tab.sessionName,
+                    windowIndex: tab.windowIndex,
+                    ...(stickyZoom ? { stickyZoom: true } : {}),
+                  });
+                  setSelectedWindowIndex(tab.windowIndex);
+                }
+              }}
+            >
+              <span className="tab-dot" style={{ backgroundColor: tab.color }} />
+              {tab.hasBell && <span className="tab-bell">🔔</span>}
+              <span className="tab-label">{tab.label}</span>
+            </button>
+          ))}
+          <button
+            className="tab tab-new"
+            onClick={createSession}
+            title="Create a new terminal session"
+          >
+            +
+          </button>
         </div>
-        <div className="top-actions">
+        <div className="tab-bar-actions">
           <span
             className={`top-status ${topStatus.kind}`}
             title={topStatus.label}
             aria-label={`Status: ${topStatus.label}`}
             data-testid="top-status-indicator"
           />
+          {bandwidthStats && (
+            <button
+              className={`bandwidth-indicator ${bandwidthStats.savedPercent > 50 ? "good" : bandwidthStats.savedPercent > 20 ? "ok" : "low"}`}
+              onClick={() => setStatsVisible((v) => !v)}
+              title={`Bandwidth: ${formatBytes(bandwidthStats.compressedBytesPerSec)}/s (${bandwidthStats.savedPercent}% saved). Click for details.`}
+            >
+              ↓{formatBytes(bandwidthStats.compressedBytesPerSec)}/s
+              {bandwidthStats.savedPercent > 0 && <span className="saved-badge">{bandwidthStats.savedPercent}%</span>}
+            </button>
+          )}
           <button
             className={`top-btn${viewMode === "terminal" ? " active" : ""}`}
+            title="Toggle between terminal view and scrollback history"
             onClick={() => {
               setViewMode((m) => m === "scroll" ? "terminal" : "scroll");
             }}
@@ -967,30 +1120,31 @@ export const App = () => {
         }}
       />
 
-      {viewMode === "terminal" && <section className="toolbar" onMouseUp={focusTerminal}>
+      {viewMode === "terminal" && <section className={`toolbar${isMobileDevice() ? "" : " desktop-hidden"}`} onMouseUp={focusTerminal}>
         {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
         <div className="toolbar-main">
-          <button onClick={() => sendTerminal("\u001b")}>Esc</button>
-          <button className={`modifier ${modifiers.ctrl}`} onClick={() => toggleModifier("ctrl")}>Ctrl</button>
-          <button className={`modifier ${modifiers.alt}`} onClick={() => toggleModifier("alt")}>Alt</button>
-          <button className={`modifier ${modifiers.meta}`} onClick={() => toggleModifier("meta")}>Cmd</button>
-          <button onClick={() => sendTerminal("/")}>/</button>
-          <button onClick={() => sendTerminal("@")}>@</button>
-          <button onClick={() => sendTerminal("\u001b[H")}>Hm</button>
-          <button onClick={() => sendTerminal("\u001b[A")}>↑</button>
-          <button onClick={() => sendTerminal("\u001b[F")}>Ed</button>
+          <button onClick={() => sendTerminal("\u001b")} title="Escape key — cancel current operation or exit insert mode">Esc</button>
+          <button className={`modifier ${modifiers.ctrl}`} onClick={() => toggleModifier("ctrl")} title="Ctrl modifier — tap for sticky (one use), double-tap for locked">Ctrl</button>
+          <button className={`modifier ${modifiers.alt}`} onClick={() => toggleModifier("alt")} title="Alt modifier — tap for sticky, double-tap for locked">Alt</button>
+          <button className={`modifier ${modifiers.meta}`} onClick={() => toggleModifier("meta")} title="Cmd/Meta modifier — tap for sticky, double-tap for locked">Cmd</button>
+          <button onClick={() => sendTerminal("/")} title="Forward slash — useful for search and file paths">/</button>
+          <button onClick={() => sendTerminal("@")} title="At sign">@</button>
+          <button onClick={() => sendTerminal("\u001b[H")} title="Home key — move cursor to start of line">Hm</button>
+          <button onClick={() => sendTerminal("\u001b[A")} title="Up arrow — previous command or move cursor up">↑</button>
+          <button onClick={() => sendTerminal("\u001b[F")} title="End key — move cursor to end of line">Ed</button>
         </div>
 
         {/* Row 2: ^C, ^B, ^R, Sft, Tab, Enter, ..., ←, ↓, → */}
         <div className="toolbar-main">
-          <button className="danger" onClick={() => sendTerminal("\u0003", false)}>^C</button>
-          <button onClick={() => sendTerminal("\u0002", false)}>^B</button>
-          <button onClick={() => sendTerminal("\u0012", false)}>^R</button>
-          <button className={`modifier ${modifiers.shift}`} onClick={() => toggleModifier("shift")}>Sft</button>
-          <button onClick={() => sendTerminal("\t")}>Tab</button>
-          <button onClick={() => sendTerminal("\r")}>Enter</button>
+          <button className="danger" onClick={() => sendTerminal("\u0003", false)} title="Ctrl+C — interrupt current process">^C</button>
+          <button onClick={() => sendTerminal("\u0002", false)} title="Ctrl+B — tmux prefix key (for tmux commands)">^B</button>
+          <button onClick={() => sendTerminal("\u0012", false)} title="Ctrl+R — reverse history search">^R</button>
+          <button className={`modifier ${modifiers.shift}`} onClick={() => toggleModifier("shift")} title="Shift modifier — tap for sticky, double-tap for locked">Sft</button>
+          <button onClick={() => sendTerminal("\t")} title="Tab — autocomplete commands and file paths">Tab</button>
+          <button onClick={() => sendTerminal("\r")} title="Enter — execute command or confirm">Enter</button>
           <button
             className="toolbar-expand-btn"
+            title="Show more keys — Del, Insert, PgUp, PgDn, Paste, Upload, F-keys"
             onClick={() => {
               setToolbarExpanded((v) => !v);
               if (toolbarExpanded) {
@@ -1000,16 +1154,17 @@ export const App = () => {
           >
             {toolbarExpanded ? "..." : "..."}
           </button>
-          <button onClick={() => sendTerminal("\u001b[D")}>←</button>
-          <button onClick={() => sendTerminal("\u001b[B")}>↓</button>
-          <button onClick={() => sendTerminal("\u001b[C")}>→</button>
+          <button onClick={() => sendTerminal("\u001b[D")} title="Left arrow — move cursor left">←</button>
+          <button onClick={() => sendTerminal("\u001b[B")} title="Down arrow — next command or move cursor down">↓</button>
+          <button onClick={() => sendTerminal("\u001b[C")} title="Right arrow — move cursor right">→</button>
         </div>
 
         {/* Expanded section (collapsible) */}
         <div className={`toolbar-row-secondary ${toolbarExpanded ? "expanded" : ""}`}>
-          <button onClick={() => sendTerminal("\u0004", false)}>^D</button>
-          <button onClick={() => sendTerminal("\u000c", false)}>^L</button>
+          <button onClick={() => sendTerminal("\u0004", false)} title="Ctrl+D — end of input / logout">^D</button>
+          <button onClick={() => sendTerminal("\u000c", false)} title="Ctrl+L — clear screen">^L</button>
           <button
+            title="Paste clipboard contents into the terminal"
             onClick={async () => {
               try {
                 const clip = await navigator.clipboard.readText();
@@ -1022,15 +1177,16 @@ export const App = () => {
             Paste
           </button>
           <button
+            title="Upload a file from your device to the terminal's working directory"
             onClick={() => fileInputRef.current?.click()}
           >
             Upload
           </button>
           {/* file input moved outside toolbar for scroll mode access */}
-          <button onClick={() => sendTerminal("\u001b[3~")}>Del</button>
-          <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
-          <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>
-          <button onClick={() => sendTerminal("\u001b[6~")}>PgDn</button>
+          <button onClick={() => sendTerminal("\u001b[3~")} title="Delete key — delete character under cursor">Del</button>
+          <button onClick={() => sendTerminal("\u001b[2~")} title="Insert key — toggle insert/overwrite mode">Insert</button>
+          <button onClick={() => sendTerminal("\u001b[5~")} title="Page Up — scroll up one page">PgUp</button>
+          <button onClick={() => sendTerminal("\u001b[6~")} title="Page Down — scroll down one page">PgDn</button>
           <button
             className="toolbar-expand-btn"
             onClick={() => setToolbarDeepExpanded((v) => !v)}
@@ -1082,12 +1238,14 @@ export const App = () => {
               }
             }}
             placeholder="Compose command"
+            title="Type a command here and press Enter to send it to the terminal"
           />
           <button
             onClick={() => {
               sendControl({ type: "send_compose", text: composeText });
               setComposeText("");
             }}
+            title="Send the composed command to the terminal"
           >
             Send
           </button>
@@ -1167,6 +1325,7 @@ export const App = () => {
               className="drawer-section-action"
               onClick={createSession}
               data-testid="new-session-button"
+              title="Create a new terminal session"
             >
               + New Session
             </button>
@@ -1235,6 +1394,7 @@ export const App = () => {
               }
               disabled={!activeSession}
               data-testid="new-window-button"
+              title="Create a new window in the current session"
             >
               + New Window
             </button>
@@ -1281,6 +1441,7 @@ export const App = () => {
                   sendControl({ type: "split_pane", paneId: activePane.id, orientation: "h" })
                 }
                 disabled={!activePane}
+                title="Split pane horizontally — create a side-by-side layout"
               >
                 Split H
               </button>
@@ -1290,6 +1451,7 @@ export const App = () => {
                   sendControl({ type: "split_pane", paneId: activePane.id, orientation: "v" })
                 }
                 disabled={!activePane}
+                title="Split pane vertically — create a top-bottom layout"
               >
                 Split V
               </button>
@@ -1300,6 +1462,7 @@ export const App = () => {
                 activePane && sendControl({ type: "zoom_pane", paneId: activePane.id })
               }
               disabled={!activePane || !activeWindow || activeWindow.paneCount <= 1}
+              title="Toggle zoom — expand active pane to fill the entire window"
             >
               Zoom Pane
             </button>
@@ -1307,6 +1470,7 @@ export const App = () => {
               className={`drawer-section-action${stickyZoom ? " active" : ""}`}
               onClick={() => setStickyZoom((v) => !v)}
               data-testid="sticky-zoom-toggle"
+              title="Sticky zoom — automatically zoom the pane when switching windows or panes"
             >
               Sticky Zoom: {stickyZoom ? "On" : "Off"}
             </button>
@@ -1319,6 +1483,7 @@ export const App = () => {
                 sendControl({ type: "kill_pane", paneId: activePane.id });
               }}
               disabled={!activePane}
+              title="Close the active pane"
             >
               Close Pane
             </button>
@@ -1335,6 +1500,7 @@ export const App = () => {
                 });
               }}
               disabled={!activeSession || !activeWindow}
+              title="Kill the active window and all its panes"
             >
               Kill Window
             </button>
@@ -1396,6 +1562,42 @@ export const App = () => {
 
       {/* Legacy overlay scrollback removed — now inline in scroll viewMode */}
 
+      {statsVisible && bandwidthStats && (
+        <div className="overlay" onClick={() => setStatsVisible(false)}>
+          <div className="card stats-card" onClick={(e) => e.stopPropagation()}>
+            <div className="stats-header">
+              <h2>Bandwidth Stats</h2>
+              <button onClick={() => setStatsVisible(false)} title="Close">×</button>
+            </div>
+            <div className="stats-grid">
+              <div className="stats-section">
+                <h3>Terminal Stream</h3>
+                <div className="stats-row"><span>Raw</span><span>{formatBytes(bandwidthStats.rawBytesPerSec)}/s</span></div>
+                <div className="stats-row"><span>Compressed</span><span>{formatBytes(bandwidthStats.compressedBytesPerSec)}/s</span></div>
+                <div className="stats-row highlight"><span>Saved</span><span>{bandwidthStats.savedPercent}%</span></div>
+              </div>
+              <div className="stats-section">
+                <h3>State Diffs</h3>
+                <div className="stats-row"><span>Full snapshots</span><span>{bandwidthStats.fullSnapshotsSent}</span></div>
+                <div className="stats-row"><span>Diff updates</span><span>{bandwidthStats.diffUpdatesSent}</span></div>
+                <div className="stats-row"><span>Avg rows/diff</span><span>{bandwidthStats.avgChangedRowsPerDiff}</span></div>
+              </div>
+              <div className="stats-section">
+                <h3>Totals</h3>
+                <div className="stats-row"><span>Raw data</span><span>{formatBytes(bandwidthStats.totalRawBytes)}</span></div>
+                <div className="stats-row"><span>Transferred</span><span>{formatBytes(bandwidthStats.totalCompressedBytes)}</span></div>
+                <div className="stats-row highlight"><span>Saved</span><span>{formatBytes(bandwidthStats.totalSavedBytes)}</span></div>
+              </div>
+              <div className="stats-section">
+                <h3>Connection</h3>
+                <div className="stats-row"><span>RTT</span><span>{bandwidthStats.rttMs !== null ? `${bandwidthStats.rttMs}ms` : "measuring..."}</span></div>
+                <div className="stats-row"><span>Protocol</span><span>{bandwidthStats.protocol}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {needsPasswordInput && (
         <div className="overlay">
           <div className="card">
@@ -1426,15 +1628,15 @@ export const App = () => {
           <span className="upload-toast-path">{uploadToast.path}</span>
           <button
             onClick={() => {
-              // Shell-quote the path to handle spaces and metacharacters
               const quoted = `'${uploadToast.path.replace(/'/g, "'\\''")}'`;
               sendTerminal(quoted, false);
               setUploadToast(null);
             }}
+            title="Insert the uploaded file path into the terminal"
           >
             Insert
           </button>
-          <button onClick={() => setUploadToast(null)}>×</button>
+          <button onClick={() => setUploadToast(null)} title="Dismiss this notification">×</button>
         </div>
       )}
 
