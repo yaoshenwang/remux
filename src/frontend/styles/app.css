@@ -388,6 +388,13 @@ input {
   font-weight: 700;
 }
 
+.experimental-badge {
+  font-size: 0.7em;
+  opacity: 0.6;
+  margin-left: 0.4em;
+  font-weight: 400;
+}
+
 .top-actions {
   display: flex;
   align-items: center;

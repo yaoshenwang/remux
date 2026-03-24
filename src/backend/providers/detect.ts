@@ -3,8 +3,8 @@
  *
  * Strategy (in order):
  * 1. If forced via options → use that backend
- * 2. If zellij is available → use ZellijCliExecutor + ZellijPtyFactory
- * 3. If tmux is available → use TmuxCliExecutor + NodePtyFactory
+ * 2. If tmux is available → use TmuxCliExecutor + NodePtyFactory
+ * 3. If zellij is available → use ZellijCliExecutor + ZellijPtyFactory
  * 4. Fallback → ConPtySessionProvider + ConPtyFactory
  */
 
@@ -59,15 +59,15 @@ export function detectSessionBackend(
     return createZellijBackend(logger);
   }
 
-  // Auto-detect: zellij → tmux → conpty
-  if (isZellijAvailable(logger)) {
-    logger?.log("[detect] zellij found in PATH, using zellij backend");
-    return createZellijBackend(logger);
-  }
-
+  // Auto-detect: tmux → zellij → conpty
   if (isTmuxAvailable(logger)) {
     logger?.log("[detect] tmux found in PATH, using tmux backend");
     return createTmuxBackend(logger, options);
+  }
+
+  if (isZellijAvailable(logger)) {
+    logger?.log("[detect] zellij found in PATH, using zellij backend");
+    return createZellijBackend(logger);
   }
 
   logger?.log("[detect] no multiplexer found, using conpty backend");

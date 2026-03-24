@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.1.34",
+  "version": "0.1.36",
   "description": "Remote tmux web client — monitor and control terminal sessions from any device",
   "license": "MIT",
   "repository": {

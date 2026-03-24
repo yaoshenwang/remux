@@ -103,6 +103,8 @@ export const App = () => {
   const suppressReconnectRef = useRef(false);
   /** Zellij pane viewport width — used to match xterm cols to pane content. */
   const paneViewportColsRef = useRef(0);
+  /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
+  const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
 
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -406,7 +408,9 @@ export const App = () => {
             sessionStorage.removeItem("remux-password");
           }
           if (message.capabilities) setCapabilities(message.capabilities);
-          openTerminalSocket(passwordValue, message.clientId);
+          // Defer terminal WS until "attached" — the server hasn't created
+          // the PTY runtime until session attach completes.
+          pendingTerminalAuthRef.current = { password: passwordValue, clientId: message.clientId };
           return;
         case "auth_error":
           debugLog("control_socket.auth_error", { reason: message.reason });
@@ -430,6 +434,14 @@ export const App = () => {
           setSessionChoices(null);
           setDrawerOpen(false);
           setStatusMessage(`attached: ${message.session}`);
+          // Now open terminal socket — PTY runtime is ready
+          if (pendingTerminalAuthRef.current) {
+            openTerminalSocket(
+              pendingTerminalAuthRef.current.password,
+              pendingTerminalAuthRef.current.clientId
+            );
+            pendingTerminalAuthRef.current = null;
+          }
           if (fitAddonRef.current) {
             fitAddonRef.current.fit();
           }
@@ -714,10 +726,24 @@ export const App = () => {
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
 
-  // Persist sticky zoom state
+  // Persist sticky zoom state — only when user explicitly toggles (not on
+  // programmatic defaults like the zellij fallback below).
+  const stickyZoomUserSetRef = useRef(false);
   useEffect(() => {
+    if (!stickyZoomUserSetRef.current) return;
     localStorage.setItem("remux-sticky-zoom", stickyZoom ? "true" : "false");
   }, [stickyZoom]);
+
+  // Default sticky zoom OFF for zellij when user has no stored preference.
+  // Does NOT persist to localStorage so it won't affect other backends.
+  useEffect(() => {
+    if (!serverConfig) return;
+    const stored = localStorage.getItem("remux-sticky-zoom");
+    if (stored !== null) return;
+    if (serverConfig.backendKind === "zellij") {
+      setStickyZoom(false);
+    }
+  }, [serverConfig]);
 
   useEffect(() => {
     if (!debugMode) {
@@ -858,7 +884,7 @@ export const App = () => {
     setSelectedWindowIndex(tab.index);
     setSelectedPaneId(null);
     sendControl({ type: "select_tab", session: activeSession.name, tabIndex: tab.index });
-    if (stickyZoom && !tab.active) {
+    if (stickyZoom && capabilities?.supportsFullscreenPane && !tab.active) {
       const pane = tab.panes.find((p) => p.active) ?? tab.panes[0];
       if (pane && !pane.zoomed) {
         sendControl({ type: "toggle_fullscreen", paneId: pane.id });
@@ -878,6 +904,9 @@ export const App = () => {
         </button>
         <div className="top-title">
           Tab: {activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}
+          {serverConfig?.backendKind === "zellij" && (
+            <span className="experimental-badge" title="Zellij support is experimental">(experimental)</span>
+          )}
         </div>
         <div className="top-actions">
           <span
@@ -893,6 +922,9 @@ export const App = () => {
             }}
           >
             {viewMode === "scroll" ? "Term" : "Scroll"}
+            {viewMode === "scroll" && capabilities && !capabilities.supportsPreciseScrollback && (
+              <span className="experimental-badge" title="Scrollback is approximate for this backend"> (approx)</span>
+            )}
           </button>
         </div>
       </header>
@@ -1045,11 +1077,11 @@ export const App = () => {
                   ) : (
                     <button
                       onClick={() => sendControl({ type: "select_session", session: session.name })}
-                      onDoubleClick={(e) => {
+                      onDoubleClick={capabilities?.supportsSessionRename ? (e) => {
                         e.preventDefault();
                         setRenamingSession(session.name);
                         setRenameSessionValue(session.name);
-                      }}
+                      } : undefined}
                       className={session.name === (attachedSession || activeSession?.name) ? "active" : ""}
                     >
                       <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
@@ -1107,11 +1139,11 @@ export const App = () => {
                       ) : (
                         <button
                           onClick={() => selectTab(tab)}
-                          onDoubleClick={(e) => {
+                          onDoubleClick={capabilities?.supportsTabRename ? (e) => {
                             e.preventDefault();
                             setRenamingWindow({ session: activeSession.name, index: tab.index });
                             setRenameWindowValue(tab.name);
-                          }}
+                          } : undefined}
                           className={tab.index === activeTab?.index ? "active" : ""}
                         >
                           <span className="item-name">
@@ -1150,7 +1182,7 @@ export const App = () => {
                           onClick={() => {
                             setSelectedPaneId(pane.id);
                             sendControl({ type: "select_pane", paneId: pane.id });
-                            if (stickyZoom && !isActive && !pane.zoomed) {
+                            if (stickyZoom && capabilities?.supportsFullscreenPane && !isActive && !pane.zoomed) {
                               sendControl({ type: "toggle_fullscreen", paneId: pane.id });
                             }
                           }}
@@ -1198,13 +1230,14 @@ export const App = () => {
               onClick={() =>
                 activePane && sendControl({ type: "toggle_fullscreen", paneId: activePane.id })
               }
-              disabled={!activePane || !activeTab || activeTab.paneCount <= 1}
+              disabled={!activePane || !activeTab || activeTab.paneCount <= 1 || !capabilities?.supportsFullscreenPane}
             >
               Zoom Pane
             </button>
             <button
               className={`drawer-section-action${stickyZoom ? " active" : ""}`}
-              onClick={() => setStickyZoom((v) => !v)}
+              onClick={() => { stickyZoomUserSetRef.current = true; setStickyZoom((v) => !v); }}
+              disabled={!capabilities?.supportsFullscreenPane}
               data-testid="sticky-zoom-toggle"
             >
               Sticky Zoom: {stickyZoom ? "On" : "Off"}
