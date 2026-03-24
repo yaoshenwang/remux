@@ -799,7 +799,7 @@ button.danger {
 }
 
 [data-testid="sessions-list"] button,
-[data-testid="windows-list"] button {
+[data-testid="tabs-list"] button {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;

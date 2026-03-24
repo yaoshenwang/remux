@@ -6,6 +6,11 @@ import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
 import { deriveContext, formatContext } from "./context-label";
 import { Toolbar, type ToolbarHandle, type Snippet } from "./components/Toolbar";
+import {
+  isAwaitingSessionSelection,
+  resolveActiveSession,
+  shouldUsePaneViewportCols
+} from "./ui-state";
 import type {
   ControlServerMessage,
   PaneState,
@@ -162,14 +167,11 @@ export const App = () => {
   // Local selection state for instant UI feedback before server snapshot arrives
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
+  const awaitingSessionSelection = isAwaitingSessionSelection(sessionChoices, attachedSession);
 
   const activeSession: SessionState | undefined = useMemo(() => {
-    const selected = snapshot.sessions.find((session) => session.name === attachedSession);
-    if (selected) {
-      return selected;
-    }
-    return snapshot.sessions.find((session) => session.attached) ?? snapshot.sessions[0];
-  }, [snapshot.sessions, attachedSession]);
+    return resolveActiveSession(snapshot.sessions, attachedSession, awaitingSessionSelection);
+  }, [snapshot.sessions, attachedSession, awaitingSessionSelection]);
 
   const activeTab: TabState | undefined = useMemo(() => {
     if (!activeSession) {
@@ -205,6 +207,9 @@ export const App = () => {
     if (errorMessage) {
       return { kind: "error", label: errorMessage };
     }
+    if (awaitingSessionSelection) {
+      return { kind: "pending", label: "select session" };
+    }
     if (statusMessage.toLowerCase().includes("disconnected") || statusMessage.toLowerCase().includes("reconnect")) {
       return { kind: "warn", label: statusMessage };
     }
@@ -218,7 +223,7 @@ export const App = () => {
       return { kind: "ok", label: "connected" };
     }
     return { kind: "pending", label: "connecting" };
-  }, [authReady, errorMessage, statusMessage]);
+  }, [authReady, awaitingSessionSelection, errorMessage, statusMessage]);
 
   const sendControl = (payload: Record<string, unknown>): void => {
     if (controlSocketRef.current?.readyState !== WebSocket.OPEN) {
@@ -455,6 +460,10 @@ export const App = () => {
               tabCount: session.tabCount
             }))
           });
+          setAttachedSession("");
+          attachedSessionRef.current = "";
+          setSelectedWindowIndex(null);
+          setSelectedPaneId(null);
           setSessionChoices(message.sessions);
           return;
         case "workspace_state":
@@ -484,7 +493,7 @@ export const App = () => {
           // Sync xterm columns to the pane's viewport width so the terminal
           // fills exactly the pane content area (no empty right half on wide
           // screens, no truncation on narrow screens).
-          if (message.clientView) {
+          if (message.clientView && shouldUsePaneViewportCols(serverConfig?.backendKind)) {
             const session = message.workspace.sessions.find(
               (s) => s.name === message.clientView!.sessionName
             );
@@ -503,6 +512,8 @@ export const App = () => {
                 sendTerminalResize();
               }
             }
+          } else {
+            paneViewportColsRef.current = 0;
           }
           return;
         case "scrollback":
@@ -622,12 +633,12 @@ export const App = () => {
         terminal.options.fontSize = preferredFontSize;
       }
       fitAddon.fit();
-      // Override cols with pane viewport width when known (zellij mode).
-      // FitAddon sizes to the CSS container, but the viewport snapshot has
-      // a fixed width determined by the zellij pane — match it so content
-      // fills exactly without empty space or truncation.
       const paneCols = paneViewportColsRef.current;
-      if (paneCols > 0 && terminal.cols !== paneCols) {
+      if (
+        shouldUsePaneViewportCols(serverConfig?.backendKind) &&
+        paneCols > 0 &&
+        terminal.cols !== paneCols
+      ) {
         terminal.resize(paneCols, terminal.rows);
       }
       sendTerminalResize();
@@ -646,7 +657,14 @@ export const App = () => {
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, []);
+  }, [serverConfig?.backendKind, sendRawToSocket]);
+
+  useEffect(() => {
+    if (shouldUsePaneViewportCols(serverConfig?.backendKind)) {
+      return;
+    }
+    paneViewportColsRef.current = 0;
+  }, [serverConfig?.backendKind]);
 
   useEffect(() => {
     return () => {
@@ -903,7 +921,9 @@ export const App = () => {
           =
         </button>
         <div className="top-title">
-          Tab: {activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}
+          {awaitingSessionSelection
+            ? "Select Session"
+            : `Tab: ${activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}`}
           {serverConfig?.backendKind === "zellij" && (
             <span className="experimental-badge" title="Zellij support is experimental">(experimental)</span>
           )}
@@ -1101,6 +1121,19 @@ export const App = () => {
               data-testid="new-session-button"
             >
               + New Session
+            </button>
+            <button
+              className="drawer-section-action"
+              onClick={() => {
+                if (!activeSession) return;
+                setSelectedWindowIndex(null);
+                setSelectedPaneId(null);
+                sendControl({ type: "close_session", session: activeSession.name });
+              }}
+              disabled={!activeSession || snapshot.sessions.length <= 1}
+              data-testid="close-session-button"
+            >
+              Close Session
             </button>
 
             <h3>Tabs ({activeSession?.name ?? "-"})</h3>

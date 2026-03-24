@@ -65,6 +65,7 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("auth"), token: z.string().optional(), password: z.string().optional(), clientId: z.string().optional(), session: z.string().optional() }),
   z.object({ type: z.literal("select_session"), session: z.string() }),
   z.object({ type: z.literal("new_session"), name: z.string() }),
+  z.object({ type: z.literal("close_session"), session: z.string() }),
   z.object({ type: z.literal("new_tab"), session: z.string() }),
   z.object({ type: z.literal("select_tab"), session: z.string(), tabIndex: z.number() }),
   z.object({ type: z.literal("close_tab"), session: z.string(), tabIndex: z.number() }),
@@ -460,6 +461,22 @@ export const createRemuxServer = (
   const getControlContext = (clientId: string): ControlContext | undefined =>
     Array.from(controlClients).find((candidate) => candidate.clientId === clientId);
 
+  const resetControlAttachment = async (context: ControlContext): Promise<void> => {
+    await context.runtime?.shutdown();
+    context.runtime = undefined;
+
+    if (deps.backend.createGroupedSession) {
+      const mobileSession = buildMobileSessionName(context.clientId);
+      try {
+        await deps.backend.killSession(mobileSession);
+      } catch (error) {
+        logger.error("failed to cleanup mobile session", mobileSession, error);
+      }
+    }
+
+    viewStore.removeClient(context.clientId);
+  };
+
   const getOrCreateRuntime = (context: ControlContext): TerminalRuntime => {
     if (context.runtime) {
       return context.runtime;
@@ -616,6 +633,36 @@ export const createRemuxServer = (
         await deps.backend.createSession(message.name);
         await attachControlToBaseSession(context, message.name);
         return;
+      case "close_session": {
+        const liveSessions = (await deps.backend.listSessions()).filter(
+          (session) => !isManagedMobileSession(session.name)
+        );
+        if (liveSessions.length <= 1) {
+          sendJson(context.socket, {
+            type: "info",
+            message: "cannot kill the last session"
+          });
+          return;
+        }
+
+        const affectedClients = Array.from(controlClients).filter((client) => {
+          if (!client.authed) {
+            return false;
+          }
+          return viewStore.getView(client.clientId)?.sessionName === message.session;
+        });
+
+        for (const client of affectedClients) {
+          await resetControlAttachment(client);
+        }
+
+        await deps.backend.killSession(message.session);
+
+        for (const client of affectedClients) {
+          await ensureAttachedSession(client);
+        }
+        return;
+      }
       case "new_tab": {
         const sessionForNew = view?.sessionName;
         if (!sessionForNew) {
@@ -779,20 +826,7 @@ export const createRemuxServer = (
       }
     }
     context.terminalClients.clear();
-    await context.runtime?.shutdown();
-    context.runtime = undefined;
-
-    // For tmux: kill the grouped mobile session
-    if (deps.backend.createGroupedSession) {
-      const mobileSession = buildMobileSessionName(context.clientId);
-      try {
-        await deps.backend.killSession(mobileSession);
-      } catch (error) {
-        logger.error("failed to cleanup mobile session", mobileSession, error);
-      }
-    }
-
-    viewStore.removeClient(context.clientId);
+    await resetControlAttachment(context);
   };
 
   controlWss.on("connection", (socket) => {

@@ -128,7 +128,11 @@ function createTmuxBackend(
     socketPath: options?.socketPath,
     logger,
   });
-  const ptyFactory = new NodePtyFactory(logger);
+  const ptyFactory = new NodePtyFactory({
+    logger,
+    socketName: options?.socketName,
+    socketPath: options?.socketPath
+  });
   return { gateway, ptyFactory, kind: "tmux" };
 }
 

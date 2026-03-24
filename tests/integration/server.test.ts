@@ -371,6 +371,64 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("close_session refuses to kill the last session", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    const { attachedSession } = await authControl(control);
+
+    tmux.calls.length = 0;
+    control.send(
+      JSON.stringify({ type: "close_session", session: attachedSession })
+    );
+
+    const infoMsg = await waitForMessage<{ type: string; message: string }>(
+      control,
+      (msg) => msg.type === "info" && msg.message.includes("last session")
+    );
+    expect(infoMsg.message).toContain("last session");
+    expect(tmux.calls.some((call) => call.startsWith("killSession:main"))).toBe(false);
+
+    control.close();
+  });
+
+  test("close_session reattaches the client to the remaining session", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main", "work"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    control.send(JSON.stringify({ type: "auth", token: "test-token" }));
+    await waitForMessage(control, (msg: { type: string }) => msg.type === "session_picker");
+    const initialAttachPromise = waitForMessage<{ type: string; session: string }>(
+      control,
+      (msg) => msg.type === "attached" && msg.session === "main"
+    );
+    control.send(JSON.stringify({ type: "select_session", session: "main" }));
+    await initialAttachPromise;
+
+    const spawnedBeforeClose = ptyFactory.processes.length;
+    tmux.calls.length = 0;
+    const attachedPromise = waitForMessage<{ type: string; session: string }>(
+      control,
+      (msg) => msg.type === "attached" && msg.session === "work"
+    );
+    control.send(JSON.stringify({ type: "close_session", session: "main" }));
+
+    const attached = await attachedPromise;
+    expect(attached.session).toBe("work");
+    expect(tmux.calls).toContain("killSession:main");
+    expect(
+      tmux.calls.some((call) => call.startsWith("killSession:remux-client-"))
+    ).toBe(true);
+    expect(
+      tmux.calls.some((call) => call.startsWith("createGroupedSession:") && call.endsWith(":work"))
+    ).toBe(true);
+    expect(ptyFactory.processes.length).toBeGreaterThan(spawnedBeforeClose);
+
+    control.close();
+  });
+
   test("rename_session renames via backend", async () => {
     await runningServer.stop();
     await startWithSessions(["alpha"]);

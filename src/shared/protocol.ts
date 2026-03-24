@@ -65,6 +65,7 @@ export type ControlClientMessage =
   | { type: "auth"; token?: string; password?: string; clientId?: string; session?: string }
   | { type: "select_session"; session: string }
   | { type: "new_session"; name: string }
+  | { type: "close_session"; session: string }
   | { type: "new_tab"; session: string }
   | { type: "select_tab"; session: string; tabIndex: number }
   | { type: "close_tab"; session: string; tabIndex: number }

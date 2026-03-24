@@ -2,12 +2,35 @@ import { execFile, spawnSync } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
+import { NodePtyFactory } from "../../src/backend/pty/node-pty-adapter.js";
 import { TmuxCliExecutor } from "../../src/backend/tmux/cli-executor.js";
 
 const execFileAsync = promisify(execFile);
 const shouldRun = process.env.REAL_TMUX_SMOKE === "1";
 
 const socketPath = (name: string): string => path.join("/tmp", `${name}.sock`);
+
+const waitForPtyOutput = async (
+  register: (handler: (data: string) => void) => void,
+  predicate: (data: string) => boolean,
+  timeoutMs = 5_000
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const chunks: string[] = [];
+    const timer = setTimeout(() => {
+      reject(new Error(`timed out waiting for PTY output: ${chunks.join("")}`));
+    }, timeoutMs);
+
+    register((data) => {
+      chunks.push(data);
+      const output = chunks.join("");
+      if (predicate(output)) {
+        clearTimeout(timer);
+        resolve(output);
+      }
+    });
+  });
+};
 
 const safeCleanup = async (sockPath: string): Promise<void> => {
   try {
@@ -61,6 +84,29 @@ describe.skipIf(!canRunIsolatedTmux)("real tmux smoke", () => {
     expect(typeof capture.text).toBe("string");
     expect(capture.paneWidth).toBeGreaterThan(0);
 
+    await tmux.killSession(sessionName);
+    await safeCleanup(sockPath);
+  }, 20_000);
+
+  test("attaches through the configured tmux socket", async () => {
+    const sockPath = socketPath(`remux-socket-attach-${process.pid}-${Date.now()}`);
+    const sessionName = "socket-main";
+    const tmux = new TmuxCliExecutor({ socketPath: sockPath });
+    const ptyFactory = new NodePtyFactory({ socketPath: sockPath });
+
+    await safeCleanup(sockPath);
+    await tmux.createSession(sessionName);
+
+    const ptyProcess = ptyFactory.spawnAttach(sessionName);
+    const outputPromise = waitForPtyOutput(
+      (handler) => ptyProcess.onData(handler),
+      (output) => output.includes("REMUX_SOCKET_OK")
+    );
+
+    ptyProcess.write("printf 'REMUX_SOCKET_OK\\n'\r");
+    await expect(outputPromise).resolves.toContain("REMUX_SOCKET_OK");
+
+    ptyProcess.kill();
     await tmux.killSession(sessionName);
     await safeCleanup(sockPath);
   }, 20_000);

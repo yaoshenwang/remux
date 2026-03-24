@@ -94,6 +94,27 @@ test.describe("remux browser behavior", () => {
       await page.getByTestId("drawer-close").click();
       await expect(page.locator(".drawer")).toHaveCount(0);
     });
+
+    test("close session button closes the active session and reattaches to the remaining one", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
+
+      try {
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        await expect(page.getByTestId("session-picker-overlay")).toBeVisible();
+        await page.getByTestId("session-picker-overlay").getByRole("button", { name: "main" }).click();
+        await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
+
+        await page.getByTestId("drawer-toggle").click();
+        await page.getByTestId("close-session-button").click();
+
+        await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
+        await expect(page.getByTestId("sessions-list").getByRole("button", { name: /work/ })).toBeVisible();
+        await expect(page.getByTestId("sessions-list").getByRole("button", { name: /main/ })).toHaveCount(0);
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
   });
 
   test.describe("session picker", () => {
@@ -119,6 +140,25 @@ test.describe("remux browser behavior", () => {
       await expect
         .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("remux-client-") ?? false)
         .toBe(true);
+    });
+
+    test("shows a neutral header while waiting for session selection", async ({ page }) => {
+      const localServer = await startE2EServer({
+        sessions: ["main", "luguo"],
+        attachedSession: "luguo",
+        defaultSession: "main"
+      });
+
+      try {
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+
+        await expect(page.getByTestId("session-picker-overlay")).toBeVisible();
+        await expect(page.locator(".top-title")).toHaveText("Select Session");
+        await expect(page.getByTestId("top-status-indicator")).toHaveAttribute("title", "select session");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
     });
   });
 

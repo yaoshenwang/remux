@@ -88,11 +88,28 @@ class ScriptPtyProcess implements PtyProcess {
   }
 }
 
+interface NodePtyFactoryOptions {
+  logger?: Pick<Console, "log" | "error">;
+  socketName?: string;
+  socketPath?: string;
+  tmuxBinary?: string;
+}
+
 export class NodePtyFactory implements PtyFactory {
   private nodePtyUnavailable = false;
   private readonly forceScriptFallback: boolean;
+  private readonly logger?: Pick<Console, "log" | "error">;
+  private readonly socketArgs: string[];
+  private readonly tmuxBinary: string;
 
-  public constructor(private readonly logger?: Pick<Console, "log" | "error">) {
+  public constructor(options: NodePtyFactoryOptions = {}) {
+    this.logger = options.logger;
+    this.tmuxBinary = options.tmuxBinary ?? "tmux";
+    this.socketArgs = options.socketPath
+      ? ["-S", options.socketPath]
+      : options.socketName
+        ? ["-L", options.socketName]
+        : [];
     this.forceScriptFallback = process.env.REMUX_FORCE_SCRIPT_PTY === "1";
     ensureNodePtySpawnHelperExecutable(this.logger);
   }
@@ -106,8 +123,8 @@ export class NodePtyFactory implements PtyFactory {
       const shell = os.platform() === "win32" ? "cmd.exe" : "/bin/sh";
       const args =
         os.platform() === "win32"
-          ? ["/c", "tmux", "attach-session", "-t", session]
-          : ["-lc", `exec tmux attach-session -t ${shellQuote(session)}`];
+          ? ["/c", this.tmuxBinary, ...this.socketArgs, "attach-session", "-t", session]
+          : ["-lc", this.buildAttachCommand(session)];
       this.logger?.log("[pty] spawn", shell, args.join(" "));
 
       const spawned = pty.spawn(shell, args, {
@@ -135,7 +152,7 @@ export class NodePtyFactory implements PtyFactory {
 
     if (os.platform() === "darwin") {
       const command = "script";
-      const args = ["-q", "/dev/null", "tmux", "attach-session", "-t", session];
+      const args = ["-q", "/dev/null", this.tmuxBinary, ...this.socketArgs, "attach-session", "-t", session];
       this.logger?.log("[pty-fallback] spawn", command, args.join(" "));
       const child = spawn(command, args, {
         cwd: process.cwd(),
@@ -147,7 +164,7 @@ export class NodePtyFactory implements PtyFactory {
 
     if (os.platform() === "linux") {
       const command = "script";
-      const attachCommand = `tmux attach-session -t ${shellQuote(session)}`;
+      const attachCommand = this.buildAttachCommand(session, false);
       const args = ["-qfc", attachCommand, "/dev/null"];
       this.logger?.log("[pty-fallback] spawn", command, args.join(" "));
       const child = spawn(command, args, {
@@ -159,5 +176,16 @@ export class NodePtyFactory implements PtyFactory {
     }
 
     throw new Error(`PTY fallback unsupported on ${os.platform()}`);
+  }
+
+  private buildAttachCommand(session: string, includeExec = true): string {
+    const commandParts = [
+      this.tmuxBinary,
+      ...this.socketArgs,
+      "attach-session",
+      "-t",
+      session
+    ].map(shellQuote);
+    return `${includeExec ? "exec " : ""}${commandParts.join(" ")}`;
   }
 }
