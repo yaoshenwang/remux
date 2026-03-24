@@ -530,7 +530,7 @@ input {
 }
 
 .toolbar-row-secondary.expanded {
-  max-height: 3rem;
+  max-height: 4rem;
   padding-top: 0.25rem;
 }
 
@@ -550,7 +550,7 @@ input {
 
 .toolbar-row-deep-fkeys {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.25rem;
 }
 
@@ -562,7 +562,7 @@ input {
 
 .toolbar button {
   font-size: 0.85rem;
-  min-height: 2.1rem;
+  min-height: 2.75rem;
 }
 
 .toolbar-expand-btn {
@@ -855,7 +855,7 @@ button.danger {
   }
 
   .toolbar button {
-    min-height: 1.9rem;
+    min-height: 2.5rem;
     font-size: 0.8rem;
   }
 }

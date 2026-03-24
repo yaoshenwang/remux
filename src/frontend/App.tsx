@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
 import { deriveContext, formatContext } from "./context-label";
+import { Toolbar, type ToolbarHandle } from "./components/Toolbar";
 import type {
   ControlServerMessage,
   TmuxPaneState,
@@ -21,9 +22,6 @@ interface ServerConfig {
   pollIntervalMs: number;
   uploadMaxSize?: number;
 }
-
-type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
-type ModifierMode = "off" | "sticky" | "locked";
 
 declare global {
   interface Window {
@@ -125,19 +123,9 @@ export const App = () => {
     Number(localStorage.getItem("remux-scroll-font-size")) || 0
   );
 
-  const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
-    ctrl: "off",
-    alt: "off",
-    shift: "off",
-    meta: "off"
-  });
-  const modifierTapRef = useRef<{ key: ModifierKey; at: number } | null>(null);
+  const toolbarRef = useRef<ToolbarHandle>(null);
 
   const [theme, setTheme] = useState(localStorage.getItem("remux-theme") ?? "midnight");
-  const [toolbarExpanded, setToolbarExpanded] = useState(
-    localStorage.getItem("remux-toolbar-expanded") === "true"
-  );
-  const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
 
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
@@ -225,48 +213,18 @@ export const App = () => {
     controlSocketRef.current.send(JSON.stringify(payload));
   };
 
-  const clearStickyModifiers = (): void => {
-    setModifiers((previous) => ({
-      ctrl: previous.ctrl === "sticky" ? "off" : previous.ctrl,
-      alt: previous.alt === "sticky" ? "off" : previous.alt,
-      shift: previous.shift === "sticky" ? "off" : previous.shift,
-      meta: previous.meta === "sticky" ? "off" : previous.meta
-    }));
-  };
-
-  const applyModifiers = (input: string): string => {
-    let output = input;
-
-    if (modifiers.shift !== "off" && output.length === 1 && /^[a-z]$/.test(output)) {
-      output = output.toUpperCase();
-    }
-
-    if (modifiers.ctrl !== "off" && output.length === 1) {
-      output = String.fromCharCode(output.toUpperCase().charCodeAt(0) & 31);
-    }
-
-    if (modifiers.alt !== "off" || modifiers.meta !== "off") {
-      output = `\u001b${output}`;
-    }
-
-    clearStickyModifiers();
-    return output;
-  };
-
-  const sendTerminal = (input: string, withModifiers = true): void => {
+  const sendRawToSocket = useCallback((data: string): void => {
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       debugLog("send_terminal.blocked", {
         readyState: socket?.readyState,
-        withModifiers,
-        bytes: input.length
+        bytes: data.length
       });
       return;
     }
-    const output = withModifiers ? applyModifiers(input) : input;
-    debugLog("send_terminal", { withModifiers, inputBytes: input.length, outputBytes: output.length });
-    socket.send(output);
-  };
+    debugLog("send_terminal", { bytes: data.length });
+    socket.send(data);
+  }, []);
 
   const sendTerminalResize = (): void => {
     const socket = terminalSocketRef.current;
@@ -286,34 +244,6 @@ export const App = () => {
         rows: terminal.rows
       })
     );
-  };
-
-  const toggleModifier = (key: ModifierKey): void => {
-    const now = Date.now();
-    const isDoubleTap =
-      modifierTapRef.current &&
-      modifierTapRef.current.key === key &&
-      now - modifierTapRef.current.at <= 300;
-
-    modifierTapRef.current = { key, at: now };
-
-    setModifiers((previous) => {
-      const current = previous[key];
-      let next: ModifierMode;
-
-      if (current === "locked") {
-        next = "off";
-      } else if (isDoubleTap) {
-        next = "locked";
-      } else {
-        next = current === "sticky" ? "off" : "sticky";
-      }
-
-      return {
-        ...previous,
-        [key]: next
-      };
-    });
   };
 
   const readTerminalBuffer = (): string => {
@@ -615,7 +545,8 @@ export const App = () => {
     });
 
     const disposable = terminal.onData((data) => {
-      sendTerminal(data);
+      const output = toolbarRef.current?.applyModifiersAndClear(data) ?? data;
+      sendRawToSocket(output);
     });
 
     terminalRef.current = terminal;
@@ -729,11 +660,6 @@ export const App = () => {
   }, [viewMode]);
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
-
-  // Persist toolbar expanded state
-  useEffect(() => {
-    localStorage.setItem("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
-  }, [toolbarExpanded]);
 
   // Persist sticky zoom state
   useEffect(() => {
@@ -868,9 +794,9 @@ export const App = () => {
     xhr.send(file);
   };
 
-  const focusTerminal = (): void => {
+  const focusTerminal = useCallback((): void => {
     terminalRef.current?.focus();
-  };
+  }, []);
 
   const selectWindow = (windowState: TmuxWindowState): void => {
     if (!activeSession) {
@@ -967,95 +893,14 @@ export const App = () => {
         }}
       />
 
-      {viewMode === "terminal" && <section className="toolbar" onMouseUp={focusTerminal}>
-        {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
-        <div className="toolbar-main">
-          <button onClick={() => sendTerminal("\u001b")}>Esc</button>
-          <button className={`modifier ${modifiers.ctrl}`} onClick={() => toggleModifier("ctrl")}>Ctrl</button>
-          <button className={`modifier ${modifiers.alt}`} onClick={() => toggleModifier("alt")}>Alt</button>
-          <button className={`modifier ${modifiers.meta}`} onClick={() => toggleModifier("meta")}>Cmd</button>
-          <button onClick={() => sendTerminal("/")}>/</button>
-          <button onClick={() => sendTerminal("@")}>@</button>
-          <button onClick={() => sendTerminal("\u001b[H")}>Hm</button>
-          <button onClick={() => sendTerminal("\u001b[A")}>↑</button>
-          <button onClick={() => sendTerminal("\u001b[F")}>Ed</button>
-        </div>
-
-        {/* Row 2: ^C, ^B, ^R, Sft, Tab, Enter, ..., ←, ↓, → */}
-        <div className="toolbar-main">
-          <button className="danger" onClick={() => sendTerminal("\u0003", false)}>^C</button>
-          <button onClick={() => sendTerminal("\u0002", false)}>^B</button>
-          <button onClick={() => sendTerminal("\u0012", false)}>^R</button>
-          <button className={`modifier ${modifiers.shift}`} onClick={() => toggleModifier("shift")}>Sft</button>
-          <button onClick={() => sendTerminal("\t")}>Tab</button>
-          <button onClick={() => sendTerminal("\r")}>Enter</button>
-          <button
-            className="toolbar-expand-btn"
-            onClick={() => {
-              setToolbarExpanded((v) => !v);
-              if (toolbarExpanded) {
-                setToolbarDeepExpanded(false);
-              }
-            }}
-          >
-            {toolbarExpanded ? "..." : "..."}
-          </button>
-          <button onClick={() => sendTerminal("\u001b[D")}>←</button>
-          <button onClick={() => sendTerminal("\u001b[B")}>↓</button>
-          <button onClick={() => sendTerminal("\u001b[C")}>→</button>
-        </div>
-
-        {/* Expanded section (collapsible) */}
-        <div className={`toolbar-row-secondary ${toolbarExpanded ? "expanded" : ""}`}>
-          <button onClick={() => sendTerminal("\u0004", false)}>^D</button>
-          <button onClick={() => sendTerminal("\u000c", false)}>^L</button>
-          <button
-            onClick={async () => {
-              try {
-                const clip = await navigator.clipboard.readText();
-                sendTerminal(clip, false);
-              } catch {
-                setStatusMessage("clipboard read failed");
-              }
-            }}
-          >
-            Paste
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Upload
-          </button>
-          {/* file input moved outside toolbar for scroll mode access */}
-          <button onClick={() => sendTerminal("\u001b[3~")}>Del</button>
-          <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
-          <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>
-          <button onClick={() => sendTerminal("\u001b[6~")}>PgDn</button>
-          <button
-            className="toolbar-expand-btn"
-            onClick={() => setToolbarDeepExpanded((v) => !v)}
-          >
-            {toolbarDeepExpanded ? "F-Keys ▲" : "F-Keys ▼"}
-          </button>
-        </div>
-
-        {/* F-keys row (collapsible from within expanded) */}
-        {toolbarExpanded && (
-          <div className={`toolbar-row-deep ${toolbarDeepExpanded ? "expanded" : ""}`}>
-            <div className="toolbar-row-deep-fkeys">
-              {[
-                "\u001bOP", "\u001bOQ", "\u001bOR", "\u001bOS",
-                "\u001b[15~", "\u001b[17~", "\u001b[18~", "\u001b[19~",
-                "\u001b[20~", "\u001b[21~", "\u001b[23~", "\u001b[24~"
-              ].map((seq, i) => (
-                <button key={`f${i + 1}`} onClick={() => sendTerminal(seq, false)}>
-                  F{i + 1}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>}
+      <Toolbar
+        ref={toolbarRef}
+        sendRaw={sendRawToSocket}
+        onFocusTerminal={focusTerminal}
+        fileInputRef={fileInputRef}
+        setStatusMessage={setStatusMessage}
+        hidden={viewMode !== "terminal"}
+      />
 
       {composeEnabled && (
         <section className="compose-bar">
@@ -1428,7 +1273,7 @@ export const App = () => {
             onClick={() => {
               // Shell-quote the path to handle spaces and metacharacters
               const quoted = `'${uploadToast.path.replace(/'/g, "'\\''")}'`;
-              sendTerminal(quoted, false);
+              sendRawToSocket(quoted);
               setUploadToast(null);
             }}
           >
