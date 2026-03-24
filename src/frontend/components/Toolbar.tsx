@@ -217,7 +217,10 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
           <div className={`toolbar-row-deep ${snippetsExpanded ? "expanded" : ""}`}>
             <div className="toolbar-row-snippets">
               {snippets.map((s) => (
-                <button key={s.id} onClick={() => sendRaw(s.command + (s.autoEnter ? "\r" : ""))}>
+                <button key={s.id} onClick={() => {
+                  clearStickyModifiers();
+                  sendRaw(s.command + (s.autoEnter ? "\r" : ""));
+                }}>
                   {s.label}
                 </button>
               ))}

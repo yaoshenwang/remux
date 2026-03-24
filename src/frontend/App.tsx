@@ -128,7 +128,9 @@ export const App = () => {
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {
       const stored = localStorage.getItem("remux-snippets");
-      return stored ? JSON.parse(stored) as Snippet[] : [];
+      if (!stored) return [];
+      const parsed: unknown = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed as Snippet[] : [];
     } catch {
       return [];
     }
