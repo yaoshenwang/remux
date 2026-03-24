@@ -101,6 +101,8 @@ export const App = () => {
   const reconnectAttemptRef = useRef(0);
   /** Set to true when user-initiated or expected close (e.g. auth error) */
   const suppressReconnectRef = useRef(false);
+  /** Zellij pane viewport width — used to match xterm cols to pane content. */
+  const paneViewportColsRef = useRef(0);
 
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -466,6 +468,30 @@ export const App = () => {
           // so the snapshot already reflects this client's active tab/pane.
           setSelectedWindowIndex(null);
           setSelectedPaneId(null);
+
+          // Sync xterm columns to the pane's viewport width so the terminal
+          // fills exactly the pane content area (no empty right half on wide
+          // screens, no truncation on narrow screens).
+          if (message.clientView) {
+            const session = message.workspace.sessions.find(
+              (s) => s.name === message.clientView!.sessionName
+            );
+            const tab = session?.tabs.find(
+              (t) => t.index === message.clientView!.tabIndex
+            );
+            const pane = tab?.panes.find(
+              (p) => p.id === message.clientView!.paneId
+            );
+            const paneWidth = pane?.width ?? 0;
+            if (paneWidth > 0) {
+              paneViewportColsRef.current = paneWidth;
+              const terminal = terminalRef.current;
+              if (terminal && terminal.cols !== paneWidth) {
+                terminal.resize(paneWidth, terminal.rows);
+                sendTerminalResize();
+              }
+            }
+          }
           return;
         case "scrollback":
           // Legacy handler — scroll mode now reads from xterm buffer directly
@@ -584,6 +610,14 @@ export const App = () => {
         terminal.options.fontSize = preferredFontSize;
       }
       fitAddon.fit();
+      // Override cols with pane viewport width when known (zellij mode).
+      // FitAddon sizes to the CSS container, but the viewport snapshot has
+      // a fixed width determined by the zellij pane — match it so content
+      // fills exactly without empty space or truncation.
+      const paneCols = paneViewportColsRef.current;
+      if (paneCols > 0 && terminal.cols !== paneCols) {
+        terminal.resize(paneCols, terminal.rows);
+      }
       sendTerminalResize();
     };
 
