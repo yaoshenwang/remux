@@ -99,6 +99,15 @@ export class ZellijPaneIO implements PtyProcess {
     } catch {
       return;
     }
+
+    if (event.event === "pane_closed") {
+      // Pane was closed — treat as process exit
+      if (!this.killed) {
+        for (const h of this.exitHandlers) h(0);
+      }
+      return;
+    }
+
     if (event.event !== "pane_update") return;
 
     let viewport = event.viewport ?? [];
