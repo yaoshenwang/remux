@@ -560,6 +560,21 @@ input {
   gap: 0.25rem;
 }
 
+.toolbar-row-snippets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.toolbar-row-snippets > button {
+  flex: 0 1 auto;
+  padding: 0 0.5rem;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .toolbar button {
   font-size: 0.85rem;
   min-height: 2.75rem;
@@ -669,6 +684,71 @@ button.danger {
   text-align: center;
   font-size: 0.75rem;
   opacity: 0.4;
+}
+
+.snippet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.snippet-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+}
+
+.snippet-item .snippet-label {
+  font-weight: 600;
+  min-width: 3rem;
+  white-space: nowrap;
+}
+
+.snippet-item .snippet-cmd {
+  flex: 1;
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snippet-item button {
+  flex-shrink: 0;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.8rem;
+}
+
+.snippet-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.snippet-form input[type="text"],
+.snippet-form input:not([type]) {
+  width: 100%;
+  padding: 0.4rem;
+  background: var(--input-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.snippet-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.snippet-form-actions {
+  display: flex;
+  gap: 0.4rem;
 }
 
 [data-testid="sessions-list"] button,

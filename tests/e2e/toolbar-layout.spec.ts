@@ -122,3 +122,52 @@ test('F-keys grid uses 6-column layout in portrait', async ({ page }) => {
   // F7 should be on a different row than F1
   expect(f7Box!.y).toBeGreaterThan(f1Box!.y + f1Box!.height * 0.5);
 });
+
+test('snippets: no Snip button when no snippets configured', async ({ page }) => {
+  await page.goto(`${server.baseUrl}/?token=${server.token}`);
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Expand toolbar
+  const expandBtn = page.locator('.toolbar-expand-btn').first();
+  await expandBtn.click();
+
+  // Should not have a "Snip ▼" button
+  await expect(page.locator('button', { hasText: 'Snip' })).not.toBeVisible();
+});
+
+test('snippets: Snip button appears and expands when snippets exist', async ({ page }) => {
+  // Inject snippets into localStorage before navigating
+  const snippets = [
+    { id: 'test-1', label: 'ls', command: 'ls -la', autoEnter: true },
+    { id: 'test-2', label: 'git st', command: 'git status', autoEnter: false }
+  ];
+
+  await page.goto(`${server.baseUrl}/?token=${server.token}`);
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Set localStorage and reload to pick up snippets
+  await page.evaluate((s) => localStorage.setItem('remux-snippets', JSON.stringify(s)), snippets);
+  await page.reload();
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Expand toolbar
+  const expandBtn = page.locator('.toolbar-expand-btn').first();
+  await expandBtn.click();
+
+  // Should see "Snip ▼" button
+  const snipBtn = page.locator('button', { hasText: 'Snip ▼' });
+  await expect(snipBtn).toBeVisible();
+
+  // Click to expand snippets
+  await snipBtn.click();
+
+  // Should see snippet buttons
+  const snippetRow = page.locator('.toolbar-row-snippets');
+  await expect(snippetRow).toBeVisible();
+
+  const snippetButtons = await snippetRow.locator('button').all();
+  expect(snippetButtons.length).toBe(2);
+
+  const labels = await Promise.all(snippetButtons.map(b => b.textContent()));
+  expect(labels).toEqual(['ls', 'git st']);
+});
