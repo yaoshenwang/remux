@@ -9,6 +9,8 @@ interface ZellijCliExecutorOptions {
   zellijBinary?: string;
   timeoutMs?: number;
   logger?: Pick<Console, "log" | "error">;
+  /** Path to remux-focus.wasm plugin for focus-pane-by-id support. */
+  focusPluginPath?: string;
 }
 
 export class ZellijCliExecutor implements SessionGateway {
@@ -22,12 +24,15 @@ export class ZellijCliExecutor implements SessionGateway {
    * Used by pane operations that need session context (splitWindow, zoomPane).
    */
   private readonly paneSessionMap = new Map<string, string>();
+  /** Path to remux-focus.wasm for focus-pane-by-id via plugin pipe. */
+  private readonly focusPluginPath?: string;
 
   public constructor(options: ZellijCliExecutorOptions = {}) {
     this.binary = options.zellijBinary ?? "zellij";
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.logger = options.logger;
     this.trace = process.env.REMUX_TRACE_ZELLIJ === "1";
+    this.focusPluginPath = options.focusPluginPath;
   }
 
   /**
@@ -171,9 +176,7 @@ export class ZellijCliExecutor implements SessionGateway {
   public async splitWindow(paneId: string, orientation: "h" | "v"): Promise<void> {
     const direction = orientation === "h" ? "right" : "down";
     const session = this.paneSessionMap.get(paneId);
-    // LIMITATION: Zellij CLI has no "focus-pane-by-id" action, so new-pane
-    // creates the split relative to whichever pane is currently focused in
-    // the session, not necessarily the pane identified by paneId.
+    await this.focusPaneViaPlugin(paneId, session);
     await this.runZellij(["action", "new-pane", "-d", direction], session);
   }
 
@@ -186,15 +189,13 @@ export class ZellijCliExecutor implements SessionGateway {
   }
 
   public async selectPane(paneId: string): Promise<void> {
-    // Zellij has no direct "focus-pane-by-id" CLI action.
-    // Virtual view tracking at the server layer handles pane selection.
-    this.logger?.log(`[zellij] selectPane ${paneId} — virtual view`);
+    const session = this.paneSessionMap.get(paneId);
+    await this.focusPaneViaPlugin(paneId, session);
   }
 
   public async zoomPane(paneId: string): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
-    // LIMITATION: toggle-fullscreen acts on the focused pane, not on paneId.
-    // Zellij CLI has no "focus-pane-by-id" action.
+    await this.focusPaneViaPlugin(paneId, session);
     await this.runZellij(["action", "toggle-fullscreen"], session);
   }
 
@@ -234,6 +235,33 @@ export class ZellijCliExecutor implements SessionGateway {
 
   public async renameSession(name: string, newName: string): Promise<void> {
     await this.runZellij(["action", "rename-session", newName], name);
+  }
+
+  // ── Focus plugin helpers ──
+
+  /**
+   * Focus a terminal pane by ID using the remux-focus WASM plugin.
+   * Uses `zellij pipe --plugin file:...` which auto-launches the plugin
+   * if it's not already running (without creating a visible pane).
+   * Falls back silently if the plugin path is not configured.
+   */
+  private async focusPaneViaPlugin(
+    paneId: string,
+    session?: string
+  ): Promise<void> {
+    if (!this.focusPluginPath) return;
+
+    const numId = extractPaneNumericId(paneId);
+    if (numId < 0) return;
+
+    try {
+      await this.runZellij(
+        ["pipe", "--plugin", `file:${this.focusPluginPath}`, "--name", "focus", "--", String(numId)],
+        session
+      );
+    } catch (err) {
+      this.logger?.error(`[zellij] focus pipe failed: ${err}`);
+    }
   }
 }
 

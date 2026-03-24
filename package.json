@@ -38,7 +38,7 @@
     "dev:backend": "VITE_DEV_MODE=1 tsx watch src/backend/cli.ts",
     "dev:frontend": "vite --config vite.config.ts",
     "build": "npm run build:frontend && npm run build:backend && node -e \"require('fs').utimesSync('dist/backend/cli.js',new Date(),new Date())\"",
-    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:backend": "tsc -p tsconfig.backend.json && node -e \"const fs=require('fs');const s='src/backend/zellij/remux-focus.wasm',d='dist/backend/zellij';fs.mkdirSync(d,{recursive:true});if(fs.existsSync(s))fs.copyFileSync(s,d+'/remux-focus.wasm')\"",
     "build:frontend": "vite build --config vite.config.ts",
     "start": "npm run build && node dist/backend/cli.js",
     "typecheck": "tsc -p tsconfig.backend.json --noEmit && tsc -p tsconfig.frontend.json --noEmit",

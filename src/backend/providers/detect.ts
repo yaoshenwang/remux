@@ -9,6 +9,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import type { SessionGateway } from "../tmux/types.js";
 import type { PtyFactory } from "../pty/pty-adapter.js";
@@ -109,7 +111,10 @@ function isTmuxAvailable(
 function createZellijBackend(
   logger?: Pick<Console, "log" | "error">
 ): SessionBackend {
-  const gateway = new ZellijCliExecutor({ logger });
+  // Resolve path to remux-focus.wasm relative to this module
+  const thisDir = path.dirname(fileURLToPath(import.meta.url));
+  const focusPluginPath = path.resolve(thisDir, "../zellij/remux-focus.wasm");
+  const gateway = new ZellijCliExecutor({ logger, focusPluginPath });
   const ptyFactory = new ZellijPtyFactory({ logger });
   return { gateway, ptyFactory, kind: "zellij" };
 }

@@ -36,6 +36,10 @@ export class ZellijPaneIO implements PtyProcess {
 
   /** Previous viewport for diffing (avoid sending unchanged lines). */
   private prevViewport: string[] = [];
+  /** Debounce flag for cursor position queries. */
+  private cursorQueryPending = false;
+  /** Client terminal column count for reflowing wide viewport lines. */
+  private clientCols = 0;
 
   constructor(options: {
     binary?: string;
@@ -97,12 +101,81 @@ export class ZellijPaneIO implements PtyProcess {
     }
     if (event.event !== "pane_update") return;
 
-    const viewport = event.viewport ?? [];
+    let viewport = event.viewport ?? [];
+    // Reflow wide lines to client's column count (for narrow mobile screens)
+    if (this.clientCols > 0) {
+      viewport = reflowViewport(viewport, this.clientCols);
+    }
     const output = this.renderViewport(viewport, event.scrollback, event.is_initial);
     if (output) {
       for (const h of this.dataHandlers) h(output);
     }
     this.prevViewport = viewport;
+
+    // Query cursor position asynchronously and send cursor addressing
+    this.queryCursorPosition();
+  }
+
+  /**
+   * Query cursor_coordinates_in_pane from list-panes and send cursor
+   * positioning escape to xterm.js so the cursor appears at the right place.
+   */
+  private queryCursorPosition(): void {
+    if (this.killed || this.cursorQueryPending) return;
+    this.cursorQueryPending = true;
+
+    execFileAsync(this.binary, [
+      "--session", this.session,
+      "action", "list-panes", "--json", "--all"
+    ], { timeout: 3_000 }).then(({ stdout }) => {
+      this.cursorQueryPending = false;
+      if (this.killed) return;
+
+      const panes = JSON.parse(stdout) as Array<{
+        id: number;
+        is_plugin: boolean;
+        cursor_coordinates_in_pane: [number, number] | null;
+      }>;
+      const numericId = parseInt(this.paneId.replace(/^terminal_/, ""), 10);
+      const pane = panes.find((p) => !p.is_plugin && p.id === numericId);
+      if (pane?.cursor_coordinates_in_pane) {
+        let [col, row] = pane.cursor_coordinates_in_pane;
+        // Remap cursor position if viewport was reflowed to narrower columns
+        if (this.clientCols > 0 && col >= this.clientCols) {
+          // Cursor is beyond the reflowed width — wrap it
+          const extraRows = Math.floor(col / this.clientCols);
+          col = col % this.clientCols;
+          row = row + extraRows;
+        }
+        // Account for lines above cursor that were wrapped by reflow
+        if (this.clientCols > 0) {
+          let extraLines = 0;
+          // Count how many extra lines reflow added before the cursor row
+          const panesJson2 = JSON.parse(stdout) as Array<{
+            id: number; is_plugin: boolean; pane_content_columns: number;
+          }>;
+          const paneInfo = panesJson2.find((p2) => !p2.is_plugin && p2.id === numericId);
+          const paneWidth = paneInfo?.pane_content_columns ?? 0;
+          if (paneWidth > this.clientCols) {
+            // Each original line that's wider than clientCols adds floor(width/clientCols) extra lines
+            // Approximate: use the stored prevViewport to count wrapped lines before cursor
+            // For accuracy, count lines in the original (pre-reflow) viewport up to original row
+            const origViewport = this.prevViewport;
+            for (let i = 0; i < Math.min(row, origViewport.length); i++) {
+              const lineLen = visibleLength(origViewport[i] ?? "");
+              if (lineLen > this.clientCols) {
+                extraLines += Math.ceil(lineLen / this.clientCols) - 1;
+              }
+            }
+          }
+          row += extraLines;
+        }
+        const cursorSeq = `\x1b[${row + 1};${col + 1}H`;
+        for (const h of this.dataHandlers) h(cursorSeq);
+      }
+    }).catch(() => {
+      this.cursorQueryPending = false;
+    });
   }
 
   /**
@@ -159,9 +232,7 @@ export class ZellijPaneIO implements PtyProcess {
 
     if (!hasChanges) return "";
 
-    // Position cursor at bottom of viewport content
-    // (in a real terminal this would be the cursor position from the shell)
-    parts.push(`\x1b[${viewport.length};1H`);
+    // Reset SGR; cursor position is set by queryCursorPosition() async
     parts.push("\x1b[m");
 
     return parts.join("");
@@ -201,9 +272,10 @@ export class ZellijPaneIO implements PtyProcess {
     }
   }
 
-  resize(_cols: number, _rows: number): void {
-    // Zellij pane sizes are determined by the layout, not individually
-    // settable from CLI. Accept the desktop dimensions.
+  resize(cols: number, _rows: number): void {
+    // Zellij pane sizes can't be set from CLI, but we use the client's
+    // column count to reflow wide viewport lines for narrow screens.
+    if (cols > 0) this.clientCols = cols;
   }
 
   onData(handler: (data: string) => void): void {
@@ -223,6 +295,78 @@ export class ZellijPaneIO implements PtyProcess {
     this.dataHandlers = [];
     this.exitHandlers = [];
   }
+}
+
+// ── ANSI-aware line wrapping ──
+
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * Measure visible (non-ANSI) character width of a string.
+ */
+function visibleLength(s: string): number {
+  return s.replace(ANSI_RE, "").length;
+}
+
+/**
+ * Wrap a single ANSI-styled line to `cols` visible characters.
+ * Preserves ANSI escape sequences across wrap boundaries by tracking
+ * active SGR state and re-emitting it at the start of continuation lines.
+ */
+function wrapAnsiLine(line: string, cols: number): string[] {
+  if (cols <= 0 || visibleLength(line) <= cols) return [line];
+
+  const result: string[] = [];
+  let current = "";
+  let visCount = 0;
+  let i = 0;
+  /** Active SGR sequences to replay on continuation lines. */
+  let activeSgr = "";
+
+  while (i < line.length) {
+    const remaining = line.slice(i);
+    const ansiMatch = remaining.match(/^\x1b\[[0-9;]*[A-Za-z]/);
+    if (ansiMatch) {
+      const seq = ansiMatch[0];
+      current += seq;
+      // Track SGR (m) sequences for replay on continuation lines
+      if (seq.endsWith("m")) {
+        if (seq === "\x1b[m" || seq === "\x1b[0m") {
+          activeSgr = "";
+        } else {
+          activeSgr += seq;
+        }
+      }
+      i += seq.length;
+      continue;
+    }
+
+    current += line[i];
+    visCount++;
+    i++;
+
+    if (visCount >= cols) {
+      result.push(current);
+      // Start continuation line with active SGR state
+      current = activeSgr;
+      visCount = 0;
+    }
+  }
+
+  if (current && current !== activeSgr) result.push(current);
+  return result;
+}
+
+/**
+ * Reflow viewport lines to target column width.
+ */
+function reflowViewport(viewport: string[], targetCols: number): string[] {
+  if (targetCols <= 0) return viewport;
+  const result: string[] = [];
+  for (const line of viewport) {
+    result.push(...wrapAnsiLine(line, targetCols));
+  }
+  return result;
 }
 
 /**
