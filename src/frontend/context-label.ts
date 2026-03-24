@@ -1,10 +1,10 @@
-import type { TmuxPaneState } from "../shared/protocol";
+import type { PaneState } from "../shared/protocol";
 
 const SHELL_COMMANDS = new Set(["bash", "zsh", "sh", "fish", "dash", "csh", "tcsh", "ksh", "login"]);
 
 const WORKSPACE_MARKERS = ["dev", "projects", "repos", "workspace", "work", "code", "src", "go"];
 
-export const deriveContext = (panes: TmuxPaneState[]): { project: string; activity: string } | null => {
+export const deriveContext = (panes: PaneState[]): { project: string; activity: string } | null => {
   const pane = panes.find((p) => p.active) ?? panes[0];
   if (!pane) return null;
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createRemuxServer, type RunningServer } from "../../src/backend/server.js";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
-import { FakeTmuxGateway } from "../harness/fakeTmux.js";
+import { FakeSessionGateway } from "../harness/fakeTmux.js";
 import { FakePtyFactory } from "../harness/fakePty.js";
 
 const silentLogger = { log: () => {}, error: () => {} };
@@ -30,7 +30,7 @@ describe("POST /api/upload", () => {
         frontendDir: tmpDir
       },
       {
-        tmux: new FakeTmuxGateway(["main"]),
+        backend: new FakeSessionGateway(["main"]),
         ptyFactory: new FakePtyFactory(),
         authService,
         logger: silentLogger

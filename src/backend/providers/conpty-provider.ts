@@ -11,12 +11,13 @@
 
 import * as pty from "node-pty";
 import os from "node:os";
-import type { TmuxGateway } from "../tmux/types.js";
+import type { MultiplexerBackend } from "../multiplexer/types.js";
 import type { PtyFactory, PtyProcess } from "../pty/pty-adapter.js";
 import type {
-  TmuxPaneState,
-  TmuxSessionSummary,
-  TmuxWindowState,
+  PaneState,
+  SessionSummary,
+  TabState,
+  BackendCapabilities,
 } from "../../shared/protocol.js";
 import { toFlatStringEnv, withoutTmuxEnv } from "../util/env.js";
 
@@ -44,10 +45,20 @@ interface ManagedSession {
 }
 
 // ---------------------------------------------------------------------------
-// ConPtySessionProvider — implements TmuxGateway
+// ConPtySessionProvider — implements MultiplexerBackend
 // ---------------------------------------------------------------------------
 
-export class ConPtySessionProvider implements TmuxGateway {
+export class ConPtySessionProvider implements MultiplexerBackend {
+  public readonly kind = "conpty" as const;
+  public readonly capabilities: BackendCapabilities = {
+    supportsPaneFocusById: false,
+    supportsTabRename: false,
+    supportsSessionRename: true,
+    supportsPreciseScrollback: false,
+    supportsFloatingPanes: false,
+    supportsFullscreenPane: false,
+  };
+
   private sessions = new Map<string, ManagedSession>();
   private readonly defaultShell: string;
   private readonly scrollbackLines: number;
@@ -63,17 +74,17 @@ export class ConPtySessionProvider implements TmuxGateway {
         : process.env.SHELL ?? "/bin/bash";
   }
 
-  async listSessions(): Promise<TmuxSessionSummary[]> {
+  async listSessions(): Promise<SessionSummary[]> {
     return Array.from(this.sessions.values()).map((s) => ({
       name: s.name,
       attached: s.attached,
-      windows: 1, // Each session has one "window" (single pane)
+      tabCount: 1, // Each session has one "tab" (single pane)
     }));
   }
 
-  async listWindows(
+  async listTabs(
     session: string
-  ): Promise<Omit<TmuxWindowState, "panes">[]> {
+  ): Promise<Omit<TabState, "panes">[]> {
     const s = this.sessions.get(session);
     if (!s) return [];
     return [
@@ -88,8 +99,8 @@ export class ConPtySessionProvider implements TmuxGateway {
 
   async listPanes(
     session: string,
-    _windowIndex: number
-  ): Promise<TmuxPaneState[]> {
+    _tabIndex: number
+  ): Promise<PaneState[]> {
     const s = this.sessions.get(session);
     if (!s) return [];
     return [
@@ -116,7 +127,7 @@ export class ConPtySessionProvider implements TmuxGateway {
 
   async createGroupedSession(
     name: string,
-    _targetSession: string
+    target: string
   ): Promise<void> {
     // Grouped sessions share windows in tmux. In our model, we create
     // a new "view" of the same session. For now, just track the name
@@ -126,7 +137,7 @@ export class ConPtySessionProvider implements TmuxGateway {
       // Create it pointing to the target session's PTY output.
       // The server's TerminalRuntime will attach to this.
       this.sessions.set(name, {
-        ...this.getOrThrow(_targetSession),
+        ...this.getOrThrow(target),
         name,
         attached: false,
       });
@@ -153,58 +164,59 @@ export class ConPtySessionProvider implements TmuxGateway {
     // In our model, the server manages this at the WebSocket level.
   }
 
-  async newWindow(_session: string): Promise<void> {
+  async newTab(_session: string): Promise<void> {
     // Not supported in single-pane model. Could be extended later.
-    this.logger?.log("[conpty] newWindow not supported (single-pane sessions)");
+    this.logger?.log("[conpty] newTab not supported (single-pane sessions)");
   }
 
-  async killWindow(_session: string, _windowIndex: number): Promise<void> {
-    // Killing the only window kills the session.
+  async closeTab(_session: string, _tabIndex: number): Promise<void> {
+    // Killing the only tab kills the session.
     await this.killSession(_session);
   }
 
-  async selectWindow(
+  async selectTab(
     _session: string,
-    _windowIndex: number
+    _tabIndex: number
   ): Promise<void> {
-    // No-op: single window per session.
+    // No-op: single tab per session.
   }
 
-  async splitWindow(
+  async splitPane(
     _paneId: string,
-    _orientation: "h" | "v"
+    _direction: "right" | "down"
   ): Promise<void> {
-    this.logger?.log("[conpty] splitWindow not supported");
+    this.logger?.log("[conpty] splitPane not supported");
   }
 
-  async killPane(paneId: string): Promise<void> {
+  async closePane(paneId: string): Promise<void> {
     const sessionName = this.sessionNameFromPaneId(paneId);
     if (sessionName) {
       await this.killSession(sessionName);
     }
   }
 
-  async selectPane(_paneId: string): Promise<void> {
+  async focusPane(_paneId: string): Promise<void> {
     // No-op: single pane per session.
   }
 
-  async zoomPane(_paneId: string): Promise<void> {
+  async toggleFullscreen(_paneId: string): Promise<void> {
     // No-op: single pane is always "zoomed".
   }
 
-  async isPaneZoomed(_paneId: string): Promise<boolean> {
+  async isPaneFullscreen(_paneId: string): Promise<boolean> {
     return false;
   }
 
-  async capturePane(paneId: string, lines: number): Promise<{ text: string; paneWidth: number }> {
+  async capturePane(paneId: string, options?: { lines?: number }): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
+    const lines = options?.lines ?? 1000;
     const sessionName = this.sessionNameFromPaneId(paneId);
-    if (!sessionName) return { text: "", paneWidth: 80 };
+    if (!sessionName) return { text: "", paneWidth: 80, isApproximate: false };
     const session = this.sessions.get(sessionName);
-    if (!session) return { text: "", paneWidth: 80 };
+    if (!session) return { text: "", paneWidth: 80, isApproximate: false };
 
     const buffer = session.outputBuffer;
     const start = Math.max(0, buffer.length - lines);
-    return { text: buffer.slice(start).join(""), paneWidth: session.cols };
+    return { text: buffer.slice(start).join(""), paneWidth: session.cols, isApproximate: false };
   }
 
   async renameSession(_name: string, _newName: string): Promise<void> {
@@ -215,8 +227,8 @@ export class ConPtySessionProvider implements TmuxGateway {
     this.sessions.set(_newName, session);
   }
 
-  async renameWindow(_session: string, _windowIndex: number, _newName: string): Promise<void> {
-    // No-op: single window per session, name is derived from command.
+  async renameTab(_session: string, _tabIndex: number, _newName: string): Promise<void> {
+    // No-op: single tab per session, name is derived from command.
   }
 
   // ---------------------------------------------------------------------------
@@ -328,7 +340,7 @@ export class ConPtySessionProvider implements TmuxGateway {
  * PtyFactory that connects to sessions managed by ConPtySessionProvider
  * instead of shelling out to `tmux attach`.
  *
- * When spawnTmuxAttach is called, it returns a PtyProcess that reads/writes
+ * When spawnAttach is called, it returns a PtyProcess that reads/writes
  * to the existing ConPTY session.
  */
 export class ConPtyFactory implements PtyFactory {
@@ -337,7 +349,7 @@ export class ConPtyFactory implements PtyFactory {
     private readonly logger?: Pick<Console, "log" | "error">
   ) {}
 
-  spawnTmuxAttach(session: string): PtyProcess {
+  spawnAttach(session: string): PtyProcess {
     const ptyProcess = this.provider.getSessionPty(session);
     if (!ptyProcess) {
       throw new Error(

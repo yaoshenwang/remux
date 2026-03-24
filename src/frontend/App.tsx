@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
 import { deriveContext, formatContext } from "./context-label";
+import { Toolbar, type ToolbarHandle, type Snippet } from "./components/Toolbar";
 import type {
   ControlServerMessage,
-  TmuxPaneState,
-  TmuxSessionState,
-  TmuxSessionSummary,
-  TmuxStateSnapshot,
-  TmuxWindowState
+  PaneState,
+  SessionState,
+  SessionSummary,
+  WorkspaceSnapshot,
+  TabState,
+  ClientView,
+  BackendCapabilities
 } from "../shared/protocol";
 
 interface ServerConfig {
@@ -20,10 +23,8 @@ interface ServerConfig {
   scrollbackLines: number;
   pollIntervalMs: number;
   uploadMaxSize?: number;
+  backendKind?: "tmux" | "zellij" | "conpty";
 }
-
-type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
-type ModifierMode = "off" | "sticky" | "locked";
 
 declare global {
   interface Window {
@@ -100,6 +101,8 @@ export const App = () => {
   const reconnectAttemptRef = useRef(0);
   /** Set to true when user-initiated or expected close (e.g. auth error) */
   const suppressReconnectRef = useRef(false);
+  /** Zellij pane viewport width — used to match xterm cols to pane content. */
+  const paneViewportColsRef = useRef(0);
 
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -109,10 +112,12 @@ export const App = () => {
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [authReady, setAuthReady] = useState(false);
 
-  const [snapshot, setSnapshot] = useState<TmuxStateSnapshot>({ sessions: [], capturedAt: "" });
+  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>({ sessions: [], capturedAt: "" });
+  const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
+  const [clientView, setClientView] = useState<ClientView | null>(null);
   const [attachedSession, setAttachedSession] = useState<string>("");
   const attachedSessionRef = useRef("");
-  const [sessionChoices, setSessionChoices] = useState<TmuxSessionSummary[] | null>(null);
+  const [sessionChoices, setSessionChoices] = useState<SessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeEnabled, setComposeEnabled] = useState(true);
   const [composeText, setComposeText] = useState("");
@@ -125,19 +130,21 @@ export const App = () => {
     Number(localStorage.getItem("remux-scroll-font-size")) || 0
   );
 
-  const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
-    ctrl: "off",
-    alt: "off",
-    shift: "off",
-    meta: "off"
+  const toolbarRef = useRef<ToolbarHandle>(null);
+
+  const [snippets, setSnippets] = useState<Snippet[]>(() => {
+    try {
+      const stored = localStorage.getItem("remux-snippets");
+      if (!stored) return [];
+      const parsed: unknown = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed as Snippet[] : [];
+    } catch {
+      return [];
+    }
   });
-  const modifierTapRef = useRef<{ key: ModifierKey; at: number } | null>(null);
+  const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
 
   const [theme, setTheme] = useState(localStorage.getItem("remux-theme") ?? "midnight");
-  const [toolbarExpanded, setToolbarExpanded] = useState(
-    localStorage.getItem("remux-toolbar-expanded") === "true"
-  );
-  const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
 
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
@@ -154,7 +161,7 @@ export const App = () => {
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
 
-  const activeSession: TmuxSessionState | undefined = useMemo(() => {
+  const activeSession: SessionState | undefined = useMemo(() => {
     const selected = snapshot.sessions.find((session) => session.name === attachedSession);
     if (selected) {
       return selected;
@@ -162,35 +169,35 @@ export const App = () => {
     return snapshot.sessions.find((session) => session.attached) ?? snapshot.sessions[0];
   }, [snapshot.sessions, attachedSession]);
 
-  const activeWindow: TmuxWindowState | undefined = useMemo(() => {
+  const activeTab: TabState | undefined = useMemo(() => {
     if (!activeSession) {
       return undefined;
     }
     // Use local selection if it still exists in the snapshot
     if (selectedWindowIndex !== null) {
-      const selected = activeSession.windowStates.find(
-        (window) => window.index === selectedWindowIndex
+      const selected = activeSession.tabs.find(
+        (tab) => tab.index === selectedWindowIndex
       );
       if (selected) {
         return selected;
       }
     }
-    return activeSession.windowStates.find((window) => window.active) ?? activeSession.windowStates[0];
+    return activeSession.tabs.find((tab) => tab.active) ?? activeSession.tabs[0];
   }, [activeSession, selectedWindowIndex]);
 
-  const activePane: TmuxPaneState | undefined = useMemo(() => {
-    if (!activeWindow) {
+  const activePane: PaneState | undefined = useMemo(() => {
+    if (!activeTab) {
       return undefined;
     }
     // Use local selection if it still exists in the snapshot
     if (selectedPaneId !== null) {
-      const selected = activeWindow.panes.find((pane) => pane.id === selectedPaneId);
+      const selected = activeTab.panes.find((pane) => pane.id === selectedPaneId);
       if (selected) {
         return selected;
       }
     }
-    return activeWindow.panes.find((pane) => pane.active) ?? activeWindow.panes[0];
-  }, [activeWindow, selectedPaneId]);
+    return activeTab.panes.find((pane) => pane.active) ?? activeTab.panes[0];
+  }, [activeTab, selectedPaneId]);
 
   const topStatus = useMemo(() => {
     if (errorMessage) {
@@ -225,48 +232,18 @@ export const App = () => {
     controlSocketRef.current.send(JSON.stringify(payload));
   };
 
-  const clearStickyModifiers = (): void => {
-    setModifiers((previous) => ({
-      ctrl: previous.ctrl === "sticky" ? "off" : previous.ctrl,
-      alt: previous.alt === "sticky" ? "off" : previous.alt,
-      shift: previous.shift === "sticky" ? "off" : previous.shift,
-      meta: previous.meta === "sticky" ? "off" : previous.meta
-    }));
-  };
-
-  const applyModifiers = (input: string): string => {
-    let output = input;
-
-    if (modifiers.shift !== "off" && output.length === 1 && /^[a-z]$/.test(output)) {
-      output = output.toUpperCase();
-    }
-
-    if (modifiers.ctrl !== "off" && output.length === 1) {
-      output = String.fromCharCode(output.toUpperCase().charCodeAt(0) & 31);
-    }
-
-    if (modifiers.alt !== "off" || modifiers.meta !== "off") {
-      output = `\u001b${output}`;
-    }
-
-    clearStickyModifiers();
-    return output;
-  };
-
-  const sendTerminal = (input: string, withModifiers = true): void => {
+  const sendRawToSocket = useCallback((data: string): void => {
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       debugLog("send_terminal.blocked", {
         readyState: socket?.readyState,
-        withModifiers,
-        bytes: input.length
+        bytes: data.length
       });
       return;
     }
-    const output = withModifiers ? applyModifiers(input) : input;
-    debugLog("send_terminal", { withModifiers, inputBytes: input.length, outputBytes: output.length });
-    socket.send(output);
-  };
+    debugLog("send_terminal", { bytes: data.length });
+    socket.send(data);
+  }, []);
 
   const sendTerminalResize = (): void => {
     const socket = terminalSocketRef.current;
@@ -286,34 +263,6 @@ export const App = () => {
         rows: terminal.rows
       })
     );
-  };
-
-  const toggleModifier = (key: ModifierKey): void => {
-    const now = Date.now();
-    const isDoubleTap =
-      modifierTapRef.current &&
-      modifierTapRef.current.key === key &&
-      now - modifierTapRef.current.at <= 300;
-
-    modifierTapRef.current = { key, at: now };
-
-    setModifiers((previous) => {
-      const current = previous[key];
-      let next: ModifierMode;
-
-      if (current === "locked") {
-        next = "off";
-      } else if (isDoubleTap) {
-        next = "locked";
-      } else {
-        next = current === "sticky" ? "off" : "sticky";
-      }
-
-      return {
-        ...previous,
-        [key]: next
-      };
-    });
   };
 
   const readTerminalBuffer = (): string => {
@@ -456,6 +405,7 @@ export const App = () => {
           } else {
             sessionStorage.removeItem("remux-password");
           }
+          if (message.capabilities) setCapabilities(message.capabilities);
           openTerminalSocket(passwordValue, message.clientId);
           return;
         case "auth_error":
@@ -490,33 +440,58 @@ export const App = () => {
             sessions: message.sessions.map((session) => ({
               name: session.name,
               attached: session.attached,
-              windows: session.windows
+              tabCount: session.tabCount
             }))
           });
           setSessionChoices(message.sessions);
           return;
-        case "tmux_state":
-          debugLog("control_socket.tmux_state", {
-            capturedAt: message.state.capturedAt,
-            sessionCount: message.state.sessions.length,
-            sessions: message.state.sessions.map((session) => {
-              const activeWindow =
-                session.windowStates.find((windowState) => windowState.active) ?? session.windowStates[0];
-              const activePane = activeWindow?.panes.find((pane) => pane.active) ?? activeWindow?.panes[0];
+        case "workspace_state":
+          debugLog("control_socket.workspace_state", {
+            capturedAt: message.workspace.capturedAt,
+            sessionCount: message.workspace.sessions.length,
+            sessions: message.workspace.sessions.map((session) => {
+              const aTab =
+                session.tabs.find((tab) => tab.active) ?? session.tabs[0];
+              const aPane = aTab?.panes.find((pane) => pane.active) ?? aTab?.panes[0];
               return {
                 name: session.name,
                 attached: session.attached,
-                activeWindow: activeWindow ? `${activeWindow.index}:${activeWindow.name}` : null,
-                activePane: activePane?.id ?? null,
-                activePaneZoomed: activePane?.zoomed ?? null
+                activeTab: aTab ? `${aTab.index}:${aTab.name}` : null,
+                activePane: aPane?.id ?? null,
+                activePaneZoomed: aPane?.zoomed ?? null
               };
             })
           });
-          setSnapshot(message.state);
+          setSnapshot(message.workspace);
+          if (message.clientView) setClientView(message.clientView);
           // Clear local selections — the server now sends per-client active state,
-          // so the snapshot already reflects this client's active window/pane.
+          // so the snapshot already reflects this client's active tab/pane.
           setSelectedWindowIndex(null);
           setSelectedPaneId(null);
+
+          // Sync xterm columns to the pane's viewport width so the terminal
+          // fills exactly the pane content area (no empty right half on wide
+          // screens, no truncation on narrow screens).
+          if (message.clientView) {
+            const session = message.workspace.sessions.find(
+              (s) => s.name === message.clientView!.sessionName
+            );
+            const tab = session?.tabs.find(
+              (t) => t.index === message.clientView!.tabIndex
+            );
+            const pane = tab?.panes.find(
+              (p) => p.id === message.clientView!.paneId
+            );
+            const paneWidth = pane?.width ?? 0;
+            if (paneWidth > 0) {
+              paneViewportColsRef.current = paneWidth;
+              const terminal = terminalRef.current;
+              if (terminal && terminal.cols !== paneWidth) {
+                terminal.resize(paneWidth, terminal.rows);
+                sendTerminalResize();
+              }
+            }
+          }
           return;
         case "scrollback":
           // Legacy handler — scroll mode now reads from xterm buffer directly
@@ -615,7 +590,8 @@ export const App = () => {
     });
 
     const disposable = terminal.onData((data) => {
-      sendTerminal(data);
+      const output = toolbarRef.current?.applyModifiersAndClear(data) ?? data;
+      sendRawToSocket(output);
     });
 
     terminalRef.current = terminal;
@@ -634,6 +610,14 @@ export const App = () => {
         terminal.options.fontSize = preferredFontSize;
       }
       fitAddon.fit();
+      // Override cols with pane viewport width when known (zellij mode).
+      // FitAddon sizes to the CSS container, but the viewport snapshot has
+      // a fixed width determined by the zellij pane — match it so content
+      // fills exactly without empty space or truncation.
+      const paneCols = paneViewportColsRef.current;
+      if (paneCols > 0 && terminal.cols !== paneCols) {
+        terminal.resize(paneCols, terminal.rows);
+      }
       sendTerminalResize();
     };
 
@@ -730,11 +714,6 @@ export const App = () => {
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
 
-  // Persist toolbar expanded state
-  useEffect(() => {
-    localStorage.setItem("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
-  }, [toolbarExpanded]);
-
   // Persist sticky zoom state
   useEffect(() => {
     localStorage.setItem("remux-sticky-zoom", stickyZoom ? "true" : "false");
@@ -745,21 +724,21 @@ export const App = () => {
       return;
     }
     const sessionSummary = snapshot.sessions.map((session) => {
-      const activeWindow =
-        session.windowStates.find((windowState) => windowState.active) ?? session.windowStates[0];
-      const activePane = activeWindow?.panes.find((pane) => pane.active) ?? activeWindow?.panes[0];
+      const aTab =
+        session.tabs.find((tab) => tab.active) ?? session.tabs[0];
+      const aPane = aTab?.panes.find((pane) => pane.active) ?? aTab?.panes[0];
       return {
         name: session.name,
         attached: session.attached,
-        activeWindow: activeWindow ? `${activeWindow.index}:${activeWindow.name}` : null,
-        activePane: activePane?.id ?? null,
-        activePaneZoomed: activePane?.zoomed ?? null
+        activeTab: aTab ? `${aTab.index}:${aTab.name}` : null,
+        activePane: aPane?.id ?? null,
+        activePaneZoomed: aPane?.zoomed ?? null
       };
     });
     const derived = {
       attachedSession,
       activeSession: activeSession?.name ?? null,
-      activeWindow: activeWindow ? `${activeWindow.index}:${activeWindow.name}` : null,
+      activeTab: activeTab ? `${activeTab.index}:${activeTab.name}` : null,
       activePane: activePane?.id ?? null,
       activePaneZoomed: activePane?.zoomed ?? null,
       topStatus,
@@ -768,7 +747,7 @@ export const App = () => {
     };
     window.__remuxDebugState = derived;
     debugLog("derived_state", derived);
-  }, [attachedSession, activeSession, activeWindow, activePane, snapshot, topStatus]);
+  }, [attachedSession, activeSession, activeTab, activePane, snapshot, topStatus]);
 
   // Handle paste events for non-text content (images, files)
   useEffect(() => {
@@ -868,22 +847,23 @@ export const App = () => {
     xhr.send(file);
   };
 
-  const focusTerminal = (): void => {
+  const focusTerminal = useCallback((): void => {
     terminalRef.current?.focus();
-  };
+  }, []);
 
-  const selectWindow = (windowState: TmuxWindowState): void => {
+  const selectTab = (tab: TabState): void => {
     if (!activeSession) {
       return;
     }
-    setSelectedWindowIndex(windowState.index);
+    setSelectedWindowIndex(tab.index);
     setSelectedPaneId(null);
-    sendControl({
-      type: "select_window",
-      session: activeSession.name,
-      windowIndex: windowState.index,
-      ...(stickyZoom && !windowState.active ? { stickyZoom: true } : {})
-    });
+    sendControl({ type: "select_tab", session: activeSession.name, tabIndex: tab.index });
+    if (stickyZoom && !tab.active) {
+      const pane = tab.panes.find((p) => p.active) ?? tab.panes[0];
+      if (pane && !pane.zoomed) {
+        sendControl({ type: "toggle_fullscreen", paneId: pane.id });
+      }
+    }
   };
 
   return (
@@ -897,7 +877,7 @@ export const App = () => {
           =
         </button>
         <div className="top-title">
-          Window: {activeWindow ? `${activeWindow.index}: ${activeWindow.name}` : "-"}
+          Tab: {activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}
         </div>
         <div className="top-actions">
           <span
@@ -967,95 +947,15 @@ export const App = () => {
         }}
       />
 
-      {viewMode === "terminal" && <section className="toolbar" onMouseUp={focusTerminal}>
-        {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
-        <div className="toolbar-main">
-          <button onClick={() => sendTerminal("\u001b")}>Esc</button>
-          <button className={`modifier ${modifiers.ctrl}`} onClick={() => toggleModifier("ctrl")}>Ctrl</button>
-          <button className={`modifier ${modifiers.alt}`} onClick={() => toggleModifier("alt")}>Alt</button>
-          <button className={`modifier ${modifiers.meta}`} onClick={() => toggleModifier("meta")}>Cmd</button>
-          <button onClick={() => sendTerminal("/")}>/</button>
-          <button onClick={() => sendTerminal("@")}>@</button>
-          <button onClick={() => sendTerminal("\u001b[H")}>Hm</button>
-          <button onClick={() => sendTerminal("\u001b[A")}>↑</button>
-          <button onClick={() => sendTerminal("\u001b[F")}>Ed</button>
-        </div>
-
-        {/* Row 2: ^C, ^B, ^R, Sft, Tab, Enter, ..., ←, ↓, → */}
-        <div className="toolbar-main">
-          <button className="danger" onClick={() => sendTerminal("\u0003", false)}>^C</button>
-          <button onClick={() => sendTerminal("\u0002", false)}>^B</button>
-          <button onClick={() => sendTerminal("\u0012", false)}>^R</button>
-          <button className={`modifier ${modifiers.shift}`} onClick={() => toggleModifier("shift")}>Sft</button>
-          <button onClick={() => sendTerminal("\t")}>Tab</button>
-          <button onClick={() => sendTerminal("\r")}>Enter</button>
-          <button
-            className="toolbar-expand-btn"
-            onClick={() => {
-              setToolbarExpanded((v) => !v);
-              if (toolbarExpanded) {
-                setToolbarDeepExpanded(false);
-              }
-            }}
-          >
-            {toolbarExpanded ? "..." : "..."}
-          </button>
-          <button onClick={() => sendTerminal("\u001b[D")}>←</button>
-          <button onClick={() => sendTerminal("\u001b[B")}>↓</button>
-          <button onClick={() => sendTerminal("\u001b[C")}>→</button>
-        </div>
-
-        {/* Expanded section (collapsible) */}
-        <div className={`toolbar-row-secondary ${toolbarExpanded ? "expanded" : ""}`}>
-          <button onClick={() => sendTerminal("\u0004", false)}>^D</button>
-          <button onClick={() => sendTerminal("\u000c", false)}>^L</button>
-          <button
-            onClick={async () => {
-              try {
-                const clip = await navigator.clipboard.readText();
-                sendTerminal(clip, false);
-              } catch {
-                setStatusMessage("clipboard read failed");
-              }
-            }}
-          >
-            Paste
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Upload
-          </button>
-          {/* file input moved outside toolbar for scroll mode access */}
-          <button onClick={() => sendTerminal("\u001b[3~")}>Del</button>
-          <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
-          <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>
-          <button onClick={() => sendTerminal("\u001b[6~")}>PgDn</button>
-          <button
-            className="toolbar-expand-btn"
-            onClick={() => setToolbarDeepExpanded((v) => !v)}
-          >
-            {toolbarDeepExpanded ? "F-Keys ▲" : "F-Keys ▼"}
-          </button>
-        </div>
-
-        {/* F-keys row (collapsible from within expanded) */}
-        {toolbarExpanded && (
-          <div className={`toolbar-row-deep ${toolbarDeepExpanded ? "expanded" : ""}`}>
-            <div className="toolbar-row-deep-fkeys">
-              {[
-                "\u001bOP", "\u001bOQ", "\u001bOR", "\u001bOS",
-                "\u001b[15~", "\u001b[17~", "\u001b[18~", "\u001b[19~",
-                "\u001b[20~", "\u001b[21~", "\u001b[23~", "\u001b[24~"
-              ].map((seq, i) => (
-                <button key={`f${i + 1}`} onClick={() => sendTerminal(seq, false)}>
-                  F{i + 1}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>}
+      <Toolbar
+        ref={toolbarRef}
+        sendRaw={sendRawToSocket}
+        onFocusTerminal={focusTerminal}
+        fileInputRef={fileInputRef}
+        setStatusMessage={setStatusMessage}
+        snippets={snippets}
+        hidden={viewMode !== "terminal"}
+      />
 
       {composeEnabled && (
         <section className="compose-bar">
@@ -1154,7 +1054,7 @@ export const App = () => {
                     >
                       <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
                       {(() => {
-                        const aw = session.windowStates.find((w) => w.active) ?? session.windowStates[0];
+                        const aw = session.tabs.find((t) => t.active) ?? session.tabs[0];
                         const label = aw ? formatContext(deriveContext(aw.panes)) : "";
                         return label ? <span className="item-context">{label}</span> : null;
                       })()}
@@ -1171,12 +1071,12 @@ export const App = () => {
               + New Session
             </button>
 
-            <h3>Windows ({activeSession?.name ?? "-"})</h3>
-            <ul data-testid="windows-list">
+            <h3>Tabs ({activeSession?.name ?? "-"})</h3>
+            <ul data-testid="tabs-list">
               {activeSession
-                ? activeSession.windowStates.map((windowState) => (
-                    <li key={`${activeSession.name}-${windowState.index}`}>
-                      {renamingWindow?.session === activeSession.name && renamingWindow?.index === windowState.index ? (
+                ? activeSession.tabs.map((tab) => (
+                    <li key={`${activeSession.name}-${tab.index}`}>
+                      {renamingWindow?.session === activeSession.name && renamingWindow?.index === tab.index ? (
                         <input
                           className="rename-input"
                           value={renameWindowValue}
@@ -1184,7 +1084,7 @@ export const App = () => {
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && renameWindowValue.trim()) {
                               renameHandledByKeyRef.current = true;
-                              sendControl({ type: "rename_window", session: activeSession.name, windowIndex: windowState.index, newName: renameWindowValue.trim() });
+                              sendControl({ type: "rename_tab", session: activeSession.name, tabIndex: tab.index, newName: renameWindowValue.trim() });
                               setRenamingWindow(null);
                             } else if (e.key === "Escape") {
                               renameHandledByKeyRef.current = true;
@@ -1196,30 +1096,30 @@ export const App = () => {
                               renameHandledByKeyRef.current = false;
                               return;
                             }
-                            if (renameWindowValue.trim() && renameWindowValue.trim() !== windowState.name) {
-                              sendControl({ type: "rename_window", session: activeSession.name, windowIndex: windowState.index, newName: renameWindowValue.trim() });
+                            if (renameWindowValue.trim() && renameWindowValue.trim() !== tab.name) {
+                              sendControl({ type: "rename_tab", session: activeSession.name, tabIndex: tab.index, newName: renameWindowValue.trim() });
                             }
                             setRenamingWindow(null);
                           }}
                           autoFocus
-                          data-testid="rename-window-input"
+                          data-testid="rename-tab-input"
                         />
                       ) : (
                         <button
-                          onClick={() => selectWindow(windowState)}
+                          onClick={() => selectTab(tab)}
                           onDoubleClick={(e) => {
                             e.preventDefault();
-                            setRenamingWindow({ session: activeSession.name, index: windowState.index });
-                            setRenameWindowValue(windowState.name);
+                            setRenamingWindow({ session: activeSession.name, index: tab.index });
+                            setRenameWindowValue(tab.name);
                           }}
-                          className={windowState.index === activeWindow?.index ? "active" : ""}
+                          className={tab.index === activeTab?.index ? "active" : ""}
                         >
                           <span className="item-name">
-                            {windowState.index}: {windowState.name}
-                            {windowState.index === activeWindow?.index ? " *" : ""}
+                            {tab.index}: {tab.name}
+                            {tab.index === activeTab?.index ? " *" : ""}
                           </span>
                           {(() => {
-                            const label = formatContext(deriveContext(windowState.panes));
+                            const label = formatContext(deriveContext(tab.panes));
                             return label ? <span className="item-context">{label}</span> : null;
                           })()}
                         </button>
@@ -1231,29 +1131,28 @@ export const App = () => {
             <button
               className="drawer-section-action"
               onClick={() =>
-                activeSession && sendControl({ type: "new_window", session: activeSession.name })
+                activeSession && sendControl({ type: "new_tab", session: activeSession.name })
               }
               disabled={!activeSession}
-              data-testid="new-window-button"
+              data-testid="new-tab-button"
             >
-              + New Window
+              + New Tab
             </button>
 
-            <h3>Panes ({activeWindow ? `${activeWindow.index}` : "-"})</h3>
+            <h3>Panes ({activeTab ? `${activeTab.index}` : "-"})</h3>
             <ul>
-              {activeWindow
-                ? activeWindow.panes.map((pane) => {
+              {activeTab
+                ? activeTab.panes.map((pane) => {
                     const isActive = pane.id === activePane?.id;
                     return (
                       <li key={pane.id}>
                         <button
                           onClick={() => {
                             setSelectedPaneId(pane.id);
-                            sendControl({
-                              type: "select_pane",
-                              paneId: pane.id,
-                              ...(stickyZoom && !isActive ? { stickyZoom: true } : {})
-                            });
+                            sendControl({ type: "select_pane", paneId: pane.id });
+                            if (stickyZoom && !isActive && !pane.zoomed) {
+                              sendControl({ type: "toggle_fullscreen", paneId: pane.id });
+                            }
                           }}
                           className={isActive ? "active" : ""}
                         >
@@ -1278,7 +1177,7 @@ export const App = () => {
               <button
                 onClick={() =>
                   activePane &&
-                  sendControl({ type: "split_pane", paneId: activePane.id, orientation: "h" })
+                  sendControl({ type: "split_pane", paneId: activePane.id, direction: "right" })
                 }
                 disabled={!activePane}
               >
@@ -1287,7 +1186,7 @@ export const App = () => {
               <button
                 onClick={() =>
                   activePane &&
-                  sendControl({ type: "split_pane", paneId: activePane.id, orientation: "v" })
+                  sendControl({ type: "split_pane", paneId: activePane.id, direction: "down" })
                 }
                 disabled={!activePane}
               >
@@ -1297,9 +1196,9 @@ export const App = () => {
             <button
               className="drawer-section-action"
               onClick={() =>
-                activePane && sendControl({ type: "zoom_pane", paneId: activePane.id })
+                activePane && sendControl({ type: "toggle_fullscreen", paneId: activePane.id })
               }
-              disabled={!activePane || !activeWindow || activeWindow.paneCount <= 1}
+              disabled={!activePane || !activeTab || activeTab.paneCount <= 1}
             >
               Zoom Pane
             </button>
@@ -1316,7 +1215,7 @@ export const App = () => {
               onClick={() => {
                 if (!activePane) return;
                 setSelectedPaneId(null);
-                sendControl({ type: "kill_pane", paneId: activePane.id });
+                sendControl({ type: "close_pane", paneId: activePane.id });
               }}
               disabled={!activePane}
             >
@@ -1325,18 +1224,18 @@ export const App = () => {
             <button
               className="drawer-section-action"
               onClick={() => {
-                if (!activeSession || !activeWindow) return;
+                if (!activeSession || !activeTab) return;
                 setSelectedWindowIndex(null);
                 setSelectedPaneId(null);
                 sendControl({
-                  type: "kill_window",
+                  type: "close_tab",
                   session: activeSession.name,
-                  windowIndex: activeWindow.index
+                  tabIndex: activeTab.index
                 });
               }}
-              disabled={!activeSession || !activeWindow}
+              disabled={!activeSession || !activeTab}
             >
-              Kill Window
+              Close Tab
             </button>
 
             <h3>Appearance</h3>
@@ -1371,8 +1270,104 @@ export const App = () => {
               localStorage.removeItem("remux-scroll-font-size");
             }}>Reset to Auto</button>
 
+            <h3>Snippets</h3>
+            <div className="snippet-list">
+              {snippets.map((s) => (
+                <div className="snippet-item" key={s.id}>
+                  <span className="snippet-label">{s.label}</span>
+                  <span className="snippet-cmd">{s.command}{s.autoEnter ? " ↵" : ""}</span>
+                  <button onClick={() => setEditingSnippet({ ...s })}>&#x270E;</button>
+                  <button onClick={() => {
+                    const next = snippets.filter((x) => x.id !== s.id);
+                    setSnippets(next);
+                    localStorage.setItem("remux-snippets", JSON.stringify(next));
+                  }}>&times;</button>
+                </div>
+              ))}
+            </div>
+            {editingSnippet ? (
+              <div className="snippet-form">
+                <input
+                  placeholder="Label (button text)"
+                  value={editingSnippet.label}
+                  onChange={(e) => setEditingSnippet({ ...editingSnippet, label: e.target.value })}
+                />
+                <input
+                  placeholder="Command"
+                  value={editingSnippet.command}
+                  onChange={(e) => setEditingSnippet({ ...editingSnippet, command: e.target.value })}
+                />
+                <label className="snippet-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={editingSnippet.autoEnter}
+                    onChange={(e) => setEditingSnippet({ ...editingSnippet, autoEnter: e.target.checked })}
+                  />
+                  Auto Enter
+                </label>
+                <div className="snippet-form-actions">
+                  <button onClick={() => {
+                    if (!editingSnippet.label.trim() || !editingSnippet.command.trim()) return;
+                    const exists = snippets.some((s) => s.id === editingSnippet.id);
+                    const next = exists
+                      ? snippets.map((s) => s.id === editingSnippet.id ? editingSnippet : s)
+                      : [...snippets, editingSnippet];
+                    setSnippets(next);
+                    localStorage.setItem("remux-snippets", JSON.stringify(next));
+                    setEditingSnippet(null);
+                  }}>Save</button>
+                  <button onClick={() => setEditingSnippet(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button className="drawer-section-action" onClick={() => setEditingSnippet({
+                id: crypto.randomUUID(),
+                label: "",
+                command: "",
+                autoEnter: true
+              })}>+ Add Snippet</button>
+            )}
+
             {serverConfig?.version && (
-              <p className="drawer-version">v{serverConfig.version}</p>
+              <div className="drawer-footer-info">
+                <p className="drawer-version">v{serverConfig.version}</p>
+                {serverConfig.backendKind && (
+                  <div className="drawer-backend-switcher">
+                    <span className="drawer-backend-label">Backend:</span>
+                    {(["tmux", "zellij", "conpty"] as const).map((kind) => (
+                      <button
+                        key={kind}
+                        className={`drawer-backend-btn${serverConfig.backendKind === kind ? " active" : ""}`}
+                        disabled={serverConfig.backendKind === kind}
+                        onClick={async () => {
+                          const token = new URLSearchParams(window.location.search).get("token");
+                          try {
+                            const resp = await fetch("/api/switch-backend", {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                                ...(password ? { "X-Password": password } : {})
+                              },
+                              body: JSON.stringify({ backend: kind })
+                            });
+                            if (resp.ok) {
+                              // Refresh config to update backendKind display
+                              const newConfig = await fetch("/api/config").then((r) => r.json());
+                              setServerConfig(newConfig);
+                            } else {
+                              const err = await resp.json().catch(() => ({}));
+                              setErrorMessage(`Switch failed: ${(err as {error?: string}).error ?? resp.statusText}`);
+                            }
+                          } catch {
+                            setErrorMessage("Failed to switch backend");
+                          }
+                        }}
+                      >{kind}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </aside>
         </div>
@@ -1428,7 +1423,7 @@ export const App = () => {
             onClick={() => {
               // Shell-quote the path to handle spaces and metacharacters
               const quoted = `'${uploadToast.path.replace(/'/g, "'\\''")}'`;
-              sendTerminal(quoted, false);
+              sendRawToSocket(quoted);
               setUploadToast(null);
             }}
           >

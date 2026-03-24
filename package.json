@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.1.21",
+  "version": "0.1.34",
   "description": "Remote tmux web client — monitor and control terminal sessions from any device",
   "license": "MIT",
   "repository": {
@@ -38,7 +38,7 @@
     "dev:backend": "VITE_DEV_MODE=1 tsx watch src/backend/cli.ts",
     "dev:frontend": "vite --config vite.config.ts",
     "build": "npm run build:frontend && npm run build:backend && node -e \"require('fs').utimesSync('dist/backend/cli.js',new Date(),new Date())\"",
-    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:backend": "tsc -p tsconfig.backend.json && node -e \"const fs=require('fs');const s='src/backend/zellij/remux-focus.wasm',d='dist/backend/zellij';fs.mkdirSync(d,{recursive:true});if(fs.existsSync(s))fs.copyFileSync(s,d+'/remux-focus.wasm')\"",
     "build:frontend": "vite build --config vite.config.ts",
     "start": "npm run build && node dist/backend/cli.js",
     "typecheck": "tsc -p tsconfig.backend.json --noEmit && tsc -p tsconfig.frontend.json --noEmit",
@@ -73,12 +73,12 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
-    "@vitejs/plugin-react": "^5.1.4",
+    "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.1.2",
     "jsdom": "^29.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vite": "^7.3.1",
+    "vite": "^8.0.1",
     "vitest": "^4.1.0"
   }
 }

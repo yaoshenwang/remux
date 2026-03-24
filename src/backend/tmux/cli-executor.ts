@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parsePanes, parseSessions, parseWindows } from "./parser.js";
-import type { TmuxGateway } from "./types.js";
+import type { MultiplexerBackend } from "../multiplexer/types.js";
+import type { BackendCapabilities } from "../../shared/protocol.js";
 import { withoutTmuxEnv } from "../util/env.js";
 
 const execFileAsync = promisify(execFile);
@@ -25,7 +26,17 @@ const isNoServerRunningError = (message: string): boolean =>
     message
   );
 
-export class TmuxCliExecutor implements TmuxGateway {
+export class TmuxCliExecutor implements MultiplexerBackend {
+  public readonly kind = "tmux" as const;
+  public readonly capabilities: BackendCapabilities = {
+    supportsPaneFocusById: false,
+    supportsTabRename: true,
+    supportsSessionRename: true,
+    supportsPreciseScrollback: true,
+    supportsFloatingPanes: false,
+    supportsFullscreenPane: true,
+  };
+
   private readonly tmuxBinary: string;
   private readonly tmuxArgsPrefix: string[];
   private readonly timeoutMs: number;
@@ -87,7 +98,7 @@ export class TmuxCliExecutor implements TmuxGateway {
     return parseSessions(output);
   }
 
-  public async listWindows(session: string) {
+  public async listTabs(session: string) {
     const output = await this.runTmux(["list-windows", "-t", session, "-F", WINDOW_FMT]);
     if (!output) {
       return [];
@@ -95,11 +106,11 @@ export class TmuxCliExecutor implements TmuxGateway {
     return parseWindows(output);
   }
 
-  public async listPanes(session: string, windowIndex: number) {
+  public async listPanes(session: string, tabIndex: number) {
     const output = await this.runTmux([
       "list-panes",
       "-t",
-      `${session}:${windowIndex}`,
+      `${session}:${tabIndex}`,
       "-F",
       PANE_FMT
     ]);
@@ -113,8 +124,8 @@ export class TmuxCliExecutor implements TmuxGateway {
     await this.runTmux(["new-session", "-d", "-s", name]);
   }
 
-  public async createGroupedSession(name: string, targetSession: string): Promise<void> {
-    await this.runTmux(["new-session", "-d", "-s", name, "-t", targetSession]);
+  public async createGroupedSession(name: string, target: string): Promise<void> {
+    await this.runTmux(["new-session", "-d", "-s", name, "-t", target]);
   }
 
   public async killSession(name: string): Promise<void> {
@@ -125,52 +136,54 @@ export class TmuxCliExecutor implements TmuxGateway {
     await this.runTmux(["switch-client", "-t", session]);
   }
 
-  public async newWindow(session: string): Promise<void> {
+  public async newTab(session: string): Promise<void> {
     await this.runTmux(["new-window", "-t", session]);
   }
 
-  public async killWindow(session: string, windowIndex: number): Promise<void> {
-    await this.runTmux(["kill-window", "-t", `${session}:${windowIndex}`]);
+  public async closeTab(session: string, tabIndex: number): Promise<void> {
+    await this.runTmux(["kill-window", "-t", `${session}:${tabIndex}`]);
   }
 
-  public async selectWindow(session: string, windowIndex: number): Promise<void> {
-    await this.runTmux(["select-window", "-t", `${session}:${windowIndex}`]);
+  public async selectTab(session: string, tabIndex: number): Promise<void> {
+    await this.runTmux(["select-window", "-t", `${session}:${tabIndex}`]);
   }
 
-  public async splitWindow(paneId: string, orientation: "h" | "v"): Promise<void> {
+  public async splitPane(paneId: string, direction: "right" | "down"): Promise<void> {
+    const orientation = direction === "right" ? "h" : "v";
     await this.runTmux(["split-window", `-${orientation}`, "-t", paneId]);
   }
 
-  public async killPane(paneId: string): Promise<void> {
+  public async closePane(paneId: string): Promise<void> {
     await this.runTmux(["kill-pane", "-t", paneId]);
   }
 
-  public async selectPane(paneId: string): Promise<void> {
+  public async focusPane(paneId: string): Promise<void> {
     await this.runTmux(["select-pane", "-t", paneId]);
   }
 
-  public async zoomPane(paneId: string): Promise<void> {
+  public async toggleFullscreen(paneId: string): Promise<void> {
     await this.runTmux(["resize-pane", "-Z", "-t", paneId]);
   }
 
-  public async isPaneZoomed(paneId: string): Promise<boolean> {
+  public async isPaneFullscreen(paneId: string): Promise<boolean> {
     const output = await this.runTmux(["display-message", "-p", "-t", paneId, ACTIVE_PANE_ZOOM_FMT]);
     return output === "1";
   }
 
-  public async capturePane(paneId: string, lines: number): Promise<{ text: string; paneWidth: number }> {
+  public async capturePane(paneId: string, options?: { lines?: number }): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
+    const lines = options?.lines ?? 1000;
     const [text, widthStr] = await Promise.all([
       this.runTmux(["capture-pane", "-t", paneId, "-p", "-e", "-J", "-S", `-${lines}`]),
       this.runTmux(["display-message", "-p", "-t", paneId, "#{pane_width}"])
     ]);
-    return { text, paneWidth: parseInt(widthStr, 10) || 80 };
+    return { text, paneWidth: parseInt(widthStr, 10) || 80, isApproximate: false };
   }
 
   public async renameSession(name: string, newName: string): Promise<void> {
     await this.runTmux(["rename-session", "-t", name, newName]);
   }
 
-  public async renameWindow(session: string, windowIndex: number, newName: string): Promise<void> {
-    await this.runTmux(["rename-window", "-t", `${session}:${windowIndex}`, newName]);
+  public async renameTab(session: string, tabIndex: number, newName: string): Promise<void> {
+    await this.runTmux(["rename-window", "-t", `${session}:${tabIndex}`, newName]);
   }
 }

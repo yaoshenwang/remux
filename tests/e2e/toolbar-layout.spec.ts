@@ -27,12 +27,12 @@ test('toolbar layout: unified rows with balanced button distribution', async ({ 
   expect(row1Buttons.length).toBe(9);
   expect(row1Labels).toEqual(['Esc', 'Ctrl', 'Alt', 'Cmd', '/', '@', 'Hm', '↑', 'Ed']);
 
-  // Row 2: ^C, ^B, ^R, Sft, Tab, Enter, ..., ←, ↓, → (10 buttons)
+  // Row 2: ^C, ^B, ^R, Sft, Tab, Enter, ▼, ←, ↓, → (10 buttons)
   const row2Buttons = await mainRows[1].locator('button').all();
   const row2Labels = await Promise.all(row2Buttons.map(b => b.textContent()));
   console.log('Row 2 buttons:', row2Labels);
   expect(row2Buttons.length).toBe(10);
-  expect(row2Labels).toEqual(['^C', '^B', '^R', 'Sft', 'Tab', 'Enter', '...', '←', '↓', '→']);
+  expect(row2Labels).toEqual(['^C', '^B', '^R', 'Sft', 'Tab', 'Enter', '▼', '←', '↓', '→']);
 
   // ^C should be in row 2, not row 1
   expect(row1Labels).not.toContain('^C');
@@ -63,10 +63,111 @@ test('toolbar layout: unified rows with balanced button distribution', async ({ 
     expect(rowWidth).toBeGreaterThan(toolbarContentWidth * 0.95);
   }
 
-  // Check button sizes are reasonable
+  // Check button sizes meet touch target guidelines (>= 40px)
   for (const btn of [...row1Buttons, ...row2Buttons]) {
     const box = await btn.boundingBox();
     console.log(`Button "${await btn.textContent()}": h=${box!.height.toFixed(0)} w=${box!.width.toFixed(0)}`);
-    expect(box!.height).toBeGreaterThan(25);
+    expect(box!.height).toBeGreaterThanOrEqual(40);
   }
+});
+
+test('expand button toggles visual indicator', async ({ page }) => {
+  await page.goto(`${server.baseUrl}/?token=${server.token}`);
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  const expandBtn = page.locator('.toolbar-expand-btn').first();
+
+  // Initially collapsed — shows ▼
+  await expect(expandBtn).toHaveText('▼');
+
+  // Click to expand — shows ▲
+  await expandBtn.click();
+  await expect(expandBtn).toHaveText('▲');
+
+  // Click again to collapse — back to ▼
+  await expandBtn.click();
+  await expect(expandBtn).toHaveText('▼');
+});
+
+test('F-keys grid uses 6-column layout in portrait', async ({ page }) => {
+  // Set portrait viewport
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${server.baseUrl}/?token=${server.token}`);
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Expand toolbar to reveal F-keys
+  const expandBtn = page.locator('.toolbar-expand-btn').first();
+  await expandBtn.click();
+
+  // Click "F-Keys ▼" to expand F-keys row
+  const fkeysBtn = page.locator('.toolbar-expand-btn').nth(1);
+  await fkeysBtn.click();
+
+  // Wait for F-keys grid to be visible
+  const fkeysGrid = page.locator('.toolbar-row-deep-fkeys');
+  await expect(fkeysGrid).toBeVisible();
+
+  // Verify 12 F-key buttons exist
+  const fkeyButtons = await fkeysGrid.locator('button').all();
+  expect(fkeyButtons.length).toBe(12);
+
+  // In portrait (6 columns), F1 and F7 should be on different rows
+  const f1Box = await fkeyButtons[0].boundingBox();
+  const f6Box = await fkeyButtons[5].boundingBox();
+  const f7Box = await fkeyButtons[6].boundingBox();
+
+  // F1 and F6 should be on the same row
+  expect(Math.abs(f1Box!.y - f6Box!.y)).toBeLessThan(5);
+
+  // F7 should be on a different row than F1
+  expect(f7Box!.y).toBeGreaterThan(f1Box!.y + f1Box!.height * 0.5);
+});
+
+test('snippets: no Snip button when no snippets configured', async ({ page }) => {
+  await page.goto(`${server.baseUrl}/?token=${server.token}`);
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Expand toolbar
+  const expandBtn = page.locator('.toolbar-expand-btn').first();
+  await expandBtn.click();
+
+  // Should not have a "Snip ▼" button
+  await expect(page.locator('button', { hasText: 'Snip' })).not.toBeVisible();
+});
+
+test('snippets: Snip button appears and expands when snippets exist', async ({ page }) => {
+  // Inject snippets into localStorage before navigating
+  const snippets = [
+    { id: 'test-1', label: 'ls', command: 'ls -la', autoEnter: true },
+    { id: 'test-2', label: 'git st', command: 'git status', autoEnter: false }
+  ];
+
+  await page.goto(`${server.baseUrl}/?token=${server.token}`);
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Set localStorage and reload to pick up snippets
+  await page.evaluate((s) => localStorage.setItem('remux-snippets', JSON.stringify(s)), snippets);
+  await page.reload();
+  await expect(page.getByTestId('terminal-host')).toBeVisible();
+
+  // Expand toolbar
+  const expandBtn = page.locator('.toolbar-expand-btn').first();
+  await expandBtn.click();
+
+  // Should see "Snip ▼" button
+  const snipBtn = page.locator('button', { hasText: 'Snip ▼' });
+  await expect(snipBtn).toBeVisible();
+
+  // Click to expand snippets
+  await snipBtn.click();
+
+  // Should see snippet buttons
+  const snippetRow = page.locator('.toolbar-row-snippets');
+  await expect(snippetRow).toBeVisible();
+
+  const snippetButtons = await snippetRow.locator('button').all();
+  expect(snippetButtons.length).toBe(2);
+
+  const labels = await Promise.all(snippetButtons.map(b => b.textContent()));
+  expect(labels).toEqual(['ls', 'git st']);
 });

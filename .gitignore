@@ -22,3 +22,6 @@ AGENTS.md
 /*.jpg
 /*.jpeg
 /*.gif
+
+# Zellij plugin build artifacts (keep remux-focus.wasm)
+src/backend/zellij/plugin/target/

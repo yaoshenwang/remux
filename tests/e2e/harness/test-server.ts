@@ -4,7 +4,7 @@ import { AuthService } from "../../../src/backend/auth/auth-service.js";
 import type { RuntimeConfig } from "../../../src/backend/config.js";
 import { createRemuxServer, type RunningServer } from "../../../src/backend/server.js";
 import { FakePtyFactory } from "../../harness/fakePty.js";
-import { FakeTmuxGateway } from "../../harness/fakeTmux.js";
+import { FakeSessionGateway } from "../../harness/fakeTmux.js";
 
 export interface E2EServerOptions {
   sessions: string[];
@@ -18,7 +18,7 @@ export interface StartedE2EServer {
   baseUrl: string;
   token: string;
   ptyFactory: FakePtyFactory;
-  tmux: FakeTmuxGateway;
+  gateway: FakeSessionGateway;
   stop: () => Promise<void>;
 }
 
@@ -48,7 +48,7 @@ export const startE2EServer = async (
 
   const token = "e2e-token";
   const authService = new AuthService({ password: options.password, token });
-  const tmux = new FakeTmuxGateway(options.sessions, {
+  const gateway = new FakeSessionGateway(options.sessions, {
     attachedSession: options.attachedSession,
     failSwitchClient: options.failSwitchClient
   });
@@ -67,7 +67,7 @@ export const startE2EServer = async (
   };
 
   const server: RunningServer = createRemuxServer(config, {
-    tmux,
+    backend: gateway,
     ptyFactory,
     authService,
     logger: e2eLogger
@@ -80,7 +80,7 @@ export const startE2EServer = async (
     baseUrl: `http://127.0.0.1:${address.port}`,
     token,
     ptyFactory,
-    tmux,
+    gateway,
     stop: () => server.stop()
   };
 };

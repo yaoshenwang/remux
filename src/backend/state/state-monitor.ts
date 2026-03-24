@@ -1,6 +1,6 @@
-import { buildSnapshot } from "../tmux/types.js";
-import type { TmuxStateSnapshot } from "../../shared/protocol.js";
-import type { TmuxGateway } from "../tmux/types.js";
+import { buildSnapshot } from "../multiplexer/types.js";
+import type { WorkspaceSnapshot } from "../../shared/protocol.js";
+import type { MultiplexerBackend } from "../multiplexer/types.js";
 
 export class TmuxStateMonitor {
   private timer?: NodeJS.Timeout;
@@ -10,15 +10,19 @@ export class TmuxStateMonitor {
   private forceGeneration = 0;
 
   public constructor(
-    private readonly tmux: TmuxGateway,
+    private readonly backend: MultiplexerBackend,
     private readonly pollIntervalMs: number,
-    private readonly onUpdate: (state: TmuxStateSnapshot) => void,
+    private readonly onUpdate: (state: WorkspaceSnapshot) => void,
     private readonly onError: (error: Error) => void
   ) {}
 
   public async start(): Promise<void> {
     this.running = true;
-    await this.publishSnapshot(false);
+    try {
+      await this.publishSnapshot(false);
+    } catch (error) {
+      this.onError(error instanceof Error ? error : new Error(String(error)));
+    }
     this.scheduleNextTick();
   }
 
@@ -67,7 +71,7 @@ export class TmuxStateMonitor {
 
   private async publishSnapshot(force: boolean): Promise<void> {
     const gen = this.forceGeneration;
-    const snapshot = await buildSnapshot(this.tmux);
+    const snapshot = await buildSnapshot(this.backend);
 
     // A newer forcePublish happened while we were building; discard stale data.
     if (gen !== this.forceGeneration) {

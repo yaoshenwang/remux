@@ -56,6 +56,12 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       type: "string",
       describe: "Write debug logs to a file"
     })
+    .option("backend", {
+      type: "string",
+      choices: ["auto", "tmux", "zellij", "conpty"] as const,
+      default: "auto",
+      describe: "Session backend (auto-detect by default)"
+    })
     .strict()
     .help()
     .parseAsync();
@@ -68,7 +74,8 @@ const parseCliArgs = async (): Promise<CliArgs> => {
     tunnel: argv.tunnel,
     session: argv.session,
     scrollback: argv.scrollback,
-    debugLog: argv.debugLog
+    debugLog: argv.debugLog,
+    backend: argv.backend
   };
 };
 
@@ -133,7 +140,11 @@ const main = async (): Promise<void> => {
   };
 
   const tunnelProvider = new CloudflareTunnelProvider();
+  const forceBackend = args.backend !== "auto"
+    ? (args.backend as "tmux" | "zellij" | "conpty")
+    : undefined;
   const backend = detectSessionBackend(logger, {
+    force: forceBackend,
     socketName: process.env.REMUX_SOCKET_NAME,
     socketPath: process.env.REMUX_SOCKET_PATH,
     scrollbackLines: args.scrollback,
@@ -141,10 +152,26 @@ const main = async (): Promise<void> => {
   logger.log(`Session backend: ${backend.kind}`);
 
   const runningServer = createRemuxServer(config, {
-    tmux: backend.gateway,
+    backend: backend.gateway,
     ptyFactory: backend.ptyFactory,
     authService,
-    logger
+    logger,
+    onSwitchBackend: (kind) => {
+      try {
+        const newBackend = detectSessionBackend(logger, {
+          force: kind,
+          socketName: process.env.REMUX_SOCKET_NAME,
+          socketPath: process.env.REMUX_SOCKET_PATH,
+          scrollbackLines: args.scrollback,
+        });
+        return {
+          backend: newBackend.gateway,
+          ptyFactory: newBackend.ptyFactory,
+        };
+      } catch {
+        return null;
+      }
+    }
   });
 
   if (debugLogPath) {

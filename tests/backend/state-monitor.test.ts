@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { TmuxStateMonitor } from "../../src/backend/state/state-monitor.js";
-import { FakeTmuxGateway } from "../harness/fakeTmux.js";
+import { FakeSessionGateway } from "../harness/fakeTmux.js";
 
 const delay = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -8,7 +8,7 @@ const delay = async (ms: number): Promise<void> => {
 
 describe("state monitor", () => {
   test("publishes only when state changes", async () => {
-    const tmux = new FakeTmuxGateway(["main"]);
+    const tmux = new FakeSessionGateway(["main"]);
     const onUpdate = vi.fn();
     const onError = vi.fn();
 
@@ -21,7 +21,7 @@ describe("state monitor", () => {
 
     expect(onUpdate.mock.calls.length).toBe(firstCount);
 
-    await tmux.newWindow("main");
+    await tmux.newTab("main");
     await delay(70);
 
     expect(onUpdate.mock.calls.length).toBeGreaterThan(firstCount);
@@ -31,7 +31,7 @@ describe("state monitor", () => {
   });
 
   test("ignores stale tick snapshot that resolves after force publish", async () => {
-    const tmux = new FakeTmuxGateway(["main"]);
+    const tmux = new FakeSessionGateway(["main"]);
     const [initialPane] = await tmux.listPanes("main", 0);
     const onUpdate = vi.fn();
     const onError = vi.fn();
@@ -60,7 +60,7 @@ describe("state monitor", () => {
     await monitor.start();
 
     await expect.poll(() => secondTickStarted).toBe(true);
-    await tmux.zoomPane(initialPane.id);
+    await tmux.toggleFullscreen(initialPane.id);
     await monitor.forcePublish();
     const forcePublishCalls = onUpdate.mock.calls.length;
 
@@ -70,7 +70,7 @@ describe("state monitor", () => {
 
     const zoomStatesAfterForcePublish = onUpdate.mock.calls
       .slice(forcePublishCalls)
-      .map(([snapshot]) => snapshot.sessions[0].windowStates[0].panes[0].zoomed);
+      .map(([snapshot]) => snapshot.sessions[0].tabs[0].panes[0].zoomed);
 
     expect(zoomStatesAfterForcePublish).not.toContain(false);
     expect(onUpdate).toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe("state monitor", () => {
   });
 
   test("ignores stale forced snapshot that resolves after a newer force publish", async () => {
-    const tmux = new FakeTmuxGateway(["main"]);
+    const tmux = new FakeSessionGateway(["main"]);
     const [initialPane] = await tmux.listPanes("main", 0);
     const onUpdate = vi.fn();
     const onError = vi.fn();
@@ -109,7 +109,7 @@ describe("state monitor", () => {
     const firstForcePublish = monitor.forcePublish();
     await expect.poll(() => firstForceStarted).toBe(true);
 
-    await tmux.zoomPane(initialPane.id);
+    await tmux.toggleFullscreen(initialPane.id);
     await monitor.forcePublish();
     const updatesAfterSecondForce = onUpdate.mock.calls.length;
 
@@ -120,10 +120,10 @@ describe("state monitor", () => {
 
     const zoomStatesAfterSecondForce = onUpdate.mock.calls
       .slice(updatesAfterSecondForce)
-      .map(([snapshot]) => snapshot.sessions[0].windowStates[0].panes[0].zoomed);
+      .map(([snapshot]) => snapshot.sessions[0].tabs[0].panes[0].zoomed);
 
     expect(zoomStatesAfterSecondForce).not.toContain(false);
-    expect(onUpdate.mock.calls.at(-1)?.[0].sessions[0].windowStates[0].panes[0].zoomed).toBe(true);
+    expect(onUpdate.mock.calls.at(-1)?.[0].sessions[0].tabs[0].panes[0].zoomed).toBe(true);
     expect(onError).not.toHaveBeenCalled();
   });
 });

@@ -51,13 +51,13 @@ describe.skipIf(!canRunIsolatedTmux)("real tmux smoke", () => {
     const sessions = await tmux.listSessions();
     expect(sessions.some((session) => session.name === sessionName)).toBe(true);
 
-    const windows = await tmux.listWindows(sessionName);
+    const windows = await tmux.listTabs(sessionName);
     expect(windows.length).toBeGreaterThan(0);
 
     const panes = await tmux.listPanes(sessionName, windows[0].index);
     expect(panes.length).toBeGreaterThan(0);
 
-    const capture = await tmux.capturePane(panes[0].id, 25);
+    const capture = await tmux.capturePane(panes[0].id, { lines: 25 });
     expect(typeof capture.text).toBe("string");
     expect(capture.paneWidth).toBeGreaterThan(0);
 

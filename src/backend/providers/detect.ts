@@ -1,27 +1,31 @@
 /**
- * Auto-detect whether to use tmux or the built-in ConPTY session provider.
+ * Auto-detect the best available session backend.
  *
- * Strategy:
- * - If tmux is available in PATH → use TmuxCliExecutor + NodePtyFactory (existing behavior)
- * - If tmux is not available (Windows, or Unix without tmux) → use ConPtySessionProvider + ConPtyFactory
+ * Strategy (in order):
+ * 1. If forced via options → use that backend
+ * 2. If zellij is available → use ZellijCliExecutor + ZellijPtyFactory
+ * 3. If tmux is available → use TmuxCliExecutor + NodePtyFactory
+ * 4. Fallback → ConPtySessionProvider + ConPtyFactory
  */
 
 import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
-import type { TmuxGateway } from "../tmux/types.js";
+import type { MultiplexerBackend } from "../multiplexer/types.js";
 import type { PtyFactory } from "../pty/pty-adapter.js";
 import { TmuxCliExecutor } from "../tmux/cli-executor.js";
 import { NodePtyFactory } from "../pty/node-pty-adapter.js";
+import { ZellijCliExecutor, ZellijPtyFactory } from "../zellij/index.js";
 import {
   ConPtySessionProvider,
   ConPtyFactory,
 } from "./conpty-provider.js";
 
 export interface SessionBackend {
-  gateway: TmuxGateway;
+  gateway: MultiplexerBackend;
   ptyFactory: PtyFactory;
-  /** "tmux" or "conpty" */
-  kind: "tmux" | "conpty";
+  kind: "tmux" | "zellij" | "conpty";
 }
 
 /**
@@ -31,7 +35,7 @@ export function detectSessionBackend(
   logger?: Pick<Console, "log" | "error">,
   options?: {
     /** Force a specific backend. */
-    force?: "tmux" | "conpty";
+    force?: "tmux" | "zellij" | "conpty";
     /** tmux socket name (-L flag). */
     socketName?: string;
     /** tmux socket path (-S flag). */
@@ -50,20 +54,44 @@ export function detectSessionBackend(
     return createTmuxBackend(logger, options);
   }
 
-  // Auto-detect: try tmux first.
+  if (options?.force === "zellij") {
+    logger?.log("[detect] forced zellij backend");
+    return createZellijBackend(logger);
+  }
+
+  // Auto-detect: zellij → tmux → conpty
+  if (isZellijAvailable(logger)) {
+    logger?.log("[detect] zellij found in PATH, using zellij backend");
+    return createZellijBackend(logger);
+  }
+
   if (isTmuxAvailable(logger)) {
     logger?.log("[detect] tmux found in PATH, using tmux backend");
     return createTmuxBackend(logger, options);
   }
 
-  logger?.log("[detect] tmux not found, using conpty backend");
+  logger?.log("[detect] no multiplexer found, using conpty backend");
   return createConPtyBackend(logger, options);
+}
+
+function isZellijAvailable(
+  logger?: Pick<Console, "log" | "error">
+): boolean {
+  try {
+    execFileSync("zellij", ["--version"], {
+      stdio: "pipe",
+      timeout: 3000,
+    });
+    return true;
+  } catch {
+    logger?.log("[detect] zellij --version failed or timed out");
+    return false;
+  }
 }
 
 function isTmuxAvailable(
   logger?: Pick<Console, "log" | "error">
 ): boolean {
-  // On Windows, tmux is almost never available natively.
   if (os.platform() === "win32") {
     return false;
   }
@@ -78,6 +106,17 @@ function isTmuxAvailable(
     logger?.log("[detect] tmux -V failed or timed out");
     return false;
   }
+}
+
+function createZellijBackend(
+  logger?: Pick<Console, "log" | "error">
+): SessionBackend {
+  // Resolve path to remux-focus.wasm relative to this module
+  const thisDir = path.dirname(fileURLToPath(import.meta.url));
+  const focusPluginPath = path.resolve(thisDir, "../zellij/remux-focus.wasm");
+  const gateway = new ZellijCliExecutor({ logger, focusPluginPath });
+  const ptyFactory = new ZellijPtyFactory({ logger });
+  return { gateway, ptyFactory, kind: "zellij" };
 }
 
 function createTmuxBackend(

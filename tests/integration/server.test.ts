@@ -4,9 +4,9 @@ import { WebSocket, type RawData } from "ws";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
 import type { RuntimeConfig } from "../../src/backend/config.js";
 import { createRemuxServer, type RunningServer } from "../../src/backend/server.js";
-import { buildSnapshot } from "../../src/backend/tmux/types.js";
+import { buildSnapshot } from "../../src/backend/multiplexer/types.js";
 import { FakePtyFactory } from "../harness/fakePty.js";
-import { FakeTmuxGateway } from "../harness/fakeTmux.js";
+import { FakeSessionGateway } from "../harness/fakeTmux.js";
 import { openSocket, waitForMessage } from "../harness/ws.js";
 
 const buildConfig = (token: string): RuntimeConfig => ({
@@ -23,7 +23,7 @@ const buildConfig = (token: string): RuntimeConfig => ({
 
 describe("tmux mobile server", () => {
   let runningServer: RunningServer;
-  let tmux: FakeTmuxGateway;
+  let tmux: FakeSessionGateway;
   let ptyFactory: FakePtyFactory;
   let baseWsUrl: string;
 
@@ -63,7 +63,7 @@ describe("tmux mobile server", () => {
     sessions: string[],
     options: { password?: string; attachedSession?: string; failSwitchClient?: boolean } = {}
   ): Promise<void> => {
-    tmux = new FakeTmuxGateway(sessions, {
+    tmux = new FakeSessionGateway(sessions, {
       attachedSession: options.attachedSession,
       failSwitchClient: options.failSwitchClient
     });
@@ -71,7 +71,7 @@ describe("tmux mobile server", () => {
     const auth = new AuthService({ password: options.password, token: "test-token" });
 
     runningServer = createRemuxServer(buildConfig("test-token"), {
-      tmux,
+      backend: tmux,
       ptyFactory,
       authService: auth,
       logger: { log: () => undefined, error: () => undefined }
@@ -234,9 +234,9 @@ describe("tmux mobile server", () => {
     const snapshot = await buildSnapshot(tmux);
     const attachedState = snapshot.sessions.find((session) => session.name === attachedSession);
     expect(attachedState).toBeDefined();
-    const paneId = attachedState?.windowStates[0].panes[0].id ?? "";
+    const paneId = attachedState?.tabs[0].panes[0].id ?? "";
 
-    control.send(JSON.stringify({ type: "split_pane", paneId, orientation: "h" }));
+    control.send(JSON.stringify({ type: "split_pane", paneId, direction: "right" }));
     control.send(JSON.stringify({ type: "send_compose", text: "echo hi" }));
     const capturePromise = waitForMessage<{ type: string; text: string }>(
       control,
@@ -246,7 +246,7 @@ describe("tmux mobile server", () => {
 
     const capture = await capturePromise;
     expect(capture.text).toContain("captured 222 lines");
-    expect(tmux.calls).toContain(`splitWindow:${paneId}:h`);
+    expect(tmux.calls).toContain(`splitPane:${paneId}:right`);
     expect(ptyFactory.latestProcess().writes).toContain("echo hi\r");
 
     const terminal = await openSocket(`${baseWsUrl}/ws/terminal`);
@@ -267,189 +267,95 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
-  test("select_pane with stickyZoom calls both selectPane and zoomPane", async () => {
-    await runningServer.stop();
-    await startWithSessions(["main"]);
-
-    const control = await openSocket(`${baseWsUrl}/ws/control`);
-    control.send(JSON.stringify({ type: "auth", token: "test-token" }));
-    await waitForMessage(control, (msg: { type: string }) => msg.type === "attached");
-
-    const snapshot = await buildSnapshot(tmux);
-    const paneId = snapshot.sessions[0].windowStates[0].panes[0].id;
-
-    // Split to create a second pane
-    control.send(JSON.stringify({ type: "split_pane", paneId, orientation: "h" }));
-    await waitForTmuxCall((call) => call === `splitWindow:${paneId}:h`);
-
-    const updatedSnapshot = await buildSnapshot(tmux);
-    const secondPaneId = updatedSnapshot.sessions[0].windowStates[0].panes[1].id;
-
-    // Clear calls to isolate the select_pane + stickyZoom behavior
-    tmux.calls.length = 0;
-
-    // Select the first pane with stickyZoom enabled
-    control.send(JSON.stringify({ type: "select_pane", paneId, stickyZoom: true }));
-    await waitForTmuxCall((call) => call === `zoomPane:${paneId}`);
-
-    expect(tmux.calls).toContain(`selectPane:${paneId}`);
-    expect(tmux.calls).toContain(`zoomPane:${paneId}`);
-
-    // Clear and verify without stickyZoom
-    tmux.calls.length = 0;
-    control.send(JSON.stringify({ type: "select_pane", paneId: secondPaneId }));
-    await waitForTmuxCall((call) => call === `selectPane:${secondPaneId}`);
-
-    expect(tmux.calls).toContain(`selectPane:${secondPaneId}`);
-    expect(tmux.calls).not.toContain(`zoomPane:${secondPaneId}`);
-
-    control.close();
-  });
-
-  test("select_pane with stickyZoom does not toggle zoom when window is already zoomed", async () => {
-    await runningServer.stop();
-    await startWithSessions(["main"]);
-
-    const control = await openSocket(`${baseWsUrl}/ws/control`);
-    control.send(JSON.stringify({ type: "auth", token: "test-token" }));
-    await waitForMessage(control, (msg: { type: string }) => msg.type === "attached");
-
-    const snapshot = await buildSnapshot(tmux);
-    const paneId = snapshot.sessions[0].windowStates[0].panes[0].id;
-
-    // Split to create a second pane
-    control.send(JSON.stringify({ type: "split_pane", paneId, orientation: "h" }));
-    await waitForTmuxCall((call) => call === `splitWindow:${paneId}:h`);
-
-    const updatedSnapshot = await buildSnapshot(tmux);
-    const secondPaneId = updatedSnapshot.sessions[0].windowStates[0].panes[1].id;
-
-    // Pre-zoom the window
-    control.send(JSON.stringify({ type: "zoom_pane", paneId }));
-    await waitForTmuxCall((call) => call === `zoomPane:${paneId}`);
-
-    // Clear calls to isolate stickyZoom select behavior
-    tmux.calls.length = 0;
-
-    control.send(JSON.stringify({ type: "select_pane", paneId: secondPaneId, stickyZoom: true }));
-    await waitForTmuxCall((call) => call === `selectPane:${secondPaneId}`);
-
-    expect(tmux.calls).toContain(`selectPane:${secondPaneId}`);
-    expect(tmux.calls).not.toContain(`zoomPane:${secondPaneId}`);
-
-    control.close();
-  });
-
-  test("select_window with stickyZoom zooms the target window active pane", async () => {
+  test("select_tab reflects per-client active tab from mobile session", async () => {
     await runningServer.stop();
     await startWithSessions(["main"]);
 
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     const { attachedSession } = await authControl(control);
 
-    control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
+    // Create a second tab — new_tab now goes to the base session "main" via view store
+    control.send(JSON.stringify({ type: "new_tab", session: attachedSession }));
+    await waitForTmuxCall((call) => call === "newTab:main");
 
-    tmux.calls.length = 0;
-
-    control.send(JSON.stringify({ type: "select_window", session: attachedSession, windowIndex: 0, stickyZoom: true }));
-    await waitForTmuxCall((call) => call.startsWith("selectWindow:remux-client-") && call.endsWith(":0"));
-
-    expect(tmux.calls.some((c) => c.startsWith("selectWindow:remux-client-") && c.endsWith(":0"))).toBe(true);
-    expect(tmux.calls.some((call) => call.startsWith("zoomPane:"))).toBe(true);
-
-    control.close();
-  });
-
-  test("tmux_state reflects per-client active window from mobile session", async () => {
-    await runningServer.stop();
-    await startWithSessions(["main"]);
-
-    const control = await openSocket(`${baseWsUrl}/ws/control`);
-    const { attachedSession } = await authControl(control);
-
-    // Create a second window (structural ops now target base session "main")
-    control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
-
-    // Drain any pending tmux_state messages from new_window
+    // Drain any pending workspace_state messages from new_tab
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // Set up listener BEFORE sending select_window to catch the response
+    // Set up listener BEFORE sending select_tab to catch the response
     const statePromise = waitForMessage<{
       type: string;
-      state: { sessions: Array<{ name: string; windowStates: Array<{ index: number; active: boolean }> }> };
+      workspace: { sessions: Array<{ name: string; tabs: Array<{ index: number; active: boolean }> }> };
     }>(control, (msg) => {
-      if (msg.type !== "tmux_state") return false;
-      // Only match state where window 0 is active (our desired state)
-      const main = msg.state.sessions.find((s) => s.name === "main");
-      const w0 = main?.windowStates.find((w) => w.index === 0);
-      return w0?.active === true;
+      if (msg.type !== "workspace_state") return false;
+      // Only match state where tab 0 is active (our desired state)
+      const main = msg.workspace.sessions.find((s) => s.name === "main");
+      const t0 = main?.tabs.find((t) => t.index === 0);
+      return t0?.active === true;
     });
 
-    // Now select window 0 on the mobile session (window 1 is currently active after new_window)
+    // Now select tab 0 on the mobile session (tab 1 is currently active after new_tab)
     control.send(
-      JSON.stringify({ type: "select_window", session: attachedSession, windowIndex: 0 })
+      JSON.stringify({ type: "select_tab", session: attachedSession, tabIndex: 0 })
     );
 
     const stateMsg = await statePromise;
-    const mainSession = stateMsg.state.sessions.find((s) => s.name === "main");
+    const mainSession = stateMsg.workspace.sessions.find((s) => s.name === "main");
     expect(mainSession).toBeDefined();
 
-    // The broadcast should show window 0 as active (matching the mobile session's state)
-    const window0 = mainSession!.windowStates.find((w) => w.index === 0);
-    const window1 = mainSession!.windowStates.find((w) => w.index === 1);
-    expect(window0?.active).toBe(true);
-    expect(window1?.active).toBe(false);
+    // The broadcast should show tab 0 as active (matching the mobile session's state)
+    const tab0 = mainSession!.tabs.find((t) => t.index === 0);
+    const tab1 = mainSession!.tabs.find((t) => t.index === 1);
+    expect(tab0?.active).toBe(true);
+    expect(tab1?.active).toBe(false);
 
     control.close();
   });
 
-  test("kill_window targets the correct window after switching", async () => {
+  test("close_tab targets the correct tab after switching", async () => {
     await runningServer.stop();
     await startWithSessions(["main"]);
 
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     const { attachedSession } = await authControl(control);
 
-    // Create window 1 (structural ops now target base session "main")
-    control.send(JSON.stringify({ type: "new_window", session: attachedSession }));
-    await waitForTmuxCall((call) => call.startsWith("newWindow:remux-client-"));
+    // Create tab 1 — new_tab goes to base session "main" via view store
+    control.send(JSON.stringify({ type: "new_tab", session: attachedSession }));
+    await waitForTmuxCall((call) => call === "newTab:main");
 
-    // Select window 1 on mobile session
+    // Select tab 1 on mobile session
     control.send(
-      JSON.stringify({ type: "select_window", session: attachedSession, windowIndex: 1 })
+      JSON.stringify({ type: "select_tab", session: attachedSession, tabIndex: 1 })
     );
     await waitForTmuxCall(
-      (call) => call.startsWith("selectWindow:remux-client-") && call.endsWith(":1")
+      (call) => call.startsWith("selectTab:remux-client-") && call.endsWith(":1")
     );
 
-    // Kill window 1 (the active window on mobile)
+    // Kill tab 1 (the active tab on mobile)
     tmux.calls.length = 0;
     control.send(
-      JSON.stringify({ type: "kill_window", session: attachedSession, windowIndex: 1 })
+      JSON.stringify({ type: "close_tab", session: attachedSession, tabIndex: 1 })
     );
-    await waitForTmuxCall((call) => call.includes("killWindow:") && call.endsWith(":1"));
+    await waitForTmuxCall((call) => call.includes("closeTab:") && call.endsWith(":1"));
 
-    // Verify the correct window (1) was killed on the base session, not window 0
+    // Verify the correct tab (1) was killed on the base session, not tab 0
     expect(
-      tmux.calls.some((c) => c === "killWindow:main:1")
+      tmux.calls.some((c) => c === "closeTab:main:1")
     ).toBe(true);
 
     control.close();
   });
 
-  test("kill_window refuses to kill the last window", async () => {
+  test("close_tab refuses to kill the last tab", async () => {
     await runningServer.stop();
     await startWithSessions(["main"]);
 
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     const { attachedSession } = await authControl(control);
 
-    // Session has only one window — kill should be rejected
+    // Session has only one tab — kill should be rejected
     tmux.calls.length = 0;
     control.send(
-      JSON.stringify({ type: "kill_window", session: attachedSession, windowIndex: 0 })
+      JSON.stringify({ type: "close_tab", session: attachedSession, tabIndex: 0 })
     );
 
     // Should receive an info message instead of killing
@@ -459,13 +365,13 @@ describe("tmux mobile server", () => {
     );
     expect(infoMsg.message).toContain("last window");
 
-    // killWindow should NOT have been called
-    expect(tmux.calls.some((c) => c.includes("killWindow:"))).toBe(false);
+    // closeTab should NOT have been called
+    expect(tmux.calls.some((c) => c.includes("closeTab:"))).toBe(false);
 
     control.close();
   });
 
-  test("rename_session renames via tmux gateway", async () => {
+  test("rename_session renames via backend", async () => {
     await runningServer.stop();
     await startWithSessions(["alpha"]);
 
@@ -483,7 +389,7 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
-  test("rename_window renames via tmux gateway", async () => {
+  test("rename_tab renames via backend", async () => {
     await runningServer.stop();
     await startWithSessions(["work"]);
 
@@ -491,12 +397,12 @@ describe("tmux mobile server", () => {
     await authControl(control);
 
     control.send(
-      JSON.stringify({ type: "rename_window", session: "work", windowIndex: 0, newName: "editor" })
+      JSON.stringify({ type: "rename_tab", session: "work", tabIndex: 0, newName: "editor" })
     );
-    await waitForTmuxCall((call) => call.includes("renameWindow:") && call.endsWith(":0:editor"));
+    await waitForTmuxCall((call) => call.includes("renameTab:") && call.endsWith(":0:editor"));
 
     expect(
-      tmux.calls.some((c) => c === "renameWindow:work:0:editor")
+      tmux.calls.some((c) => c === "renameTab:work:0:editor")
     ).toBe(true);
 
     control.close();

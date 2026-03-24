@@ -12,6 +12,8 @@ export class TerminalRuntime {
   private process?: PtyProcess;
   private session?: string;
   private lastDimensions: { cols: number; rows: number } = { cols: 80, rows: 24 };
+  /** Cached last data chunk for replaying to late-joining terminal clients. */
+  private lastDataChunk?: string;
 
   public constructor(private readonly factory: PtyFactory) {}
 
@@ -34,8 +36,11 @@ export class TerminalRuntime {
     }
 
     this.session = session;
-    const processRef = this.factory.spawnTmuxAttach(session);
-    processRef.onData((data) => this.events.emit("data", data));
+    const processRef = this.factory.spawnAttach(session);
+    processRef.onData((data) => {
+      this.lastDataChunk = data;
+      this.events.emit("data", data);
+    });
     processRef.onExit((code) => {
       this.events.emit("exit", code);
       if (this.process === processRef) {
@@ -45,6 +50,13 @@ export class TerminalRuntime {
     processRef.resize(this.lastDimensions.cols, this.lastDimensions.rows);
     this.process = processRef;
     this.events.emit("attach", session);
+  }
+
+  /** Replay cached data to a late-joining listener (e.g. terminal WS client). */
+  public replayLast(handler: (data: string) => void): void {
+    if (this.lastDataChunk) {
+      handler(this.lastDataChunk);
+    }
   }
 
   public write(data: string): void {

@@ -97,7 +97,7 @@ export class NodePtyFactory implements PtyFactory {
     ensureNodePtySpawnHelperExecutable(this.logger);
   }
 
-  public spawnTmuxAttach(session: string): PtyProcess {
+  public spawnAttach(session: string): PtyProcess {
     if (os.platform() !== "win32" && (this.forceScriptFallback || this.nodePtyUnavailable)) {
       return this.spawnViaScript(session);
     }

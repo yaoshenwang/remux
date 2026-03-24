@@ -1,9 +1,10 @@
 import type {
-  TmuxPaneState,
-  TmuxSessionSummary,
-  TmuxWindowState
+  PaneState,
+  SessionSummary,
+  TabState,
+  BackendCapabilities
 } from "../../src/shared/protocol.js";
-import type { TmuxGateway } from "../../src/backend/tmux/types.js";
+import type { MultiplexerBackend } from "../../src/backend/multiplexer/types.js";
 
 interface SessionNode {
   name: string;
@@ -60,7 +61,17 @@ const buildDefaultSession = (name: string): SessionNode => ({
   ]
 });
 
-export class FakeTmuxGateway implements TmuxGateway {
+export class FakeSessionGateway implements MultiplexerBackend {
+  public readonly kind = "tmux" as const;
+  public readonly capabilities: BackendCapabilities = {
+    supportsPaneFocusById: false,
+    supportsTabRename: true,
+    supportsSessionRename: true,
+    supportsPreciseScrollback: true,
+    supportsFloatingPanes: false,
+    supportsFullscreenPane: true,
+  };
+
   private sessions: SessionNode[] = [];
   private failSwitchClient = false;
   public readonly calls: string[] = [];
@@ -73,19 +84,19 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public listSessions(): Promise<TmuxSessionSummary[]> {
+  public listSessions(): Promise<SessionSummary[]> {
     this.calls.push("listSessions");
     return Promise.resolve(
       this.sessions.map((session) => ({
         name: session.name,
         attached: session.attached,
-        windows: session.windows.length
+        tabCount: session.windows.length
       }))
     );
   }
 
-  public listWindows(sessionName: string): Promise<Omit<TmuxWindowState, "panes">[]> {
-    this.calls.push(`listWindows:${sessionName}`);
+  public listTabs(sessionName: string): Promise<Omit<TabState, "panes">[]> {
+    this.calls.push(`listTabs:${sessionName}`);
     const session = this.findSession(sessionName);
     return Promise.resolve(
       session.windows.map((window) => ({
@@ -97,9 +108,9 @@ export class FakeTmuxGateway implements TmuxGateway {
     );
   }
 
-  public listPanes(sessionName: string, windowIndex: number): Promise<TmuxPaneState[]> {
-    this.calls.push(`listPanes:${sessionName}:${windowIndex}`);
-    const window = this.findWindow(sessionName, windowIndex);
+  public listPanes(sessionName: string, tabIndex: number): Promise<PaneState[]> {
+    this.calls.push(`listPanes:${sessionName}:${tabIndex}`);
+    const window = this.findWindow(sessionName, tabIndex);
     return Promise.resolve(
       window.panes.map((pane) => ({
         index: pane.index,
@@ -122,20 +133,20 @@ export class FakeTmuxGateway implements TmuxGateway {
     this.sessions.push(buildDefaultSession(name));
   }
 
-  public async createGroupedSession(name: string, targetSession: string): Promise<void> {
-    this.calls.push(`createGroupedSession:${name}:${targetSession}`);
+  public async createGroupedSession(name: string, target: string): Promise<void> {
+    this.calls.push(`createGroupedSession:${name}:${target}`);
     if (this.sessions.some((session) => session.name === name)) {
       return;
     }
-    const target = this.findSession(targetSession);
+    const targetSession = this.findSession(target);
     // Grouped sessions share the same underlying windows/panes but each session
     // has its own active window pointer (like real tmux).
     // We deep-copy the window metadata but share pane arrays.
     this.sessions.push({
       name,
       attached: false,
-      groupTarget: targetSession,
-      windows: target.windows.map((w) => ({ ...w, panes: [...w.panes] }))
+      groupTarget: target,
+      windows: targetSession.windows.map((w) => ({ ...w, panes: [...w.panes] }))
     });
   }
 
@@ -152,8 +163,8 @@ export class FakeTmuxGateway implements TmuxGateway {
     this.markAttached(sessionName);
   }
 
-  public async newWindow(sessionName: string): Promise<void> {
-    this.calls.push(`newWindow:${sessionName}`);
+  public async newTab(sessionName: string): Promise<void> {
+    this.calls.push(`newTab:${sessionName}`);
     const session = this.findSession(sessionName);
     for (const window of session.windows) {
       window.active = false;
@@ -180,26 +191,26 @@ export class FakeTmuxGateway implements TmuxGateway {
     this.syncWindowToGroup(session, newWindow);
   }
 
-  public async killWindow(sessionName: string, windowIndex: number): Promise<void> {
-    this.calls.push(`killWindow:${sessionName}:${windowIndex}`);
+  public async closeTab(sessionName: string, tabIndex: number): Promise<void> {
+    this.calls.push(`closeTab:${sessionName}:${tabIndex}`);
     const session = this.findSession(sessionName);
-    session.windows = session.windows.filter((window) => window.index !== windowIndex);
+    session.windows = session.windows.filter((window) => window.index !== tabIndex);
     if (session.windows.length > 0 && !session.windows.some((w) => w.active)) {
       session.windows[0].active = true;
     }
-    this.syncWindowRemovalToGroup(session, windowIndex);
+    this.syncWindowRemovalToGroup(session, tabIndex);
   }
 
-  public async selectWindow(sessionName: string, windowIndex: number): Promise<void> {
-    this.calls.push(`selectWindow:${sessionName}:${windowIndex}`);
+  public async selectTab(sessionName: string, tabIndex: number): Promise<void> {
+    this.calls.push(`selectTab:${sessionName}:${tabIndex}`);
     const session = this.findSession(sessionName);
     for (const window of session.windows) {
-      window.active = window.index === windowIndex;
+      window.active = window.index === tabIndex;
     }
   }
 
-  public async splitWindow(paneId: string, orientation: "h" | "v"): Promise<void> {
-    this.calls.push(`splitWindow:${paneId}:${orientation}`);
+  public async splitPane(paneId: string, direction: "right" | "down"): Promise<void> {
+    this.calls.push(`splitPane:${paneId}:${direction}`);
     const { session, window } = this.findByPane(paneId);
     for (const pane of window.panes) {
       pane.active = false;
@@ -210,8 +221,8 @@ export class FakeTmuxGateway implements TmuxGateway {
       id: `%${paneCounter++}`,
       command: "bash",
       active: true,
-      width: orientation === "h" ? 60 : 120,
-      height: orientation === "v" ? 20 : 40
+      width: direction === "right" ? 60 : 120,
+      height: direction === "down" ? 20 : 40
     };
     window.panes.push(newPane);
     // Sync new pane to grouped session copies of this window
@@ -227,8 +238,8 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public async killPane(paneId: string): Promise<void> {
-    this.calls.push(`killPane:${paneId}`);
+  public async closePane(paneId: string): Promise<void> {
+    this.calls.push(`closePane:${paneId}`);
     const { window } = this.findByPane(paneId);
     window.panes = window.panes.filter((pane) => pane.id !== paneId);
     if (window.panes.length > 0) {
@@ -236,8 +247,8 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public async selectPane(paneId: string): Promise<void> {
-    this.calls.push(`selectPane:${paneId}`);
+  public async focusPane(paneId: string): Promise<void> {
+    this.calls.push(`focusPane:${paneId}`);
     // Pane objects are shared by reference across grouped sessions,
     // so setting pane.active here affects all sessions.
     const { window } = this.findByPane(paneId);
@@ -246,8 +257,8 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public async zoomPane(paneId: string): Promise<void> {
-    this.calls.push(`zoomPane:${paneId}`);
+  public async toggleFullscreen(paneId: string): Promise<void> {
+    this.calls.push(`toggleFullscreen:${paneId}`);
     const { session, window } = this.findByPane(paneId);
     for (const pane of window.panes) {
       pane.active = pane.id === paneId;
@@ -262,15 +273,16 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public async isPaneZoomed(paneId: string): Promise<boolean> {
-    this.calls.push(`isPaneZoomed:${paneId}`);
+  public async isPaneFullscreen(paneId: string): Promise<boolean> {
+    this.calls.push(`isPaneFullscreen:${paneId}`);
     const { window, pane } = this.findByPane(paneId);
     return window.zoomed && pane.active;
   }
 
-  public async capturePane(paneId: string, lines: number): Promise<{ text: string; paneWidth: number }> {
+  public async capturePane(paneId: string, options?: { lines?: number }): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
+    const lines = options?.lines ?? 1000;
     this.calls.push(`capturePane:${paneId}:${lines}`);
-    return { text: `captured ${lines} lines for ${paneId}`, paneWidth: 80 };
+    return { text: `captured ${lines} lines for ${paneId}`, paneWidth: 80, isApproximate: false };
   }
 
   public async renameSession(name: string, newName: string): Promise<void> {
@@ -285,9 +297,9 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public async renameWindow(sessionName: string, windowIndex: number, newName: string): Promise<void> {
-    this.calls.push(`renameWindow:${sessionName}:${windowIndex}:${newName}`);
-    const window = this.findWindow(sessionName, windowIndex);
+  public async renameTab(sessionName: string, tabIndex: number, newName: string): Promise<void> {
+    this.calls.push(`renameTab:${sessionName}:${tabIndex}:${newName}`);
+    const window = this.findWindow(sessionName, tabIndex);
     window.name = newName;
   }
 
