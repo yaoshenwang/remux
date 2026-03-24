@@ -17,11 +17,10 @@ register_plugin!(RemuxFocus);
 
 impl ZellijPlugin for RemuxFocus {
     fn load(&mut self, _configuration: BTreeMap<String, String>) {
-        subscribe(&[EventType::RunCommandResult]);
-    }
-
-    fn update(&mut self, _event: Event) -> bool {
-        false
+        request_permission(&[
+            PermissionType::ChangeApplicationState,
+            PermissionType::ReadCliPipes,
+        ]);
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -30,6 +29,8 @@ impl ZellijPlugin for RemuxFocus {
                 focus_terminal_pane(pane_id, false);
             }
         }
+        // Unblock so the CLI pipe command returns immediately
+        unblock_cli_pipe_input(&pipe_message.name);
         false
     }
 }
