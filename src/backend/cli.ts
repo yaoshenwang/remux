@@ -156,7 +156,24 @@ const main = async (): Promise<void> => {
     ptyFactory: backend.ptyFactory,
     backendKind: backend.kind,
     authService,
-    logger
+    logger,
+    onSwitchBackend: (kind) => {
+      try {
+        const newBackend = detectSessionBackend(logger, {
+          force: kind,
+          socketName: process.env.REMUX_SOCKET_NAME,
+          socketPath: process.env.REMUX_SOCKET_PATH,
+          scrollbackLines: args.scrollback,
+        });
+        return {
+          tmux: newBackend.gateway,
+          ptyFactory: newBackend.ptyFactory,
+          backendKind: newBackend.kind,
+        };
+      } catch {
+        return null;
+      }
+    }
   });
 
   if (debugLogPath) {
