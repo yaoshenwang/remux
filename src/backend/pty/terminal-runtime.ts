@@ -34,7 +34,7 @@ export class TerminalRuntime {
     }
 
     this.session = session;
-    const processRef = this.factory.spawnTmuxAttach(session);
+    const processRef = this.factory.spawnAttach(session);
     processRef.onData((data) => this.events.emit("data", data));
     processRef.onExit((code) => {
       this.events.emit("exit", code);

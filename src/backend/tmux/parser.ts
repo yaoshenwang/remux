@@ -1,12 +1,12 @@
 import type {
-  TmuxPaneState,
-  TmuxSessionSummary,
-  TmuxWindowState
+  PaneState,
+  SessionSummary,
+  WindowState
 } from "../../shared/protocol.js";
 
 const splitLine = (line: string): string[] => line.split("\t");
 
-export const parseSessions = (raw: string): TmuxSessionSummary[] =>
+export const parseSessions = (raw: string): SessionSummary[] =>
   raw
     .split("\n")
     .map((line) => line.trim())
@@ -20,7 +20,7 @@ export const parseSessions = (raw: string): TmuxSessionSummary[] =>
       };
     });
 
-export const parseWindows = (raw: string): Omit<TmuxWindowState, "panes">[] =>
+export const parseWindows = (raw: string): Omit<WindowState, "panes">[] =>
   raw
     .split("\n")
     .map((line) => line.trim())
@@ -35,7 +35,7 @@ export const parseWindows = (raw: string): Omit<TmuxWindowState, "panes">[] =>
       };
     });
 
-export const parsePanes = (raw: string): TmuxPaneState[] =>
+export const parsePanes = (raw: string): PaneState[] =>
   raw
     .split("\n")
     .map((line) => line.trim())

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parsePanes, parseSessions, parseWindows } from "./parser.js";
-import type { TmuxGateway } from "./types.js";
+import type { SessionGateway } from "./types.js";
 import { withoutTmuxEnv } from "../util/env.js";
 
 const execFileAsync = promisify(execFile);
@@ -25,7 +25,7 @@ const isNoServerRunningError = (message: string): boolean =>
     message
   );
 
-export class TmuxCliExecutor implements TmuxGateway {
+export class TmuxCliExecutor implements SessionGateway {
   private readonly tmuxBinary: string;
   private readonly tmuxArgsPrefix: string[];
   private readonly timeoutMs: number;

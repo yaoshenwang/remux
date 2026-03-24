@@ -143,6 +143,7 @@ const main = async (): Promise<void> => {
   const runningServer = createRemuxServer(config, {
     tmux: backend.gateway,
     ptyFactory: backend.ptyFactory,
+    backendKind: backend.kind,
     authService,
     logger
   });

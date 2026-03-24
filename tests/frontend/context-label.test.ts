@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { deriveContext, formatContext } from "../../src/frontend/context-label";
-import type { TmuxPaneState } from "../../src/shared/protocol";
+import type { PaneState } from "../../src/shared/protocol";
 
-const makePane = (overrides: Partial<TmuxPaneState> = {}): TmuxPaneState => ({
+const makePane = (overrides: Partial<PaneState> = {}): PaneState => ({
   index: 0,
   id: "%0",
   currentCommand: "bash",

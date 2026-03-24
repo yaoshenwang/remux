@@ -1,6 +1,6 @@
 import { buildSnapshot } from "../tmux/types.js";
-import type { TmuxStateSnapshot } from "../../shared/protocol.js";
-import type { TmuxGateway } from "../tmux/types.js";
+import type { StateSnapshot } from "../../shared/protocol.js";
+import type { SessionGateway } from "../tmux/types.js";
 
 export class TmuxStateMonitor {
   private timer?: NodeJS.Timeout;
@@ -10,9 +10,9 @@ export class TmuxStateMonitor {
   private forceGeneration = 0;
 
   public constructor(
-    private readonly tmux: TmuxGateway,
+    private readonly tmux: SessionGateway,
     private readonly pollIntervalMs: number,
-    private readonly onUpdate: (state: TmuxStateSnapshot) => void,
+    private readonly onUpdate: (state: StateSnapshot) => void,
     private readonly onError: (error: Error) => void
   ) {}
 

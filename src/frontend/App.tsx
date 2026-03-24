@@ -8,11 +8,11 @@ import { deriveContext, formatContext } from "./context-label";
 import { Toolbar, type ToolbarHandle, type Snippet } from "./components/Toolbar";
 import type {
   ControlServerMessage,
-  TmuxPaneState,
-  TmuxSessionState,
-  TmuxSessionSummary,
-  TmuxStateSnapshot,
-  TmuxWindowState
+  PaneState,
+  SessionState,
+  SessionSummary,
+  StateSnapshot,
+  WindowState
 } from "../shared/protocol";
 
 interface ServerConfig {
@@ -107,10 +107,10 @@ export const App = () => {
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [authReady, setAuthReady] = useState(false);
 
-  const [snapshot, setSnapshot] = useState<TmuxStateSnapshot>({ sessions: [], capturedAt: "" });
+  const [snapshot, setSnapshot] = useState<StateSnapshot>({ sessions: [], capturedAt: "" });
   const [attachedSession, setAttachedSession] = useState<string>("");
   const attachedSessionRef = useRef("");
-  const [sessionChoices, setSessionChoices] = useState<TmuxSessionSummary[] | null>(null);
+  const [sessionChoices, setSessionChoices] = useState<SessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeEnabled, setComposeEnabled] = useState(true);
   const [composeText, setComposeText] = useState("");
@@ -154,7 +154,7 @@ export const App = () => {
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
 
-  const activeSession: TmuxSessionState | undefined = useMemo(() => {
+  const activeSession: SessionState | undefined = useMemo(() => {
     const selected = snapshot.sessions.find((session) => session.name === attachedSession);
     if (selected) {
       return selected;
@@ -162,7 +162,7 @@ export const App = () => {
     return snapshot.sessions.find((session) => session.attached) ?? snapshot.sessions[0];
   }, [snapshot.sessions, attachedSession]);
 
-  const activeWindow: TmuxWindowState | undefined = useMemo(() => {
+  const activeWindow: WindowState | undefined = useMemo(() => {
     if (!activeSession) {
       return undefined;
     }
@@ -178,7 +178,7 @@ export const App = () => {
     return activeSession.windowStates.find((window) => window.active) ?? activeSession.windowStates[0];
   }, [activeSession, selectedWindowIndex]);
 
-  const activePane: TmuxPaneState | undefined = useMemo(() => {
+  const activePane: PaneState | undefined = useMemo(() => {
     if (!activeWindow) {
       return undefined;
     }
@@ -810,7 +810,7 @@ export const App = () => {
     terminalRef.current?.focus();
   }, []);
 
-  const selectWindow = (windowState: TmuxWindowState): void => {
+  const selectWindow = (windowState: WindowState): void => {
     if (!activeSession) {
       return;
     }
