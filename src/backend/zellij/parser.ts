@@ -82,7 +82,13 @@ export function parseSessions(output: string): SessionSummary[] {
  * Zellij "tab" maps to our "window" concept.
  */
 export function parseTabs(json: string): Omit<WindowState, "panes">[] {
-  const tabs: ZellijTabJson[] = JSON.parse(json);
+  let tabs: ZellijTabJson[];
+  try {
+    tabs = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(tabs)) return [];
   return tabs.map((tab) => ({
     index: tab.position,
     name: tab.name,
@@ -99,7 +105,13 @@ export function parsePanes(
   json: string,
   tabId: number
 ): PaneState[] {
-  const panes: ZellijPaneJson[] = JSON.parse(json);
+  let panes: ZellijPaneJson[];
+  try {
+    panes = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(panes)) return [];
   return panes
     .filter((p) => !p.is_plugin && p.is_selectable && p.tab_id === tabId)
     .map((p, idx) => ({
@@ -121,6 +133,12 @@ export function findTabId(
   json: string,
   position: number
 ): number | undefined {
-  const tabs: ZellijTabJson[] = JSON.parse(json);
+  let tabs: ZellijTabJson[];
+  try {
+    tabs = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(tabs)) return undefined;
   return tabs.find((t) => t.position === position)?.tab_id;
 }
