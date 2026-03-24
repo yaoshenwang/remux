@@ -342,6 +342,7 @@ export const createRemuxServer = (
 
   const buildClientState = (
     baseSessions: WorkspaceSnapshot,
+    fullState: WorkspaceSnapshot,
     client: ControlContext
   ): { workspace: WorkspaceSnapshot; clientView: ClientView } => {
     const view = viewStore.getView(client.clientId);
@@ -355,19 +356,31 @@ export const createRemuxServer = (
       return { workspace: baseSessions, clientView: defaultView };
     }
 
+    // For tmux grouped sessions, find the mobile session to get per-client zoomed state
+    const mobileSession = deps.backend.createGroupedSession
+      ? fullState.sessions.find((s) => s.name === buildMobileSessionName(client.clientId))
+      : undefined;
+
     // Overlay view onto workspace: mark the viewed tab/pane as active
     const sessions = baseSessions.sessions.map((session) => {
       if (session.name !== view.sessionName) return session;
       return {
         ...session,
-        tabs: session.tabs.map((tab) => ({
-          ...tab,
-          active: tab.index === view.tabIndex,
-          panes: tab.panes.map((pane) => ({
-            ...pane,
-            active: pane.id === view.paneId
-          }))
-        }))
+        tabs: session.tabs.map((tab) => {
+          const mobileTab = mobileSession?.tabs.find((mt) => mt.index === tab.index);
+          return {
+            ...tab,
+            active: tab.index === view.tabIndex,
+            panes: tab.panes.map((pane) => {
+              const mobilePane = mobileTab?.panes.find((mp) => mp.id === pane.id);
+              return {
+                ...pane,
+                active: pane.id === view.paneId,
+                zoomed: mobilePane?.zoomed ?? pane.zoomed
+              };
+            })
+          };
+        })
       };
     });
 
@@ -386,8 +399,28 @@ export const createRemuxServer = (
     };
     latestSnapshot = baseSessions;
 
+    // Snapshot prev views before reconcile to detect changes
+    const prevViews = new Map<string, { session: string; paneId: string }>();
+    if (!deps.backend.createGroupedSession) {
+      for (const client of controlClients) {
+        if (!client.authed || !client.runtime) continue;
+        const v = viewStore.getView(client.clientId);
+        if (v) prevViews.set(client.clientId, { session: v.sessionName, paneId: v.paneId });
+      }
+    }
+
     // Reconcile all client views
     viewStore.reconcile(baseSessions);
+
+    // Reattach runtime if view changed (non-tmux backends only)
+    for (const [clientId, prev] of prevViews) {
+      const newView = viewStore.getView(clientId);
+      if (!newView || (newView.paneId === prev.paneId && newView.sessionName === prev.session)) continue;
+      const ctx = getControlContext(clientId);
+      if (ctx?.runtime) {
+        ctx.runtime.attachToSession(`${newView.sessionName}:${newView.paneId}`);
+      }
+    }
 
     verboseLog(
       "broadcast workspace_state",
@@ -396,7 +429,7 @@ export const createRemuxServer = (
     );
     for (const client of controlClients) {
       if (client.authed) {
-        const { workspace, clientView } = buildClientState(baseSessions, client);
+        const { workspace, clientView } = buildClientState(baseSessions, state, client);
         sendJson(client.socket, { type: "workspace_state", workspace, clientView });
       }
     }
@@ -567,6 +600,20 @@ export const createRemuxServer = (
           throw new Error("no attached session");
         }
         await deps.backend.newTab(sessionForNew);
+        // New tab becomes active — update view to the new tab
+        if (!deps.backend.createGroupedSession) {
+          const snapshot = await buildSnapshot(deps.backend);
+          const session = snapshot.sessions.find((s) => s.name === sessionForNew);
+          const activeTab = session?.tabs.find((t) => t.active) ?? session?.tabs.at(-1);
+          if (activeTab) {
+            viewStore.selectTab(context.clientId, activeTab.index, snapshot);
+            const updatedView = viewStore.getView(context.clientId);
+            if (updatedView) {
+              const runtime = getOrCreateRuntime(context);
+              runtime.attachToSession(`${updatedView.sessionName}:${updatedView.paneId}`);
+            }
+          }
+        }
         return;
       }
       case "select_tab": {
