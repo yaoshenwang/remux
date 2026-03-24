@@ -11,12 +11,12 @@
 
 import * as pty from "node-pty";
 import os from "node:os";
-import type { TmuxGateway } from "../tmux/types.js";
+import type { SessionGateway } from "../tmux/types.js";
 import type { PtyFactory, PtyProcess } from "../pty/pty-adapter.js";
 import type {
-  TmuxPaneState,
-  TmuxSessionSummary,
-  TmuxWindowState,
+  PaneState,
+  SessionSummary,
+  WindowState,
 } from "../../shared/protocol.js";
 import { toFlatStringEnv, withoutTmuxEnv } from "../util/env.js";
 
@@ -44,10 +44,10 @@ interface ManagedSession {
 }
 
 // ---------------------------------------------------------------------------
-// ConPtySessionProvider — implements TmuxGateway
+// ConPtySessionProvider — implements SessionGateway
 // ---------------------------------------------------------------------------
 
-export class ConPtySessionProvider implements TmuxGateway {
+export class ConPtySessionProvider implements SessionGateway {
   private sessions = new Map<string, ManagedSession>();
   private readonly defaultShell: string;
   private readonly scrollbackLines: number;
@@ -63,7 +63,7 @@ export class ConPtySessionProvider implements TmuxGateway {
         : process.env.SHELL ?? "/bin/bash";
   }
 
-  async listSessions(): Promise<TmuxSessionSummary[]> {
+  async listSessions(): Promise<SessionSummary[]> {
     return Array.from(this.sessions.values()).map((s) => ({
       name: s.name,
       attached: s.attached,
@@ -73,7 +73,7 @@ export class ConPtySessionProvider implements TmuxGateway {
 
   async listWindows(
     session: string
-  ): Promise<Omit<TmuxWindowState, "panes">[]> {
+  ): Promise<Omit<WindowState, "panes">[]> {
     const s = this.sessions.get(session);
     if (!s) return [];
     return [
@@ -89,7 +89,7 @@ export class ConPtySessionProvider implements TmuxGateway {
   async listPanes(
     session: string,
     _windowIndex: number
-  ): Promise<TmuxPaneState[]> {
+  ): Promise<PaneState[]> {
     const s = this.sessions.get(session);
     if (!s) return [];
     return [
@@ -328,7 +328,7 @@ export class ConPtySessionProvider implements TmuxGateway {
  * PtyFactory that connects to sessions managed by ConPtySessionProvider
  * instead of shelling out to `tmux attach`.
  *
- * When spawnTmuxAttach is called, it returns a PtyProcess that reads/writes
+ * When spawnAttach is called, it returns a PtyProcess that reads/writes
  * to the existing ConPTY session.
  */
 export class ConPtyFactory implements PtyFactory {
@@ -337,7 +337,7 @@ export class ConPtyFactory implements PtyFactory {
     private readonly logger?: Pick<Console, "log" | "error">
   ) {}
 
-  spawnTmuxAttach(session: string): PtyProcess {
+  spawnAttach(session: string): PtyProcess {
     const ptyProcess = this.provider.getSessionPty(session);
     if (!ptyProcess) {
       throw new Error(

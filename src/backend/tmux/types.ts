@@ -1,15 +1,15 @@
 import type {
-  TmuxPaneState,
-  TmuxSessionState,
-  TmuxSessionSummary,
-  TmuxStateSnapshot,
-  TmuxWindowState
+  PaneState,
+  SessionState,
+  SessionSummary,
+  StateSnapshot,
+  WindowState
 } from "../../shared/protocol.js";
 
-export interface TmuxGateway {
-  listSessions(): Promise<TmuxSessionSummary[]>;
-  listWindows(session: string): Promise<Omit<TmuxWindowState, "panes">[]>;
-  listPanes(session: string, windowIndex: number): Promise<TmuxPaneState[]>;
+export interface SessionGateway {
+  listSessions(): Promise<SessionSummary[]>;
+  listWindows(session: string): Promise<Omit<WindowState, "panes">[]>;
+  listPanes(session: string, windowIndex: number): Promise<PaneState[]>;
   createSession(name: string): Promise<void>;
   createGroupedSession(name: string, targetSession: string): Promise<void>;
   killSession(name: string): Promise<void>;
@@ -28,14 +28,14 @@ export interface TmuxGateway {
 }
 
 export const buildSnapshot = async (
-  tmux: TmuxGateway
-): Promise<TmuxStateSnapshot> => {
+  tmux: SessionGateway
+): Promise<StateSnapshot> => {
   const sessions = await tmux.listSessions();
 
-  const sessionStates: TmuxSessionState[] = await Promise.all(
+  const sessionStates: SessionState[] = await Promise.all(
     sessions.map(async (session) => {
       const windows = await tmux.listWindows(session.name);
-      const withPanes: TmuxWindowState[] = await Promise.all(
+      const withPanes: WindowState[] = await Promise.all(
         windows.map(async (window) => {
           const panes = await tmux.listPanes(session.name, window.index);
           return { ...window, panes };
@@ -50,3 +50,6 @@ export const buildSnapshot = async (
     capturedAt: new Date().toISOString()
   };
 };
+
+/** @deprecated Use SessionGateway */
+export type TmuxGateway = SessionGateway;

@@ -14,13 +14,13 @@ export type ControlClientMessage =
   | { type: "rename_session"; session: string; newName: string }
   | { type: "rename_window"; session: string; windowIndex: number; newName: string };
 
-export interface TmuxSessionSummary {
+export interface SessionSummary {
   name: string;
   attached: boolean;
   windows: number;
 }
 
-export interface TmuxPaneState {
+export interface PaneState {
   index: number;
   id: string;
   currentCommand: string;
@@ -31,20 +31,20 @@ export interface TmuxPaneState {
   currentPath: string;
 }
 
-export interface TmuxWindowState {
+export interface WindowState {
   index: number;
   name: string;
   active: boolean;
   paneCount: number;
-  panes: TmuxPaneState[];
+  panes: PaneState[];
 }
 
-export interface TmuxSessionState extends TmuxSessionSummary {
-  windowStates: TmuxWindowState[];
+export interface SessionState extends SessionSummary {
+  windowStates: WindowState[];
 }
 
-export interface TmuxStateSnapshot {
-  sessions: TmuxSessionState[];
+export interface StateSnapshot {
+  sessions: SessionState[];
   capturedAt: string;
 }
 
@@ -52,8 +52,19 @@ export type ControlServerMessage =
   | { type: "auth_ok"; clientId: string; requiresPassword: boolean }
   | { type: "auth_error"; reason: string }
   | { type: "attached"; session: string }
-  | { type: "session_picker"; sessions: TmuxSessionSummary[] }
-  | { type: "tmux_state"; state: TmuxStateSnapshot }
+  | { type: "session_picker"; sessions: SessionSummary[] }
+  | { type: "tmux_state"; state: StateSnapshot }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number }
   | { type: "error"; message: string }
   | { type: "info"; message: string };
+
+/** @deprecated Use SessionSummary */
+export type TmuxSessionSummary = SessionSummary;
+/** @deprecated Use PaneState */
+export type TmuxPaneState = PaneState;
+/** @deprecated Use WindowState */
+export type TmuxWindowState = WindowState;
+/** @deprecated Use SessionState */
+export type TmuxSessionState = SessionState;
+/** @deprecated Use StateSnapshot */
+export type TmuxStateSnapshot = StateSnapshot;

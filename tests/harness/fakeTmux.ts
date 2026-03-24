@@ -1,9 +1,9 @@
 import type {
-  TmuxPaneState,
-  TmuxSessionSummary,
-  TmuxWindowState
+  PaneState,
+  SessionSummary,
+  WindowState
 } from "../../src/shared/protocol.js";
-import type { TmuxGateway } from "../../src/backend/tmux/types.js";
+import type { SessionGateway } from "../../src/backend/tmux/types.js";
 
 interface SessionNode {
   name: string;
@@ -60,7 +60,7 @@ const buildDefaultSession = (name: string): SessionNode => ({
   ]
 });
 
-export class FakeTmuxGateway implements TmuxGateway {
+export class FakeSessionGateway implements SessionGateway {
   private sessions: SessionNode[] = [];
   private failSwitchClient = false;
   public readonly calls: string[] = [];
@@ -73,7 +73,7 @@ export class FakeTmuxGateway implements TmuxGateway {
     }
   }
 
-  public listSessions(): Promise<TmuxSessionSummary[]> {
+  public listSessions(): Promise<SessionSummary[]> {
     this.calls.push("listSessions");
     return Promise.resolve(
       this.sessions.map((session) => ({
@@ -84,7 +84,7 @@ export class FakeTmuxGateway implements TmuxGateway {
     );
   }
 
-  public listWindows(sessionName: string): Promise<Omit<TmuxWindowState, "panes">[]> {
+  public listWindows(sessionName: string): Promise<Omit<WindowState, "panes">[]> {
     this.calls.push(`listWindows:${sessionName}`);
     const session = this.findSession(sessionName);
     return Promise.resolve(
@@ -97,7 +97,7 @@ export class FakeTmuxGateway implements TmuxGateway {
     );
   }
 
-  public listPanes(sessionName: string, windowIndex: number): Promise<TmuxPaneState[]> {
+  public listPanes(sessionName: string, windowIndex: number): Promise<PaneState[]> {
     this.calls.push(`listPanes:${sessionName}:${windowIndex}`);
     const window = this.findWindow(sessionName, windowIndex);
     return Promise.resolve(

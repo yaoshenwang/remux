@@ -7,5 +7,5 @@ export interface PtyProcess {
 }
 
 export interface PtyFactory {
-  spawnTmuxAttach(session: string): PtyProcess;
+  spawnAttach(session: string): PtyProcess;
 }

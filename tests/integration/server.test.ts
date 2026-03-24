@@ -6,7 +6,7 @@ import type { RuntimeConfig } from "../../src/backend/config.js";
 import { createRemuxServer, type RunningServer } from "../../src/backend/server.js";
 import { buildSnapshot } from "../../src/backend/tmux/types.js";
 import { FakePtyFactory } from "../harness/fakePty.js";
-import { FakeTmuxGateway } from "../harness/fakeTmux.js";
+import { FakeSessionGateway } from "../harness/fakeTmux.js";
 import { openSocket, waitForMessage } from "../harness/ws.js";
 
 const buildConfig = (token: string): RuntimeConfig => ({
@@ -23,7 +23,7 @@ const buildConfig = (token: string): RuntimeConfig => ({
 
 describe("tmux mobile server", () => {
   let runningServer: RunningServer;
-  let tmux: FakeTmuxGateway;
+  let tmux: FakeSessionGateway;
   let ptyFactory: FakePtyFactory;
   let baseWsUrl: string;
 
@@ -63,7 +63,7 @@ describe("tmux mobile server", () => {
     sessions: string[],
     options: { password?: string; attachedSession?: string; failSwitchClient?: boolean } = {}
   ): Promise<void> => {
-    tmux = new FakeTmuxGateway(sessions, {
+    tmux = new FakeSessionGateway(sessions, {
       attachedSession: options.attachedSession,
       failSwitchClient: options.failSwitchClient
     });

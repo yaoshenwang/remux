@@ -9,13 +9,13 @@ import type { RuntimeConfig } from "./config.js";
 import type {
   ControlClientMessage,
   ControlServerMessage,
-  TmuxSessionState,
-  TmuxSessionSummary,
-  TmuxStateSnapshot
+  SessionState,
+  SessionSummary,
+  StateSnapshot
 } from "../shared/protocol.js";
 import { randomToken } from "./util/random.js";
 import { AuthService } from "./auth/auth-service.js";
-import type { TmuxGateway } from "./tmux/types.js";
+import type { SessionGateway } from "./tmux/types.js";
 import { TerminalRuntime } from "./pty/terminal-runtime.js";
 import type { PtyFactory } from "./pty/pty-adapter.js";
 import { TmuxStateMonitor } from "./state/state-monitor.js";
@@ -40,7 +40,7 @@ interface DataContext {
 }
 
 export interface ServerDependencies {
-  tmux: TmuxGateway;
+  tmux: SessionGateway;
   ptyFactory: PtyFactory;
   authService?: AuthService;
   logger?: Pick<Console, "log" | "error">;
@@ -114,7 +114,7 @@ const summarizeClientMessage = (message: ControlClientMessage): string => {
   return JSON.stringify({ type: message.type });
 };
 
-const summarizeState = (state: TmuxStateSnapshot): string => {
+const summarizeState = (state: StateSnapshot): string => {
   const sessions = state.sessions.map((session) => {
     const activeWindow =
       session.windowStates.find((windowState) => windowState.active) ?? session.windowStates[0];
@@ -270,10 +270,10 @@ export const createRemuxServer = (
   let stopPromise: Promise<void> | null = null;
 
   const buildClientState = (
-    baseSessions: TmuxSessionState[],
-    fullState: TmuxStateSnapshot,
+    baseSessions: SessionState[],
+    fullState: StateSnapshot,
     client: ControlContext
-  ): TmuxStateSnapshot => {
+  ): StateSnapshot => {
     if (!client.attachedSession || !client.baseSession) {
       return { ...fullState, sessions: baseSessions };
     }
@@ -318,7 +318,7 @@ export const createRemuxServer = (
     return { ...fullState, sessions };
   };
 
-  const broadcastState = (state: TmuxStateSnapshot): void => {
+  const broadcastState = (state: StateSnapshot): void => {
     const baseSessions = state.sessions.filter(
       (session) => !isManagedMobileSession(session.name)
     );

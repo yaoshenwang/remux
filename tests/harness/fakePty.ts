@@ -35,7 +35,7 @@ export class FakePtyFactory implements PtyFactory {
   public lastSpawnedSession?: string;
   public readonly processes: FakePtyProcess[] = [];
 
-  public spawnTmuxAttach(session: string): PtyProcess {
+  public spawnAttach(session: string): PtyProcess {
     this.lastSpawnedSession = session;
     const process = new FakePtyProcess();
     this.processes.push(process);

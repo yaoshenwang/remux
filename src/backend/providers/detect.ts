@@ -8,7 +8,7 @@
 
 import { execFileSync } from "node:child_process";
 import os from "node:os";
-import type { TmuxGateway } from "../tmux/types.js";
+import type { SessionGateway } from "../tmux/types.js";
 import type { PtyFactory } from "../pty/pty-adapter.js";
 import { TmuxCliExecutor } from "../tmux/cli-executor.js";
 import { NodePtyFactory } from "../pty/node-pty-adapter.js";
@@ -18,10 +18,9 @@ import {
 } from "./conpty-provider.js";
 
 export interface SessionBackend {
-  gateway: TmuxGateway;
+  gateway: SessionGateway;
   ptyFactory: PtyFactory;
-  /** "tmux" or "conpty" */
-  kind: "tmux" | "conpty";
+  kind: "tmux" | "zellij" | "conpty";
 }
 
 /**
@@ -31,7 +30,7 @@ export function detectSessionBackend(
   logger?: Pick<Console, "log" | "error">,
   options?: {
     /** Force a specific backend. */
-    force?: "tmux" | "conpty";
+    force?: "tmux" | "zellij" | "conpty";
     /** tmux socket name (-L flag). */
     socketName?: string;
     /** tmux socket path (-S flag). */

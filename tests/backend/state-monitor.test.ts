@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { TmuxStateMonitor } from "../../src/backend/state/state-monitor.js";
-import { FakeTmuxGateway } from "../harness/fakeTmux.js";
+import { FakeSessionGateway } from "../harness/fakeTmux.js";
 
 const delay = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -8,7 +8,7 @@ const delay = async (ms: number): Promise<void> => {
 
 describe("state monitor", () => {
   test("publishes only when state changes", async () => {
-    const tmux = new FakeTmuxGateway(["main"]);
+    const tmux = new FakeSessionGateway(["main"]);
     const onUpdate = vi.fn();
     const onError = vi.fn();
 
@@ -31,7 +31,7 @@ describe("state monitor", () => {
   });
 
   test("ignores stale tick snapshot that resolves after force publish", async () => {
-    const tmux = new FakeTmuxGateway(["main"]);
+    const tmux = new FakeSessionGateway(["main"]);
     const [initialPane] = await tmux.listPanes("main", 0);
     const onUpdate = vi.fn();
     const onError = vi.fn();
@@ -78,7 +78,7 @@ describe("state monitor", () => {
   });
 
   test("ignores stale forced snapshot that resolves after a newer force publish", async () => {
-    const tmux = new FakeTmuxGateway(["main"]);
+    const tmux = new FakeSessionGateway(["main"]);
     const [initialPane] = await tmux.listPanes("main", 0);
     const onUpdate = vi.fn();
     const onError = vi.fn();
