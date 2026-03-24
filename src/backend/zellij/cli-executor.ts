@@ -5,6 +5,9 @@ import { parseSessions, parseTabs, parsePanes, findTabId } from "./parser.js";
 
 const execFileAsync = promisify(execFile);
 
+/** Strip ANSI escape sequences from CLI output. */
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+
 interface ZellijCliExecutorOptions {
   zellijBinary?: string;
   timeoutMs?: number;
@@ -53,7 +56,8 @@ export class ZellijCliExecutor implements SessionGateway {
       const { stdout } = await execFileAsync(this.binary, finalArgs, {
         timeout: this.timeoutMs
       });
-      return stdout.trim();
+      // Strip ANSI escape codes — Zellij sometimes emits colors on stdout
+      return stripAnsi(stdout).trim();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -205,8 +209,9 @@ export class ZellijCliExecutor implements SessionGateway {
       ["action", "list-panes", "--json", "--all"],
       session
     );
-    const panes: Array<{ id: number; is_plugin: boolean; is_fullscreen: boolean }> =
-      JSON.parse(json);
+    let panes: Array<{ id: number; is_plugin: boolean; is_fullscreen: boolean }>;
+    try { panes = JSON.parse(json); } catch { return false; }
+    if (!Array.isArray(panes)) return false;
     const numId = extractPaneNumericId(paneId);
     return panes.find((p) => !p.is_plugin && p.id === numId)?.is_fullscreen ?? false;
   }
@@ -226,8 +231,9 @@ export class ZellijCliExecutor implements SessionGateway {
         session
       )
     ]);
-    const panes: Array<{ id: number; is_plugin: boolean; pane_content_columns: number }> =
-      JSON.parse(json);
+    let panes: Array<{ id: number; is_plugin: boolean; pane_content_columns: number }>;
+    try { panes = JSON.parse(json); } catch { return { text, paneWidth: 80 }; }
+    if (!Array.isArray(panes)) return { text, paneWidth: 80 };
     const numId = extractPaneNumericId(paneId);
     const pane = panes.find((p) => !p.is_plugin && p.id === numId);
     return { text, paneWidth: pane?.pane_content_columns ?? 80 };

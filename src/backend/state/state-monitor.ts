@@ -18,7 +18,11 @@ export class TmuxStateMonitor {
 
   public async start(): Promise<void> {
     this.running = true;
-    await this.publishSnapshot(false);
+    try {
+      await this.publishSnapshot(false);
+    } catch (error) {
+      this.onError(error instanceof Error ? error : new Error(String(error)));
+    }
     this.scheduleNextTick();
   }
 
