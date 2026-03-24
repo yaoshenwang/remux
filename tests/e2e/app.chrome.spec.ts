@@ -17,7 +17,7 @@ test.describe("remux browser behavior", () => {
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
 
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
-      await expect(page.locator(".top-title")).toContainText("Window: 0: shell");
+      await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
       await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
 
       await expect.poll(() => server.ptyFactory.processes.length).toBeGreaterThan(0);
@@ -62,10 +62,10 @@ test.describe("remux browser behavior", () => {
       });
 
       const windowGap = await page.evaluate(() => {
-        const list = document.querySelector('[data-testid="windows-list"]');
+        const list = document.querySelector('[data-testid="tabs-list"]');
         const last = list?.querySelector("li:last-child button") as HTMLElement | null;
         const action = document.querySelector(
-          '[data-testid="new-window-button"]'
+          '[data-testid="new-tab-button"]'
         ) as HTMLElement | null;
         if (!last || !action) {
           return -1;
@@ -114,7 +114,7 @@ test.describe("remux browser behavior", () => {
       await page.getByTestId("session-picker-overlay").getByRole("button", { name: "work" }).click();
 
       await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
-      await expect(page.locator(".top-title")).toContainText("Window: 0: shell");
+      await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
 
       await expect
         .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("remux-client-") ?? false)
@@ -239,8 +239,8 @@ test.describe("remux browser behavior", () => {
     test("applies sticky zoom when switching windows", async ({ page }) => {
       const localServer = await startE2EServer({ sessions: ["main"], defaultSession: "main" });
       try {
-        await localServer.tmux.newWindow("main");
-        await localServer.tmux.selectWindow("main", 0);
+        await localServer.gateway.newTab("main");
+        await localServer.gateway.selectTab("main", 0);
 
         await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
         await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
@@ -251,13 +251,13 @@ test.describe("remux browser behavior", () => {
         await stickyZoomToggle.click();
         await expect(stickyZoomToggle).toContainText("Sticky Zoom: On");
 
-        const initialZoomCalls = localServer.tmux.calls.filter((call) =>
-          call.startsWith("zoomPane:")
+        const initialZoomCalls = localServer.gateway.calls.filter((call) =>
+          call.startsWith("toggleFullscreen:")
         ).length;
-        await page.getByTestId("windows-list").getByRole("button", { name: /^1:\s/ }).click();
+        await page.getByTestId("tabs-list").getByRole("button", { name: /^1:\s/ }).click();
 
         await expect
-          .poll(() => localServer.tmux.calls.filter((call) => call.startsWith("zoomPane:")).length)
+          .poll(() => localServer.gateway.calls.filter((call) => call.startsWith("toggleFullscreen:")).length)
           .toBe(initialZoomCalls + 1);
         await expect(page.getByTestId("active-pane-zoom-indicator")).toHaveAttribute(
           "aria-label",
@@ -333,7 +333,7 @@ test.describe("remux browser behavior", () => {
         let tmuxPanes: unknown = null;
         let tmuxPanesError: string | null = null;
         try {
-          tmuxPanes = await server.tmux.listPanes("main", 0);
+          tmuxPanes = await server.gateway.listPanes("main", 0);
         } catch (error) {
           tmuxPanesError = error instanceof Error ? error.message : String(error);
         }
@@ -352,8 +352,8 @@ test.describe("remux browser behavior", () => {
           sessionButtons,
           frontendConsole: frontendConsole.slice(-200),
           browserDebug,
-          zoomCalls: server.tmux.calls.filter((call) => call.startsWith("zoomPane:")),
-          recentTmuxCalls: server.tmux.calls.slice(-120),
+          zoomCalls: server.gateway.calls.filter((call) => call.startsWith("toggleFullscreen:")),
+          recentTmuxCalls: server.gateway.calls.slice(-120),
           tmuxPanes,
           tmuxPanesError
         };
@@ -385,8 +385,8 @@ test.describe("remux browser behavior", () => {
         }
       };
 
-      const initialPanes = await server.tmux.listPanes("main", 0);
-      await server.tmux.splitWindow(initialPanes[0].id, "h");
+      const initialPanes = await server.gateway.listPanes("main", 0);
+      await server.gateway.splitPane(initialPanes[0].id, "right");
 
       await page.goto(`${server.baseUrl}/?token=${server.token}&debug=1`);
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
@@ -410,10 +410,10 @@ test.describe("remux browser behavior", () => {
 
       const zoomButton = page.getByRole("button", { name: "Zoom Pane" });
       await expect(zoomButton).toBeEnabled();
-      const initialZoomCalls = server.tmux.calls.filter((call) => call.startsWith("zoomPane:")).length;
+      const initialZoomCalls = server.gateway.calls.filter((call) => call.startsWith("toggleFullscreen:")).length;
       await zoomButton.click();
       await expect
-        .poll(() => server.tmux.calls.filter((call) => call.startsWith("zoomPane:")).length)
+        .poll(() => server.gateway.calls.filter((call) => call.startsWith("toggleFullscreen:")).length)
         .toBe(initialZoomCalls + 1);
       await collectZoomDebug("after-first-zoom-call");
       await expectZoomIndicators("on", "after-first-zoom");
@@ -421,7 +421,7 @@ test.describe("remux browser behavior", () => {
 
       await zoomButton.click();
       await expect
-        .poll(() => server.tmux.calls.filter((call) => call.startsWith("zoomPane:")).length)
+        .poll(() => server.gateway.calls.filter((call) => call.startsWith("toggleFullscreen:")).length)
         .toBe(initialZoomCalls + 2);
       await collectZoomDebug("after-second-zoom-call");
       await expectZoomIndicators("off", "after-second-zoom");
@@ -451,7 +451,7 @@ test.describe("remux browser behavior", () => {
       await page.getByTestId("session-picker-overlay").getByRole("button", { name: "dev" }).click();
 
       await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
-      await expect(page.locator(".top-title")).toContainText("Window: 0: shell");
+      await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
       await expect
         .poll(() => server.ptyFactory.lastSpawnedSession?.startsWith("remux-client-") ?? false)
         .toBe(true);

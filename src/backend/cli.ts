@@ -152,9 +152,8 @@ const main = async (): Promise<void> => {
   logger.log(`Session backend: ${backend.kind}`);
 
   const runningServer = createRemuxServer(config, {
-    tmux: backend.gateway,
+    backend: backend.gateway,
     ptyFactory: backend.ptyFactory,
-    backendKind: backend.kind,
     authService,
     logger,
     onSwitchBackend: (kind) => {
@@ -166,9 +165,8 @@ const main = async (): Promise<void> => {
           scrollbackLines: args.scrollback,
         });
         return {
-          tmux: newBackend.gateway,
+          backend: newBackend.gateway,
           ptyFactory: newBackend.ptyFactory,
-          backendKind: newBackend.kind,
         };
       } catch {
         return null;

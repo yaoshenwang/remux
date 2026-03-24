@@ -18,7 +18,7 @@ export interface StartedE2EServer {
   baseUrl: string;
   token: string;
   ptyFactory: FakePtyFactory;
-  tmux: FakeSessionGateway;
+  gateway: FakeSessionGateway;
   stop: () => Promise<void>;
 }
 
@@ -48,7 +48,7 @@ export const startE2EServer = async (
 
   const token = "e2e-token";
   const authService = new AuthService({ password: options.password, token });
-  const tmux = new FakeSessionGateway(options.sessions, {
+  const gateway = new FakeSessionGateway(options.sessions, {
     attachedSession: options.attachedSession,
     failSwitchClient: options.failSwitchClient
   });
@@ -67,7 +67,7 @@ export const startE2EServer = async (
   };
 
   const server: RunningServer = createRemuxServer(config, {
-    tmux,
+    backend: gateway,
     ptyFactory,
     authService,
     logger: e2eLogger
@@ -80,7 +80,7 @@ export const startE2EServer = async (
     baseUrl: `http://127.0.0.1:${address.port}`,
     token,
     ptyFactory,
-    tmux,
+    gateway,
     stop: () => server.stop()
   };
 };

@@ -30,7 +30,7 @@ describe("POST /api/upload", () => {
         frontendDir: tmpDir
       },
       {
-        tmux: new FakeSessionGateway(["main"]),
+        backend: new FakeSessionGateway(["main"]),
         ptyFactory: new FakePtyFactory(),
         authService,
         logger: silentLogger

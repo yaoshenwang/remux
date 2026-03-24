@@ -21,7 +21,7 @@ describe("state monitor", () => {
 
     expect(onUpdate.mock.calls.length).toBe(firstCount);
 
-    await tmux.newWindow("main");
+    await tmux.newTab("main");
     await delay(70);
 
     expect(onUpdate.mock.calls.length).toBeGreaterThan(firstCount);
@@ -60,7 +60,7 @@ describe("state monitor", () => {
     await monitor.start();
 
     await expect.poll(() => secondTickStarted).toBe(true);
-    await tmux.zoomPane(initialPane.id);
+    await tmux.toggleFullscreen(initialPane.id);
     await monitor.forcePublish();
     const forcePublishCalls = onUpdate.mock.calls.length;
 
@@ -70,7 +70,7 @@ describe("state monitor", () => {
 
     const zoomStatesAfterForcePublish = onUpdate.mock.calls
       .slice(forcePublishCalls)
-      .map(([snapshot]) => snapshot.sessions[0].windowStates[0].panes[0].zoomed);
+      .map(([snapshot]) => snapshot.sessions[0].tabs[0].panes[0].zoomed);
 
     expect(zoomStatesAfterForcePublish).not.toContain(false);
     expect(onUpdate).toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe("state monitor", () => {
     const firstForcePublish = monitor.forcePublish();
     await expect.poll(() => firstForceStarted).toBe(true);
 
-    await tmux.zoomPane(initialPane.id);
+    await tmux.toggleFullscreen(initialPane.id);
     await monitor.forcePublish();
     const updatesAfterSecondForce = onUpdate.mock.calls.length;
 
@@ -120,10 +120,10 @@ describe("state monitor", () => {
 
     const zoomStatesAfterSecondForce = onUpdate.mock.calls
       .slice(updatesAfterSecondForce)
-      .map(([snapshot]) => snapshot.sessions[0].windowStates[0].panes[0].zoomed);
+      .map(([snapshot]) => snapshot.sessions[0].tabs[0].panes[0].zoomed);
 
     expect(zoomStatesAfterSecondForce).not.toContain(false);
-    expect(onUpdate.mock.calls.at(-1)?.[0].sessions[0].windowStates[0].panes[0].zoomed).toBe(true);
+    expect(onUpdate.mock.calls.at(-1)?.[0].sessions[0].tabs[0].panes[0].zoomed).toBe(true);
     expect(onError).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 import type {
   SessionSummary,
-  WindowState,
+  TabState,
   PaneState
 } from "../../shared/protocol.js";
 
@@ -79,14 +79,14 @@ export function parseSessions(output: string): SessionSummary[] {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((name) => ({ name, attached: false, windows: 0 }));
+    .map((name) => ({ name, attached: false, tabCount: 0 }));
 }
 
 /**
- * Parse `zellij action list-tabs --json --all` output into WindowState[].
- * Zellij "tab" maps to our "window" concept.
+ * Parse `zellij action list-tabs --json --all` output into TabState[].
+ * Zellij "tab" maps to our "tab" concept.
  */
-export function parseTabs(json: string): Omit<WindowState, "panes">[] {
+export function parseTabs(json: string): Omit<TabState, "panes">[] {
   let tabs: ZellijTabJson[];
   try {
     tabs = JSON.parse(json);

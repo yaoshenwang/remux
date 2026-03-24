@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
-import type { SessionGateway } from "../tmux/types.js";
+import type { MultiplexerBackend } from "../multiplexer/types.js";
 import type { PtyFactory } from "../pty/pty-adapter.js";
 import { TmuxCliExecutor } from "../tmux/cli-executor.js";
 import { NodePtyFactory } from "../pty/node-pty-adapter.js";
@@ -23,7 +23,7 @@ import {
 } from "./conpty-provider.js";
 
 export interface SessionBackend {
-  gateway: SessionGateway;
+  gateway: MultiplexerBackend;
   ptyFactory: PtyFactory;
   kind: "tmux" | "zellij" | "conpty";
 }

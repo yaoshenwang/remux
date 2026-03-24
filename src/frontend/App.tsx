@@ -11,8 +11,10 @@ import type {
   PaneState,
   SessionState,
   SessionSummary,
-  StateSnapshot,
-  WindowState
+  WorkspaceSnapshot,
+  TabState,
+  ClientView,
+  BackendCapabilities
 } from "../shared/protocol";
 
 interface ServerConfig {
@@ -108,7 +110,9 @@ export const App = () => {
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [authReady, setAuthReady] = useState(false);
 
-  const [snapshot, setSnapshot] = useState<StateSnapshot>({ sessions: [], capturedAt: "" });
+  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>({ sessions: [], capturedAt: "" });
+  const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
+  const [clientView, setClientView] = useState<ClientView | null>(null);
   const [attachedSession, setAttachedSession] = useState<string>("");
   const attachedSessionRef = useRef("");
   const [sessionChoices, setSessionChoices] = useState<SessionSummary[] | null>(null);
@@ -163,35 +167,35 @@ export const App = () => {
     return snapshot.sessions.find((session) => session.attached) ?? snapshot.sessions[0];
   }, [snapshot.sessions, attachedSession]);
 
-  const activeWindow: WindowState | undefined = useMemo(() => {
+  const activeTab: TabState | undefined = useMemo(() => {
     if (!activeSession) {
       return undefined;
     }
     // Use local selection if it still exists in the snapshot
     if (selectedWindowIndex !== null) {
-      const selected = activeSession.windowStates.find(
-        (window) => window.index === selectedWindowIndex
+      const selected = activeSession.tabs.find(
+        (tab) => tab.index === selectedWindowIndex
       );
       if (selected) {
         return selected;
       }
     }
-    return activeSession.windowStates.find((window) => window.active) ?? activeSession.windowStates[0];
+    return activeSession.tabs.find((tab) => tab.active) ?? activeSession.tabs[0];
   }, [activeSession, selectedWindowIndex]);
 
   const activePane: PaneState | undefined = useMemo(() => {
-    if (!activeWindow) {
+    if (!activeTab) {
       return undefined;
     }
     // Use local selection if it still exists in the snapshot
     if (selectedPaneId !== null) {
-      const selected = activeWindow.panes.find((pane) => pane.id === selectedPaneId);
+      const selected = activeTab.panes.find((pane) => pane.id === selectedPaneId);
       if (selected) {
         return selected;
       }
     }
-    return activeWindow.panes.find((pane) => pane.active) ?? activeWindow.panes[0];
-  }, [activeWindow, selectedPaneId]);
+    return activeTab.panes.find((pane) => pane.active) ?? activeTab.panes[0];
+  }, [activeTab, selectedPaneId]);
 
   const topStatus = useMemo(() => {
     if (errorMessage) {
@@ -399,6 +403,7 @@ export const App = () => {
           } else {
             sessionStorage.removeItem("remux-password");
           }
+          if (message.capabilities) setCapabilities(message.capabilities);
           openTerminalSocket(passwordValue, message.clientId);
           return;
         case "auth_error":
@@ -433,31 +438,32 @@ export const App = () => {
             sessions: message.sessions.map((session) => ({
               name: session.name,
               attached: session.attached,
-              windows: session.windows
+              tabCount: session.tabCount
             }))
           });
           setSessionChoices(message.sessions);
           return;
-        case "tmux_state":
-          debugLog("control_socket.tmux_state", {
-            capturedAt: message.state.capturedAt,
-            sessionCount: message.state.sessions.length,
-            sessions: message.state.sessions.map((session) => {
-              const activeWindow =
-                session.windowStates.find((windowState) => windowState.active) ?? session.windowStates[0];
-              const activePane = activeWindow?.panes.find((pane) => pane.active) ?? activeWindow?.panes[0];
+        case "workspace_state":
+          debugLog("control_socket.workspace_state", {
+            capturedAt: message.workspace.capturedAt,
+            sessionCount: message.workspace.sessions.length,
+            sessions: message.workspace.sessions.map((session) => {
+              const aTab =
+                session.tabs.find((tab) => tab.active) ?? session.tabs[0];
+              const aPane = aTab?.panes.find((pane) => pane.active) ?? aTab?.panes[0];
               return {
                 name: session.name,
                 attached: session.attached,
-                activeWindow: activeWindow ? `${activeWindow.index}:${activeWindow.name}` : null,
-                activePane: activePane?.id ?? null,
-                activePaneZoomed: activePane?.zoomed ?? null
+                activeTab: aTab ? `${aTab.index}:${aTab.name}` : null,
+                activePane: aPane?.id ?? null,
+                activePaneZoomed: aPane?.zoomed ?? null
               };
             })
           });
-          setSnapshot(message.state);
+          setSnapshot(message.workspace);
+          if (message.clientView) setClientView(message.clientView);
           // Clear local selections — the server now sends per-client active state,
-          // so the snapshot already reflects this client's active window/pane.
+          // so the snapshot already reflects this client's active tab/pane.
           setSelectedWindowIndex(null);
           setSelectedPaneId(null);
           return;
@@ -684,21 +690,21 @@ export const App = () => {
       return;
     }
     const sessionSummary = snapshot.sessions.map((session) => {
-      const activeWindow =
-        session.windowStates.find((windowState) => windowState.active) ?? session.windowStates[0];
-      const activePane = activeWindow?.panes.find((pane) => pane.active) ?? activeWindow?.panes[0];
+      const aTab =
+        session.tabs.find((tab) => tab.active) ?? session.tabs[0];
+      const aPane = aTab?.panes.find((pane) => pane.active) ?? aTab?.panes[0];
       return {
         name: session.name,
         attached: session.attached,
-        activeWindow: activeWindow ? `${activeWindow.index}:${activeWindow.name}` : null,
-        activePane: activePane?.id ?? null,
-        activePaneZoomed: activePane?.zoomed ?? null
+        activeTab: aTab ? `${aTab.index}:${aTab.name}` : null,
+        activePane: aPane?.id ?? null,
+        activePaneZoomed: aPane?.zoomed ?? null
       };
     });
     const derived = {
       attachedSession,
       activeSession: activeSession?.name ?? null,
-      activeWindow: activeWindow ? `${activeWindow.index}:${activeWindow.name}` : null,
+      activeTab: activeTab ? `${activeTab.index}:${activeTab.name}` : null,
       activePane: activePane?.id ?? null,
       activePaneZoomed: activePane?.zoomed ?? null,
       topStatus,
@@ -707,7 +713,7 @@ export const App = () => {
     };
     window.__remuxDebugState = derived;
     debugLog("derived_state", derived);
-  }, [attachedSession, activeSession, activeWindow, activePane, snapshot, topStatus]);
+  }, [attachedSession, activeSession, activeTab, activePane, snapshot, topStatus]);
 
   // Handle paste events for non-text content (images, files)
   useEffect(() => {
@@ -811,18 +817,19 @@ export const App = () => {
     terminalRef.current?.focus();
   }, []);
 
-  const selectWindow = (windowState: WindowState): void => {
+  const selectTab = (tab: TabState): void => {
     if (!activeSession) {
       return;
     }
-    setSelectedWindowIndex(windowState.index);
+    setSelectedWindowIndex(tab.index);
     setSelectedPaneId(null);
-    sendControl({
-      type: "select_window",
-      session: activeSession.name,
-      windowIndex: windowState.index,
-      ...(stickyZoom && !windowState.active ? { stickyZoom: true } : {})
-    });
+    sendControl({ type: "select_tab", session: activeSession.name, tabIndex: tab.index });
+    if (stickyZoom && !tab.active) {
+      const pane = tab.panes.find((p) => p.active) ?? tab.panes[0];
+      if (pane && !pane.zoomed) {
+        sendControl({ type: "toggle_fullscreen", paneId: pane.id });
+      }
+    }
   };
 
   return (
@@ -836,7 +843,7 @@ export const App = () => {
           =
         </button>
         <div className="top-title">
-          Window: {activeWindow ? `${activeWindow.index}: ${activeWindow.name}` : "-"}
+          Tab: {activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}
         </div>
         <div className="top-actions">
           <span
@@ -1013,7 +1020,7 @@ export const App = () => {
                     >
                       <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
                       {(() => {
-                        const aw = session.windowStates.find((w) => w.active) ?? session.windowStates[0];
+                        const aw = session.tabs.find((t) => t.active) ?? session.tabs[0];
                         const label = aw ? formatContext(deriveContext(aw.panes)) : "";
                         return label ? <span className="item-context">{label}</span> : null;
                       })()}
@@ -1030,12 +1037,12 @@ export const App = () => {
               + New Session
             </button>
 
-            <h3>Windows ({activeSession?.name ?? "-"})</h3>
-            <ul data-testid="windows-list">
+            <h3>Tabs ({activeSession?.name ?? "-"})</h3>
+            <ul data-testid="tabs-list">
               {activeSession
-                ? activeSession.windowStates.map((windowState) => (
-                    <li key={`${activeSession.name}-${windowState.index}`}>
-                      {renamingWindow?.session === activeSession.name && renamingWindow?.index === windowState.index ? (
+                ? activeSession.tabs.map((tab) => (
+                    <li key={`${activeSession.name}-${tab.index}`}>
+                      {renamingWindow?.session === activeSession.name && renamingWindow?.index === tab.index ? (
                         <input
                           className="rename-input"
                           value={renameWindowValue}
@@ -1043,7 +1050,7 @@ export const App = () => {
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && renameWindowValue.trim()) {
                               renameHandledByKeyRef.current = true;
-                              sendControl({ type: "rename_window", session: activeSession.name, windowIndex: windowState.index, newName: renameWindowValue.trim() });
+                              sendControl({ type: "rename_tab", session: activeSession.name, tabIndex: tab.index, newName: renameWindowValue.trim() });
                               setRenamingWindow(null);
                             } else if (e.key === "Escape") {
                               renameHandledByKeyRef.current = true;
@@ -1055,30 +1062,30 @@ export const App = () => {
                               renameHandledByKeyRef.current = false;
                               return;
                             }
-                            if (renameWindowValue.trim() && renameWindowValue.trim() !== windowState.name) {
-                              sendControl({ type: "rename_window", session: activeSession.name, windowIndex: windowState.index, newName: renameWindowValue.trim() });
+                            if (renameWindowValue.trim() && renameWindowValue.trim() !== tab.name) {
+                              sendControl({ type: "rename_tab", session: activeSession.name, tabIndex: tab.index, newName: renameWindowValue.trim() });
                             }
                             setRenamingWindow(null);
                           }}
                           autoFocus
-                          data-testid="rename-window-input"
+                          data-testid="rename-tab-input"
                         />
                       ) : (
                         <button
-                          onClick={() => selectWindow(windowState)}
+                          onClick={() => selectTab(tab)}
                           onDoubleClick={(e) => {
                             e.preventDefault();
-                            setRenamingWindow({ session: activeSession.name, index: windowState.index });
-                            setRenameWindowValue(windowState.name);
+                            setRenamingWindow({ session: activeSession.name, index: tab.index });
+                            setRenameWindowValue(tab.name);
                           }}
-                          className={windowState.index === activeWindow?.index ? "active" : ""}
+                          className={tab.index === activeTab?.index ? "active" : ""}
                         >
                           <span className="item-name">
-                            {windowState.index}: {windowState.name}
-                            {windowState.index === activeWindow?.index ? " *" : ""}
+                            {tab.index}: {tab.name}
+                            {tab.index === activeTab?.index ? " *" : ""}
                           </span>
                           {(() => {
-                            const label = formatContext(deriveContext(windowState.panes));
+                            const label = formatContext(deriveContext(tab.panes));
                             return label ? <span className="item-context">{label}</span> : null;
                           })()}
                         </button>
@@ -1090,29 +1097,28 @@ export const App = () => {
             <button
               className="drawer-section-action"
               onClick={() =>
-                activeSession && sendControl({ type: "new_window", session: activeSession.name })
+                activeSession && sendControl({ type: "new_tab", session: activeSession.name })
               }
               disabled={!activeSession}
-              data-testid="new-window-button"
+              data-testid="new-tab-button"
             >
-              + New Window
+              + New Tab
             </button>
 
-            <h3>Panes ({activeWindow ? `${activeWindow.index}` : "-"})</h3>
+            <h3>Panes ({activeTab ? `${activeTab.index}` : "-"})</h3>
             <ul>
-              {activeWindow
-                ? activeWindow.panes.map((pane) => {
+              {activeTab
+                ? activeTab.panes.map((pane) => {
                     const isActive = pane.id === activePane?.id;
                     return (
                       <li key={pane.id}>
                         <button
                           onClick={() => {
                             setSelectedPaneId(pane.id);
-                            sendControl({
-                              type: "select_pane",
-                              paneId: pane.id,
-                              ...(stickyZoom && !isActive ? { stickyZoom: true } : {})
-                            });
+                            sendControl({ type: "select_pane", paneId: pane.id });
+                            if (stickyZoom && !isActive && !pane.zoomed) {
+                              sendControl({ type: "toggle_fullscreen", paneId: pane.id });
+                            }
                           }}
                           className={isActive ? "active" : ""}
                         >
@@ -1137,7 +1143,7 @@ export const App = () => {
               <button
                 onClick={() =>
                   activePane &&
-                  sendControl({ type: "split_pane", paneId: activePane.id, orientation: "h" })
+                  sendControl({ type: "split_pane", paneId: activePane.id, direction: "right" })
                 }
                 disabled={!activePane}
               >
@@ -1146,7 +1152,7 @@ export const App = () => {
               <button
                 onClick={() =>
                   activePane &&
-                  sendControl({ type: "split_pane", paneId: activePane.id, orientation: "v" })
+                  sendControl({ type: "split_pane", paneId: activePane.id, direction: "down" })
                 }
                 disabled={!activePane}
               >
@@ -1156,9 +1162,9 @@ export const App = () => {
             <button
               className="drawer-section-action"
               onClick={() =>
-                activePane && sendControl({ type: "zoom_pane", paneId: activePane.id })
+                activePane && sendControl({ type: "toggle_fullscreen", paneId: activePane.id })
               }
-              disabled={!activePane || !activeWindow || activeWindow.paneCount <= 1}
+              disabled={!activePane || !activeTab || activeTab.paneCount <= 1}
             >
               Zoom Pane
             </button>
@@ -1175,7 +1181,7 @@ export const App = () => {
               onClick={() => {
                 if (!activePane) return;
                 setSelectedPaneId(null);
-                sendControl({ type: "kill_pane", paneId: activePane.id });
+                sendControl({ type: "close_pane", paneId: activePane.id });
               }}
               disabled={!activePane}
             >
@@ -1184,18 +1190,18 @@ export const App = () => {
             <button
               className="drawer-section-action"
               onClick={() => {
-                if (!activeSession || !activeWindow) return;
+                if (!activeSession || !activeTab) return;
                 setSelectedWindowIndex(null);
                 setSelectedPaneId(null);
                 sendControl({
-                  type: "kill_window",
+                  type: "close_tab",
                   session: activeSession.name,
-                  windowIndex: activeWindow.index
+                  tabIndex: activeTab.index
                 });
               }}
-              disabled={!activeSession || !activeWindow}
+              disabled={!activeSession || !activeTab}
             >
-              Kill Window
+              Close Tab
             </button>
 
             <h3>Appearance</h3>

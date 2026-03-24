@@ -7,15 +7,15 @@ describe("zellij parser", () => {
       const output = "main\ndev\ntest-session";
       const result = parseSessions(output);
       expect(result).toEqual([
-        { name: "main", attached: false, windows: 0 },
-        { name: "dev", attached: false, windows: 0 },
-        { name: "test-session", attached: false, windows: 0 }
+        { name: "main", attached: false, tabCount: 0 },
+        { name: "dev", attached: false, tabCount: 0 },
+        { name: "test-session", attached: false, tabCount: 0 }
       ]);
     });
 
     it("handles single session", () => {
       expect(parseSessions("main")).toEqual([
-        { name: "main", attached: false, windows: 0 }
+        { name: "main", attached: false, tabCount: 0 }
       ]);
     });
 
@@ -26,8 +26,8 @@ describe("zellij parser", () => {
     it("trims whitespace and skips empty lines", () => {
       const output = "  main  \n\n  dev  \n";
       expect(parseSessions(output)).toEqual([
-        { name: "main", attached: false, windows: 0 },
-        { name: "dev", attached: false, windows: 0 }
+        { name: "main", attached: false, tabCount: 0 },
+        { name: "dev", attached: false, tabCount: 0 }
       ]);
     });
   });

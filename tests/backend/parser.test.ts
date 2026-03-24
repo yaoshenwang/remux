@@ -5,8 +5,8 @@ describe("tmux parser", () => {
   test("parses session lines", () => {
     const parsed = parseSessions("main\t1\t2\nwork\t0\t1");
     expect(parsed).toEqual([
-      { name: "main", attached: true, windows: 2 },
-      { name: "work", attached: false, windows: 1 }
+      { name: "main", attached: true, tabCount: 2 },
+      { name: "work", attached: false, tabCount: 1 }
     ]);
   });
 

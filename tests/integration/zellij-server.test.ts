@@ -20,9 +20,37 @@ const buildConfig = (token: string): RuntimeConfig => ({
   frontendDir: process.cwd()
 });
 
+/**
+ * A zellij-style fake: no createGroupedSession, no switchClient.
+ * We create a wrapper that delegates to FakeSessionGateway but omits optional methods.
+ */
+function createFakeZellijGateway(
+  sessions: string[],
+  options?: { attachedSession?: string }
+): FakeSessionGateway & { readonly kind: "zellij" } {
+  const base = new FakeSessionGateway(sessions, options);
+  // Create a proxy that hides createGroupedSession and switchClient
+  return Object.create(base, {
+    kind: { value: "zellij" as const, writable: false },
+    capabilities: {
+      value: {
+        supportsPaneFocusById: true,
+        supportsTabRename: true,
+        supportsSessionRename: true,
+        supportsPreciseScrollback: false,
+        supportsFloatingPanes: true,
+        supportsFullscreenPane: true,
+      },
+      writable: false
+    },
+    createGroupedSession: { value: undefined, writable: false },
+    switchClient: { value: undefined, writable: false },
+  }) as FakeSessionGateway & { readonly kind: "zellij" };
+}
+
 describe("zellij backend server", () => {
   let runningServer: RunningServer;
-  let gateway: FakeSessionGateway;
+  let gateway: FakeSessionGateway & { readonly kind: "zellij" };
   let ptyFactory: FakePtyFactory;
   let baseWsUrl: string;
 
@@ -45,15 +73,14 @@ describe("zellij backend server", () => {
   };
 
   beforeEach(async () => {
-    gateway = new FakeSessionGateway(["main"], { attachedSession: "main" });
+    gateway = createFakeZellijGateway(["main"], { attachedSession: "main" });
     ptyFactory = new FakePtyFactory();
     const authService = new AuthService({ token: "test-token" });
     const config = buildConfig("test-token");
 
     runningServer = createRemuxServer(config, {
-      tmux: gateway,
+      backend: gateway,
       ptyFactory,
-      backendKind: "zellij",
       authService,
       logger: { log: () => {}, error: () => {} }
     });
@@ -101,8 +128,8 @@ describe("zellij backend server", () => {
     expect(killCalls).toHaveLength(0);
   });
 
-  test("select_window updates virtual view and re-attaches PTY", async () => {
-    await gateway.newWindow("main");
+  test("select_tab updates view and re-attaches PTY", async () => {
+    await gateway.newTab("main");
     const p0 = await gateway.listPanes("main", 0);
 
     const control = await openSocket(`${baseWsUrl}/ws/control`);
@@ -110,21 +137,21 @@ describe("zellij backend server", () => {
       await authControl(control);
       const processCountBefore = ptyFactory.processes.length;
 
-      // Wait for state reflecting window 0 as active (virtual view updated)
+      // Wait for state reflecting tab 0 as active (view updated)
       const statePromise = waitForMessage<{
         type: string;
-        state: { sessions: Array<{ windowStates: Array<{ index: number; active: boolean }> }> };
+        workspace: { sessions: Array<{ tabs: Array<{ index: number; active: boolean }> }> };
       }>(control, (msg) => {
-        if (msg.type !== "tmux_state") return false;
-        const ws = msg.state?.sessions?.[0]?.windowStates;
-        return ws?.some((w: { index: number; active: boolean }) => w.index === 0 && w.active) ?? false;
+        if (msg.type !== "workspace_state") return false;
+        const ts = msg.workspace?.sessions?.[0]?.tabs;
+        return ts?.some((t: { index: number; active: boolean }) => t.index === 0 && t.active) ?? false;
       });
       control.send(
-        JSON.stringify({ type: "select_window", session: "main", windowIndex: 0 })
+        JSON.stringify({ type: "select_tab", session: "main", tabIndex: 0 })
       );
       await statePromise;
 
-      // A new PTY process should have been spawned for window 0's pane
+      // A new PTY process should have been spawned for tab 0's pane
       expect(ptyFactory.processes.length).toBe(processCountBefore + 1);
       expect(ptyFactory.lastSpawnedSession).toContain(p0[0].id);
     } finally {
@@ -132,11 +159,11 @@ describe("zellij backend server", () => {
     }
   });
 
-  test("select_pane updates virtual view and re-attaches PTY", async () => {
+  test("select_pane updates view and re-attaches PTY", async () => {
     // Get the first pane ID from the gateway, then split to get a second
     const initialPanes = await gateway.listPanes("main", 0);
     const firstPaneId = initialPanes[0].id;
-    await gateway.splitWindow(firstPaneId, "h");
+    await gateway.splitPane(firstPaneId, "right");
     const panes = await gateway.listPanes("main", 0);
     const secondPane = panes[1];
     expect(secondPane).toBeDefined();
@@ -147,7 +174,7 @@ describe("zellij backend server", () => {
 
       const statePromise = waitForMessage<{ type: string }>(
         control,
-        (msg) => msg.type === "tmux_state"
+        (msg) => msg.type === "workspace_state"
       );
       control.send(
         JSON.stringify({ type: "select_pane", paneId: secondPane.id })
@@ -160,32 +187,32 @@ describe("zellij backend server", () => {
     }
   });
 
-  test("tmux_state reflects virtual view active flags", async () => {
-    // newWindow makes window 1 active (initial attach picks window 1)
-    // Select window 0 to change the virtual view
-    await gateway.newWindow("main");
+  test("workspace_state reflects view active flags", async () => {
+    // newTab makes tab 1 active (initial attach picks tab 1)
+    // Select tab 0 to change the view
+    await gateway.newTab("main");
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     try {
       await authControl(control);
 
       control.send(
-        JSON.stringify({ type: "select_window", session: "main", windowIndex: 0 })
+        JSON.stringify({ type: "select_tab", session: "main", tabIndex: 0 })
       );
 
       const state = await waitForMessage<{
         type: string;
-        state: { sessions: Array<{ windowStates: Array<{ index: number; active: boolean }> }> };
+        workspace: { sessions: Array<{ tabs: Array<{ index: number; active: boolean }> }> };
       }>(control, (msg) => {
-        if (msg.type !== "tmux_state") return false;
-        const ws = msg.state?.sessions?.[0]?.windowStates;
-        return ws?.some((w: { index: number; active: boolean }) => w.index === 0 && w.active) ?? false;
+        if (msg.type !== "workspace_state") return false;
+        const ts = msg.workspace?.sessions?.[0]?.tabs;
+        return ts?.some((t: { index: number; active: boolean }) => t.index === 0 && t.active) ?? false;
       });
 
-      const windows = state.state.sessions[0].windowStates;
-      const w0 = windows.find((w) => w.index === 0);
-      const w1 = windows.find((w) => w.index === 1);
-      expect(w0?.active).toBe(true);
-      expect(w1?.active).toBe(false);
+      const tabs = state.workspace.sessions[0].tabs;
+      const t0 = tabs.find((t) => t.index === 0);
+      const t1 = tabs.find((t) => t.index === 1);
+      expect(t0?.active).toBe(true);
+      expect(t1?.active).toBe(false);
     } finally {
       control.close();
     }

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { SessionGateway } from "../tmux/types.js";
+import type { MultiplexerBackend } from "../multiplexer/types.js";
+import type { BackendCapabilities } from "../../shared/protocol.js";
 import { parseSessions, parseTabs, parsePanes, findTabId } from "./parser.js";
 
 const execFileAsync = promisify(execFile);
@@ -16,7 +17,17 @@ interface ZellijCliExecutorOptions {
   focusPluginPath?: string;
 }
 
-export class ZellijCliExecutor implements SessionGateway {
+export class ZellijCliExecutor implements MultiplexerBackend {
+  public readonly kind = "zellij" as const;
+  public readonly capabilities: BackendCapabilities = {
+    supportsPaneFocusById: true,
+    supportsTabRename: true,
+    supportsSessionRename: true,
+    supportsPreciseScrollback: false,
+    supportsFloatingPanes: true,
+    supportsFullscreenPane: true,
+  };
+
   private readonly binary: string;
   private readonly timeoutMs: number;
   private readonly logger?: Pick<Console, "log" | "error">;
@@ -24,7 +35,7 @@ export class ZellijCliExecutor implements SessionGateway {
 
   /**
    * Cache paneId → sessionName, populated by listPanes() during state polling.
-   * Used by pane operations that need session context (splitWindow, zoomPane).
+   * Used by pane operations that need session context (splitPane, toggleFullscreen).
    */
   private readonly paneSessionMap = new Map<string, string>();
   /** Path to remux-focus.wasm for focus-pane-by-id via plugin pipe. */
@@ -95,24 +106,17 @@ export class ZellijCliExecutor implements SessionGateway {
     });
   }
 
-  /**
-   * No-op — Zellij has no session groups.
-   * Virtual view tracking is handled at the server layer.
-   */
-  public async createGroupedSession(
-    _name: string,
-    _targetSession: string
-  ): Promise<void> {}
-
   public async killSession(name: string): Promise<void> {
     await this.runZellij(["delete-session", "-f", name]);
   }
 
-  public async switchClient(_session: string): Promise<void> {}
+  public async renameSession(name: string, newName: string): Promise<void> {
+    await this.runZellij(["action", "rename-session", newName], name);
+  }
 
-  // ── Tab/Window operations ──
+  // ── Tab operations ──
 
-  public async listWindows(session: string) {
+  public async listTabs(session: string) {
     const json = await this.runZellij(
       ["action", "list-tabs", "--json", "--all"],
       session
@@ -120,18 +124,18 @@ export class ZellijCliExecutor implements SessionGateway {
     return parseTabs(json);
   }
 
-  public async newWindow(session: string): Promise<void> {
+  public async newTab(session: string): Promise<void> {
     await this.runZellij(["action", "new-tab"], session);
   }
 
-  public async killWindow(session: string, windowIndex: number): Promise<void> {
+  public async closeTab(session: string, tabIndex: number): Promise<void> {
     const json = await this.runZellij(
       ["action", "list-tabs", "--json", "--all"],
       session
     );
-    const tabId = findTabId(json, windowIndex);
+    const tabId = findTabId(json, tabIndex);
     if (tabId === undefined) {
-      throw new Error(`No tab at position ${windowIndex} in session ${session}`);
+      throw new Error(`No tab at position ${tabIndex} in session ${session}`);
     }
     await this.runZellij(
       ["action", "close-tab-by-id", String(tabId)],
@@ -139,26 +143,26 @@ export class ZellijCliExecutor implements SessionGateway {
     );
   }
 
-  public async selectWindow(session: string, windowIndex: number): Promise<void> {
+  public async selectTab(session: string, tabIndex: number): Promise<void> {
     // go-to-tab uses 1-based index
     await this.runZellij(
-      ["action", "go-to-tab", String(windowIndex + 1)],
+      ["action", "go-to-tab", String(tabIndex + 1)],
       session
     );
   }
 
-  public async renameWindow(
+  public async renameTab(
     session: string,
-    windowIndex: number,
+    tabIndex: number,
     newName: string
   ): Promise<void> {
     const json = await this.runZellij(
       ["action", "list-tabs", "--json", "--all"],
       session
     );
-    const tabId = findTabId(json, windowIndex);
+    const tabId = findTabId(json, tabIndex);
     if (tabId === undefined) {
-      throw new Error(`No tab at position ${windowIndex} in session ${session}`);
+      throw new Error(`No tab at position ${tabIndex} in session ${session}`);
     }
     await this.runZellij(
       ["action", "rename-tab-by-id", String(tabId), newName],
@@ -168,12 +172,12 @@ export class ZellijCliExecutor implements SessionGateway {
 
   // ── Pane operations ──
 
-  public async listPanes(session: string, windowIndex: number) {
+  public async listPanes(session: string, tabIndex: number) {
     const tabsJson = await this.runZellij(
       ["action", "list-tabs", "--json", "--all"],
       session
     );
-    const tabId = findTabId(tabsJson, windowIndex);
+    const tabId = findTabId(tabsJson, tabIndex);
     if (tabId === undefined) return [];
 
     const panesJson = await this.runZellij(
@@ -190,14 +194,13 @@ export class ZellijCliExecutor implements SessionGateway {
     return panes;
   }
 
-  public async splitWindow(paneId: string, orientation: "h" | "v"): Promise<void> {
-    const direction = orientation === "h" ? "right" : "down";
+  public async splitPane(paneId: string, direction: "right" | "down"): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
     await this.focusPaneViaPlugin(paneId, session);
     await this.runZellij(["action", "new-pane", "-d", direction], session);
   }
 
-  public async killPane(paneId: string): Promise<void> {
+  public async closePane(paneId: string): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
     await this.runZellij(
       ["action", "close-pane", "--pane-id", paneId],
@@ -205,12 +208,12 @@ export class ZellijCliExecutor implements SessionGateway {
     );
   }
 
-  public async selectPane(paneId: string): Promise<void> {
+  public async focusPane(paneId: string): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
     await this.focusPaneViaPlugin(paneId, session);
   }
 
-  public async zoomPane(paneId: string): Promise<void> {
+  public async toggleFullscreen(paneId: string): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
     // toggle-fullscreen supports --pane-id directly, no need to focus first
     await this.runZellij(
@@ -219,7 +222,7 @@ export class ZellijCliExecutor implements SessionGateway {
     );
   }
 
-  public async isPaneZoomed(paneId: string): Promise<boolean> {
+  public async isPaneFullscreen(paneId: string): Promise<boolean> {
     const session = this.paneSessionMap.get(paneId);
     const json = await this.runZellij(
       ["action", "list-panes", "--json", "--all"],
@@ -234,8 +237,8 @@ export class ZellijCliExecutor implements SessionGateway {
 
   public async capturePane(
     paneId: string,
-    _lines: number
-  ): Promise<{ text: string; paneWidth: number }> {
+    _options?: { lines?: number }
+  ): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
     const session = this.paneSessionMap.get(paneId);
     const [text, json] = await Promise.all([
       this.runZellij(
@@ -249,15 +252,11 @@ export class ZellijCliExecutor implements SessionGateway {
       )
     ]);
     let panes: Array<{ id: number; is_plugin: boolean; pane_content_columns: number }>;
-    try { panes = JSON.parse(json); } catch { return { text, paneWidth: 80 }; }
-    if (!Array.isArray(panes)) return { text, paneWidth: 80 };
+    try { panes = JSON.parse(json); } catch { return { text, paneWidth: 80, isApproximate: true }; }
+    if (!Array.isArray(panes)) return { text, paneWidth: 80, isApproximate: true };
     const numId = extractPaneNumericId(paneId);
     const pane = panes.find((p) => !p.is_plugin && p.id === numId);
-    return { text, paneWidth: pane?.pane_content_columns ?? 80 };
-  }
-
-  public async renameSession(name: string, newName: string): Promise<void> {
-    await this.runZellij(["action", "rename-session", newName], name);
+    return { text, paneWidth: pane?.pane_content_columns ?? 80, isApproximate: true };
   }
 
   // ── Focus plugin helpers ──

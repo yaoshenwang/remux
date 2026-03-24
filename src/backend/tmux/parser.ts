@@ -1,7 +1,7 @@
 import type {
   PaneState,
   SessionSummary,
-  WindowState
+  TabState
 } from "../../shared/protocol.js";
 
 const splitLine = (line: string): string[] => line.split("\t");
@@ -16,11 +16,11 @@ export const parseSessions = (raw: string): SessionSummary[] =>
       return {
         name,
         attached: attached === "1",
-        windows: Number.parseInt(windows, 10)
+        tabCount: Number.parseInt(windows, 10)
       };
     });
 
-export const parseWindows = (raw: string): Omit<WindowState, "panes">[] =>
+export const parseWindows = (raw: string): Omit<TabState, "panes">[] =>
   raw
     .split("\n")
     .map((line) => line.trim())
