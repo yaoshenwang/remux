@@ -145,6 +145,8 @@ export class ZellijPaneIO implements PtyProcess {
       const newLine = viewport[i] ?? "";
       const oldLine = this.prevViewport[i] ?? "";
       if (newLine !== oldLine) {
+        // Reset SGR before clearing to prevent style leaking across rows
+        parts.push("\x1b[m");
         // Move cursor to row i+1, col 1 (1-indexed)
         parts.push(`\x1b[${i + 1};1H`);
         // Clear the line
@@ -168,19 +170,35 @@ export class ZellijPaneIO implements PtyProcess {
   write(data: string): void {
     if (this.killed) return;
 
-    // Convert string to byte array for `zellij action write`
+    // Use `action write` (raw bytes) for small payloads with control chars,
+    // `write-chars` (string) for regular text to avoid ARG_MAX on large pastes.
+    const hasControlChars = /[\x00-\x1f]/.test(data);
     const bytes = Buffer.from(data, "utf8");
-    const byteArgs = Array.from(bytes).map(String);
 
-    const args = [
-      "--session", this.session,
-      "action", "write",
-      "--pane-id", this.paneId,
-      ...byteArgs
-    ];
-    execFileAsync(this.binary, args, { timeout: 3_000 }).catch((err) => {
-      this.logger?.error(`[zellij-write] ${err}`);
-    });
+    if (hasControlChars && bytes.length <= 256) {
+      // Raw byte mode: each byte as a separate arg
+      const byteArgs = Array.from(bytes).map(String);
+      const args = [
+        "--session", this.session,
+        "action", "write",
+        "--pane-id", this.paneId,
+        ...byteArgs
+      ];
+      execFileAsync(this.binary, args, { timeout: 3_000 }).catch((err) => {
+        this.logger?.error(`[zellij-write] ${err}`);
+      });
+    } else {
+      // String mode: single argument, safe for large payloads
+      const args = [
+        "--session", this.session,
+        "action", "write-chars",
+        "--pane-id", this.paneId,
+        data
+      ];
+      execFileAsync(this.binary, args, { timeout: 3_000 }).catch((err) => {
+        this.logger?.error(`[zellij-write-chars] ${err}`);
+      });
+    }
   }
 
   resize(_cols: number, _rows: number): void {
