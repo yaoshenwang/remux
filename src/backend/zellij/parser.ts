@@ -52,15 +52,20 @@ export interface ZellijPaneJson {
   pane_command?: string;
 }
 
-// ── Subscribe event shape ──
+// ── Subscribe event shapes ──
 
-export interface ZellijSubscribeEvent {
-  event: "pane_update";
-  is_initial: boolean;
-  pane_id: string;
-  scrollback: string[] | null;
-  viewport: string[];
-}
+export type ZellijSubscribeEvent =
+  | {
+      event: "pane_update";
+      is_initial: boolean;
+      pane_id: string;
+      scrollback: string[] | null;
+      viewport: string[];
+    }
+  | {
+      event: "pane_closed";
+      pane_id: string;
+    };
 
 // ── Parsers ──
 

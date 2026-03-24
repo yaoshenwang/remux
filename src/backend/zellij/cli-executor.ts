@@ -44,7 +44,8 @@ export class ZellijCliExecutor implements SessionGateway {
    */
   private async runZellij(
     args: string[],
-    session?: string
+    session?: string,
+    options?: { raw?: boolean }
   ): Promise<string> {
     const finalArgs = session
       ? ["--session", session, ...args]
@@ -56,8 +57,8 @@ export class ZellijCliExecutor implements SessionGateway {
       const { stdout } = await execFileAsync(this.binary, finalArgs, {
         timeout: this.timeoutMs
       });
-      // Strip ANSI escape codes — Zellij sometimes emits colors on stdout
-      return stripAnsi(stdout).trim();
+      // Strip ANSI escape codes unless raw mode requested (e.g. dump-screen --ansi)
+      return options?.raw ? stdout.trim() : stripAnsi(stdout).trim();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -79,6 +80,9 @@ export class ZellijCliExecutor implements SessionGateway {
   }
 
   public async createSession(name: string): Promise<void> {
+    // Guard: skip if session already exists (attach -cb blocks on existing sessions)
+    const sessions = await this.listSessions();
+    if (sessions.some((s) => s.name === name)) return;
     await this.runZellij(["attach", "-cb", name]);
   }
 
@@ -199,8 +203,11 @@ export class ZellijCliExecutor implements SessionGateway {
 
   public async zoomPane(paneId: string): Promise<void> {
     const session = this.paneSessionMap.get(paneId);
-    await this.focusPaneViaPlugin(paneId, session);
-    await this.runZellij(["action", "toggle-fullscreen"], session);
+    // toggle-fullscreen supports --pane-id directly, no need to focus first
+    await this.runZellij(
+      ["action", "toggle-fullscreen", "--pane-id", paneId],
+      session
+    );
   }
 
   public async isPaneZoomed(paneId: string): Promise<boolean> {
@@ -224,7 +231,8 @@ export class ZellijCliExecutor implements SessionGateway {
     const [text, json] = await Promise.all([
       this.runZellij(
         ["action", "dump-screen", "--pane-id", paneId, "--full", "--ansi"],
-        session
+        session,
+        { raw: true }
       ),
       this.runZellij(
         ["action", "list-panes", "--json", "--all"],
