@@ -7,11 +7,10 @@ import qrcode from "qrcode-terminal";
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import { AuthService } from "./auth/auth-service.js";
-import { CloudflaredManager } from "./cloudflared/manager.js";
 import type { CliArgs, RuntimeConfig } from "./config.js";
-import { NodePtyFactory } from "./pty/node-pty-adapter.js";
 import { createRemuxServer } from "./server.js";
-import { TmuxCliExecutor } from "./tmux/cli-executor.js";
+import { detectSessionBackend } from "./providers/detect.js";
+import { CloudflareTunnelProvider } from "./tunnels/index.js";
 import { createLogger } from "./util/file-logger.js";
 import { randomToken } from "./util/random.js";
 
@@ -112,7 +111,10 @@ const printConnectionInfo = (
 const main = async (): Promise<void> => {
   const args = await parseCliArgs();
   const effectivePassword = args.requirePassword ? args.password ?? randomToken(16) : undefined;
-  const authService = new AuthService(effectivePassword, process.env.REMUX_TOKEN || undefined);
+  const authService = new AuthService({
+    password: effectivePassword,
+    token: process.env.REMUX_TOKEN || undefined,
+  });
   const debugLogPath = args.debugLog ?? process.env.REMUX_DEBUG_LOG;
   const logger = createLogger(debugLogPath);
   const cliDir = path.dirname(fileURLToPath(import.meta.url));
@@ -130,16 +132,17 @@ const main = async (): Promise<void> => {
     frontendDir
   };
 
-  const cloudflaredManager = new CloudflaredManager();
-  const tmux = new TmuxCliExecutor({
+  const tunnelProvider = new CloudflareTunnelProvider();
+  const backend = detectSessionBackend(logger, {
     socketName: process.env.REMUX_SOCKET_NAME,
     socketPath: process.env.REMUX_SOCKET_PATH,
-    logger
+    scrollbackLines: args.scrollback,
   });
-  const ptyFactory = new NodePtyFactory(logger);
+  logger.log(`Session backend: ${backend.kind}`);
+
   const runningServer = createRemuxServer(config, {
-    tmux,
-    ptyFactory,
+    tmux: backend.gateway,
+    ptyFactory: backend.ptyFactory,
     authService,
     logger
   });
@@ -156,10 +159,10 @@ const main = async (): Promise<void> => {
   let tunnelUrl: string | undefined;
   if (args.tunnel && !isDevMode) {
     try {
-      const tunnel = await cloudflaredManager.start(args.port);
+      const tunnel = await tunnelProvider.start(args.port);
       tunnelUrl = tunnel.publicUrl;
     } catch (error) {
-      console.error(`Unable to start cloudflared: ${String(error)}`);
+      console.error(`Unable to start tunnel: ${String(error)}`);
     }
   }
 
@@ -173,7 +176,7 @@ const main = async (): Promise<void> => {
     }
 
     shutdownPromise = (async () => {
-      cloudflaredManager.stop();
+      tunnelProvider.stop();
       await runningServer.stop();
     })();
 

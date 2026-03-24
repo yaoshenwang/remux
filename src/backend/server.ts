@@ -144,7 +144,7 @@ export const createRemuxServer = (
       logger.log(...args);
     }
   };
-  const authService = deps.authService ?? new AuthService(config.password, config.token);
+  const authService = deps.authService ?? new AuthService({ password: config.password, token: config.token });
 
   const app = express();
   app.use(express.json());
@@ -260,8 +260,8 @@ export const createRemuxServer = (
   });
 
   const server = http.createServer(app);
-  const controlWss = new WebSocketServer({ noServer: true });
-  const terminalWss = new WebSocketServer({ noServer: true });
+  const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
+  const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const controlClients = new Set<ControlContext>();
   const terminalClients = new Set<DataContext>();
 

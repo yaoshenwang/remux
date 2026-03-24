@@ -47,7 +47,7 @@ export const startE2EServer = async (
   };
 
   const token = "e2e-token";
-  const authService = new AuthService(options.password, token);
+  const authService = new AuthService({ password: options.password, token });
   const tmux = new FakeTmuxGateway(options.sessions, {
     attachedSession: options.attachedSession,
     failSwitchClient: options.failSwitchClient

@@ -12,4 +12,13 @@ screenshots
 # AI agent 本地指令文件（不入库）
 CLAUDE.md
 AGENTS.md
-*.png
+
+# Temp uploads from Claude Code / CleanShot
+/upload-*
+/CleanShot*
+
+# Loose images in root (project images live in docs/assets/)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif

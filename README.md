@@ -16,10 +16,10 @@ Built for the age of AI coding agents: keep an eye on Claude Code, long-running 
 ## Screenshots
 
 ### Amber theme
-![Remux screenshot - Amber](./screenshot.png)
+![Remux screenshot - Amber](./docs/assets/screenshot.png)
 
 ### Midnight theme
-![Remux screenshot - Midnight](./screenshot-midnight.png)
+![Remux screenshot - Midnight](./docs/assets/screenshot-midnight.png)
 
 ## Prerequisites
 
@@ -73,16 +73,17 @@ Options:
 
 | Variable | Description |
 |----------|-------------|
-| `TMUX_MOBILE_SOCKET_NAME` | Dedicated tmux socket name (`tmux -L`) for isolation |
-| `TMUX_MOBILE_SOCKET_PATH` | Explicit tmux socket path (`tmux -S`) |
-| `TMUX_MOBILE_DEBUG_LOG` | Enable debug log file output |
-| `TMUX_MOBILE_FORCE_SCRIPT_PTY` | Force Unix `script(1)` PTY fallback |
+| `REMUX_SOCKET_NAME` | Dedicated tmux socket name (`tmux -L`) for isolation |
+| `REMUX_SOCKET_PATH` | Explicit tmux socket path (`tmux -S`) |
+| `REMUX_DEBUG_LOG` | Enable debug log file output |
+| `REMUX_FORCE_SCRIPT_PTY` | Force Unix `script(1)` PTY fallback |
+| `REMUX_TOKEN` | Fixed auth token across restarts |
 
 ## Security
 
 - Password authentication enabled by default (random password generated if not specified)
 - Clients attach through dedicated grouped tmux sessions for independent window focus
-- Full security model documented in [SECURITY.md](./SECURITY.md)
+- Full security model documented in [SECURITY.md](./docs/SECURITY.md)
 
 ## Development
 
@@ -107,11 +108,9 @@ npm run test:smoke
 - **Testing**: Vitest (unit/integration), Playwright (E2E)
 - **Language**: TypeScript
 
-## Based On
+## Acknowledgments
 
-Remux is based on [tmux-mobile](https://github.com/DagsHub/tmux-mobile) by [DagsHub](https://github.com/DagsHub), a mobile-first tmux web client. We build upon their excellent foundation to add further customizations and features tailored to our workflow. The original project is also inspired by [porterminal](https://github.com/lyehe/porterminal).
-
-Thank you to the DagsHub team for creating and open-sourcing tmux-mobile under the MIT license.
+Remux was originally inspired by [tmux-mobile](https://github.com/DagsHub/tmux-mobile) by [DagsHub](https://github.com/DagsHub) and [porterminal](https://github.com/lyehe/porterminal). The project has since been substantially rewritten.
 
 ## License
 

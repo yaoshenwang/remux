@@ -17,7 +17,7 @@ describe("POST /api/upload", () => {
   beforeEach(async () => {
     tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-upload-test-"));
     authToken = "test-token-123";
-    const authService = new AuthService(undefined, authToken);
+    const authService = new AuthService({ token: authToken });
     server = createRemuxServer(
       {
         port: 0,

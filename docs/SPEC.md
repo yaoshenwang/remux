@@ -1,12 +1,12 @@
-# tmux-mobile Specification
+# Remux Specification
 
 ## Overview
 
-A mobile-first web app that provides an opinionated tmux interface via cloudflared tunnel. Unlike generic web terminals (e.g., porterminal), tmux-mobile is purpose-built for tmux: it always runs inside a tmux session and provides touch-friendly UI for tmux operations that are painful on mobile keyboards (window/pane switching, copy mode, split, etc.).
+A mobile-first web app that provides an opinionated tmux interface via cloudflared tunnel. Unlike generic web terminals, Remux is purpose-built for tmux: it always runs inside a tmux session and provides touch-friendly UI for tmux operations that are painful on mobile keyboards (window/pane switching, copy mode, split, etc.).
 
-**Distribution:** npm package, invoked via `npx tmux-mobile`
+**Distribution:** npm package, invoked via `npx remux`
 **Tech Stack:** Node.js backend (Express + node-pty + WebSocket), React frontend (Vite + xterm.js)
-**Reference:** ./porterminal - clone from https://github.com/lyehe/porterminal (submodule) - the original inspiration for this repo. The difference is that porterminal offers a generic shell session, and this project aims to offer a first class web mobile experience for tmux specifically.
+**Origin:** Originally inspired by [porterminal](https://github.com/lyehe/porterminal) (generic web terminal) and [tmux-mobile](https://github.com/DagsHub/tmux-mobile). Remux has been substantially rewritten to offer a first-class web mobile experience for tmux specifically.
 
 ---
 
@@ -37,7 +37,7 @@ A mobile-first web app that provides an opinionated tmux interface via cloudflar
 
 ### Connection Flow
 
-1. User runs `npx tmux-mobile` on their server
+1. User runs `npx remux` on their server
 2. Server starts Express on a local port
 3. Server starts cloudflared quick tunnel, prints public URL + QR code
 4. User scans QR code on phone, opens the URL
@@ -45,8 +45,8 @@ A mobile-first web app that provides an opinionated tmux interface via cloudflar
 ### Authentication
 
 - **Token-based URL**: Server generates a unique token on startup, embedded in the cloudflared URL (e.g., `https://xxx.trycloudflare.com/?token=abc123`)
-- **Optional password**: `-p` flag to require a password on top of the token (like porterminal)
-- Password auth uses the same approach as porterminal: first message on WebSocket is auth, saved in localStorage
+- **Optional password**: `-p` flag to require a password on top of the token
+- Password auth: first message on WebSocket is auth, saved in sessionStorage
 
 ### Tmux Attach Flow
 
@@ -154,7 +154,7 @@ Slide-in from left edge (swipe or hamburger button). Contains:
 | Down | Arrow Down | `\x1b[B` | |
 | Right | Arrow Right | `\x1b[C` | |
 
-### Modifier Behavior (from porterminal)
+### Modifier Behavior
 - **Tap**: Sticky mode - modifier applies to next key only, then auto-clears
 - **Double-tap** (within 300ms): Locked mode - modifier stays on until tapped again
 - Visual indicator: highlight for sticky, strong highlight for locked
@@ -244,7 +244,7 @@ Toggleable text input mode (on by default for mobile):
 
 ### CLI Flags
 ```
-npx tmux-mobile [options]
+npx remux [options]
 
 Options:
   -p, --port <port>     Local port (default: 8767)
