@@ -1078,7 +1078,6 @@ export const createRemuxServer = (
     controlClients.add(context);
     logger.log("control ws connected", context.clientId);
 
-<<<<<<< HEAD
     socket.on("message", async (rawData) => {
       const raw = rawData.toString("utf8");
 
