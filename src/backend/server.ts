@@ -904,6 +904,14 @@ export const createRemuxServer = (
             }
           }
           broadcastSnapshotNow(snapshot);
+        } else {
+          const snapshot = await waitForSessionSnapshot(sessionForNew);
+          const session = snapshot.sessions[0];
+          const activeTab = session?.tabs.find((tab) => tab.active) ?? session?.tabs.at(-1);
+          if (activeTab) {
+            viewStore.selectTab(context.clientId, activeTab.index, snapshot);
+            await deps.backend.selectTab(buildMobileSessionName(context.clientId), activeTab.index);
+          }
         }
         return;
       }

@@ -87,8 +87,8 @@ export const ansiToHtml = (input: string): string => {
 
   let result = "";
   let spanOpen = false;
-  // Match ANSI CSI sequences: ESC[ ... m, or any other ESC[ ... <letter>
-  const regex = /\x1b\[([0-9;]*)([A-Za-z])/g;
+  // Match CSI sequences, including private mode toggles like ESC[?1049h.
+  const regex = /\x1b\[([0-?]*)([@-~])/g;
   let lastIndex = 0;
 
   for (const match of input.matchAll(regex)) {
