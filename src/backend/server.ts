@@ -788,19 +788,20 @@ export const createRemuxServer = (
 
   const ensureAttachedSession = async (
     context: ControlContext,
-    forceSession?: string
+    forceSession?: string,
+    options?: { refreshSessions?: boolean }
   ): Promise<void> => {
-    const sessions = latestSnapshot
-      ? latestSnapshot.sessions
-        .filter((session) => !isManagedMobileSession(session.name))
-        .map((session) => ({
-          name: session.name,
-          attached: session.attached,
-          tabCount: session.tabCount
-        }))
-      : (await deps.backend.listSessions()).filter(
-        (session) => !isManagedMobileSession(session.name)
-      );
+    const sessions = options?.refreshSessions || !latestSnapshot
+      ? (await deps.backend.listSessions()).filter(
+          (session) => !isManagedMobileSession(session.name)
+        )
+      : latestSnapshot.sessions
+          .filter((session) => !isManagedMobileSession(session.name))
+          .map((session) => ({
+            name: session.name,
+            attached: session.attached,
+            tabCount: session.tabCount
+          }));
 
     if (forceSession && sessions.some((s) => s.name === forceSession)) {
       logger.log("attach session (forced)", forceSession);
@@ -872,7 +873,7 @@ export const createRemuxServer = (
         await deps.backend.killSession(message.session);
 
         for (const client of affectedClients) {
-          await ensureAttachedSession(client);
+          await ensureAttachedSession(client, undefined, { refreshSessions: true });
         }
         return;
       }
