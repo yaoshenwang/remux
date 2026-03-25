@@ -44,6 +44,21 @@ test.describe("remux browser behavior", () => {
       await expect(page.getByTestId("compose-input")).toBeVisible();
     });
 
+    test("loads without browser console errors", async ({ page }) => {
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error") {
+          consoleErrors.push(message.text());
+        }
+      });
+
+      await page.goto(`${server.baseUrl}/?token=${server.token}`);
+      await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+      await page.waitForTimeout(250);
+
+      expect(consoleErrors).toEqual([]);
+    });
+
     test("compose Enter sends immediately without inserting an extra newline", async ({ page }) => {
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
@@ -102,6 +117,28 @@ test.describe("remux browser behavior", () => {
       await expect(page.locator(".sidebar.open")).toBeVisible();
       await page.getByTestId("drawer-close").click();
       await expect(page.locator(".sidebar")).not.toHaveClass(/open/);
+    });
+
+    test("viewport changes propagate terminal resize to the backend", async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.goto(`${server.baseUrl}/?token=${server.token}`);
+      await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+      const process = server.ptyFactory.latestProcess();
+      await expect.poll(() => process.resizes.length).toBeGreaterThan(0);
+      const initialResizeCount = process.resizes.length;
+      const initialResize = process.resizes.at(-1);
+      expect(initialResize).toBeDefined();
+
+      await page.setViewportSize({ width: 900, height: 700 });
+
+      await expect.poll(() => process.resizes.length).toBeGreaterThan(initialResizeCount);
+      await expect
+        .poll(() => {
+          const latest = process.resizes.at(-1);
+          return latest ? `${latest.cols}x${latest.rows}` : "";
+        })
+        .not.toBe(`${initialResize!.cols}x${initialResize!.rows}`);
     });
 
     test("inline session close control closes the active session and reattaches to the remaining one", async ({ page }) => {

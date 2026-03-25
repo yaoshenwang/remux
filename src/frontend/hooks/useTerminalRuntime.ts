@@ -12,6 +12,7 @@ interface UseTerminalRuntimeOptions {
   paneViewportColsRef: MutableRefObject<number>;
   serverConfig: ServerConfig | null;
   setStatusMessage: Dispatch<SetStateAction<string>>;
+  terminalSocketRef: MutableRefObject<WebSocket | null>;
   theme: "dark" | "light";
   toolbarRef: RefObject<ToolbarHandle | null>;
 }
@@ -40,6 +41,7 @@ export const useTerminalRuntime = ({
   paneViewportColsRef,
   serverConfig,
   setStatusMessage,
+  terminalSocketRef,
   theme,
   toolbarRef
 }: UseTerminalRuntimeOptions): UseTerminalRuntimeResult => {
@@ -190,6 +192,7 @@ export const useTerminalRuntime = ({
       ) {
         terminal.resize(paneCols, terminal.rows);
       }
+      sendTerminalResize(terminalSocketRef);
     };
 
     const resizeObserver = new ResizeObserver(() => {
@@ -205,7 +208,7 @@ export const useTerminalRuntime = ({
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [copySelection, focusTerminal, onSendRaw, paneViewportColsRef, serverConfig?.backendKind, theme, toolbarRef]);
+  }, [copySelection, focusTerminal, onSendRaw, paneViewportColsRef, sendTerminalResize, serverConfig?.backendKind, terminalSocketRef, theme, toolbarRef]);
 
   useEffect(() => {
     const themeConfig = themes[theme];

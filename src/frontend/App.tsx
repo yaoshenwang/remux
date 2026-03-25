@@ -162,6 +162,7 @@ export const App = () => {
     paneViewportColsRef,
     serverConfig,
     setStatusMessage,
+    terminalSocketRef,
     theme,
     toolbarRef
   });
