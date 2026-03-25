@@ -138,7 +138,6 @@ export const App = () => {
   const [pendingSessionAttachment, setPendingSessionAttachment] = useState<string | null>(null);
   const [sessionChoices, setSessionChoices] = useState<SessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [composeEnabled, setComposeEnabled] = useState(() => isMobileDevice());
   const [composeText, setComposeText] = useState("");
 
   const [scrollbackHtml, setScrollbackHtml] = useState("");
@@ -718,6 +717,23 @@ export const App = () => {
   }, [attachedSession]);
 
   useEffect(() => {
+    if (
+      !sessionChoices ||
+      attachedSession ||
+      pendingSessionAttachment ||
+      snapshot.sessions.length !== 1
+    ) {
+      return;
+    }
+
+    const [onlySession] = snapshot.sessions;
+    setPendingSessionAttachment(onlySession.name);
+    setStatusMessage(`attaching: ${onlySession.name}`);
+    setDrawerOpen(false);
+    sendControl({ type: "select_session", session: onlySession.name });
+  }, [attachedSession, pendingSessionAttachment, sessionChoices, snapshot.sessions]);
+
+  useEffect(() => {
     if (!terminalContainerRef.current || terminalRef.current) {
       return;
     }
@@ -1050,6 +1066,15 @@ export const App = () => {
     }
   };
 
+  const sendCompose = (): void => {
+    const text = composeText.trim();
+    if (!text) {
+      return;
+    }
+    sendControl({ type: "send_compose", text });
+    setComposeText("");
+  };
+
   return (
     <div className="app-shell">
       <header className="tab-bar">
@@ -1161,44 +1186,41 @@ export const App = () => {
         hidden={viewMode !== "terminal"}
       />
 
-      {composeEnabled && (
-        <section className="compose-bar">
-          <input
-            value={composeText}
-            onChange={(event) => setComposeText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-              if (event.key === "Enter") {
-                sendControl({ type: "send_compose", text: composeText });
-                setComposeText("");
+      <section className="compose-bar" data-testid="compose-bar">
+        <input
+          data-testid="compose-input"
+          value={composeText}
+          onChange={(event) => setComposeText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Enter") {
+              sendCompose();
+            }
+          }}
+          onPaste={(event) => {
+            const items = event.clipboardData?.items;
+            if (!items) return;
+            for (const item of items) {
+              if (item.kind === "file") {
+                event.preventDefault();
+                const file = item.getAsFile();
+                if (file) uploadFile(file);
+                return;
               }
-            }}
-            onPaste={(event) => {
-              const items = event.clipboardData?.items;
-              if (!items) return;
-              for (const item of items) {
-                if (item.kind === "file") {
-                  event.preventDefault();
-                  const file = item.getAsFile();
-                  if (file) uploadFile(file);
-                  return;
-                }
-              }
-            }}
-            placeholder="Compose command"
-            title="Type a command here and press Enter to send it to the terminal"
-          />
-          <button
-            onClick={() => {
-              sendControl({ type: "send_compose", text: composeText });
-              setComposeText("");
-            }}
-            title="Send the composed command to the terminal"
-          >
-            Send
-          </button>
-        </section>
-      )}
+            }
+          }}
+          placeholder="Compose command"
+          title="Type a command here and press Enter to send it to the terminal"
+        />
+        <button
+          data-testid="compose-send"
+          onClick={sendCompose}
+          title="Send the composed command to the terminal"
+          disabled={!composeText.trim()}
+        >
+          Send
+        </button>
+      </section>
 
       {drawerOpen && (
         <div
@@ -1249,22 +1271,48 @@ export const App = () => {
                       data-testid="rename-session-input"
                     />
                   ) : (
-                    <button
-                      onClick={() => sendControl({ type: "select_session", session: session.name })}
-                      onDoubleClick={capabilities?.supportsSessionRename ? (e) => {
-                        e.preventDefault();
-                        setRenamingSession(session.name);
-                        setRenameSessionValue(session.name);
-                      } : undefined}
-                      className={session.name === (attachedSession || activeSession?.name) ? "active" : ""}
-                    >
-                      <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
-                      {(() => {
-                        const aw = session.tabs.find((t) => t.active) ?? session.tabs[0];
-                        const label = aw ? formatContext(deriveContext(aw.panes)) : "";
-                        return label ? <span className="item-context">{label}</span> : null;
-                      })()}
-                    </button>
+                    <div className="drawer-item-row">
+                      <button
+                        onClick={() => sendControl({ type: "select_session", session: session.name })}
+                        onDoubleClick={capabilities?.supportsSessionRename ? (e) => {
+                          e.preventDefault();
+                          setRenamingSession(session.name);
+                          setRenameSessionValue(session.name);
+                        } : undefined}
+                        className={`drawer-item-main${
+                          session.name === (attachedSession || activeSession?.name) ? " active" : ""
+                        }`}
+                      >
+                        <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
+                        {(() => {
+                          const aw = session.tabs.find((t) => t.active) ?? session.tabs[0];
+                          const label = aw ? formatContext(deriveContext(aw.panes)) : "";
+                          return label ? <span className="item-context">{label}</span> : null;
+                        })()}
+                      </button>
+                      <button
+                        type="button"
+                        className="drawer-item-icon danger"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (
+                            session.name === activeSession?.name ||
+                            session.name === attachedSession ||
+                            snapshot.sessions.length <= 1
+                          ) {
+                            setSelectedWindowIndex(null);
+                            setSelectedPaneId(null);
+                          }
+                          sendControl({ type: "close_session", session: session.name });
+                        }}
+                        disabled={snapshot.sessions.length <= 1}
+                        data-testid={`close-session-${session.name}`}
+                        aria-label={`Close session ${session.name}`}
+                        title={`Close session ${session.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
                   )}
                 </li>
               ))}
@@ -1277,20 +1325,6 @@ export const App = () => {
             >
               + New Session
             </button>
-            <button
-              className="drawer-section-action"
-              onClick={() => {
-                if (!activeSession) return;
-                setSelectedWindowIndex(null);
-                setSelectedPaneId(null);
-                sendControl({ type: "close_session", session: activeSession.name });
-              }}
-              disabled={!activeSession || snapshot.sessions.length <= 1}
-              data-testid="close-session-button"
-            >
-              Close Session
-            </button>
-
             <h3>Tabs ({activeSession?.name ?? "-"})</h3>
             <ul data-testid="tabs-list">
               {activeSession
@@ -1325,24 +1359,48 @@ export const App = () => {
                           data-testid="rename-tab-input"
                         />
                       ) : (
-                        <button
-                          onClick={() => selectTab(tab)}
-                          onDoubleClick={capabilities?.supportsTabRename ? (e) => {
-                            e.preventDefault();
-                            setRenamingWindow({ session: activeSession.name, index: tab.index });
-                            setRenameWindowValue(tab.name);
-                          } : undefined}
-                          className={tab.index === activeTab?.index ? "active" : ""}
-                        >
-                          <span className="item-name">
-                            {tab.index}: {tab.name}
-                            {tab.index === activeTab?.index ? " *" : ""}
-                          </span>
-                          {(() => {
-                            const label = formatContext(deriveContext(tab.panes));
-                            return label ? <span className="item-context">{label}</span> : null;
-                          })()}
-                        </button>
+                        <div className="drawer-item-row">
+                          <button
+                            onClick={() => selectTab(tab)}
+                            onDoubleClick={capabilities?.supportsTabRename ? (e) => {
+                              e.preventDefault();
+                              setRenamingWindow({ session: activeSession.name, index: tab.index });
+                              setRenameWindowValue(tab.name);
+                            } : undefined}
+                            className={`drawer-item-main${tab.index === activeTab?.index ? " active" : ""}`}
+                          >
+                            <span className="item-name">
+                              {tab.index}: {tab.name}
+                              {tab.index === activeTab?.index ? " *" : ""}
+                            </span>
+                            {(() => {
+                              const label = formatContext(deriveContext(tab.panes));
+                              return label ? <span className="item-context">{label}</span> : null;
+                            })()}
+                          </button>
+                          <button
+                            type="button"
+                            className="drawer-item-icon danger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (tab.index === activeTab?.index) {
+                                setSelectedWindowIndex(null);
+                                setSelectedPaneId(null);
+                              }
+                              sendControl({
+                                type: "close_tab",
+                                session: activeSession.name,
+                                tabIndex: tab.index
+                              });
+                            }}
+                            disabled={activeSession.tabs.length <= 1}
+                            data-testid={`close-tab-${activeSession.name}-${tab.index}`}
+                            aria-label={`Close tab ${tab.index} in session ${activeSession.name}`}
+                            title={`Close tab ${tab.index}`}
+                          >
+                            ×
+                          </button>
+                        </div>
                       )}
                     </li>
                   ))
@@ -1366,28 +1424,47 @@ export const App = () => {
                     const isActive = pane.id === activePane?.id;
                     return (
                       <li key={pane.id}>
-                        <button
-                          onClick={() => {
-                            setSelectedPaneId(pane.id);
-                            sendControl({ type: "select_pane", paneId: pane.id });
-                            if (stickyZoom && capabilities?.supportsFullscreenPane && !isActive && !pane.zoomed) {
-                              sendControl({ type: "toggle_fullscreen", paneId: pane.id });
-                            }
-                          }}
-                          className={isActive ? "active" : ""}
-                        >
-                          %{pane.index}: {pane.currentCommand} {isActive ? "*" : ""}
-                          {isActive && pane.zoomed ? (
-                            <span
-                              className="pane-zoom-indicator on"
-                              title="Active pane is zoomed"
-                              aria-label="Pane zoom: on"
-                              data-testid="active-pane-zoom-indicator"
-                            >
-                              🔍
-                            </span>
-                          ) : null}
-                        </button>
+                        <div className="drawer-item-row">
+                          <button
+                            onClick={() => {
+                              setSelectedPaneId(pane.id);
+                              sendControl({ type: "select_pane", paneId: pane.id });
+                              if (stickyZoom && capabilities?.supportsFullscreenPane && !isActive && !pane.zoomed) {
+                                sendControl({ type: "toggle_fullscreen", paneId: pane.id });
+                              }
+                            }}
+                            className={`drawer-item-main${isActive ? " active" : ""}`}
+                          >
+                            <span className="item-name">%{pane.index}: {pane.currentCommand} {isActive ? "*" : ""}</span>
+                            {isActive && pane.zoomed ? (
+                              <span
+                                className="pane-zoom-indicator on"
+                                title="Active pane is zoomed"
+                                aria-label="Pane zoom: on"
+                                data-testid="active-pane-zoom-indicator"
+                              >
+                                🔍
+                              </span>
+                            ) : null}
+                          </button>
+                          <button
+                            type="button"
+                            className="drawer-item-icon danger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (isActive) {
+                                setSelectedPaneId(null);
+                              }
+                              sendControl({ type: "close_pane", paneId: pane.id });
+                            }}
+                            disabled={activeTab.panes.length <= 1}
+                            data-testid={`close-pane-${pane.id}`}
+                            aria-label={`Close pane ${pane.id}`}
+                            title={`Close pane ${pane.id}`}
+                          >
+                            ×
+                          </button>
+                        </div>
                       </li>
                     );
                   })
@@ -1432,35 +1509,6 @@ export const App = () => {
               title="Sticky zoom — automatically zoom the pane when switching windows or panes"
             >
               Sticky Zoom: {stickyZoom ? "On" : "Off"}
-            </button>
-
-            <button
-              className="drawer-section-action"
-              onClick={() => {
-                if (!activePane) return;
-                setSelectedPaneId(null);
-                sendControl({ type: "close_pane", paneId: activePane.id });
-              }}
-              disabled={!activePane}
-              title="Close the active pane"
-            >
-              Close Pane
-            </button>
-            <button
-              className="drawer-section-action"
-              onClick={() => {
-                if (!activeSession || !activeTab) return;
-                setSelectedWindowIndex(null);
-                setSelectedPaneId(null);
-                sendControl({
-                  type: "close_tab",
-                  session: activeSession.name,
-                  tabIndex: activeTab.index
-                });
-              }}
-              disabled={!activeSession || !activeTab}
-            >
-              Close Tab
             </button>
 
             <h3>Appearance</h3>

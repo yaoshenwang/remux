@@ -40,6 +40,8 @@ test.describe("remux browser behavior", () => {
       expect(screenWidth).toBeGreaterThan(40);
       expect(screenHeight).toBeGreaterThan(40);
       await expect(page.getByTestId("top-status-indicator")).not.toHaveClass(/error/);
+      await expect(page.getByTestId("compose-bar")).toBeVisible();
+      await expect(page.getByTestId("compose-input")).toBeVisible();
     });
 
     test("drawer closes via backdrop and close button and preserves section spacing", async ({ page }) => {
@@ -95,7 +97,7 @@ test.describe("remux browser behavior", () => {
       await expect(page.locator(".drawer")).toHaveCount(0);
     });
 
-    test("close session button closes the active session and reattaches to the remaining one", async ({ page }) => {
+    test("inline session close control closes the active session and reattaches to the remaining one", async ({ page }) => {
       const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
 
       try {
@@ -105,7 +107,7 @@ test.describe("remux browser behavior", () => {
         await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
 
         await page.getByTestId("drawer-toggle").click();
-        await page.getByTestId("close-session-button").click();
+        await page.getByTestId("close-session-main").click();
 
         await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
         await expect(page.locator(".drawer")).toHaveCount(0);
@@ -114,6 +116,49 @@ test.describe("remux browser behavior", () => {
         await expect(page.locator(".drawer")).toBeVisible();
         await expect(page.getByTestId("sessions-list")).toContainText("work");
         await expect(page.getByTestId("sessions-list")).not.toContainText("main");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
+
+    test("drawer uses compact inline close controls and keeps them touch friendly", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
+
+      try {
+        const [{ id: paneId }] = await localServer.gateway.listPanes("main", 0);
+        await localServer.gateway.newTab("main");
+        await localServer.gateway.splitPane(paneId, "right");
+        await localServer.gateway.selectTab("main", 0);
+        const panes = await localServer.gateway.listPanes("main", 0);
+        const closablePaneId = panes.find((pane) => pane.id !== paneId)?.id ?? paneId;
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        await expect(page.getByTestId("session-picker-overlay")).toBeVisible();
+        await page.getByTestId("session-picker-overlay").getByRole("button", { name: "main" }).click();
+        await page.getByTestId("drawer-toggle").click();
+
+        await expect(page.getByTestId("close-session-button")).toHaveCount(0);
+        await expect(page.getByTestId("close-tab-button")).toHaveCount(0);
+
+        const sessionClose = page.getByTestId("close-session-main");
+        const tabClose = page.getByTestId("close-tab-main-0");
+        const paneClose = page.getByTestId(`close-pane-${closablePaneId}`);
+
+        await expect(sessionClose).toBeVisible();
+        await expect(tabClose).toBeVisible();
+        await expect(paneClose).toBeVisible();
+
+        const minimumTouchTarget = async (testId: string): Promise<void> => {
+          const box = await page.getByTestId(testId).boundingBox();
+          expect(box?.width ?? 0).toBeGreaterThanOrEqual(36);
+          expect(box?.height ?? 0).toBeGreaterThanOrEqual(36);
+        };
+
+        await minimumTouchTarget("close-session-main");
+        await minimumTouchTarget("close-tab-main-0");
+        await minimumTouchTarget(`close-pane-${closablePaneId}`);
       } finally {
         await page.goto("about:blank");
         await localServer.stop();
