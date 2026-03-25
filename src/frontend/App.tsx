@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -27,6 +27,8 @@ import {
   type SnippetRecord as Snippet
 } from "./snippets";
 import {
+  moveSessionOrder,
+  moveSessionTabOrder,
   normalizeWorkspaceOrder,
   orderSessions,
   orderTabs,
@@ -238,6 +240,13 @@ export const App = () => {
   const [draggedSessionName, setDraggedSessionName] = useState<string | null>(null);
   const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
   const [draggedSnippetId, setDraggedSnippetId] = useState<string | null>(null);
+  const [sessionDropTarget, setSessionDropTarget] = useState<string | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<string | null>(null);
+  const [snippetDropTarget, setSnippetDropTarget] = useState<string | null>(null);
+  const [pointerDraggingSession, setPointerDraggingSession] = useState<string | null>(null);
+  const [pointerDraggingTab, setPointerDraggingTab] = useState<string | null>(null);
+  const pointerDraggingSessionRef = useRef<string | null>(null);
+  const pointerDraggingTabRef = useRef<string | null>(null);
 
   // Local selection state for instant UI feedback before server snapshot arrives
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
@@ -428,6 +437,65 @@ export const App = () => {
   useEffect(() => {
     setQuickSnippetIndex(0);
   }, [snippetPickerQuery]);
+
+  useEffect(() => {
+    const clearPointerDrag = (): void => {
+      pointerDraggingSessionRef.current = null;
+      pointerDraggingTabRef.current = null;
+      setPointerDraggingSession(null);
+      setPointerDraggingTab(null);
+    };
+    const handlePointerMove = (event: PointerEvent): void => {
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      if (!target) {
+        return;
+      }
+
+      const draggingSession = pointerDraggingSessionRef.current;
+      if (draggingSession) {
+        const sessionNode = target.closest<HTMLElement>("[data-session-name]");
+        const targetSession = sessionNode?.dataset.sessionName;
+        if (targetSession && targetSession !== draggingSession) {
+          setSessionDropTarget(targetSession);
+          setWorkspaceOrder((current) => reorderSessionState(current, draggingSession, targetSession));
+          pointerDraggingSessionRef.current = targetSession;
+          setPointerDraggingSession(targetSession);
+        }
+      }
+
+      const draggingTab = pointerDraggingTabRef.current;
+      if (draggingTab) {
+        const tabNode = target.closest<HTMLElement>("[data-tab-key]");
+        const targetTabKey = tabNode?.dataset.tabKey;
+        if (activeSession && targetTabKey && targetTabKey !== draggingTab) {
+          setTabDropTarget(targetTabKey);
+          setWorkspaceOrder((current) =>
+            reorderSessionTabs(current, activeSession.name, draggingTab, targetTabKey)
+          );
+          pointerDraggingTabRef.current = targetTabKey;
+          setPointerDraggingTab(targetTabKey);
+        }
+      }
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", clearPointerDrag);
+    window.addEventListener("pointercancel", clearPointerDrag);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", clearPointerDrag);
+      window.removeEventListener("pointercancel", clearPointerDrag);
+    };
+  }, [activeSession]);
+
+  const startPointerSessionDrag = (sessionName: string): void => {
+    pointerDraggingSessionRef.current = sessionName;
+    setPointerDraggingSession(sessionName);
+  };
+
+  const startPointerTabDrag = (tabKey: string): void => {
+    pointerDraggingTabRef.current = tabKey;
+    setPointerDraggingTab(tabKey);
+  };
 
   const sendTerminalResize = (): void => {
     const socket = terminalSocketRef.current;
@@ -1256,6 +1324,15 @@ export const App = () => {
     setComposeText("");
   };
 
+  const beginDrag = (
+    event: DragEvent<HTMLElement>,
+    type: "session" | "tab" | "snippet",
+    value: string
+  ): void => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${type}:${value}`);
+  };
+
   return (
     <div className="app-shell">
       <header className="tab-bar">
@@ -1547,14 +1624,42 @@ export const App = () => {
                 <li
                   key={session.name}
                   draggable
-                  onDragStart={() => setDraggedSessionName(session.name)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={() => {
+                  data-testid={`session-item-${session.name}`}
+                  data-session-name={session.name}
+                  className={sessionDropTarget === session.name ? "drawer-sort-target" : undefined}
+                  onDragStart={(event) => {
+                    beginDrag(event, "session", session.name);
+                    setDraggedSessionName(session.name);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedSessionName(null);
+                    setSessionDropTarget(null);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (draggedSessionName && draggedSessionName !== session.name) {
+                      setSessionDropTarget(session.name);
+                      setWorkspaceOrder((current) => reorderSessionState(current, draggedSessionName, session.name));
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setSessionDropTarget((current) => current === session.name ? null : current);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
                     if (!draggedSessionName || draggedSessionName === session.name) {
+                      setSessionDropTarget(null);
                       return;
                     }
                     setWorkspaceOrder((current) => reorderSessionState(current, draggedSessionName, session.name));
                     setDraggedSessionName(null);
+                    setSessionDropTarget(null);
                   }}
                 >
                   {renamingSession === session.name ? (
@@ -1607,6 +1712,48 @@ export const App = () => {
                       </button>
                       <button
                         type="button"
+                        className="drawer-item-icon"
+                        data-testid={`move-session-up-${session.name}`}
+                        aria-label={`Move session ${session.name} up`}
+                        title={`Move session ${session.name} up`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setWorkspaceOrder((current) => moveSessionOrder(current, session.name, -1));
+                        }}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="drawer-item-icon"
+                        data-testid={`move-session-down-${session.name}`}
+                        aria-label={`Move session ${session.name} down`}
+                        title={`Move session ${session.name} down`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setWorkspaceOrder((current) => moveSessionOrder(current, session.name, 1));
+                        }}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        className="drawer-item-icon drag-handle"
+                        data-testid={`drag-session-${session.name}`}
+                        aria-label={`Drag session ${session.name}`}
+                        title={`Drag session ${session.name}`}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          startPointerSessionDrag(session.name);
+                        }}
+                      >
+                        ≡
+                      </button>
+                      <button
+                        type="button"
                         className="drawer-item-icon danger"
                         onClick={(event) => {
                           event.stopPropagation();
@@ -1647,11 +1794,44 @@ export const App = () => {
                     <li
                       key={`${activeSession.name}-${tab.index}`}
                       draggable
-                      onDragStart={() => setDraggedTabKey(getTabOrderKey(tab))}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => {
+                      data-testid={`tab-item-${activeSession.name}-${tab.index}`}
+                      data-tab-key={getTabOrderKey(tab)}
+                      className={tabDropTarget === getTabOrderKey(tab) ? "drawer-sort-target" : undefined}
+                      onDragStart={(event) => {
+                        beginDrag(event, "tab", getTabOrderKey(tab));
+                        setDraggedTabKey(getTabOrderKey(tab));
+                      }}
+                      onDragEnd={() => {
+                        setDraggedTabKey(null);
+                        setTabDropTarget(null);
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                      }}
+                      onDragEnter={(event) => {
+                        event.preventDefault();
+                        const targetKey = getTabOrderKey(tab);
+                        if (draggedTabKey && draggedTabKey !== targetKey) {
+                          setTabDropTarget(targetKey);
+                          setWorkspaceOrder((current) => reorderSessionTabs(
+                            current,
+                            activeSession.name,
+                            draggedTabKey,
+                            targetKey
+                          ));
+                        }
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          setTabDropTarget((current) => current === getTabOrderKey(tab) ? null : current);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
                         const targetKey = getTabOrderKey(tab);
                         if (!draggedTabKey || draggedTabKey === targetKey) {
+                          setTabDropTarget(null);
                           return;
                         }
                         setWorkspaceOrder((current) => reorderSessionTabs(
@@ -1661,6 +1841,7 @@ export const App = () => {
                           targetKey
                         ));
                         setDraggedTabKey(null);
+                        setTabDropTarget(null);
                       }}
                     >
                       {renamingWindow?.session === activeSession.name && renamingWindow?.index === tab.index ? (
@@ -1710,6 +1891,58 @@ export const App = () => {
                               const label = formatContext(deriveContext(tab.panes));
                               return label ? <span className="item-context">{label}</span> : null;
                             })()}
+                          </button>
+                          <button
+                            type="button"
+                            className="drawer-item-icon"
+                            data-testid={`move-tab-up-${activeSession.name}-${tab.index}`}
+                            aria-label={`Move tab ${tab.index} up`}
+                            title={`Move tab ${tab.index} up`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setWorkspaceOrder((current) => moveSessionTabOrder(
+                                current,
+                                activeSession.name,
+                                getTabOrderKey(tab),
+                                -1
+                              ));
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            className="drawer-item-icon"
+                            data-testid={`move-tab-down-${activeSession.name}-${tab.index}`}
+                            aria-label={`Move tab ${tab.index} down`}
+                            title={`Move tab ${tab.index} down`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setWorkspaceOrder((current) => moveSessionTabOrder(
+                                current,
+                                activeSession.name,
+                                getTabOrderKey(tab),
+                                1
+                              ));
+                            }}
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            className="drawer-item-icon drag-handle"
+                            data-testid={`drag-tab-${activeSession.name}-${tab.index}`}
+                            aria-label={`Drag tab ${tab.index} in session ${activeSession.name}`}
+                            title={`Drag tab ${tab.index}`}
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              startPointerTabDrag(getTabOrderKey(tab));
+                            }}
+                          >
+                            ≡
                           </button>
                           <button
                             type="button"
@@ -1898,10 +2131,43 @@ export const App = () => {
                           className="snippet-item"
                           key={s.id}
                           draggable
-                          onDragStart={() => setDraggedSnippetId(s.id)}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={() => {
+                          data-testid={`snippet-item-${s.id}`}
+                          onDragStart={(event) => {
+                            beginDrag(event, "snippet", s.id);
+                            setDraggedSnippetId(s.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedSnippetId(null);
+                            setSnippetDropTarget(null);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                          }}
+                          onDragEnter={(event) => {
+                            event.preventDefault();
+                            if (draggedSnippetId && draggedSnippetId !== s.id) {
+                              setSnippetDropTarget(s.id);
+                              persistSnippetPatch((current) => reorderById(
+                                current.map((snippet) => (
+                                  snippet.id === draggedSnippetId
+                                    ? { ...snippet, group: s.group }
+                                    : snippet
+                                )),
+                                draggedSnippetId,
+                                s.id
+                              ));
+                            }
+                          }}
+                          onDragLeave={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setSnippetDropTarget((current) => current === s.id ? null : current);
+                            }
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
                             if (!draggedSnippetId || draggedSnippetId === s.id) {
+                              setSnippetDropTarget(null);
                               return;
                             }
                             persistSnippetPatch((current) => reorderById(
@@ -1914,7 +2180,9 @@ export const App = () => {
                               s.id
                             ));
                             setDraggedSnippetId(null);
+                            setSnippetDropTarget(null);
                           }}
+                          style={snippetDropTarget === s.id ? { borderColor: "var(--border-active)" } : undefined}
                         >
                           <span className="snippet-label">{s.icon ? `${s.icon} ` : ""}{s.label}</span>
                           <span className="snippet-cmd">

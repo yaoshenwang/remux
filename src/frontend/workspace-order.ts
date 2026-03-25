@@ -89,6 +89,18 @@ export const reorderSessionState = (
   return { ...state, sessions };
 };
 
+export const moveSessionOrder = (
+  state: WorkspaceOrderState,
+  sessionName: string,
+  direction: -1 | 1
+): WorkspaceOrderState => {
+  const sessions = Array.from(new Set([...state.sessions, sessionName]));
+  return {
+    ...state,
+    sessions: moveId(sessions, sessionName, direction)
+  };
+};
+
 export const reorderSessionTabs = (
   state: WorkspaceOrderState,
   sessionName: string,
@@ -108,6 +120,22 @@ export const reorderSessionTabs = (
   };
 };
 
+export const moveSessionTabOrder = (
+  state: WorkspaceOrderState,
+  sessionName: string,
+  tabKey: string,
+  direction: -1 | 1
+): WorkspaceOrderState => {
+  const current = Array.from(new Set([...(state.tabsBySession[sessionName] ?? []), tabKey]));
+  return {
+    ...state,
+    tabsBySession: {
+      ...state.tabsBySession,
+      [sessionName]: moveId(current, tabKey, direction)
+    }
+  };
+};
+
 const reorderIds = <T extends string>(items: T[], draggedId: string, targetId: string): T[] => {
   if (draggedId === targetId) {
     return items;
@@ -122,5 +150,19 @@ const reorderIds = <T extends string>(items: T[], draggedId: string, targetId: s
 
   const [dragged] = next.splice(draggedIndex, 1);
   next.splice(targetIndex, 0, dragged);
+  return next;
+};
+
+const moveId = <T extends string>(items: T[], id: string, direction: -1 | 1): T[] => {
+  const next = [...items];
+  const index = next.findIndex((item) => item === id);
+  if (index === -1) {
+    return items;
+  }
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= next.length) {
+    return items;
+  }
+  [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
   return next;
 };

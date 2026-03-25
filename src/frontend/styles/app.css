@@ -1118,9 +1118,26 @@ button.danger {
 
 .drawer-item-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
   gap: 0.35rem;
   align-items: stretch;
+}
+
+.drawer-sort-target {
+  border-radius: 8px;
+  outline: 2px dashed var(--border-active);
+  outline-offset: 2px;
+}
+
+[data-testid^="session-item-"],
+[data-testid^="tab-item-"],
+[data-testid^="snippet-item-"] {
+  cursor: grab;
+}
+
+.drag-handle {
+  color: var(--text-muted);
+  font-size: 1rem;
 }
 
 .drawer-item-main {

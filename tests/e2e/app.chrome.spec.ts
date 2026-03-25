@@ -257,6 +257,50 @@ test.describe("remux browser behavior", () => {
         await localServer.stop();
       }
     });
+
+    test("sessions can be manually reordered in the drawer", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
+
+      try {
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        const picker = page.getByTestId("session-picker-overlay");
+        if (await picker.count()) {
+          await picker.getByRole("button", { name: "main" }).click();
+        }
+        await page.getByTestId("drawer-toggle").click();
+
+        await page.getByTestId("move-session-up-work").click();
+
+        const sessionButtons = page.getByTestId("sessions-list").locator("li .drawer-item-main");
+        await expect(sessionButtons.nth(0)).toContainText("work");
+        await expect(sessionButtons.nth(1)).toContainText("main");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
+
+    test("tabs can be manually reordered in the drawer", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main"], defaultSession: "main" });
+
+      try {
+        await localServer.gateway.newTab("main");
+        await localServer.gateway.selectTab("main", 0);
+
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        await expect(page.getByTestId("compose-bar")).toBeVisible();
+        await page.getByTestId("drawer-toggle").click();
+
+        await page.getByTestId("move-tab-up-main-1").click();
+
+        const tabButtons = page.getByTestId("tabs-list").locator("li .drawer-item-main");
+        await expect(tabButtons.nth(0)).toContainText("1:");
+        await expect(tabButtons.nth(1)).toContainText("0:");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
   });
 
   test.describe("session picker", () => {

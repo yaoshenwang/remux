@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import type { SessionState, TabState } from "../../src/shared/protocol.js";
 import {
   getTabOrderKey,
+  moveSessionOrder,
+  moveSessionTabOrder,
   normalizeWorkspaceOrder,
   orderSessions,
   orderTabs,
@@ -77,6 +79,28 @@ describe("workspace order helpers", () => {
     expect(reorderSessionTabs(state, "main", "1:logs", "0:shell").tabsBySession.main).toEqual([
       "1:logs",
       "0:shell"
+    ]);
+  });
+
+  test("moves sessions and tabs one step at a time", () => {
+    const state = {
+      sessions: ["main", "work", "ops"],
+      tabsBySession: {
+        main: ["0:shell", "1:logs", "2:ops"]
+      }
+    };
+
+    expect(moveSessionOrder(state, "work", -1).sessions).toEqual(["work", "main", "ops"]);
+    expect(moveSessionOrder(state, "main", -1).sessions).toEqual(["main", "work", "ops"]);
+    expect(moveSessionTabOrder(state, "main", "1:logs", 1).tabsBySession.main).toEqual([
+      "0:shell",
+      "2:ops",
+      "1:logs"
+    ]);
+    expect(moveSessionTabOrder(state, "main", "2:ops", 1).tabsBySession.main).toEqual([
+      "0:shell",
+      "1:logs",
+      "2:ops"
     ]);
   });
 });
