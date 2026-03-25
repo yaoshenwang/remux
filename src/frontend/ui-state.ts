@@ -1,16 +1,22 @@
-import type { SessionState } from "../shared/protocol";
+import type { ClientView, SessionState } from "../shared/protocol";
 
 export const isAwaitingSessionSelection = (
   sessionChoices: Array<unknown> | null,
   attachedSession: string
 ): boolean => sessionChoices !== null && !attachedSession;
 
+export const isAwaitingSessionAttachment = (
+  pendingSessionName: string | null,
+  attachedSession: string
+): boolean => Boolean(pendingSessionName && pendingSessionName !== attachedSession);
+
 export const resolveActiveSession = (
   sessions: SessionState[],
   attachedSession: string,
-  awaitingSessionSelection: boolean
+  awaitingSessionSelection: boolean,
+  awaitingSessionAttachment = false
 ): SessionState | undefined => {
-  if (awaitingSessionSelection) {
+  if (awaitingSessionSelection || awaitingSessionAttachment) {
     return undefined;
   }
 
@@ -20,6 +26,18 @@ export const resolveActiveSession = (
   }
 
   return sessions.find((session) => session.attached) ?? sessions[0];
+};
+
+export const inferAttachedSessionFromWorkspace = (
+  sessions: SessionState[],
+  clientView: ClientView | null
+): string => {
+  const sessionName = clientView?.sessionName ?? "";
+  if (!sessionName) {
+    return "";
+  }
+
+  return sessions.some((session) => session.name === sessionName) ? sessionName : "";
 };
 
 export const shouldUsePaneViewportCols = (

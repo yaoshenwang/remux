@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import type { SessionState } from "../../src/shared/protocol.js";
 import {
+  inferAttachedSessionFromWorkspace,
+  isAwaitingSessionAttachment,
   isAwaitingSessionSelection,
   resolveActiveSession,
   shouldUsePaneViewportCols
@@ -44,9 +46,44 @@ describe("frontend ui state helpers", () => {
     expect(resolveActiveSession(sessions, "", true)).toBeUndefined();
   });
 
+  test("does not fall back to another session while attach is still pending", () => {
+    const sessions = [buildSession("main"), buildSession("work", true)];
+    expect(resolveActiveSession(sessions, "", false, true)).toBeUndefined();
+  });
+
   test("still resolves the attached session when picker is not blocking selection", () => {
     const sessions = [buildSession("main"), buildSession("work", true)];
     expect(resolveActiveSession(sessions, "", false)?.name).toBe("work");
+  });
+
+  test("treats pending session creation as awaiting attachment until attached lands", () => {
+    expect(isAwaitingSessionAttachment("pending", "")).toBe(true);
+    expect(isAwaitingSessionAttachment("pending", "pending")).toBe(false);
+    expect(isAwaitingSessionAttachment(null, "")).toBe(false);
+  });
+
+  test("infers attached session from client view when workspace has already converged", () => {
+    const sessions = [buildSession("main"), buildSession("work", true)];
+    expect(
+      inferAttachedSessionFromWorkspace(sessions, {
+        sessionName: "main",
+        tabIndex: 0,
+        paneId: "%main",
+        followBackendFocus: false
+      })
+    ).toBe("main");
+  });
+
+  test("does not infer an attached session from stale client view data", () => {
+    const sessions = [buildSession("main"), buildSession("work", true)];
+    expect(
+      inferAttachedSessionFromWorkspace(sessions, {
+        sessionName: "missing",
+        tabIndex: 0,
+        paneId: "%missing",
+        followBackendFocus: false
+      })
+    ).toBe("");
   });
 
   test("locks viewport columns only for zellij", () => {

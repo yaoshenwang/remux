@@ -2,6 +2,7 @@ import type { ClientView, WorkspaceSnapshot } from "../../shared/protocol.js";
 
 export class ClientViewStore {
   private views = new Map<string, ClientView>();
+  private missingSessionCounts = new Map<string, number>();
 
   initView(clientId: string, session: string, snapshot: WorkspaceSnapshot): ClientView {
     const sessionState = snapshot.sessions.find((s) => s.name === session);
@@ -15,6 +16,7 @@ export class ClientViewStore {
       followBackendFocus: false,
     };
     this.views.set(clientId, view);
+    this.missingSessionCounts.set(clientId, 0);
     return view;
   }
 
@@ -57,13 +59,20 @@ export class ClientViewStore {
     for (const [clientId, view] of this.views) {
       const session = snapshot.sessions.find((s) => s.name === view.sessionName);
       if (!session) {
-        // Session gone — fall back to first available
+        const misses = (this.missingSessionCounts.get(clientId) ?? 0) + 1;
+        this.missingSessionCounts.set(clientId, misses);
+        if (misses < 2) {
+          continue;
+        }
+        // Session gone — fall back to first available after a grace poll,
+        // so transient zellij rename/create gaps do not detach the client view.
         const fallback = snapshot.sessions[0];
         if (fallback) {
           this.selectSession(clientId, fallback.name, snapshot);
         }
         continue;
       }
+      this.missingSessionCounts.set(clientId, 0);
 
       // Check if current tab still exists
       const tab = session.tabs.find((t) => t.index === view.tabIndex);
@@ -111,5 +120,6 @@ export class ClientViewStore {
 
   removeClient(clientId: string): void {
     this.views.delete(clientId);
+    this.missingSessionCounts.delete(clientId);
   }
 }

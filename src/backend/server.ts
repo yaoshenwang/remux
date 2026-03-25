@@ -10,6 +10,7 @@ import type {
   ControlClientMessage,
   ControlServerMessage,
   ClientView,
+  SessionState,
   WorkspaceSnapshot
 } from "../shared/protocol.js";
 import { randomToken } from "./util/random.js";
@@ -25,6 +26,7 @@ interface ControlContext {
   socket: WebSocket;
   authed: boolean;
   clientId: string;
+  messageQueue: Promise<void>;
   runtime?: TerminalRuntime;
   terminalClients: Set<DataContext>;
   /** Pending resize from terminal WS received before runtime was created */
@@ -135,6 +137,9 @@ const REMUX_SESSION_PREFIX = "remux-client-";
 const isManagedMobileSession = (name: string): boolean => name.startsWith(REMUX_SESSION_PREFIX);
 
 const buildMobileSessionName = (clientId: string): string => `${REMUX_SESSION_PREFIX}${clientId}`;
+
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 export const createRemuxServer = (
   config: RuntimeConfig,
@@ -340,6 +345,81 @@ export const createRemuxServer = (
   let started = false;
   let stopPromise: Promise<void> | null = null;
   let latestSnapshot: WorkspaceSnapshot | undefined;
+  const isNonGroupedBackend = (): boolean => !deps.backend.createGroupedSession;
+
+  const waitForWorkspace = async (
+    predicate: (snapshot: WorkspaceSnapshot) => boolean,
+    options?: { timeoutMs?: number; intervalMs?: number }
+  ): Promise<WorkspaceSnapshot> => {
+    const timeoutMs = options?.timeoutMs ?? Math.max(config.pollIntervalMs * 4, 1_500);
+    const intervalMs = options?.intervalMs ?? 100;
+    const deadline = Date.now() + timeoutMs;
+    let lastSnapshot = latestSnapshot ?? await buildSnapshot(deps.backend);
+    if (predicate(lastSnapshot)) {
+      return lastSnapshot;
+    }
+    while (Date.now() < deadline) {
+      await sleep(intervalMs);
+      lastSnapshot = await buildSnapshot(deps.backend);
+      if (predicate(lastSnapshot)) {
+        return lastSnapshot;
+      }
+    }
+    return lastSnapshot;
+  };
+
+  const buildSingleSessionSnapshot = async (sessionName: string): Promise<WorkspaceSnapshot> => {
+    const tabs = await deps.backend.listTabs(sessionName);
+    const tabsWithPanes = await Promise.all(
+      tabs.map(async (tab) => ({
+        ...tab,
+        panes: await deps.backend.listPanes(sessionName, tab.index)
+      }))
+    );
+    const session: SessionState = {
+      name: sessionName,
+      attached: false,
+      tabCount: tabsWithPanes.length,
+      tabs: tabsWithPanes
+    };
+    return {
+      capturedAt: new Date().toISOString(),
+      sessions: [session]
+    };
+  };
+
+  const waitForSessionSnapshot = async (
+    sessionName: string,
+    options?: { timeoutMs?: number; intervalMs?: number }
+  ): Promise<WorkspaceSnapshot> => {
+    const timeoutMs = options?.timeoutMs ?? Math.max(config.pollIntervalMs * 4, 1_500);
+    const intervalMs = options?.intervalMs ?? 100;
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown;
+
+    while (Date.now() < deadline) {
+      try {
+        const snapshot = await buildSingleSessionSnapshot(sessionName);
+        const session = snapshot.sessions[0];
+        if (session && session.tabs.length > 0) {
+          return snapshot;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      await sleep(intervalMs);
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+    return buildSingleSessionSnapshot(sessionName);
+  };
+
+  const broadcastSnapshotNow = (snapshot: WorkspaceSnapshot): void => {
+    latestSnapshot = snapshot;
+    broadcastState(snapshot);
+  };
 
   const buildClientState = (
     baseSessions: WorkspaceSnapshot,
@@ -389,6 +469,16 @@ export const createRemuxServer = (
       workspace: { ...baseSessions, sessions },
       clientView: view,
     };
+  };
+
+  const primeViewPaneContext = async (
+    view: ClientView | undefined,
+    paneId: string
+  ): Promise<void> => {
+    if (!view || !isNonGroupedBackend() || view.paneId !== paneId) {
+      return;
+    }
+    await deps.backend.listPanes(view.sessionName, view.tabIndex);
   };
 
   const broadcastState = (state: WorkspaceSnapshot): void => {
@@ -524,7 +614,8 @@ export const createRemuxServer = (
 
   const attachControlToBaseSession = async (
     context: ControlContext,
-    baseSession: string
+    baseSession: string,
+    snapshotForInit?: WorkspaceSnapshot
   ): Promise<void> => {
     const runtime = getOrCreateRuntime(context);
 
@@ -560,8 +651,10 @@ export const createRemuxServer = (
         await runtime.shutdown();
       }
 
-      // Build a snapshot to init the view
-      const snapshot = await buildSnapshot(deps.backend);
+      // Build only the target session snapshot here so new-session attach does
+      // not wait on a full multi-session zellij workspace scan before sending
+      // the authoritative "attached" event back to the client.
+      const snapshot = snapshotForInit ?? await waitForSessionSnapshot(baseSession);
       const view = viewStore.initView(context.clientId, baseSession, snapshot);
 
       // PTY expects "session:paneId" format
@@ -590,9 +683,17 @@ export const createRemuxServer = (
     context: ControlContext,
     forceSession?: string
   ): Promise<void> => {
-    const sessions = (await deps.backend.listSessions()).filter(
-      (session) => !isManagedMobileSession(session.name)
-    );
+    const sessions = latestSnapshot
+      ? latestSnapshot.sessions
+        .filter((session) => !isManagedMobileSession(session.name))
+        .map((session) => ({
+          name: session.name,
+          attached: session.attached,
+          tabCount: session.tabCount
+        }))
+      : (await deps.backend.listSessions()).filter(
+        (session) => !isManagedMobileSession(session.name)
+      );
 
     if (forceSession && sessions.some((s) => s.name === forceSession)) {
       logger.log("attach session (forced)", forceSession);
@@ -631,6 +732,11 @@ export const createRemuxServer = (
         return;
       case "new_session":
         await deps.backend.createSession(message.name);
+        if (isNonGroupedBackend()) {
+          const sessionSnapshot = await waitForSessionSnapshot(message.name);
+          await attachControlToBaseSession(context, message.name, sessionSnapshot);
+          return;
+        }
         await attachControlToBaseSession(context, message.name);
         return;
       case "close_session": {
@@ -670,8 +776,12 @@ export const createRemuxServer = (
         }
         await deps.backend.newTab(sessionForNew);
         // New tab becomes active — update view to the new tab
-        if (!deps.backend.createGroupedSession) {
-          const snapshot = await buildSnapshot(deps.backend);
+        if (isNonGroupedBackend()) {
+          const snapshot = await waitForWorkspace((candidate) => {
+            const session = candidate.sessions.find((s) => s.name === sessionForNew);
+            const activeTab = session?.tabs.find((t) => t.active) ?? session?.tabs.at(-1);
+            return Boolean(activeTab && activeTab.panes.length > 0);
+          });
           const session = snapshot.sessions.find((s) => s.name === sessionForNew);
           const activeTab = session?.tabs.find((t) => t.active) ?? session?.tabs.at(-1);
           if (activeTab) {
@@ -682,6 +792,7 @@ export const createRemuxServer = (
               runtime.attachToSession(`${updatedView.sessionName}:${updatedView.paneId}`);
             }
           }
+          broadcastSnapshotNow(snapshot);
         }
         return;
       }
@@ -690,6 +801,9 @@ export const createRemuxServer = (
         // Update view store
         const snapshot = latestSnapshot ?? await buildSnapshot(deps.backend);
         viewStore.selectTab(context.clientId, message.tabIndex, snapshot);
+        if (isNonGroupedBackend()) {
+          await deps.backend.selectTab(view.sessionName, message.tabIndex);
+        }
         // Switch terminal stream
         if (deps.backend.createGroupedSession) {
           // tmux: select window on the mobile session
@@ -723,7 +837,11 @@ export const createRemuxServer = (
       }
       case "select_pane": {
         if (!view) throw new Error("no attached session");
+        await primeViewPaneContext(view, message.paneId);
         viewStore.selectPane(context.clientId, message.paneId);
+        if (isNonGroupedBackend() && deps.backend.capabilities.supportsPaneFocusById) {
+          await deps.backend.focusPane(message.paneId);
+        }
         if (deps.backend.createGroupedSession) {
           // tmux: select the pane directly
           await deps.backend.focusPane(message.paneId);
@@ -735,9 +853,11 @@ export const createRemuxServer = (
         return;
       }
       case "split_pane":
+        await primeViewPaneContext(view, message.paneId);
         await deps.backend.splitPane(message.paneId, message.direction);
         return;
       case "close_pane": {
+        await primeViewPaneContext(view, message.paneId);
         // Guard: prevent killing the last pane of the last tab (would destroy session)
         const baseForKillPane = view?.sessionName;
         if (baseForKillPane) {
@@ -760,9 +880,11 @@ export const createRemuxServer = (
         return;
       }
       case "toggle_fullscreen":
+        await primeViewPaneContext(view, message.paneId);
         await deps.backend.toggleFullscreen(message.paneId);
         return;
       case "capture_scrollback": {
+        await primeViewPaneContext(view, message.paneId);
         const lines = message.lines ?? config.scrollbackLines;
         const result = await deps.backend.capturePane(message.paneId, { lines });
         sendJson(context.socket, {
@@ -782,13 +904,22 @@ export const createRemuxServer = (
         await deps.backend.renameSession(message.session, message.newName);
         // Update all client views
         viewStore.renameSession(message.session, message.newName);
+        let renamedSnapshot: WorkspaceSnapshot | undefined;
+        if (isNonGroupedBackend()) {
+          renamedSnapshot = await waitForWorkspace((snapshot) =>
+            snapshot.sessions.some((session) => session.name === message.newName)
+          );
+        }
         // Reattach runtimes for zellij/conpty
-        if (!deps.backend.createGroupedSession) {
+        if (isNonGroupedBackend()) {
           for (const client of controlClients) {
             const clientView = viewStore.getView(client.clientId);
             if (client.authed && clientView && clientView.sessionName === message.newName && client.runtime) {
               client.runtime.attachToSession(`${message.newName}:${clientView.paneId}`);
             }
+          }
+          if (renamedSnapshot) {
+            broadcastSnapshotNow(renamedSnapshot);
           }
         }
         for (const client of controlClients) {
@@ -834,78 +965,87 @@ export const createRemuxServer = (
       socket,
       authed: false,
       clientId: randomToken(12),
+      messageQueue: Promise.resolve(),
       terminalClients: new Set<DataContext>()
     };
     controlClients.add(context);
     logger.log("control ws connected", context.clientId);
 
-    socket.on("message", async (rawData) => {
+    socket.on("message", (rawData) => {
       const message = parseClientMessage(rawData.toString("utf8"));
       if (!message) {
         sendJson(socket, { type: "error", message: "invalid message format" });
         return;
       }
-      logger.log("control ws message", context.clientId, message.type);
-      verboseLog("control ws payload", context.clientId, summarizeClientMessage(message));
-
-      try {
-        if (!context.authed) {
-          if (message.type !== "auth") {
-            sendJson(socket, { type: "auth_error", reason: "auth required" });
-            return;
-          }
-
-          const authResult = authService.verify({
-            token: message.token,
-            password: message.password
-          });
-          if (!authResult.ok) {
-            logger.log("control ws auth failed", context.clientId, authResult.reason ?? "unknown");
-            sendJson(socket, {
-              type: "auth_error",
-              reason: authResult.reason ?? "unauthorized"
-            });
-            return;
-          }
-
-          context.authed = true;
-          logger.log("control ws auth ok", context.clientId);
-          sendJson(socket, {
-            type: "auth_ok",
-            clientId: context.clientId,
-            requiresPassword: authService.requiresPassword(),
-            capabilities: deps.backend.capabilities,
-            backendKind: deps.backend.kind
-          });
-          try {
-            await ensureAttachedSession(context, message.session);
-          } catch (error) {
-            logger.error("initial attach failed", error);
-            sendJson(socket, {
-              type: "error",
-              message: error instanceof Error ? error.message : String(error)
-            });
-          }
-          await monitor?.forcePublish();
-          return;
-        }
+      context.messageQueue = context.messageQueue.then(async () => {
+        logger.log("control ws message", context.clientId, message.type);
+        verboseLog("control ws payload", context.clientId, summarizeClientMessage(message));
 
         try {
-          verboseLog("control mutation start", context.clientId, message.type);
-          await runControlMutation(message, context);
-          verboseLog("control mutation done", context.clientId, message.type);
-        } finally {
-          verboseLog("force publish start", context.clientId, message.type);
-          await monitor?.forcePublish();
-          verboseLog("force publish done", context.clientId, message.type);
+          if (!context.authed) {
+            if (message.type !== "auth") {
+              sendJson(socket, { type: "auth_error", reason: "auth required" });
+              return;
+            }
+
+            const authResult = authService.verify({
+              token: message.token,
+              password: message.password
+            });
+            if (!authResult.ok) {
+              logger.log("control ws auth failed", context.clientId, authResult.reason ?? "unknown");
+              sendJson(socket, {
+                type: "auth_error",
+                reason: authResult.reason ?? "unauthorized"
+              });
+              return;
+            }
+
+            context.authed = true;
+            logger.log("control ws auth ok", context.clientId);
+            sendJson(socket, {
+              type: "auth_ok",
+              clientId: context.clientId,
+              requiresPassword: authService.requiresPassword(),
+              capabilities: deps.backend.capabilities,
+              backendKind: deps.backend.kind
+            });
+            try {
+              await ensureAttachedSession(context, message.session);
+            } catch (error) {
+              logger.error("initial attach failed", error);
+              sendJson(socket, {
+                type: "error",
+                message: error instanceof Error ? error.message : String(error)
+              });
+            }
+            await monitor?.forcePublish();
+            return;
+          }
+
+          try {
+            verboseLog("control mutation start", context.clientId, message.type);
+            await runControlMutation(message, context);
+            verboseLog("control mutation done", context.clientId, message.type);
+          } finally {
+            verboseLog("force publish start", context.clientId, message.type);
+            await monitor?.forcePublish();
+            verboseLog("force publish done", context.clientId, message.type);
+          }
+        } catch (error) {
+          logger.error("control ws error", context.clientId, error);
+          sendJson(socket, {
+            type: "error",
+            message: error instanceof Error ? error.message : String(error)
+          });
         }
-      } catch (error) {
+      }).catch((error) => {
         logger.error("control ws error", context.clientId, error);
         sendJson(socket, {
           type: "error",
           message: error instanceof Error ? error.message : String(error)
         });
-      }
+      });
     });
 
     socket.on("close", () => {
