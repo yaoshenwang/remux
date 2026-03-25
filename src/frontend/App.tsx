@@ -1310,11 +1310,20 @@ export const App = () => {
               key={tab.key}
               className={`tab${tab.isActive ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
               onClick={() => {
-                if (tab.sessionName !== (attachedSession || activeSession?.name)) {
+                const currentSession = attachedSession || activeSession?.name;
+                if (tab.sessionName !== currentSession) {
                   sendControl({ type: "select_session", session: tab.sessionName });
+                  setSelectedWindowIndex(tab.windowIndex);
+                  setSelectedPaneId(null);
+                } else {
+                  const tabState = activeSession?.tabs.find((t) => t.index === tab.windowIndex);
+                  if (tabState) {
+                    selectTab(tabState);
+                  } else {
+                    sendControl({ type: "select_tab", session: tab.sessionName, tabIndex: tab.windowIndex });
+                    setSelectedWindowIndex(tab.windowIndex);
+                  }
                 }
-                sendControl({ type: "select_tab", session: tab.sessionName, tabIndex: tab.windowIndex });
-                setSelectedWindowIndex(tab.windowIndex);
               }}
             >
               <span className="tab-dot" style={{ background: tab.color }} />
