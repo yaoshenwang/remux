@@ -1440,7 +1440,8 @@ button.danger {
     bottom: 0;
     width: min(85vw, 22rem);
     transform: translateX(-100%);
-    transition: transform var(--transition-slow);
+    visibility: hidden;
+    transition: transform var(--transition-slow), visibility var(--transition-slow);
     z-index: 30;
     background: var(--bg-app);
     backdrop-filter: none;
@@ -1448,6 +1449,7 @@ button.danger {
 
   .sidebar.open {
     transform: translateX(0);
+    visibility: visible;
   }
 
   .sidebar-close {
