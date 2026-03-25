@@ -139,7 +139,7 @@ test.describe("remux browser behavior", () => {
       }
     });
 
-    test("drawer uses compact inline close controls and keeps them touch friendly", async ({ page }) => {
+    test("drawer keeps close controls touch friendly without showing reorder chrome", async ({ page }) => {
       const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
 
       try {
@@ -158,14 +158,22 @@ test.describe("remux browser behavior", () => {
 
         await expect(page.getByTestId("close-session-button")).toHaveCount(0);
         await expect(page.getByTestId("close-tab-button")).toHaveCount(0);
+        await expect(page.getByTestId("move-session-up-main")).toHaveCount(0);
+        await expect(page.getByTestId("move-session-down-main")).toHaveCount(0);
+        await expect(page.getByTestId("drag-session-main")).toHaveCount(0);
+        await expect(page.getByTestId("move-tab-up-main-0")).toHaveCount(0);
+        await expect(page.getByTestId("move-tab-down-main-0")).toHaveCount(0);
+        await expect(page.getByTestId("drag-tab-main-0")).toHaveCount(0);
 
         const sessionClose = page.getByTestId("close-session-main");
         const tabClose = page.getByTestId("close-tab-main-0");
         const paneClose = page.getByTestId(`close-pane-${closablePaneId}`);
+        const drawerClose = page.getByTestId("drawer-close");
 
         await expect(sessionClose).toBeVisible();
         await expect(tabClose).toBeVisible();
         await expect(paneClose).toBeVisible();
+        await expect(drawerClose).toBeVisible();
 
         const minimumTouchTarget = async (testId: string): Promise<void> => {
           const box = await page.getByTestId(testId).boundingBox();
@@ -176,6 +184,7 @@ test.describe("remux browser behavior", () => {
         await minimumTouchTarget("close-session-main");
         await minimumTouchTarget("close-tab-main-0");
         await minimumTouchTarget(`close-pane-${closablePaneId}`);
+        await minimumTouchTarget("drawer-close");
       } finally {
         await page.goto("about:blank");
         await localServer.stop();

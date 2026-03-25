@@ -1555,7 +1555,8 @@ export const App = () => {
             data-testid="drawer-close"
             aria-label="Close sidebar"
           >
-            ×
+            <span className="sidebar-close-icon" aria-hidden="true">×</span>
+            <span className="sidebar-close-label">Done</span>
           </button>
         </div>
 
@@ -1643,6 +1644,7 @@ export const App = () => {
                         className={`drawer-item-main${
                           session.name === (attachedSession || activeSession?.name) ? " active" : ""
                         }`}
+                        data-testid={`session-drag-target-${session.name}`}
                       >
                         <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
                         {(() => {
@@ -1653,44 +1655,7 @@ export const App = () => {
                       </button>
                       <button
                         type="button"
-                        className="drawer-item-icon"
-                        data-testid={`move-session-up-${session.name}`}
-                        aria-label={`Move session ${session.name} up`}
-                        title={`Move session ${session.name} up`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setWorkspaceOrder((current) => moveSessionOrder(current, session.name, -1));
-                        }}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        className="drawer-item-icon"
-                        data-testid={`move-session-down-${session.name}`}
-                        aria-label={`Move session ${session.name} down`}
-                        title={`Move session ${session.name} down`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setWorkspaceOrder((current) => moveSessionOrder(current, session.name, 1));
-                        }}
-                      >
-                        ↓
-                      </button>
-                      <button
-                        type="button"
-                        className="drawer-item-icon drag-handle"
-                        data-testid={`drag-session-${session.name}`}
-                        aria-label={`Drag session ${session.name}`}
-                        title={`Drag session ${session.name}`}
-                      >
-                        ≡
-                      </button>
-                      <button
-                        type="button"
-                        className="drawer-item-icon danger"
+                        className="drawer-close-action"
                         onClick={(event) => {
                           event.stopPropagation();
                           if (
@@ -1708,7 +1673,7 @@ export const App = () => {
                         aria-label={`Close session ${session.name}`}
                         title={`Close session ${session.name}`}
                       >
-                        ×
+                        <span aria-hidden="true">×</span>
                       </button>
                     </div>
                   )}
@@ -1818,6 +1783,7 @@ export const App = () => {
                               setRenameWindowValue(tab.name);
                             } : undefined}
                             className={`drawer-item-main${tab.index === activeTab?.index ? " active" : ""}`}
+                            data-testid={`tab-drag-target-${activeSession.name}-${tab.index}`}
                           >
                             <span className="item-name">
                               {tab.index}: {tab.name}
@@ -1830,54 +1796,7 @@ export const App = () => {
                           </button>
                           <button
                             type="button"
-                            className="drawer-item-icon"
-                            data-testid={`move-tab-up-${activeSession.name}-${tab.index}`}
-                            aria-label={`Move tab ${tab.index} up`}
-                            title={`Move tab ${tab.index} up`}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setWorkspaceOrder((current) => moveSessionTabOrder(
-                                current,
-                                activeSession.name,
-                                getTabOrderKey(tab),
-                                -1
-                              ));
-                            }}
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            className="drawer-item-icon"
-                            data-testid={`move-tab-down-${activeSession.name}-${tab.index}`}
-                            aria-label={`Move tab ${tab.index} down`}
-                            title={`Move tab ${tab.index} down`}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setWorkspaceOrder((current) => moveSessionTabOrder(
-                                current,
-                                activeSession.name,
-                                getTabOrderKey(tab),
-                                1
-                              ));
-                            }}
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            className="drawer-item-icon drag-handle"
-                            data-testid={`drag-tab-${activeSession.name}-${tab.index}`}
-                            aria-label={`Drag tab ${tab.index} in session ${activeSession.name}`}
-                            title={`Drag tab ${tab.index}`}
-                          >
-                            ≡
-                          </button>
-                          <button
-                            type="button"
-                            className="drawer-item-icon danger"
+                            className="drawer-close-action"
                             onClick={(event) => {
                               event.stopPropagation();
                               if (tab.index === activeTab?.index) {
@@ -1895,7 +1814,7 @@ export const App = () => {
                             aria-label={`Close tab ${tab.index} in session ${activeSession.name}`}
                             title={`Close tab ${tab.index}`}
                           >
-                            ×
+                            <span aria-hidden="true">×</span>
                           </button>
                         </div>
                       )}
@@ -1946,7 +1865,7 @@ export const App = () => {
                           </button>
                           <button
                             type="button"
-                            className="drawer-item-icon danger"
+                            className="drawer-close-action"
                             onClick={(event) => {
                               event.stopPropagation();
                               if (isActive) {
@@ -1959,7 +1878,7 @@ export const App = () => {
                             aria-label={`Close pane ${pane.id}`}
                             title={`Close pane ${pane.id}`}
                           >
-                            ×
+                            <span aria-hidden="true">×</span>
                           </button>
                         </div>
                       </li>

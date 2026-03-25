@@ -213,6 +213,9 @@ button, input {
   position: sticky;
   top: 0;
   z-index: 1;
+  background: linear-gradient(180deg, var(--bg-app) 0%, color-mix(in srgb, var(--bg-app) 90%, transparent) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .sidebar-brand {
@@ -225,22 +228,34 @@ button, input {
 
 .sidebar-close {
   display: none;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 6px;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  border-radius: 999px;
   border: 1px solid var(--btn-border);
   background: var(--btn-bg);
   color: var(--text-muted);
-  font-size: 1.1rem;
   cursor: pointer;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 600;
   transition: all var(--transition-fast);
 }
 
 .sidebar-close:hover {
   background: var(--btn-hover);
   color: var(--text-primary);
+}
+
+.sidebar-close-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.sidebar-close-label {
+  letter-spacing: 0.01em;
 }
 
 .sidebar-backdrop {
@@ -317,26 +332,15 @@ button, input {
 
 .drawer-item-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
   align-items: stretch;
 }
 
 .drawer-item-main {
   min-width: 0;
-}
-
-.drawer-item-icon {
-  width: 2.5rem !important;
-  min-width: 2.5rem;
-  min-height: 2.5rem;
-  padding: 0;
-  text-align: center !important;
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  font-size: 1rem;
-  line-height: 1;
+  min-height: 3rem;
+  position: relative;
 }
 
 .item-name {
@@ -362,15 +366,42 @@ button, input {
   opacity: 0.72;
 }
 
-[data-testid^="session-item-"],
-[data-testid^="tab-item-"],
-[data-testid^="snippet-item-"] {
+.drawer-item-main[draggable="true"] {
   cursor: grab;
 }
 
-.drag-handle {
+.drawer-item-main[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.drawer-close-action {
+  width: 2.25rem !important;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  align-self: center;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px !important;
+  text-align: center !important;
   color: var(--text-muted);
+  background: color-mix(in srgb, var(--btn-bg) 70%, transparent);
+}
+
+.drawer-close-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--btn-hover) 82%, transparent);
+}
+
+.drawer-close-action span {
   font-size: 1rem;
+  line-height: 1;
+}
+
+.drawer-item-row:hover .drawer-close-action:not(:disabled),
+.drawer-item-row:focus-within .drawer-close-action:not(:disabled) {
+  color: var(--text-primary);
 }
 
 .drawer-section-action {
@@ -1438,13 +1469,15 @@ button.danger {
     left: 0;
     top: 0;
     bottom: 0;
-    width: min(85vw, 22rem);
+    width: min(90vw, 24rem);
     transform: translateX(-100%);
     visibility: hidden;
     transition: transform var(--transition-slow), visibility var(--transition-slow);
     z-index: 30;
     background: var(--bg-app);
     backdrop-filter: none;
+    padding: 0 max(0.75rem, env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom));
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
   }
 
   .sidebar.open {
@@ -1454,6 +1487,19 @@ button.danger {
 
   .sidebar-close {
     display: inline-flex;
+    min-width: 3rem;
+    min-height: 3rem;
+    padding-inline: 0.95rem;
+  }
+
+  .drawer-close-action {
+    width: 2.5rem !important;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+
+  .drawer-item-main {
+    min-height: 3.25rem;
   }
 
   .sidebar-backdrop {
