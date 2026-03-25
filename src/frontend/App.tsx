@@ -205,7 +205,11 @@ export const App = () => {
     }
   });
 
-  const [theme, setTheme] = useState(localStorage.getItem("remux-theme") ?? "midnight");
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem("remux-theme");
+    if (stored === "light") return "light";
+    return "dark"; // migrate old themes (midnight, amber, etc.) to dark
+  });
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
 
   // Bandwidth stats
@@ -1272,6 +1276,7 @@ export const App = () => {
 
   return (
     <div className="app-shell">
+      <div className="main-content">
       <header className="tab-bar">
         <button
           onClick={() => setDrawerOpen((value) => !value)}
@@ -1539,21 +1544,20 @@ export const App = () => {
         </section>
       )}
 
-      {drawerOpen && (
-        <div
-          className="drawer-backdrop"
-          onClick={() => setDrawerOpen(false)}
-          data-testid="drawer-backdrop"
-        >
-          <aside className="drawer" onClick={(event) => event.stopPropagation()}>
-            <button
-              className="drawer-close"
-              onClick={() => setDrawerOpen(false)}
-              data-testid="drawer-close"
-              aria-label="Close drawer"
-            >
-              ←
-            </button>
+      </div>{/* end main-content */}
+
+      <aside className={`sidebar drawer${drawerOpen ? " open" : ""}`}>
+        <div className="sidebar-header">
+          <span className="sidebar-brand">REMUX</span>
+          <button
+            className="sidebar-close"
+            onClick={() => setDrawerOpen(false)}
+            data-testid="drawer-close"
+            aria-label="Close sidebar"
+          >
+            ×
+          </button>
+        </div>
 
             <h3>Sessions</h3>
             <ul data-testid="sessions-list">
@@ -2005,16 +2009,19 @@ export const App = () => {
             </button>
 
             <h3>Appearance</h3>
-            <div className="theme-picker" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-              {Object.entries(themes).map(([key, config]) => (
-                <button
-                  key={key}
-                  className={theme === key ? "active" : ""}
-                  onClick={() => setTheme(key)}
-                >
-                  {config.name}
-                </button>
-              ))}
+            <div className="theme-toggle">
+              <button
+                className={theme === "dark" ? "active" : ""}
+                onClick={() => setTheme("dark")}
+              >
+                Dark
+              </button>
+              <button
+                className={theme === "light" ? "active" : ""}
+                onClick={() => setTheme("light")}
+              >
+                Light
+              </button>
             </div>
 
             <h3>Font Size</h3>
@@ -2232,9 +2239,9 @@ export const App = () => {
                 )}
               </div>
             )}
-          </aside>
-        </div>
-      )}
+      </aside>
+
+      {drawerOpen && <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} data-testid="drawer-backdrop" />}
 
       {sessionChoices && (
         <div className="overlay" data-testid="session-picker-overlay">

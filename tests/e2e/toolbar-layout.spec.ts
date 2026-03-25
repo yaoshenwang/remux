@@ -131,8 +131,8 @@ test('snippets: no Snip button when no snippets configured', async ({ page }) =>
   const expandBtn = page.locator('.toolbar-expand-btn').first();
   await expandBtn.click();
 
-  // Should not have a "Snip ▼" button
-  await expect(page.locator('button', { hasText: 'Snip' })).not.toBeVisible();
+  // Should not have a "Snip ▼" button in the toolbar
+  await expect(page.locator('.toolbar button', { hasText: 'Snip' })).not.toBeVisible();
 });
 
 test('snippets: Snip button appears and expands when snippets exist', async ({ page }) => {
