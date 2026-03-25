@@ -351,6 +351,223 @@ input {
   overflow: hidden;
 }
 
+/* Tab bar — replaces the old topbar */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-topbar);
+  backdrop-filter: var(--topbar-blur);
+  -webkit-backdrop-filter: var(--topbar-blur);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.tab-bar-burger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 100%;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  cursor: pointer;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  padding: 0.5rem 0;
+}
+
+.tab-bar-burger:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.tab-list {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  gap: 0;
+}
+
+.tab-list::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.tab.active {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 600;
+}
+
+.tab.bell {
+  animation: tab-bell-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tab-bell-pulse {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(250, 204, 21, 0.15); }
+}
+
+.tab-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.tab-bell {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 10rem;
+}
+
+.tab-new {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.tab-new:hover {
+  color: var(--accent);
+}
+
+.tab-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Bandwidth indicator */
+.bandwidth-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: monospace;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bandwidth-indicator:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.bandwidth-indicator.good { color: #4ade80; border-color: rgba(74, 222, 128, 0.3); }
+.bandwidth-indicator.ok { color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); }
+.bandwidth-indicator.low { color: #f87171; border-color: rgba(248, 113, 113, 0.3); }
+
+.saved-badge {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  font-size: 0.65rem;
+}
+
+/* Stats panel */
+.stats-card {
+  max-width: 420px;
+  width: 90vw;
+}
+
+.stats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.stats-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.stats-header button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stats-section h3 {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.35rem;
+}
+
+.stats-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  padding: 0.15rem 0;
+  color: var(--text-secondary);
+}
+
+.stats-row span:last-child {
+  font-family: monospace;
+  color: var(--text-primary);
+}
+
+.stats-row.highlight span:last-child {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+/* Keep the old topbar styles as fallback */
 .topbar {
   display: flex;
   align-items: center;
@@ -510,6 +727,10 @@ input {
   backdrop-filter: var(--toolbar-blur);
   -webkit-backdrop-filter: var(--toolbar-blur);
   border-top: 1px solid var(--border-subtle);
+}
+
+.toolbar.desktop-hidden {
+  display: none;
 }
 
 .toolbar-main {

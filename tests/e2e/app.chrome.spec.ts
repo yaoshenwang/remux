@@ -108,8 +108,12 @@ test.describe("remux browser behavior", () => {
         await page.getByTestId("close-session-button").click();
 
         await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
-        await expect(page.getByTestId("sessions-list").getByRole("button", { name: /work/ })).toBeVisible();
-        await expect(page.getByTestId("sessions-list").getByRole("button", { name: /main/ })).toHaveCount(0);
+        await expect(page.locator(".drawer")).toHaveCount(0);
+
+        await page.getByTestId("drawer-toggle").click();
+        await expect(page.locator(".drawer")).toBeVisible();
+        await expect(page.getByTestId("sessions-list")).toContainText("work");
+        await expect(page.getByTestId("sessions-list")).not.toContainText("main");
       } finally {
         await page.goto("about:blank");
         await localServer.stop();

@@ -9,6 +9,7 @@ import { hideBin } from "yargs/helpers";
 import { AuthService } from "./auth/auth-service.js";
 import type { CliArgs, RuntimeConfig } from "./config.js";
 import { createRemuxServer } from "./server.js";
+import { createExtensions } from "./extensions.js";
 import { detectSessionBackend } from "./providers/detect.js";
 import { CloudflareTunnelProvider } from "./tunnels/index.js";
 import { createLogger } from "./util/file-logger.js";
@@ -151,12 +152,14 @@ const main = async (): Promise<void> => {
     scrollbackLines: args.scrollback,
   });
   logger.log(`Session backend: ${backend.kind}`);
+  const extensions = createExtensions(logger);
 
   const runningServer = createRemuxServer(config, {
     backend: backend.gateway,
     ptyFactory: backend.ptyFactory,
     authService,
     logger,
+    extensions,
     onSwitchBackend: (kind) => {
       try {
         const newBackend = detectSessionBackend(logger, {
@@ -206,6 +209,7 @@ const main = async (): Promise<void> => {
 
     shutdownPromise = (async () => {
       tunnelProvider.stop();
+      extensions.dispose();
       await runningServer.stop();
     })();
 
