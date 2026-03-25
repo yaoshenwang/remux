@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "Remote terminal multiplexer web client for tmux, zellij, and conpty",
   "license": "MIT",
   "repository": {
