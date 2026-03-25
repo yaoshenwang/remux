@@ -15,11 +15,31 @@ deploy_instance() {
   local name="$1"
   local dir="$2"
   local service="com.remux.${name}"
+  local port
+  local gui_domain="gui/$(id -u)"
+
+  case "$name" in
+    dev)
+      port=3457
+      ;;
+    main)
+      port=3456
+      ;;
+    *)
+      echo "[deploy] unknown instance: $name"
+      exit 1
+      ;;
+  esac
 
   echo "[deploy] building $name in $dir ..."
   (cd "$dir" && npm run build 2>&1 | tail -3)
 
-  echo "[deploy] restarting $name ..."
+  echo "[deploy] clearing listeners on :$port ..."
+  lsof -ti tcp:"$port" | xargs kill 2>/dev/null || true
+  sleep 2
+  lsof -ti tcp:"$port" | xargs kill -9 2>/dev/null || true
+
+  echo "[deploy] restarting $name via launchctl ..."
   local pid
   pid=$(launchctl list "$service" 2>/dev/null | awk -F'"PID" = ' '/PID/{gsub(/[^0-9]/,"",$2); print $2}' || true)
   if [[ -n "$pid" && "$pid" != "0" ]]; then
@@ -27,9 +47,10 @@ deploy_instance() {
     kill "$pid" 2>/dev/null || true
     sleep 2
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-  else
-    launchctl load "$HOME/Library/LaunchAgents/${service}.plist" 2>/dev/null || true
   fi
+
+  launchctl bootstrap "$gui_domain" "$HOME/Library/LaunchAgents/${service}.plist" 2>/dev/null || true
+  launchctl kickstart -k "${gui_domain}/${service}"
 
   sleep 3
   local new_pid
