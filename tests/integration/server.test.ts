@@ -311,6 +311,41 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("new_tab switches the current client to the newly created tab", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    const { attachedSession } = await authControl(control);
+
+    const statePromise = waitForMessage<{
+      type: string;
+      workspace: { sessions: Array<{ name: string; tabs: Array<{ index: number; active: boolean }> }> };
+    }>(control, (msg) => {
+      if (msg.type !== "workspace_state") return false;
+      const main = msg.workspace.sessions.find((session) => session.name === "main");
+      const newTab = main?.tabs.find((tab) => tab.index === 1);
+      return newTab?.active === true;
+    });
+
+    control.send(JSON.stringify({ type: "new_tab", session: attachedSession }));
+
+    await waitForTmuxCall((call) => call === "newTab:main");
+    await waitForTmuxCall(
+      (call) => call.startsWith("selectTab:remux-client-") && call.endsWith(":1")
+    );
+
+    const stateMsg = await statePromise;
+    const mainSession = stateMsg.workspace.sessions.find((session) => session.name === "main");
+    const tab0 = mainSession?.tabs.find((tab) => tab.index === 0);
+    const tab1 = mainSession?.tabs.find((tab) => tab.index === 1);
+
+    expect(tab0?.active).toBe(false);
+    expect(tab1?.active).toBe(true);
+
+    control.close();
+  });
+
   test("close_tab targets the correct tab after switching", async () => {
     await runningServer.stop();
     await startWithSessions(["main"]);
