@@ -40,6 +40,8 @@ export function detectSessionBackend(
     socketName?: string;
     /** tmux socket path (-S flag). */
     socketPath?: string;
+    /** zellij socket dir (ZELLIJ_SOCKET_DIR). */
+    socketDir?: string;
     /** Scrollback lines for ConPTY provider. */
     scrollbackLines?: number;
   }
@@ -56,7 +58,7 @@ export function detectSessionBackend(
 
   if (options?.force === "zellij") {
     logger?.log("[detect] forced zellij backend");
-    return createZellijBackend(logger);
+    return createZellijBackend(logger, options);
   }
 
   // Auto-detect: tmux → zellij → conpty
@@ -67,7 +69,7 @@ export function detectSessionBackend(
 
   if (isZellijAvailable(logger)) {
     logger?.log("[detect] zellij found in PATH, using zellij backend");
-    return createZellijBackend(logger);
+    return createZellijBackend(logger, options);
   }
 
   logger?.log("[detect] no multiplexer found, using conpty backend");
@@ -109,13 +111,21 @@ function isTmuxAvailable(
 }
 
 function createZellijBackend(
-  logger?: Pick<Console, "log" | "error">
+  logger?: Pick<Console, "log" | "error">,
+  options?: { socketDir?: string }
 ): SessionBackend {
   // Resolve path to remux-focus.wasm relative to this module
   const thisDir = path.dirname(fileURLToPath(import.meta.url));
   const focusPluginPath = path.resolve(thisDir, "../zellij/remux-focus.wasm");
-  const gateway = new ZellijCliExecutor({ logger, focusPluginPath });
-  const ptyFactory = new ZellijPtyFactory({ logger });
+  const gateway = new ZellijCliExecutor({
+    logger,
+    focusPluginPath,
+    socketDir: options?.socketDir
+  });
+  const ptyFactory = new ZellijPtyFactory({
+    logger,
+    socketDir: options?.socketDir
+  });
   return { gateway, ptyFactory, kind: "zellij" };
 }
 

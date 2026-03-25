@@ -7,6 +7,8 @@ import { ansiToHtml } from "./ansi-to-html";
 import { deriveContext, formatContext } from "./context-label";
 import { Toolbar, type ToolbarHandle, type Snippet } from "./components/Toolbar";
 import {
+  inferAttachedSessionFromWorkspace,
+  isAwaitingSessionAttachment,
   isAwaitingSessionSelection,
   resolveActiveSession,
   shouldUsePaneViewportCols
@@ -124,6 +126,7 @@ export const App = () => {
   const [clientView, setClientView] = useState<ClientView | null>(null);
   const [attachedSession, setAttachedSession] = useState<string>("");
   const attachedSessionRef = useRef("");
+  const [pendingSessionAttachment, setPendingSessionAttachment] = useState<string | null>(null);
   const [sessionChoices, setSessionChoices] = useState<SessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeEnabled, setComposeEnabled] = useState(true);
@@ -168,10 +171,19 @@ export const App = () => {
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
   const awaitingSessionSelection = isAwaitingSessionSelection(sessionChoices, attachedSession);
+  const awaitingSessionAttachment = isAwaitingSessionAttachment(
+    pendingSessionAttachment,
+    attachedSession
+  );
 
   const activeSession: SessionState | undefined = useMemo(() => {
-    return resolveActiveSession(snapshot.sessions, attachedSession, awaitingSessionSelection);
-  }, [snapshot.sessions, attachedSession, awaitingSessionSelection]);
+    return resolveActiveSession(
+      snapshot.sessions,
+      attachedSession,
+      awaitingSessionSelection,
+      awaitingSessionAttachment
+    );
+  }, [snapshot.sessions, attachedSession, awaitingSessionSelection, awaitingSessionAttachment]);
 
   const activeTab: TabState | undefined = useMemo(() => {
     if (!activeSession) {
@@ -210,6 +222,9 @@ export const App = () => {
     if (awaitingSessionSelection) {
       return { kind: "pending", label: "select session" };
     }
+    if (awaitingSessionAttachment && pendingSessionAttachment) {
+      return { kind: "pending", label: `attaching: ${pendingSessionAttachment}` };
+    }
     if (statusMessage.toLowerCase().includes("disconnected") || statusMessage.toLowerCase().includes("reconnect")) {
       return { kind: "warn", label: statusMessage };
     }
@@ -223,7 +238,14 @@ export const App = () => {
       return { kind: "ok", label: "connected" };
     }
     return { kind: "pending", label: "connecting" };
-  }, [authReady, awaitingSessionSelection, errorMessage, statusMessage]);
+  }, [
+    authReady,
+    awaitingSessionAttachment,
+    awaitingSessionSelection,
+    errorMessage,
+    pendingSessionAttachment,
+    statusMessage
+  ]);
 
   const sendControl = (payload: Record<string, unknown>): void => {
     if (controlSocketRef.current?.readyState !== WebSocket.OPEN) {
@@ -434,6 +456,7 @@ export const App = () => {
           debugLog("control_socket.attached", { session: message.session });
           setAttachedSession(message.session);
           attachedSessionRef.current = message.session;
+          setPendingSessionAttachment(null);
           setSelectedWindowIndex(null);
           setSelectedPaneId(null);
           setSessionChoices(null);
@@ -462,6 +485,7 @@ export const App = () => {
           });
           setAttachedSession("");
           attachedSessionRef.current = "";
+          setPendingSessionAttachment(null);
           setSelectedWindowIndex(null);
           setSelectedPaneId(null);
           setSessionChoices(message.sessions);
@@ -485,6 +509,17 @@ export const App = () => {
           });
           setSnapshot(message.workspace);
           if (message.clientView) setClientView(message.clientView);
+          const inferredAttachedSession = inferAttachedSessionFromWorkspace(
+            message.workspace.sessions,
+            message.clientView
+          );
+          if (inferredAttachedSession) {
+            setAttachedSession(inferredAttachedSession);
+            attachedSessionRef.current = inferredAttachedSession;
+            setPendingSessionAttachment(null);
+            setSessionChoices(null);
+            setStatusMessage(`attached: ${inferredAttachedSession}`);
+          }
           // Clear local selections — the server now sends per-client active state,
           // so the snapshot already reflects this client's active tab/pane.
           setSelectedWindowIndex(null);
@@ -583,6 +618,12 @@ export const App = () => {
       terminalRef.current.options.theme = themeConfig.xterm;
     }
   }, [theme]);
+
+  useEffect(() => {
+    if (attachedSession) {
+      setSessionChoices(null);
+    }
+  }, [attachedSession]);
 
   useEffect(() => {
     if (!terminalContainerRef.current || terminalRef.current) {
@@ -827,6 +868,9 @@ export const App = () => {
     if (!name) {
       return;
     }
+    setPendingSessionAttachment(name);
+    setStatusMessage(`attaching: ${name}`);
+    setSessionChoices(null);
     sendControl({ type: "new_session", name });
   };
 
@@ -848,8 +892,12 @@ export const App = () => {
       return;
     }
 
-    setStatusMessage(`uploading ${file.name}...`);
     const paneCwd = activePane?.currentPath ?? "";
+    if (serverConfig?.backendKind === "zellij" && !paneCwd) {
+      setStatusMessage(`uploading ${file.name}... (zellij uses server cwd)`);
+    } else {
+      setStatusMessage(`uploading ${file.name}...`);
+    }
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/upload");

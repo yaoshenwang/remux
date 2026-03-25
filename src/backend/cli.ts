@@ -147,6 +147,7 @@ const main = async (): Promise<void> => {
     force: forceBackend,
     socketName: process.env.REMUX_SOCKET_NAME,
     socketPath: process.env.REMUX_SOCKET_PATH,
+    socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
     scrollbackLines: args.scrollback,
   });
   logger.log(`Session backend: ${backend.kind}`);
@@ -162,6 +163,7 @@ const main = async (): Promise<void> => {
           force: kind,
           socketName: process.env.REMUX_SOCKET_NAME,
           socketPath: process.env.REMUX_SOCKET_PATH,
+          socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
           scrollbackLines: args.scrollback,
         });
         return {

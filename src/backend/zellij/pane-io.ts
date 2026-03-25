@@ -1,9 +1,13 @@
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
+import * as pty from "node-pty";
 import type { PtyProcess, PtyFactory } from "../pty/pty-adapter.js";
 import type { ZellijSubscribeEvent } from "./parser.js";
 
 const execFileAsync = promisify(execFile);
+const hiddenClients = new Map<string, { client: pty.IPty; refs: number }>();
+
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
 /**
  * A PtyProcess that uses `zellij subscribe` for output and
@@ -24,6 +28,8 @@ export class ZellijPaneIO implements PtyProcess {
   private readonly session: string;
   private readonly paneId: string;
   private readonly logger?: Pick<Console, "log" | "error">;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly hiddenClientKey: string;
 
   private dataHandlers: Array<(data: string) => void> = [];
   private exitHandlers: Array<(code: number) => void> = [];
@@ -44,13 +50,71 @@ export class ZellijPaneIO implements PtyProcess {
     session: string;
     paneId: string;
     logger?: Pick<Console, "log" | "error">;
+    socketDir?: string;
   }) {
     this.binary = options.binary ?? "zellij";
     this.session = options.session;
     this.paneId = options.paneId;
     this.logger = options.logger;
+    this.env = {
+      ...process.env,
+      ...(options.socketDir ? { ZELLIJ_SOCKET_DIR: options.socketDir } : {})
+    };
+    this.hiddenClientKey = [
+      this.binary,
+      options.socketDir ?? "",
+      this.session
+    ].join("\u0000");
 
+    this.acquireHiddenClient();
     this.startSubscribe();
+  }
+
+  private acquireHiddenClient(): void {
+    const existing = hiddenClients.get(this.hiddenClientKey);
+    if (existing) {
+      existing.refs += 1;
+      return;
+    }
+
+    const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+    const args = process.platform === "win32"
+      ? ["/c", this.binary, "attach", this.session]
+      : ["-lc", `exec ${shellQuote(this.binary)} attach ${shellQuote(this.session)}`];
+    const client = pty.spawn(shell, args, {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env: this.env
+    });
+    setTimeout(() => {
+      try {
+        client.write("\x1b");
+      } catch {
+        // Ignore races when the hidden client exits during setup.
+      }
+    }, 150);
+
+    hiddenClients.set(this.hiddenClientKey, { client, refs: 1 });
+    client.onExit(() => {
+      const current = hiddenClients.get(this.hiddenClientKey);
+      if (current?.client === client) {
+        hiddenClients.delete(this.hiddenClientKey);
+      }
+    });
+  }
+
+  private releaseHiddenClient(): void {
+    const current = hiddenClients.get(this.hiddenClientKey);
+    if (!current) {
+      return;
+    }
+    current.refs -= 1;
+    if (current.refs <= 0) {
+      hiddenClients.delete(this.hiddenClientKey);
+      current.client.kill();
+    }
   }
 
   private startSubscribe(): void {
@@ -64,6 +128,7 @@ export class ZellijPaneIO implements PtyProcess {
     ];
 
     this.subscribeProc = spawn(this.binary, args, {
+      env: this.env,
       stdio: ["ignore", "pipe", "pipe"]
     });
 
@@ -200,7 +265,7 @@ export class ZellijPaneIO implements PtyProcess {
           data
         ];
 
-    execFileAsync(this.binary, args, { timeout: 3_000 })
+    execFileAsync(this.binary, args, { timeout: 3_000, env: this.env })
       .catch((err) => {
         this.logger?.error(`[zellij-write] ${err}`);
       })
@@ -237,6 +302,7 @@ export class ZellijPaneIO implements PtyProcess {
     }
     this.dataHandlers = [];
     this.exitHandlers = [];
+    this.releaseHiddenClient();
   }
 }
 
@@ -246,13 +312,16 @@ export class ZellijPaneIO implements PtyProcess {
 export class ZellijPtyFactory implements PtyFactory {
   private readonly binary: string;
   private readonly logger?: Pick<Console, "log" | "error">;
+  private readonly socketDir?: string;
 
   constructor(options?: {
     zellijBinary?: string;
     logger?: Pick<Console, "log" | "error">;
+    socketDir?: string;
   }) {
     this.binary = options?.zellijBinary ?? "zellij";
     this.logger = options?.logger;
+    this.socketDir = options?.socketDir;
   }
 
   spawnAttach(session: string): PtyProcess {
@@ -264,7 +333,8 @@ export class ZellijPtyFactory implements PtyFactory {
       binary: this.binary,
       session: sessionName,
       paneId,
-      logger: this.logger
+      logger: this.logger,
+      socketDir: this.socketDir
     });
   }
 }

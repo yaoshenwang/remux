@@ -45,21 +45,30 @@ export const buildSnapshot = async (
 ): Promise<WorkspaceSnapshot> => {
   const sessions = await backend.listSessions();
 
-  const sessionStates: SessionState[] = await Promise.all(
+  const sessionStates = await Promise.allSettled(
     sessions.map(async (session) => {
       const tabs = await backend.listTabs(session.name);
-      const withPanes: TabState[] = await Promise.all(
+      const withPanesSettled = await Promise.allSettled(
         tabs.map(async (tab) => {
           const panes = await backend.listPanes(session.name, tab.index);
-          return { ...tab, panes };
+          return {
+            ...tab,
+            paneCount: panes.length,
+            panes
+          };
         })
       );
+      const withPanes: TabState[] = withPanesSettled
+        .filter((result): result is PromiseFulfilledResult<TabState> => result.status === "fulfilled")
+        .map((result) => result.value);
       return { ...session, tabs: withPanes, tabCount: withPanes.length };
     })
   );
 
   return {
-    sessions: sessionStates,
+    sessions: sessionStates
+      .filter((result): result is PromiseFulfilledResult<SessionState> => result.status === "fulfilled")
+      .map((result) => result.value),
     capturedAt: new Date().toISOString()
   };
 };
