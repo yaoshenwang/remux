@@ -1,7 +1,7 @@
 {
   "name": "remux",
-  "version": "0.1.37",
-  "description": "Remote tmux web client — monitor and control terminal sessions from any device",
+  "version": "0.1.38",
+  "description": "Remote terminal multiplexer web client for tmux, zellij, and conpty",
   "license": "MIT",
   "repository": {
     "type": "git",
