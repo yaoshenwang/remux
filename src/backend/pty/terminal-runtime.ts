@@ -81,17 +81,23 @@ export class TerminalRuntime {
 
   public shutdown(): Promise<void> {
     if (!this.process) {
+      this.session = undefined;
+      this.lastDataChunk = undefined;
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
       const proc = this.process!;
       const timeout = setTimeout(() => {
         this.process = undefined;
+        this.session = undefined;
+        this.lastDataChunk = undefined;
         resolve();
       }, 500);
       proc.onExit(() => {
         clearTimeout(timeout);
         this.process = undefined;
+        this.session = undefined;
+        this.lastDataChunk = undefined;
         resolve();
       });
       proc.kill();

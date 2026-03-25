@@ -44,12 +44,43 @@ test.describe("remux browser behavior", () => {
       await expect(page.getByTestId("compose-input")).toBeVisible();
     });
 
-    test("drawer closes via backdrop and close button and preserves section spacing", async ({ page }) => {
+    test("compose Enter sends immediately without inserting an extra newline", async ({ page }) => {
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
 
-      await page.getByTestId("drawer-toggle").click();
-      await expect(page.locator(".drawer")).toBeVisible();
+      const process = server.ptyFactory.latestProcess();
+      await page.getByTestId("compose-input").fill("echo hi");
+      await page.getByTestId("compose-input").press("Enter");
+
+      await expect.poll(() => process.writes).toContain("echo hi\r");
+      expect(process.writes.filter((entry) => entry === "\r")).toHaveLength(0);
+      await expect(page.getByTestId("compose-input")).toHaveValue("");
+    });
+
+    test("terminal paste works directly in terminal mode", async ({ page, browserName }) => {
+      test.skip(browserName !== "chromium", "clipboard permissions are only configured for chromium here");
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin: server.baseUrl
+      });
+
+      await page.goto(`${server.baseUrl}/?token=${server.token}`);
+      await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+      await page.evaluate(async () => {
+        await navigator.clipboard.writeText("from-clipboard");
+      });
+      await page.getByTestId("terminal-host").click();
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
+
+      await expect.poll(() => server.ptyFactory.latestProcess().writes).toContain("from-clipboard");
+    });
+
+    test("sidebar is always visible on desktop and preserves section spacing", async ({ page }) => {
+      await page.goto(`${server.baseUrl}/?token=${server.token}`);
+      await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+      // Sidebar is always visible on desktop — no toggle needed
+      await expect(page.locator(".sidebar")).toBeVisible();
 
       const sessionGap = await page.evaluate(() => {
         const list = document.querySelector('[data-testid="sessions-list"]');
@@ -78,23 +109,12 @@ test.describe("remux browser behavior", () => {
       expect(sessionGap).toBeGreaterThan(2);
       expect(windowGap).toBeGreaterThan(2);
 
-      await page.evaluate(() => {
-        const backdrop = document.querySelector('[data-testid=\"drawer-backdrop\"]') as HTMLElement | null;
-        if (!backdrop) {
-          return;
-        }
-        const rect = backdrop.getBoundingClientRect();
-        const clickX = Math.max(rect.right - 8, rect.left + 8);
-        const clickY = Math.max(rect.top + 24, rect.top + 8);
-        const target = document.elementFromPoint(clickX, clickY) as HTMLElement | null;
-        target?.click();
-      });
-      await expect(page.locator(".drawer")).toHaveCount(0);
-
+      // On mobile, sidebar slides in/out via toggle
+      await page.setViewportSize({ width: 390, height: 844 });
       await page.getByTestId("drawer-toggle").click();
-      await expect(page.locator(".drawer")).toBeVisible();
+      await expect(page.locator(".sidebar.open")).toBeVisible();
       await page.getByTestId("drawer-close").click();
-      await expect(page.locator(".drawer")).toHaveCount(0);
+      await expect(page.locator(".sidebar")).not.toHaveClass(/open/);
     });
 
     test("inline session close control closes the active session and reattaches to the remaining one", async ({ page }) => {
@@ -106,14 +126,11 @@ test.describe("remux browser behavior", () => {
         await page.getByTestId("session-picker-overlay").getByRole("button", { name: "main" }).click();
         await expect(page.getByTestId("session-picker-overlay")).toHaveCount(0);
 
-        await page.getByTestId("drawer-toggle").click();
+        // Sidebar is visible on desktop — no toggle needed
         await page.getByTestId("close-session-main").click();
 
         await expect(page.locator(".top-title")).toContainText("Tab: 0: shell");
-        await expect(page.locator(".drawer")).toHaveCount(0);
 
-        await page.getByTestId("drawer-toggle").click();
-        await expect(page.locator(".drawer")).toBeVisible();
         await expect(page.getByTestId("sessions-list")).toContainText("work");
         await expect(page.getByTestId("sessions-list")).not.toContainText("main");
       } finally {
@@ -122,7 +139,7 @@ test.describe("remux browser behavior", () => {
       }
     });
 
-    test("drawer uses compact inline close controls and keeps them touch friendly", async ({ page }) => {
+    test("drawer keeps close controls touch friendly without showing reorder chrome", async ({ page }) => {
       const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
 
       try {
@@ -141,14 +158,22 @@ test.describe("remux browser behavior", () => {
 
         await expect(page.getByTestId("close-session-button")).toHaveCount(0);
         await expect(page.getByTestId("close-tab-button")).toHaveCount(0);
+        await expect(page.getByTestId("move-session-up-main")).toHaveCount(0);
+        await expect(page.getByTestId("move-session-down-main")).toHaveCount(0);
+        await expect(page.getByTestId("drag-session-main")).toHaveCount(0);
+        await expect(page.getByTestId("move-tab-up-main-0")).toHaveCount(0);
+        await expect(page.getByTestId("move-tab-down-main-0")).toHaveCount(0);
+        await expect(page.getByTestId("drag-tab-main-0")).toHaveCount(0);
 
         const sessionClose = page.getByTestId("close-session-main");
         const tabClose = page.getByTestId("close-tab-main-0");
         const paneClose = page.getByTestId(`close-pane-${closablePaneId}`);
+        const drawerClose = page.getByTestId("drawer-close");
 
         await expect(sessionClose).toBeVisible();
         await expect(tabClose).toBeVisible();
         await expect(paneClose).toBeVisible();
+        await expect(drawerClose).toBeVisible();
 
         const minimumTouchTarget = async (testId: string): Promise<void> => {
           const box = await page.getByTestId(testId).boundingBox();
@@ -159,6 +184,121 @@ test.describe("remux browser behavior", () => {
         await minimumTouchTarget("close-session-main");
         await minimumTouchTarget("close-tab-main-0");
         await minimumTouchTarget(`close-pane-${closablePaneId}`);
+        await minimumTouchTarget("drawer-close");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
+
+    test("quick phrases support pinned buttons, slash search, templates, and persisted ordering", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
+
+      try {
+        await localServer.gateway.newTab("main");
+        await localServer.gateway.selectTab("main", 0);
+
+        await page.addInitScript(() => {
+          localStorage.setItem("remux-snippets", JSON.stringify([
+            {
+              id: "git-status",
+              label: "Status",
+              command: "git status",
+              autoEnter: true,
+              pinned: true,
+              group: "Git",
+              sortOrder: 0
+            },
+            {
+              id: "ssh-host",
+              label: "SSH",
+              command: "ssh {{host}}",
+              autoEnter: true,
+              group: "Ops",
+              sortOrder: 1
+            }
+          ]));
+          localStorage.setItem("remux-workspace-order", JSON.stringify({
+            sessions: ["work", "main"],
+            tabsBySession: {
+              main: ["1:win-1", "0:shell"]
+            }
+          }));
+        });
+
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        await expect(page.getByTestId("session-picker-overlay")).toBeVisible();
+        await page.getByTestId("session-picker-overlay").getByRole("button", { name: "main" }).click();
+        await expect(page.getByTestId("snippet-pinned-bar")).toContainText("Status");
+
+        await page.getByTestId("pinned-snippet-git-status").click();
+        await expect.poll(() => localServer.ptyFactory.latestProcess().writes).toContain("git status\r");
+
+        await page.getByTestId("compose-input").fill("/ssh");
+        await expect(page.getByTestId("snippet-picker")).toBeVisible();
+        await page.getByTestId("compose-input").press("Enter");
+        await expect(page.getByTestId("snippet-template-panel")).toBeVisible();
+        await page.getByPlaceholder("host").fill("prod-box");
+        await page.getByRole("button", { name: "Run" }).click();
+        await expect.poll(() => localServer.ptyFactory.latestProcess().writes).toContain("ssh prod-box\r");
+
+        // Sidebar is visible on desktop — no toggle needed
+        const sessionButtons = page.getByTestId("sessions-list").getByRole("button");
+        await expect(sessionButtons.nth(0)).toContainText("work");
+        const tabButtons = page.getByTestId("tabs-list").getByRole("button");
+        await expect(tabButtons.nth(0)).toContainText("1: win-1");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
+
+    test("sessions can be manually reordered in the drawer", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main", "work"], defaultSession: "main" });
+
+      try {
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        // Wait for session picker and select main
+        const picker = page.getByTestId("session-picker-overlay");
+        await expect(picker).toBeVisible();
+        await picker.getByRole("button", { name: "main" }).click();
+        await expect(picker).toHaveCount(0);
+        // Wait for sidebar sessions to be populated after attach
+        await expect(page.getByTestId("session-item-work")).toBeVisible();
+
+        await page
+          .getByTestId("session-item-work")
+          .locator(".drawer-item-main")
+          .dragTo(page.getByTestId("session-item-main").locator(".drawer-item-main"));
+
+        const sessionButtons = page.getByTestId("sessions-list").locator("li .drawer-item-main");
+        await expect(sessionButtons.nth(0)).toContainText("work");
+        await expect(sessionButtons.nth(1)).toContainText("main");
+      } finally {
+        await page.goto("about:blank");
+        await localServer.stop();
+      }
+    });
+
+    test("tabs can be manually reordered in the drawer", async ({ page }) => {
+      const localServer = await startE2EServer({ sessions: ["main"], defaultSession: "main" });
+
+      try {
+        await localServer.gateway.newTab("main");
+        await localServer.gateway.selectTab("main", 0);
+
+        await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
+        await expect(page.getByTestId("compose-bar")).toBeVisible();
+        // Sidebar is visible on desktop — no toggle needed
+
+        await page
+          .getByTestId("tab-item-main-1")
+          .locator(".drawer-item-main")
+          .dragTo(page.getByTestId("tab-item-main-0").locator(".drawer-item-main"));
+
+        const tabButtons = page.getByTestId("tabs-list").locator("li .drawer-item-main");
+        await expect(tabButtons.nth(0)).toContainText("1:");
+        await expect(tabButtons.nth(1)).toContainText("0:");
       } finally {
         await page.goto("about:blank");
         await localServer.stop();
@@ -278,9 +418,7 @@ test.describe("remux browser behavior", () => {
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
 
-      // Open drawer
-      await page.getByTestId("drawer-toggle").click();
-      await expect(page.locator(".drawer")).toBeVisible();
+      // Sidebar is always visible on desktop — no toggle needed
 
       // Verify sticky zoom toggle exists and is off by default
       const toggle = page.getByTestId("sticky-zoom-toggle");
@@ -320,8 +458,7 @@ test.describe("remux browser behavior", () => {
       await page.goto(`${server.baseUrl}/?token=${server.token}`);
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
 
-      // Open drawer and verify sticky zoom is on
-      await page.getByTestId("drawer-toggle").click();
+      // Sidebar is always visible — verify sticky zoom is on
       await expect(page.getByTestId("sticky-zoom-toggle")).toContainText("Sticky Zoom: On");
     });
 
@@ -334,7 +471,7 @@ test.describe("remux browser behavior", () => {
         await page.goto(`${localServer.baseUrl}/?token=${localServer.token}`);
         await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
 
-        await page.getByTestId("drawer-toggle").click();
+        // Sidebar is always visible — no toggle needed
         const stickyZoomToggle = page.getByTestId("sticky-zoom-toggle");
         await expect(stickyZoomToggle).toContainText("Sticky Zoom: Off");
         await stickyZoomToggle.click();
@@ -481,19 +618,14 @@ test.describe("remux browser behavior", () => {
       await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
       await collectZoomDebug("after-load");
 
-      await page.getByTestId("drawer-toggle").click();
-      await expect(page.locator(".drawer")).toBeVisible();
+      // Sidebar is always visible on desktop
       const mainSessionButton = page
         .getByTestId("sessions-list")
         .getByRole("button", { name: /^main\b/ });
       await expect(mainSessionButton).toBeVisible();
       await mainSessionButton.click();
-      await expect(page.locator(".drawer")).toHaveCount(0);
       await collectZoomDebug("after-select-main");
 
-      // Re-open drawer after explicit attach to pin UI state to "main".
-      await page.getByTestId("drawer-toggle").click();
-      await expect(page.locator(".drawer")).toBeVisible();
       await expect(page.getByTestId("active-pane-zoom-indicator")).toHaveCount(0);
       await expect(page.getByRole("button", { name: /^%\d+:/ })).toHaveCount(2);
 

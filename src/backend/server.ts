@@ -653,6 +653,9 @@ export const createRemuxServer = (
   const resetControlAttachment = async (context: ControlContext): Promise<void> => {
     await context.runtime?.shutdown();
     context.runtime = undefined;
+    context.baseSession = undefined;
+    context.attachedSession = undefined;
+    context.pendingResize = undefined;
 
     if (deps.backend.createGroupedSession) {
       const mobileSession = buildMobileSessionName(context.clientId);

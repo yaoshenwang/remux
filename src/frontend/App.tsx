@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "./themes";
 import { ansiToHtml } from "./ansi-to-html";
 import { deriveContext, formatContext } from "./context-label";
-import { Toolbar, type ToolbarHandle, type Snippet } from "./components/Toolbar";
+import { Toolbar, type ToolbarHandle } from "./components/Toolbar";
 import {
   inferAttachedSessionFromWorkspace,
   isAwaitingSessionAttachment,
@@ -13,6 +13,31 @@ import {
   resolveActiveSession,
   shouldUsePaneViewportCols
 } from "./ui-state";
+import {
+  assignSnippetSortOrders,
+  extractSnippetVariables,
+  fillSnippetTemplate,
+  filterSnippets,
+  getPinnedSnippets,
+  getSnippetStorageKey,
+  groupSnippets,
+  normalizeSnippets,
+  reorderById,
+  type SnippetGroup,
+  type SnippetRecord as Snippet
+} from "./snippets";
+import {
+  moveSessionOrder,
+  moveSessionTabOrder,
+  normalizeWorkspaceOrder,
+  orderSessions,
+  orderTabs,
+  reorderSessionState,
+  reorderSessionTabs,
+  WORKSPACE_ORDER_STORAGE_KEY,
+  getTabOrderKey,
+  type WorkspaceOrderState
+} from "./workspace-order";
 import type {
   ControlServerMessage,
   PaneState,
@@ -106,6 +131,12 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 };
 
+interface PendingSnippetExecution {
+  snippet: Snippet;
+  variables: string[];
+  values: Record<string, string>;
+}
+
 export const App = () => {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -152,17 +183,33 @@ export const App = () => {
 
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {
-      const stored = localStorage.getItem("remux-snippets");
+      const stored = localStorage.getItem(getSnippetStorageKey());
       if (!stored) return [];
-      const parsed: unknown = JSON.parse(stored);
-      return Array.isArray(parsed) ? parsed as Snippet[] : [];
+      return normalizeSnippets(JSON.parse(stored));
     } catch {
       return [];
     }
   });
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
+  const [collapsedSnippetGroups, setCollapsedSnippetGroups] = useState<Record<string, boolean>>({});
+  const [pendingSnippetExecution, setPendingSnippetExecution] = useState<PendingSnippetExecution | null>(null);
+  const [workspaceOrder, setWorkspaceOrder] = useState<WorkspaceOrderState>(() => {
+    try {
+      const stored = localStorage.getItem(WORKSPACE_ORDER_STORAGE_KEY);
+      if (!stored) {
+        return { sessions: [], tabsBySession: {} };
+      }
+      return normalizeWorkspaceOrder(JSON.parse(stored));
+    } catch {
+      return { sessions: [], tabsBySession: {} };
+    }
+  });
 
-  const [theme, setTheme] = useState(localStorage.getItem("remux-theme") ?? "midnight");
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem("remux-theme");
+    if (stored === "light") return "light";
+    return "dark"; // migrate old themes (midnight, amber, etc.) to dark
+  });
   const [stickyZoom, setStickyZoom] = useState(getInitialStickyZoom);
 
   // Bandwidth stats
@@ -194,6 +241,12 @@ export const App = () => {
 
   // Bell tracking: sessions that have rung the bell since last viewed.
   const [bellSessions, setBellSessions] = useState<Set<string>>(new Set());
+  const [draggedSessionName, setDraggedSessionName] = useState<string | null>(null);
+  const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
+  const [draggedSnippetId, setDraggedSnippetId] = useState<string | null>(null);
+  const [sessionDropTarget, setSessionDropTarget] = useState<string | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<string | null>(null);
+  const [snippetDropTarget, setSnippetDropTarget] = useState<string | null>(null);
 
   // Local selection state for instant UI feedback before server snapshot arrives
   const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
@@ -242,6 +295,30 @@ export const App = () => {
     }
     return activeTab.panes.find((pane) => pane.active) ?? activeTab.panes[0];
   }, [activeTab, selectedPaneId]);
+
+  const orderedSessions = useMemo(
+    () => orderSessions(snapshot.sessions, workspaceOrder),
+    [snapshot.sessions, workspaceOrder]
+  );
+  const orderedActiveTabs = useMemo(
+    () => activeSession ? orderTabs(activeSession.name, activeSession.tabs, workspaceOrder) : [],
+    [activeSession, workspaceOrder]
+  );
+  const groupedSnippetList: SnippetGroup[] = useMemo(
+    () => groupSnippets(snippets),
+    [snippets]
+  );
+  const pinnedSnippets = useMemo(
+    () => getPinnedSnippets(snippets).slice(0, 8),
+    [snippets]
+  );
+  const snippetPickerQuery = composeText.startsWith("/") ? composeText.slice(1) : null;
+  const quickSnippetResults = useMemo(
+    () => snippetPickerQuery === null ? [] : filterSnippets(snippets, snippetPickerQuery),
+    [snippetPickerQuery, snippets]
+  );
+  const visibleQuickSnippetResults = quickSnippetResults.slice(0, 8);
+  const [quickSnippetIndex, setQuickSnippetIndex] = useState(0);
 
   const topStatus = useMemo(() => {
     if (errorMessage) {
@@ -344,6 +421,22 @@ export const App = () => {
     debugLog("send_terminal", { bytes: data.length });
     socket.send(data);
   }, []);
+  const sendRawToSocketRef = useRef(sendRawToSocket);
+  const setStatusMessageRef = useRef(setStatusMessage);
+  sendRawToSocketRef.current = sendRawToSocket;
+  setStatusMessageRef.current = setStatusMessage;
+
+  useEffect(() => {
+    localStorage.setItem(getSnippetStorageKey(), JSON.stringify(snippets));
+  }, [snippets]);
+
+  useEffect(() => {
+    localStorage.setItem(WORKSPACE_ORDER_STORAGE_KEY, JSON.stringify(workspaceOrder));
+  }, [workspaceOrder]);
+
+  useEffect(() => {
+    setQuickSnippetIndex(0);
+  }, [snippetPickerQuery]);
 
   const sendTerminalResize = (): void => {
     const socket = terminalSocketRef.current;
@@ -545,6 +638,7 @@ export const App = () => {
           return;
         case "attached":
           debugLog("control_socket.attached", { session: message.session });
+          resetTerminalBuffer();
           setAttachedSession(message.session);
           attachedSessionRef.current = message.session;
           setPendingSessionAttachment(null);
@@ -574,6 +668,7 @@ export const App = () => {
               tabCount: session.tabCount
             }))
           });
+          resetTerminalBuffer();
           setAttachedSession("");
           attachedSessionRef.current = "";
           setPendingSessionAttachment(null);
@@ -755,6 +850,35 @@ export const App = () => {
     const serializeAddon = new SerializeAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(serializeAddon);
+    terminal.attachCustomKeyEventHandler((event) => {
+      const modifierKey = navigator.platform.toLowerCase().includes("mac")
+        ? event.metaKey
+        : event.ctrlKey;
+      const key = event.key.toLowerCase();
+
+      if (modifierKey && key === "c" && terminal.hasSelection()) {
+        void copySelection();
+        event.preventDefault();
+        return false;
+      }
+
+      if (modifierKey && key === "v") {
+        void navigator.clipboard.readText()
+          .then((text) => {
+            if (text) {
+              sendRawToSocketRef.current(text);
+              focusTerminal();
+            }
+          })
+          .catch(() => {
+            setStatusMessageRef.current("clipboard read failed");
+          });
+        event.preventDefault();
+        return false;
+      }
+
+      return true;
+    });
     terminal.open(terminalContainerRef.current);
     requestAnimationFrame(() => {
       fitAddon.fit();
@@ -971,6 +1095,18 @@ export const App = () => {
     openControlSocket(password);
   };
 
+  const resetTerminalBuffer = useCallback((): void => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminal.reset();
+    const themeConfig = themes[theme];
+    if (themeConfig) {
+      terminal.options.theme = themeConfig.xterm;
+    }
+  }, [theme]);
+
   const createSession = (): void => {
     const name = window.prompt("Session name", "main");
     if (!name) {
@@ -984,6 +1120,12 @@ export const App = () => {
 
   const copySelection = async (): Promise<void> => {
     let text = window.getSelection()?.toString() || "";
+    const terminalSelection = terminalRef.current?.hasSelection()
+      ? terminalRef.current.getSelection()
+      : "";
+    if (!text && terminalSelection) {
+      text = terminalSelection;
+    }
     if (!text) {
       // Fallback: copy terminal buffer with ANSI codes stripped
       const raw = readTerminalBuffer();
@@ -1051,6 +1193,54 @@ export const App = () => {
     terminalRef.current?.focus();
   }, []);
 
+  const persistSnippetPatch = useCallback((updater: (current: Snippet[]) => Snippet[]): void => {
+    setSnippets((current) => assignSnippetSortOrders(updater(current)));
+  }, []);
+
+  const executeSnippet = useCallback((snippet: Snippet): void => {
+    const variables = extractSnippetVariables(snippet.command);
+    if (variables.length > 0) {
+      setPendingSnippetExecution({
+        snippet,
+        variables,
+        values: Object.fromEntries(
+          variables.map((variable) => [variable, snippet.lastUsedVars?.[variable] ?? ""])
+        )
+      });
+      return;
+    }
+
+    sendRawToSocket(`${snippet.command}${snippet.autoEnter ? "\r" : ""}`);
+    focusTerminal();
+  }, [focusTerminal, sendRawToSocket]);
+
+  const runPendingSnippet = useCallback((): void => {
+    if (!pendingSnippetExecution) {
+      return;
+    }
+
+    const command = fillSnippetTemplate(
+      pendingSnippetExecution.snippet.command,
+      pendingSnippetExecution.values
+    );
+
+    persistSnippetPatch((current) => current.map((snippet) => (
+      snippet.id === pendingSnippetExecution.snippet.id
+        ? {
+            ...snippet,
+            lastUsedVars: {
+              ...(snippet.lastUsedVars ?? {}),
+              ...pendingSnippetExecution.values
+            }
+          }
+        : snippet
+    )));
+
+    sendRawToSocket(`${command}${pendingSnippetExecution.snippet.autoEnter ? "\r" : ""}`);
+    setPendingSnippetExecution(null);
+    focusTerminal();
+  }, [focusTerminal, pendingSnippetExecution, persistSnippetPatch, sendRawToSocket]);
+
   const selectTab = (tab: TabState): void => {
     if (!activeSession) {
       return;
@@ -1075,8 +1265,18 @@ export const App = () => {
     setComposeText("");
   };
 
+  const beginDrag = (
+    event: DragEvent<HTMLElement>,
+    type: "session" | "tab" | "snippet",
+    value: string
+  ): void => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${type}:${value}`);
+  };
+
   return (
     <div className="app-shell">
+      <div className="main-content">
       <header className="tab-bar">
         <button
           onClick={() => setDrawerOpen((value) => !value)}
@@ -1183,8 +1383,80 @@ export const App = () => {
         fileInputRef={fileInputRef}
         setStatusMessage={setStatusMessage}
         snippets={snippets}
+        onExecuteSnippet={executeSnippet}
         hidden={viewMode !== "terminal"}
       />
+
+      {pinnedSnippets.length > 0 && (
+        <section className="snippet-pinned-bar" data-testid="snippet-pinned-bar">
+          {pinnedSnippets.map((snippet) => (
+            <button
+              key={snippet.id}
+              type="button"
+              data-testid={`pinned-snippet-${snippet.id}`}
+              onClick={() => executeSnippet(snippet)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setEditingSnippet({ ...snippet });
+                setDrawerOpen(true);
+              }}
+              onPointerDown={(event) => {
+                const target = event.currentTarget;
+                window.setTimeout(() => {
+                  if (target.matches(":active")) {
+                    setEditingSnippet({ ...snippet });
+                    setDrawerOpen(true);
+                  }
+                }, 550);
+              }}
+            >
+              {snippet.icon ? `${snippet.icon} ` : ""}{snippet.label}
+            </button>
+          ))}
+        </section>
+      )}
+
+      {pendingSnippetExecution && (
+        <section className="snippet-template-panel" data-testid="snippet-template-panel">
+          <div className="snippet-template-title">
+            Fill template: {pendingSnippetExecution.snippet.label}
+          </div>
+          <div className="snippet-template-grid">
+            {pendingSnippetExecution.variables.map((variable) => (
+              <label key={variable} className="snippet-template-field">
+                <span>{variable}</span>
+                <input
+                  value={pendingSnippetExecution.values[variable] ?? ""}
+                  onChange={(event) => setPendingSnippetExecution((current) => (
+                    current
+                      ? {
+                          ...current,
+                          values: {
+                            ...current.values,
+                            [variable]: event.target.value
+                          }
+                        }
+                      : current
+                  ))}
+                  placeholder={variable}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="snippet-form-actions">
+            <button
+              type="button"
+              onClick={runPendingSnippet}
+              disabled={pendingSnippetExecution.variables.some(
+                (variable) => !(pendingSnippetExecution.values[variable] ?? "").trim()
+              )}
+            >
+              Run
+            </button>
+            <button type="button" onClick={() => setPendingSnippetExecution(null)}>Cancel</button>
+          </div>
+        </section>
+      )}
 
       <section className="compose-bar" data-testid="compose-bar">
         <input
@@ -1193,7 +1465,34 @@ export const App = () => {
           onChange={(event) => setComposeText(event.target.value)}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (snippetPickerQuery !== null && visibleQuickSnippetResults.length > 0) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                event.stopPropagation();
+                setQuickSnippetIndex((current) => (current + 1) % visibleQuickSnippetResults.length);
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                event.stopPropagation();
+                setQuickSnippetIndex((current) => (
+                  current === 0 ? visibleQuickSnippetResults.length - 1 : current - 1
+                ));
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.stopPropagation();
+                executeSnippet(
+                  visibleQuickSnippetResults[quickSnippetIndex] ?? visibleQuickSnippetResults[0]
+                );
+                setComposeText("");
+                return;
+              }
+            }
             if (event.key === "Enter") {
+              event.preventDefault();
+              event.stopPropagation();
               sendCompose();
             }
           }}
@@ -1221,27 +1520,81 @@ export const App = () => {
           Send
         </button>
       </section>
+      {snippetPickerQuery !== null && (
+        <section className="snippet-picker" data-testid="snippet-picker">
+          {visibleQuickSnippetResults.length > 0 ? (
+            visibleQuickSnippetResults.map((snippet, index) => (
+              <button
+                key={snippet.id}
+                type="button"
+                className={`snippet-picker-item${index === quickSnippetIndex ? " active" : ""}`}
+                onMouseEnter={() => setQuickSnippetIndex(index)}
+                onClick={() => {
+                  executeSnippet(snippet);
+                  setComposeText("");
+                }}
+              >
+                <span>{snippet.icon ? `${snippet.icon} ` : ""}{snippet.label}</span>
+                <small>{snippet.group?.trim() || "Ungrouped"}</small>
+              </button>
+            ))
+          ) : (
+            <div className="snippet-picker-empty">No matching quick phrases</div>
+          )}
+        </section>
+      )}
 
-      {drawerOpen && (
-        <div
-          className="drawer-backdrop"
-          onClick={() => setDrawerOpen(false)}
-          data-testid="drawer-backdrop"
-        >
-          <aside className="drawer" onClick={(event) => event.stopPropagation()}>
-            <button
-              className="drawer-close"
-              onClick={() => setDrawerOpen(false)}
-              data-testid="drawer-close"
-              aria-label="Close drawer"
-            >
-              ←
-            </button>
+      </div>{/* end main-content */}
+
+      <aside className={`sidebar drawer${drawerOpen ? " open" : ""}`}>
+        <div className="sidebar-header">
+          <span className="sidebar-brand">REMUX</span>
+          <button
+            className="sidebar-close"
+            onClick={() => setDrawerOpen(false)}
+            data-testid="drawer-close"
+            aria-label="Close sidebar"
+          >
+            <span className="sidebar-close-icon" aria-hidden="true">×</span>
+            <span className="sidebar-close-label">Done</span>
+          </button>
+        </div>
 
             <h3>Sessions</h3>
             <ul data-testid="sessions-list">
-              {snapshot.sessions.map((session) => (
-                <li key={session.name}>
+              {orderedSessions.map((session) => (
+                <li
+                  key={session.name}
+                  data-testid={`session-item-${session.name}`}
+                  data-session-name={session.name}
+                  className={sessionDropTarget === session.name ? "drawer-sort-target" : undefined}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (draggedSessionName && draggedSessionName !== session.name) {
+                      setSessionDropTarget(session.name);
+                      setWorkspaceOrder((current) => reorderSessionState(current, draggedSessionName, session.name));
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setSessionDropTarget((current) => current === session.name ? null : current);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (!draggedSessionName || draggedSessionName === session.name) {
+                      setSessionDropTarget(null);
+                      return;
+                    }
+                    setWorkspaceOrder((current) => reorderSessionState(current, draggedSessionName, session.name));
+                    setDraggedSessionName(null);
+                    setSessionDropTarget(null);
+                  }}
+                >
                   {renamingSession === session.name ? (
                     <input
                       className="rename-input"
@@ -1273,7 +1626,16 @@ export const App = () => {
                   ) : (
                     <div className="drawer-item-row">
                       <button
+                        draggable
                         onClick={() => sendControl({ type: "select_session", session: session.name })}
+                        onDragStart={(event) => {
+                          beginDrag(event, "session", session.name);
+                          setDraggedSessionName(session.name);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedSessionName(null);
+                          setSessionDropTarget(null);
+                        }}
                         onDoubleClick={capabilities?.supportsSessionRename ? (e) => {
                           e.preventDefault();
                           setRenamingSession(session.name);
@@ -1282,6 +1644,7 @@ export const App = () => {
                         className={`drawer-item-main${
                           session.name === (attachedSession || activeSession?.name) ? " active" : ""
                         }`}
+                        data-testid={`session-drag-target-${session.name}`}
                       >
                         <span className="item-name">{session.name} {session.attached ? "*" : ""}</span>
                         {(() => {
@@ -1292,7 +1655,7 @@ export const App = () => {
                       </button>
                       <button
                         type="button"
-                        className="drawer-item-icon danger"
+                        className="drawer-close-action"
                         onClick={(event) => {
                           event.stopPropagation();
                           if (
@@ -1310,7 +1673,7 @@ export const App = () => {
                         aria-label={`Close session ${session.name}`}
                         title={`Close session ${session.name}`}
                       >
-                        ×
+                        <span aria-hidden="true">×</span>
                       </button>
                     </div>
                   )}
@@ -1328,8 +1691,51 @@ export const App = () => {
             <h3>Tabs ({activeSession?.name ?? "-"})</h3>
             <ul data-testid="tabs-list">
               {activeSession
-                ? activeSession.tabs.map((tab) => (
-                    <li key={`${activeSession.name}-${tab.index}`}>
+                ? orderedActiveTabs.map((tab) => (
+                    <li
+                      key={`${activeSession.name}-${tab.index}`}
+                      data-testid={`tab-item-${activeSession.name}-${tab.index}`}
+                      data-tab-key={getTabOrderKey(tab)}
+                      className={tabDropTarget === getTabOrderKey(tab) ? "drawer-sort-target" : undefined}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                      }}
+                      onDragEnter={(event) => {
+                        event.preventDefault();
+                        const targetKey = getTabOrderKey(tab);
+                        if (draggedTabKey && draggedTabKey !== targetKey) {
+                          setTabDropTarget(targetKey);
+                          setWorkspaceOrder((current) => reorderSessionTabs(
+                            current,
+                            activeSession.name,
+                            draggedTabKey,
+                            targetKey
+                          ));
+                        }
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          setTabDropTarget((current) => current === getTabOrderKey(tab) ? null : current);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const targetKey = getTabOrderKey(tab);
+                        if (!draggedTabKey || draggedTabKey === targetKey) {
+                          setTabDropTarget(null);
+                          return;
+                        }
+                        setWorkspaceOrder((current) => reorderSessionTabs(
+                          current,
+                          activeSession.name,
+                          draggedTabKey,
+                          targetKey
+                        ));
+                        setDraggedTabKey(null);
+                        setTabDropTarget(null);
+                      }}
+                    >
                       {renamingWindow?.session === activeSession.name && renamingWindow?.index === tab.index ? (
                         <input
                           className="rename-input"
@@ -1361,13 +1767,23 @@ export const App = () => {
                       ) : (
                         <div className="drawer-item-row">
                           <button
+                            draggable
                             onClick={() => selectTab(tab)}
+                            onDragStart={(event) => {
+                              beginDrag(event, "tab", getTabOrderKey(tab));
+                              setDraggedTabKey(getTabOrderKey(tab));
+                            }}
+                            onDragEnd={() => {
+                              setDraggedTabKey(null);
+                              setTabDropTarget(null);
+                            }}
                             onDoubleClick={capabilities?.supportsTabRename ? (e) => {
                               e.preventDefault();
                               setRenamingWindow({ session: activeSession.name, index: tab.index });
                               setRenameWindowValue(tab.name);
                             } : undefined}
                             className={`drawer-item-main${tab.index === activeTab?.index ? " active" : ""}`}
+                            data-testid={`tab-drag-target-${activeSession.name}-${tab.index}`}
                           >
                             <span className="item-name">
                               {tab.index}: {tab.name}
@@ -1380,7 +1796,7 @@ export const App = () => {
                           </button>
                           <button
                             type="button"
-                            className="drawer-item-icon danger"
+                            className="drawer-close-action"
                             onClick={(event) => {
                               event.stopPropagation();
                               if (tab.index === activeTab?.index) {
@@ -1398,7 +1814,7 @@ export const App = () => {
                             aria-label={`Close tab ${tab.index} in session ${activeSession.name}`}
                             title={`Close tab ${tab.index}`}
                           >
-                            ×
+                            <span aria-hidden="true">×</span>
                           </button>
                         </div>
                       )}
@@ -1449,7 +1865,7 @@ export const App = () => {
                           </button>
                           <button
                             type="button"
-                            className="drawer-item-icon danger"
+                            className="drawer-close-action"
                             onClick={(event) => {
                               event.stopPropagation();
                               if (isActive) {
@@ -1462,7 +1878,7 @@ export const App = () => {
                             aria-label={`Close pane ${pane.id}`}
                             title={`Close pane ${pane.id}`}
                           >
-                            ×
+                            <span aria-hidden="true">×</span>
                           </button>
                         </div>
                       </li>
@@ -1512,16 +1928,19 @@ export const App = () => {
             </button>
 
             <h3>Appearance</h3>
-            <div className="theme-picker" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-              {Object.entries(themes).map(([key, config]) => (
-                <button
-                  key={key}
-                  className={theme === key ? "active" : ""}
-                  onClick={() => setTheme(key)}
-                >
-                  {config.name}
-                </button>
-              ))}
+            <div className="theme-toggle">
+              <button
+                className={theme === "dark" ? "active" : ""}
+                onClick={() => setTheme("dark")}
+              >
+                Dark
+              </button>
+              <button
+                className={theme === "light" ? "active" : ""}
+                onClick={() => setTheme("light")}
+              >
+                Light
+              </button>
             </div>
 
             <h3>Font Size</h3>
@@ -1544,26 +1963,113 @@ export const App = () => {
             }}>Reset to Auto</button>
 
             <h3>Snippets</h3>
-            <div className="snippet-list">
-              {snippets.map((s) => (
-                <div className="snippet-item" key={s.id}>
-                  <span className="snippet-label">{s.label}</span>
-                  <span className="snippet-cmd">{s.command}{s.autoEnter ? " ↵" : ""}</span>
-                  <button onClick={() => setEditingSnippet({ ...s })}>&#x270E;</button>
-                  <button onClick={() => {
-                    const next = snippets.filter((x) => x.id !== s.id);
-                    setSnippets(next);
-                    localStorage.setItem("remux-snippets", JSON.stringify(next));
-                  }}>&times;</button>
+            {groupedSnippetList.map((group) => {
+              const collapsed = collapsedSnippetGroups[group.name] === true;
+              return (
+                <div className="snippet-group" key={group.name}>
+                  <button
+                    type="button"
+                    className="snippet-group-toggle"
+                    onClick={() => setCollapsedSnippetGroups((current) => ({
+                      ...current,
+                      [group.name]: !collapsed
+                    }))}
+                  >
+                    {group.name} {collapsed ? "▼" : "▲"}
+                  </button>
+                  {!collapsed && (
+                    <div className="snippet-list">
+                      {group.snippets.map((s) => (
+                        <div
+                          className="snippet-item"
+                          key={s.id}
+                          draggable
+                          data-testid={`snippet-item-${s.id}`}
+                          onDragStart={(event) => {
+                            beginDrag(event, "snippet", s.id);
+                            setDraggedSnippetId(s.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedSnippetId(null);
+                            setSnippetDropTarget(null);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                          }}
+                          onDragEnter={(event) => {
+                            event.preventDefault();
+                            if (draggedSnippetId && draggedSnippetId !== s.id) {
+                              setSnippetDropTarget(s.id);
+                              persistSnippetPatch((current) => reorderById(
+                                current.map((snippet) => (
+                                  snippet.id === draggedSnippetId
+                                    ? { ...snippet, group: s.group }
+                                    : snippet
+                                )),
+                                draggedSnippetId,
+                                s.id
+                              ));
+                            }
+                          }}
+                          onDragLeave={(event) => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setSnippetDropTarget((current) => current === s.id ? null : current);
+                            }
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (!draggedSnippetId || draggedSnippetId === s.id) {
+                              setSnippetDropTarget(null);
+                              return;
+                            }
+                            persistSnippetPatch((current) => reorderById(
+                              current.map((snippet) => (
+                                snippet.id === draggedSnippetId
+                                  ? { ...snippet, group: s.group }
+                                  : snippet
+                              )),
+                              draggedSnippetId,
+                              s.id
+                            ));
+                            setDraggedSnippetId(null);
+                            setSnippetDropTarget(null);
+                          }}
+                          style={snippetDropTarget === s.id ? { borderColor: "var(--border-active)" } : undefined}
+                        >
+                          <span className="snippet-label">{s.icon ? `${s.icon} ` : ""}{s.label}</span>
+                          <span className="snippet-cmd">
+                            [{s.group?.trim() || "Ungrouped"}] {s.command}{s.autoEnter ? " ↵" : ""}
+                          </span>
+                          <button onClick={() => setEditingSnippet({ ...s })}>&#x270E;</button>
+                          <button
+                            onClick={() => persistSnippetPatch((current) => current.filter((x) => x.id !== s.id))}
+                          >
+                            &times;
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+            })}
             {editingSnippet ? (
               <div className="snippet-form">
                 <input
                   placeholder="Label (button text)"
                   value={editingSnippet.label}
                   onChange={(e) => setEditingSnippet({ ...editingSnippet, label: e.target.value })}
+                />
+                <input
+                  placeholder="Emoji / icon"
+                  value={editingSnippet.icon ?? ""}
+                  onChange={(e) => setEditingSnippet({ ...editingSnippet, icon: e.target.value || undefined })}
+                />
+                <input
+                  placeholder="Group"
+                  value={editingSnippet.group ?? ""}
+                  onChange={(e) => setEditingSnippet({ ...editingSnippet, group: e.target.value || undefined })}
                 />
                 <input
                   placeholder="Command"
@@ -1578,15 +2084,23 @@ export const App = () => {
                   />
                   Auto Enter
                 </label>
+                <label className="snippet-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={editingSnippet.pinned === true}
+                    onChange={(e) => setEditingSnippet({ ...editingSnippet, pinned: e.target.checked })}
+                  />
+                  Pinned
+                </label>
                 <div className="snippet-form-actions">
                   <button onClick={() => {
                     if (!editingSnippet.label.trim() || !editingSnippet.command.trim()) return;
-                    const exists = snippets.some((s) => s.id === editingSnippet.id);
-                    const next = exists
-                      ? snippets.map((s) => s.id === editingSnippet.id ? editingSnippet : s)
-                      : [...snippets, editingSnippet];
-                    setSnippets(next);
-                    localStorage.setItem("remux-snippets", JSON.stringify(next));
+                    persistSnippetPatch((current) => {
+                      const exists = current.some((s) => s.id === editingSnippet.id);
+                      return exists
+                        ? current.map((s) => s.id === editingSnippet.id ? editingSnippet : s)
+                        : [...current, { ...editingSnippet, sortOrder: current.length }];
+                    });
                     setEditingSnippet(null);
                   }}>Save</button>
                   <button onClick={() => setEditingSnippet(null)}>Cancel</button>
@@ -1597,7 +2111,9 @@ export const App = () => {
                 id: crypto.randomUUID(),
                 label: "",
                 command: "",
-                autoEnter: true
+                autoEnter: true,
+                pinned: false,
+                sortOrder: snippets.length
               })}>+ Add Snippet</button>
             )}
 
@@ -1642,9 +2158,9 @@ export const App = () => {
                 )}
               </div>
             )}
-          </aside>
-        </div>
-      )}
+      </aside>
+
+      {drawerOpen && <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} data-testid="drawer-backdrop" />}
 
       {sessionChoices && (
         <div className="overlay" data-testid="session-picker-overlay">

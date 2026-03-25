@@ -33,15 +33,15 @@ test("capture UI screenshot for PR preview", async ({ page }) => {
   });
 });
 
-test("capture drawer open screenshot", async ({ page }) => {
+test("capture sidebar screenshot", async ({ page }) => {
   await page.goto(`${server.baseUrl}/?token=${server.token}`);
   await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
 
-  await page.getByTestId("drawer-toggle").click();
-  await expect(page.locator(".drawer")).toBeVisible();
+  // Sidebar is always visible on desktop
+  await expect(page.locator(".sidebar")).toBeVisible();
 
   await page.screenshot({
-    path: "screenshots/drawer-open.png",
+    path: "screenshots/sidebar-view.png",
     fullPage: true
   });
 });

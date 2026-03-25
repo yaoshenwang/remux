@@ -1,14 +1,12 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  groupSnippets,
+  type SnippetGroup,
+  type SnippetRecord as Snippet
+} from "../snippets.js";
 
 type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
 type ModifierMode = "off" | "sticky" | "locked";
-
-export interface Snippet {
-  id: string;
-  label: string;
-  command: string;
-  autoEnter: boolean;
-}
 
 export interface ToolbarHandle {
   applyModifiersAndClear: (input: string) => string;
@@ -20,11 +18,12 @@ export interface ToolbarProps {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   setStatusMessage: (msg: string) => void;
   snippets: Snippet[];
+  onExecuteSnippet: (snippet: Snippet) => void;
   hidden?: boolean;
 }
 
 export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
-  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, setStatusMessage, snippets, hidden }, ref) {
+  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, setStatusMessage, snippets, onExecuteSnippet, hidden }, ref) {
     const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
       ctrl: "off",
       alt: "off",
@@ -38,6 +37,8 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
     );
     const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
     const [snippetsExpanded, setSnippetsExpanded] = useState(false);
+    const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+    const groupedSnippets: SnippetGroup[] = groupSnippets(snippets);
 
     // We need a ref to always have access to the latest modifiers in the imperative handle
     const modifiersRef = useRef(modifiers);
@@ -215,16 +216,38 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
         {/* Snippets row (collapsible from within expanded) */}
         {toolbarExpanded && snippets.length > 0 && (
           <div className={`toolbar-row-deep ${snippetsExpanded ? "expanded" : ""}`}>
-            <div className="toolbar-row-snippets">
-              {snippets.map((s) => (
-                <button key={s.id} onClick={() => {
-                  clearStickyModifiers();
-                  sendRaw(s.command + (s.autoEnter ? "\r" : ""));
-                }}>
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            {groupedSnippets.map((group) => {
+              const isCollapsed = collapsedGroups[group.name] === true;
+              return (
+                <div className="toolbar-snippet-group" key={group.name}>
+                  <button
+                    type="button"
+                    className="toolbar-snippet-group-toggle"
+                    onClick={() => setCollapsedGroups((previous) => ({
+                      ...previous,
+                      [group.name]: !isCollapsed
+                    }))}
+                  >
+                    {group.name} {isCollapsed ? "▼" : "▲"}
+                  </button>
+                  {!isCollapsed && (
+                    <div className="toolbar-row-snippets">
+                      {group.snippets.map((snippet) => (
+                        <button
+                          key={snippet.id}
+                          onClick={() => {
+                            clearStickyModifiers();
+                            onExecuteSnippet(snippet);
+                          }}
+                        >
+                          {snippet.icon ? `${snippet.icon} ` : ""}{snippet.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
