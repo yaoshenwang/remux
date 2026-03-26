@@ -344,6 +344,11 @@ export class FakeSessionGateway implements MultiplexerBackend {
     pane.currentPath = currentPath;
   }
 
+  public setPaneCommand(paneId: string, command: string): void {
+    const { pane } = this.findByPane(paneId);
+    pane.command = command;
+  }
+
   /** Get all sessions in the same group as the given session */
   private getGroupMembers(session: SessionNode): SessionNode[] {
     const groupName = session.groupTarget ?? session.name;

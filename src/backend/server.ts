@@ -30,6 +30,10 @@ import {
   type DeviceCapabilityDependencies,
   type NotificationTransport,
 } from "./server/client-capabilities.js";
+import {
+  resolvePaneCommandForView,
+  sendComposeToRuntime,
+} from "./server/compose-submit.js";
 import type { AdapterRegistry } from "./adapters/registry.js";
 import type { SemanticEventTransport } from "./server/semantic-event-transport.js";
 import {
@@ -594,9 +598,24 @@ export const createRemuxServer = (
         sendJson(context.socket, await sessionAttachService.buildTabHistoryPayload(sessionName, message.tabIndex, lines));
         return;
       }
-      case "send_compose":
-        context.runtime?.write(`${message.text}\r`);
+      case "send_compose": {
+        const runtime = context.runtime;
+        if (!runtime) {
+          return;
+        }
+        const snapshotForCompose = latestSnapshotRef.current ?? (view ? await buildSnapshot(deps.backend) : undefined);
+        const targetPaneId = view?.paneId;
+        sendComposeToRuntime({
+          runtime,
+          text: message.text,
+          paneCommand: resolvePaneCommandForView(snapshotForCompose, view),
+          shouldSendDelayedEnter: () => (
+            context.runtime === runtime
+            && (!targetPaneId || viewStore.getView(context.clientId)?.paneId === targetPaneId)
+          )
+        });
         return;
+      }
       case "rename_session": {
         await deps.backend.renameSession(message.session, message.newName);
         // Update all client views

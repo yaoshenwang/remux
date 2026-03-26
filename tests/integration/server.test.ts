@@ -408,6 +408,25 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("delays compose Enter for codex panes so it does not become a pasted newline", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const snapshot = await buildSnapshot(tmux);
+    const paneId = snapshot.sessions.find((session) => session.name === "main")?.tabs[0]?.panes[0]?.id ?? "";
+    tmux.setPaneCommand(paneId, "codex");
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    await authControl(control);
+
+    control.send(JSON.stringify({ type: "send_compose", text: "explain this diff" }));
+
+    await expect.poll(() => ptyFactory.latestProcess().writes).toEqual(["explain this diff"]);
+    await expect.poll(() => ptyFactory.latestProcess().writes).toEqual(["explain this diff", "\r"]);
+
+    control.close();
+  });
+
   test("new_tab uses the active pane cwd in tmux mode", async () => {
     await runningServer.stop();
     await startWithSessions(["main"]);
