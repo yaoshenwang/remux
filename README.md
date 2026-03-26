@@ -4,6 +4,9 @@
 
 **Monitor, inspect, and control live terminal workspaces from a phone, tablet, or second laptop.**
 
+[![GitHub stars](https://img.shields.io/github/stars/yaoshenwang/remux?style=social)](https://github.com/yaoshenwang/remux/stargazers)
+![GitHub contributors](https://img.shields.io/github/contributors/yaoshenwang/remux)
+
 Remux is a remote workspace cockpit for terminal-first work. It helps you check on long-running coding sessions, AI agents, builds, and shells when you are away from the primary machine. Run `npx remux`, open the generated URL, and move between three complementary surfaces: `Inspect` for readable history and context, `Live` for direct terminal I/O, and `Control` for structured workspace operations.
 
 Remux is intentionally not a generic browser SSH client and not a thin browser wrapper around a multiplexer. It is designed for awareness first, comprehension second, and lightweight intervention when needed.
@@ -208,6 +211,18 @@ npm run test:smoke
 ## Acknowledgments
 
 Remux was originally inspired by [tmux-mobile](https://github.com/DagsHub/tmux-mobile) and [porterminal](https://github.com/lyehe/porterminal), then substantially rewritten around a dedicated mobile-first control surface.
+
+## Contributors
+
+Thanks to everyone who has helped shape Remux.
+
+[![Contributors](https://contrib.rocks/image?repo=yaoshenwang/remux)](https://github.com/yaoshenwang/remux/graphs/contributors)
+
+Made with [contrib.rocks](https://contrib.rocks).
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date)](https://star-history.com/#yaoshenwang/remux&Date)
 
 ## License
 
