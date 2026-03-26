@@ -4,9 +4,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUNTIME_WORKTREE_ROOT="${REMUX_RUNTIME_WORKTREE_ROOT:-$HOME/.remux/runtime-worktrees}"
-GIT_DIR="$(git -C "$PROJECT_DIR" rev-parse --absolute-git-dir)"
-SYNC_LOCK_DIR="$GIT_DIR/remux-runtime-sync.lock"
+RUNTIME_STATE_ROOT="${REMUX_RUNTIME_STATE_ROOT:-$HOME/.remux}"
+RUNTIME_WORKTREE_ROOT="${REMUX_RUNTIME_WORKTREE_ROOT:-$RUNTIME_STATE_ROOT/runtime-worktrees}"
+# Keep the sync lock outside ephemeral checkouts so launchd sync and Actions deploys share it.
+SYNC_LOCK_DIR="${REMUX_RUNTIME_SYNC_LOCK_DIR:-$RUNTIME_STATE_ROOT/runtime-sync.lock}"
 LAUNCHD_GUI_DOMAIN="gui/$(id -u)"
 
 ensure_instance_name() {
@@ -304,6 +305,7 @@ verify_public_runtime() {
 }
 
 acquire_sync_lock() {
+  mkdir -p "$(dirname "$SYNC_LOCK_DIR")"
   if mkdir "$SYNC_LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$SYNC_LOCK_DIR/pid"
     return 0
