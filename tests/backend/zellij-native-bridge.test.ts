@@ -93,4 +93,34 @@ describe("zellij native bridge helpers", () => {
       rows: 40
     })).toBe("{\"type\":\"terminal_resize\",\"cols\":120,\"rows\":40}\n");
   });
+
+  test("parses pane render events with cursor", () => {
+    const event = parseZellijBridgeEventLine(JSON.stringify({
+      type: "pane_render",
+      paneId: "terminal_0",
+      viewport: ["$ "],
+      scrollback: null,
+      isInitial: false,
+      cursor: { row: 1, col: 3 }
+    }));
+    expect(event).toEqual({
+      type: "pane_render",
+      paneId: "terminal_0",
+      viewport: ["$ "],
+      scrollback: null,
+      isInitial: false,
+      cursor: { row: 1, col: 3 }
+    });
+  });
+
+  test("pane render without cursor field omits cursor", () => {
+    const event = parseZellijBridgeEventLine(JSON.stringify({
+      type: "pane_render",
+      paneId: "terminal_0",
+      viewport: ["$ "],
+      scrollback: null,
+      isInitial: false
+    }));
+    expect((event as any).cursor).toBeUndefined();
+  });
 });

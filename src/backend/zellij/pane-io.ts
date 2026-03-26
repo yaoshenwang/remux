@@ -194,8 +194,14 @@ export class ZellijPaneIO implements PtyProcess {
           viewport: event.viewport,
           scrollback: event.scrollback
         });
+        if (event.cursor) {
+          this.lastCursor = { row: event.cursor.row, col: event.cursor.col };
+        }
         this.emitNativeFrame();
-        this.requestCursorRefresh({ immediate: true, boost: true });
+        if (!event.cursor) {
+          // Bridge didn't provide cursor — fall back to CLI cursor query
+          this.requestCursorRefresh({ immediate: true, boost: true });
+        }
         return;
       }
       if (event.type === "pane_closed" && event.paneId === this.paneId) {

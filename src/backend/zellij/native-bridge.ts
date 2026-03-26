@@ -29,6 +29,7 @@ export interface ZellijNativeBridgePaneRenderEvent {
   viewport: string[];
   scrollback: string[] | null;
   isInitial: boolean;
+  cursor?: { row: number; col: number };
 }
 
 export interface ZellijNativeBridgePaneClosedEvent {
@@ -171,13 +172,25 @@ export function parseZellijBridgeEventLine(line: string): ZellijNativeBridgeEven
     ) {
       throw new Error("invalid zellij bridge pane_render event");
     }
-    return {
+    const result: ZellijNativeBridgePaneRenderEvent = {
       type: "pane_render",
       paneId: event.paneId,
       viewport: event.viewport,
       scrollback: event.scrollback,
       isInitial: event.isInitial
     };
+    if (
+      event.cursor
+      && typeof event.cursor === "object"
+      && typeof (event.cursor as Record<string, unknown>).row === "number"
+      && typeof (event.cursor as Record<string, unknown>).col === "number"
+    ) {
+      result.cursor = {
+        row: (event.cursor as Record<string, unknown>).row as number,
+        col: (event.cursor as Record<string, unknown>).col as number,
+      };
+    }
+    return result;
   }
 
   if (event.type === "pane_closed") {

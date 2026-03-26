@@ -107,6 +107,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     spawn_stdin_command_loop(os_input.box_clone(), default_command_pane_id);
 
+    let cursor_querier = CursorQuerier::new(args.session.clone(), args.socket_dir.clone());
+
     let mut remaining_panes: HashSet<PaneId> = pane_ids.into_iter().collect();
     loop {
         match os_input.recv_from_server() {
@@ -119,13 +121,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 _,
             )) => {
-                emit_json(serde_json::json!({
+                let cursor = cursor_querier.query(&pane_id.to_string());
+                let mut event = serde_json::json!({
                     "type": "pane_render",
                     "paneId": pane_id.to_string(),
                     "viewport": viewport,
                     "scrollback": scrollback,
                     "isInitial": is_initial,
-                }))?;
+                });
+                if let Some(cursor) = cursor {
+                    event["cursor"] = serde_json::json!({
+                        "row": cursor.row,
+                        "col": cursor.col,
+                    });
+                }
+                emit_json(event)?;
             }
             Some((ServerToClientMsg::SubscribedPaneClosed { pane_id }, _)) => {
                 remaining_panes.remove(&pane_id);
@@ -440,6 +450,92 @@ fn parse_positive_usize_field(
         ));
     }
     usize::try_from(value).map_err(|_| format!("bridge command field '{field}' is too large"))
+}
+
+/// Cursor position for a terminal pane.
+#[derive(Debug, Clone)]
+struct CursorPosition {
+    row: usize,
+    col: usize,
+}
+
+/// Queries cursor position from `zellij list-panes --json --all` subprocess.
+/// Caches the last-known cursor per pane to reduce subprocess calls.
+struct CursorQuerier {
+    session: String,
+    socket_dir: Option<String>,
+    cache: Mutex<std::collections::HashMap<String, CursorPosition>>,
+}
+
+impl CursorQuerier {
+    fn new(session: String, socket_dir: Option<String>) -> Self {
+        Self {
+            session,
+            socket_dir,
+            cache: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn query(&self, pane_id: &str) -> Option<CursorPosition> {
+        let mut cmd = Command::new("zellij");
+        cmd.args(["--session", &self.session, "action", "list-panes", "--json", "--all"]);
+        if let Some(ref socket_dir) = self.socket_dir {
+            cmd.env("ZELLIJ_SOCKET_DIR", socket_dir);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+
+        let output = match cmd.output() {
+            Ok(output) if output.status.success() => output,
+            _ => {
+                // Fallback to cached cursor on failure
+                return self.cache.lock().ok()?.get(pane_id).cloned();
+            }
+        };
+
+        let json_str = String::from_utf8_lossy(&output.stdout);
+        let cursor = self.parse_cursor_from_list_panes(&json_str, pane_id);
+
+        if let Some(ref cursor) = cursor {
+            if let Ok(mut cache) = self.cache.lock() {
+                cache.insert(pane_id.to_owned(), cursor.clone());
+            }
+        }
+
+        cursor.or_else(|| self.cache.lock().ok()?.get(pane_id).cloned())
+    }
+
+    fn parse_cursor_from_list_panes(&self, json_str: &str, target_pane_id: &str) -> Option<CursorPosition> {
+        // Extract numeric ID from "terminal_N" format
+        let target_id: u32 = target_pane_id
+            .strip_prefix("terminal_")
+            .or(Some(target_pane_id))
+            .and_then(|s| s.parse().ok())?;
+
+        // Parse the JSON output: array of tab objects containing panes
+        let tabs: Vec<serde_json::Value> = serde_json::from_str(json_str).ok()?;
+        for tab in &tabs {
+            let panes = tab.get("panes")?.as_array()?;
+            for pane in panes {
+                let id = pane.get("id")?.as_u64()?;
+                if id == target_id as u64 {
+                    let coords = pane.get("cursor_coordinates_in_pane")?.as_str()?;
+                    return parse_cursor_coordinates(coords);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn parse_cursor_coordinates(coords: &str) -> Option<CursorPosition> {
+    // Format: "row,col" (0-based) → convert to 1-based
+    let (row_str, col_str) = coords.split_once(',')?;
+    let row: usize = row_str.trim().parse().ok()?;
+    let col: usize = col_str.trim().parse().ok()?;
+    Some(CursorPosition {
+        row: row + 1,
+        col: col + 1,
+    })
 }
 
 fn resolve_socket_dir(explicit_socket_dir: Option<&str>) -> PathBuf {
