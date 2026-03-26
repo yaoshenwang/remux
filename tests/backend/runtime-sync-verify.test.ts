@@ -33,20 +33,48 @@ describe("runtime sync verification", () => {
     expect(output).not.toContain(process.cwd());
   });
 
+  test("resolves the first executable runtime node from configured candidates", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-node-resolve-test-"));
+    tempDirs.push(tempHome);
+
+    const runtimeNodeDir = path.join(tempHome, "toolchains", "node-lts", "bin");
+    const runtimeNodeBin = path.join(runtimeNodeDir, "node");
+    const missingNodeBin = path.join(tempHome, "missing", "bin", "node");
+
+    await fs.promises.mkdir(runtimeNodeDir, { recursive: true });
+    await fs.promises.writeFile(runtimeNodeBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+
+    const output = execFileSync("bash", ["-c", "source scripts/runtime-lib.sh && resolve_runtime_node_bin"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: tempHome,
+        REMUX_RUNTIME_NODE_SEARCH_PATHS: `${missingNodeBin}:${runtimeNodeBin}`
+      },
+      stdio: "pipe"
+    }).toString("utf8");
+
+    expect(output.trim()).toBe(runtimeNodeBin);
+  });
+
   test("installs runtime dependencies with dev packages even in production-like environments", async () => {
     const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-install-test-"));
     tempDirs.push(tempHome);
 
-    const fakeBinDir = path.join(tempHome, "bin");
+    const runtimeNodeDir = path.join(tempHome, "toolchains", "node-lts", "bin");
     const runtimeDir = path.join(tempHome, "runtime-dir");
     const npmLogPath = path.join(tempHome, "npm.log");
-    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    const runtimeNodeBin = path.join(runtimeNodeDir, "node");
+    const runtimeNpmBin = path.join(runtimeNodeDir, "npm");
+    await fs.promises.mkdir(runtimeNodeDir, { recursive: true });
     await fs.promises.mkdir(runtimeDir, { recursive: true });
+    await fs.promises.writeFile(runtimeNodeBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
     await fs.promises.writeFile(
-      path.join(fakeBinDir, "npm"),
+      runtimeNpmBin,
       `#!/bin/bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "${npmLogPath}"
+printf 'node=%s\\n' "$(command -v node)" >> "${npmLogPath}"
 `,
       { mode: 0o755 }
     );
@@ -63,7 +91,7 @@ printf '%s\\n' "$*" >> "${npmLogPath}"
           ...process.env,
           HOME: tempHome,
           NODE_ENV: "production",
-          PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+          REMUX_RUNTIME_NODE_SEARCH_PATHS: runtimeNodeBin,
           TARGET_DIR: runtimeDir
         },
         stdio: "pipe"
@@ -71,6 +99,7 @@ printf '%s\\n' "$*" >> "${npmLogPath}"
     );
 
     await expect(fs.promises.readFile(npmLogPath, "utf8")).resolves.toContain("ci --include=dev");
+    await expect(fs.promises.readFile(npmLogPath, "utf8")).resolves.toContain(`node=${runtimeNodeBin}`);
   });
 
   test("accepts legacy config payloads that only expose version", async () => {

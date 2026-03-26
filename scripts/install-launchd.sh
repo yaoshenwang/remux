@@ -11,7 +11,11 @@ mkdir -p "$HOME/Library/LaunchAgents"
 write_runtime_plist() {
   local name="$1"
   local plist
+  local runtime_node_bin
+  local runtime_path
   plist="$(runtime_plist_path "$name")"
+  runtime_node_bin="$(resolve_runtime_node_bin)"
+  runtime_path="$(runtime_shell_path)"
 
   cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -22,7 +26,7 @@ write_runtime_plist() {
     <string>$(runtime_service "$name")</string>
     <key>ProgramArguments</key>
     <array>
-      <string>/opt/homebrew/bin/node</string>
+      <string>$runtime_node_bin</string>
       <string>dist/backend/cli.js</string>
       <string>--host</string>
       <string>0.0.0.0</string>
@@ -42,7 +46,7 @@ write_runtime_plist() {
       <key>REMUX_RUNTIME_BRANCH</key>
       <string>$(runtime_branch "$name")</string>
       <key>PATH</key>
-      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <string>$runtime_path</string>
       <key>TERM</key>
       <string>xterm-256color</string>
       <key>HOME</key>
@@ -68,8 +72,10 @@ EOF
 write_sync_plist() {
   local plist
   local runtime_manager_dir
+  local runtime_path
   plist="$(runtime_sync_plist_path)"
   runtime_manager_dir="$(runtime_dir dev)"
+  runtime_path="$(runtime_shell_path)"
 
   cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -100,7 +106,7 @@ write_sync_plist() {
     <key>EnvironmentVariables</key>
     <dict>
       <key>PATH</key>
-      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <string>$runtime_path</string>
       <key>HOME</key>
       <string>$HOME</string>
       <key>LANG</key>
