@@ -14,6 +14,8 @@ import type {
   TabState,
   WorkspaceSnapshot
 } from "../shared/protocol.js";
+import { PROTOCOL_VERSION } from "../shared/contracts/core.js";
+import type { ServerCapabilities } from "../shared/contracts/core.js";
 import { randomToken } from "./util/random.js";
 import { AuthService } from "./auth/auth-service.js";
 import type { MultiplexerBackend } from "./multiplexer/types.js";
@@ -212,6 +214,23 @@ export const createRemuxServer = (
   };
 
   const UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+
+  const buildServerCapabilities = (): ServerCapabilities => ({
+    protocolVersion: PROTOCOL_VERSION,
+    workspace: {
+      ...deps.backend.capabilities,
+      supportsUpload: true,
+    },
+    notifications: {
+      supportsPushNotifications: Boolean(deps.extensions),
+    },
+    transport: {
+      supportsTrustedReconnect: false,
+    },
+    semantic: {
+      adaptersAvailable: [],
+    },
+  });
 
   const runtimeMetadata = readRuntimeMetadata();
 
@@ -1351,6 +1370,7 @@ export const createRemuxServer = (
               clientId: context.clientId,
               requiresPassword: authService.requiresPassword(),
               capabilities: deps.backend.capabilities,
+              serverCapabilities: buildServerCapabilities(),
               backendKind: deps.backend.kind
             });
             try {
