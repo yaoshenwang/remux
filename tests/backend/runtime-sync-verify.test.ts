@@ -12,6 +12,27 @@ afterEach(async () => {
 });
 
 describe("runtime sync verification", () => {
+  test("uses a stable sync lock outside the checkout", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-lock-test-"));
+    tempDirs.push(tempHome);
+
+    const output = execFileSync(
+      "bash",
+      ["-c", "source scripts/runtime-lib.sh && printf '%s' \"$SYNC_LOCK_DIR\""],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: tempHome
+        },
+        stdio: "pipe"
+      }
+    ).toString("utf8");
+
+    expect(output).toBe(path.join(tempHome, ".remux", "runtime-sync.lock"));
+    expect(output).not.toContain(process.cwd());
+  });
+
   test("installs runtime dependencies with dev packages even in production-like environments", async () => {
     const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-install-test-"));
     tempDirs.push(tempHome);
