@@ -4,10 +4,96 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUNTIME_WORKTREE_ROOT="${REMUX_RUNTIME_WORKTREE_ROOT:-$HOME/.remux/runtime-worktrees}"
-GIT_DIR="$(git -C "$PROJECT_DIR" rev-parse --absolute-git-dir)"
-SYNC_LOCK_DIR="$GIT_DIR/remux-runtime-sync.lock"
+RUNTIME_STATE_ROOT="${REMUX_RUNTIME_STATE_ROOT:-$HOME/.remux}"
+RUNTIME_WORKTREE_ROOT="${REMUX_RUNTIME_WORKTREE_ROOT:-$RUNTIME_STATE_ROOT/runtime-worktrees}"
+# Keep the sync lock outside ephemeral checkouts so launchd sync and Actions deploys share it.
+SYNC_LOCK_DIR="${REMUX_RUNTIME_SYNC_LOCK_DIR:-$RUNTIME_STATE_ROOT/runtime-sync.lock}"
+RUNTIME_BASE_PATH="${REMUX_RUNTIME_BASE_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}"
 LAUNCHD_GUI_DOMAIN="gui/$(id -u)"
+
+runtime_node_candidates() {
+  if [[ -n "${REMUX_RUNTIME_NODE_BIN:-}" ]]; then
+    printf '%s\n' "$REMUX_RUNTIME_NODE_BIN"
+    return 0
+  fi
+
+  if [[ -n "${REMUX_RUNTIME_NODE_SEARCH_PATHS:-}" ]]; then
+    local -a candidates
+    local IFS=':'
+    read -r -a candidates <<<"$REMUX_RUNTIME_NODE_SEARCH_PATHS" || true
+    printf '%s\n' "${candidates[@]}"
+    return 0
+  fi
+
+  printf '%s\n' \
+    /opt/homebrew/opt/node@22/bin/node \
+    /opt/homebrew/opt/node@20/bin/node \
+    /usr/local/opt/node@22/bin/node \
+    /usr/local/opt/node@20/bin/node
+
+  command -v node 2>/dev/null || true
+}
+
+resolve_runtime_node_bin() {
+  local candidate
+
+  while IFS= read -r candidate; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(runtime_node_candidates)
+
+  echo "[runtime] unable to resolve a supported node binary" >&2
+  return 1
+}
+
+runtime_node_dir() {
+  dirname "$(resolve_runtime_node_bin)"
+}
+
+resolve_runtime_npm_bin() {
+  local candidate
+
+  if [[ -n "${REMUX_RUNTIME_NPM_BIN:-}" ]]; then
+    if [[ -x "$REMUX_RUNTIME_NPM_BIN" ]]; then
+      printf '%s\n' "$REMUX_RUNTIME_NPM_BIN"
+      return 0
+    fi
+    echo "[runtime] REMUX_RUNTIME_NPM_BIN is not executable: $REMUX_RUNTIME_NPM_BIN" >&2
+    return 1
+  fi
+
+  candidate="$(runtime_node_dir)/npm"
+  if [[ -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  candidate="$(command -v npm 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  echo "[runtime] unable to resolve npm for the runtime toolchain" >&2
+  return 1
+}
+
+runtime_shell_path() {
+  printf '%s:%s\n' "$(runtime_node_dir)" "$RUNTIME_BASE_PATH"
+}
+
+run_runtime_npm() {
+  local dir="$1"
+  shift
+  local npm_bin
+  npm_bin="$(resolve_runtime_npm_bin)"
+  (
+    cd "$dir"
+    PATH="$(runtime_shell_path)" "$npm_bin" "$@"
+  )
+}
 
 ensure_instance_name() {
   case "$1" in
@@ -107,7 +193,7 @@ json_field_or_empty() {
   local json="$1"
   local field="$2"
 
-  node - "$json" "$field" <<'NODE'
+  "$(resolve_runtime_node_bin)" - "$json" "$field" <<'NODE'
 const [json, field] = process.argv.slice(2);
 try {
   const value = JSON.parse(json)[field];
@@ -134,7 +220,7 @@ origin_sha_for() {
 origin_version_for() {
   ensure_instance_name "$1"
   git -C "$PROJECT_DIR" show "origin/$(runtime_branch "$1"):package.json" \
-    | node -e 'let raw="";process.stdin.on("data",d=>raw+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(raw).version));'
+    | "$(resolve_runtime_node_bin)" -e 'let raw="";process.stdin.on("data",d=>raw+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(raw).version));'
 }
 
 current_worktree_sha_for() {
@@ -146,7 +232,7 @@ install_runtime_dependencies() {
   local dir="$1"
   # Deploy runners may export NODE_ENV=production or omit devDependencies by
   # default, but the runtime quality gate requires TypeScript/Vitest typings.
-  (cd "$dir" && npm ci --include=dev)
+  run_runtime_npm "$dir" ci --include=dev
 }
 
 worktree_is_clean() {
@@ -174,7 +260,11 @@ verify_runtime_plist() {
   ensure_instance_name "$1"
   local name="$1"
   local plist
+  local expected_node_bin
+  local expected_path
   plist="$(runtime_plist_path "$name")"
+  expected_node_bin="$(resolve_runtime_node_bin)"
+  expected_path="$(runtime_shell_path)"
 
   if [[ ! -f "$plist" ]]; then
     echo "[runtime] missing launchd plist for $name: $plist" >&2
@@ -182,14 +272,26 @@ verify_runtime_plist() {
     return 1
   fi
 
-  if ! grep -q "$(runtime_dir "$name")" "$plist"; then
+  if ! grep -Fq "$(runtime_dir "$name")" "$plist"; then
     echo "[runtime] $plist does not point to $(runtime_dir "$name")" >&2
     echo "[runtime] rerun: npm run runtime:install-launchd" >&2
     return 1
   fi
 
-  if ! grep -q "REMUX_RUNTIME_BRANCH" "$plist"; then
+  if ! grep -Fq "REMUX_RUNTIME_BRANCH" "$plist"; then
     echo "[runtime] $plist does not export REMUX_RUNTIME_BRANCH" >&2
+    echo "[runtime] rerun: npm run runtime:install-launchd" >&2
+    return 1
+  fi
+
+  if ! grep -Fq "$expected_node_bin" "$plist"; then
+    echo "[runtime] $plist does not point to the resolved node binary: $expected_node_bin" >&2
+    echo "[runtime] rerun: npm run runtime:install-launchd" >&2
+    return 1
+  fi
+
+  if ! grep -Fq "$expected_path" "$plist"; then
+    echo "[runtime] $plist does not prefix PATH with the resolved runtime toolchain" >&2
     echo "[runtime] rerun: npm run runtime:install-launchd" >&2
     return 1
   fi
@@ -304,6 +406,7 @@ verify_public_runtime() {
 }
 
 acquire_sync_lock() {
+  mkdir -p "$(dirname "$SYNC_LOCK_DIR")"
   if mkdir "$SYNC_LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$SYNC_LOCK_DIR/pid"
     return 0

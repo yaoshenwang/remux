@@ -32,6 +32,35 @@ describe("runtime launchd install", () => {
     expect(plist).not.toContain(path.join(process.cwd(), ".worktrees", "runtime-dev"));
   });
 
+  test("writes the resolved runtime node binary and PATH prefix into launchd plists", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-node-plist-test-"));
+    tempDirs.push(tempHome);
+
+    const runtimeNodeDir = path.join(tempHome, "toolchains", "node-lts", "bin");
+    const runtimeNodeBin = path.join(runtimeNodeDir, "node");
+    await fs.promises.mkdir(runtimeNodeDir, { recursive: true });
+    await fs.promises.writeFile(runtimeNodeBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+
+    execFileSync("bash", ["scripts/install-launchd.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: tempHome,
+        REMUX_RUNTIME_NODE_BIN: runtimeNodeBin
+      },
+      stdio: "pipe"
+    });
+
+    const runtimePlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.dev.plist");
+    const runtimePlist = await fs.promises.readFile(runtimePlistPath, "utf8");
+    expect(runtimePlist).toContain(runtimeNodeBin);
+    expect(runtimePlist).toContain(`${runtimeNodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`);
+
+    const syncPlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.runtime-sync.plist");
+    const syncPlist = await fs.promises.readFile(syncPlistPath, "utf8");
+    expect(syncPlist).toContain(`${runtimeNodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`);
+  });
+
   test("writes the runtime sync plist against the stable dev runtime worktree", async () => {
     const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-sync-plist-test-"));
     tempDirs.push(tempHome);
