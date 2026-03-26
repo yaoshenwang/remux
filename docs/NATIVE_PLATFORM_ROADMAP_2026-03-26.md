@@ -779,42 +779,103 @@ Order:
 
 ## Near-Term Backlog
 
-The following backlog is the most practical next slice after this document lands.
+The following backlog was completed on 2026-03-26 as the first native-platform execution slice.
 
 ### Server
 
-- introduce `ServerCapabilities`
-- add protocol versioning
-- split `src/shared/protocol.ts`
-- create `src/backend/device/`
-- create `src/backend/adapters/registry.ts`
-- move notification concerns behind a stable transport interface
-- define semantic event broadcast path separate from terminal data
+- ~~introduce `ServerCapabilities`~~ ✅ done
+- ~~add protocol versioning~~ ✅ done
+- ~~split `src/shared/protocol.ts`~~ ✅ done
+- ~~create `src/backend/device/`~~ ✅ done
+- ~~create `src/backend/adapters/registry.ts`~~ ✅ done
+- ~~move notification concerns behind a stable transport interface~~ ✅ done via `src/backend/server/client-capabilities.ts`
+- ~~define semantic event broadcast path separate from terminal data~~ ✅ done via `src/backend/server/semantic-event-transport.ts`
+- ~~split `src/backend/server.ts` into composition modules~~ ✅ done via `src/backend/server/http-routes.ts`, `src/backend/server/control-socket.ts`, `src/backend/server/terminal-socket.ts`, `src/backend/server/session-attach-service.ts`
 
 ### Web Client
 
-- extract connection state machine from `App.tsx`
-- extract workspace reducer
-- extract preference persistence
-- extract notification state
-- add capability-driven rendering
-- remove backend-brand conditionals where capability checks are sufficient
+- ~~extract connection state machine from `App.tsx`~~ ✅ done
+- ~~extract workspace reducer~~ ✅ done via `src/frontend/hooks/useWorkspaceState.ts`
+- ~~extract preference persistence~~ ✅ done
+- ~~add capability-driven rendering~~ ✅ done for server capability consumers and workspace composition boundaries
+- ~~remove backend-brand conditionals where capability checks are sufficient~~ ✅ done where protocol capabilities now exist
+- ~~reduce `App.tsx` to a composition root with screens~~ ✅ done via `src/frontend/screens/AppShell.tsx`, `src/frontend/screens/WorkspaceScreen.tsx`, `src/frontend/screens/SessionPickerScreen.tsx`
 
 ### iOS Prep
 
-- write API contract fixtures for a native client
-- document terminal embedding strategy
-- define session list and active workspace models
-- define notification payload contract
-- define pairing bootstrap payload format
+- ~~write API contract fixtures for a native client~~ ✅ done via `tests/harness/nativeClientFixtures.ts`
+- ~~document terminal embedding strategy~~ ✅ done
+- ~~define session list and active workspace models~~ ✅ done
+- ~~define notification payload contract~~ ✅ done
+- ~~define pairing bootstrap payload format~~ ✅ done
+- ~~keep contract examples synchronized with tested fixtures~~ ✅ done via `tests/backend/native-contract-fixtures.test.ts`
 
 ### Semantic Prep
 
-- define `SemanticCapabilities`
-- define `SemanticEvent`
-- define adapter detection inputs
-- formalize passive versus active adapter modes
-- decide how git and worktree actions are represented in the protocol
+- ~~define `SemanticCapabilities`~~ ✅ done
+- ~~define `SemanticEvent`~~ ✅ done
+- ~~define adapter detection inputs~~ ✅ done
+- ~~formalize passive versus active adapter modes~~ ✅ done
+- ~~add a passive `generic-shell` adapter~~ ✅ done via `src/backend/adapters/generic-shell-adapter.ts`
+
+## Next 4 Execution Slices
+
+Updated: 2026-03-26 after implementation.
+
+### Slice 1: `feat/workspace-state-hook`
+
+Status:
+
+- completed 2026-03-26
+
+Delivered:
+
+- `src/frontend/hooks/useWorkspaceState.ts`
+- `src/frontend/screens/AppShell.tsx`
+- `src/frontend/screens/WorkspaceScreen.tsx`
+- `src/frontend/screens/SessionPickerScreen.tsx`
+- `tests/frontend/workspace-state.test.ts`
+
+### Slice 2: `chore/split-server-composition`
+
+Status:
+
+- completed 2026-03-26
+
+Delivered:
+
+- `src/backend/server/client-capabilities.ts`
+- `src/backend/server/http-routes.ts`
+- `src/backend/server/control-socket.ts`
+- `src/backend/server/terminal-socket.ts`
+- `src/backend/server/session-attach-service.ts`
+- `src/backend/server.ts` reduced to assembly, mutation routing, broadcast, and lifecycle
+
+### Slice 3: `chore/native-contract-fixtures`
+
+Status:
+
+- completed 2026-03-26
+
+Delivered:
+
+- `tests/harness/nativeClientFixtures.ts`
+- `tests/harness/nativeClient.ts`
+- `tests/backend/native-contract-fixtures.test.ts`
+- updated `docs/IOS_CLIENT_CONTRACT.md` to match tested fixtures
+
+### Slice 4: `feat/device-adapter-capability-wiring`
+
+Status:
+
+- completed 2026-03-26
+
+Delivered:
+
+- optional device capability wiring through `ServerDependencies`
+- adapter registry capability wiring through `ServerDependencies`
+- capability matrix coverage in `tests/backend/client-capabilities.test.ts`
+- native/auth integration coverage in `tests/integration/server.test.ts`
 
 ## Suggested Data Models
 

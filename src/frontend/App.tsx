@@ -1,4 +1,4 @@
-import { Suspense, lazy, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { Suspense, lazy, startTransition, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { Toolbar, type ToolbarHandle } from "./components/Toolbar";
 import { AppHeader } from "./components/AppHeader";
 import { TerminalStage } from "./components/TerminalStage";
@@ -9,9 +9,6 @@ import { AppearanceSection } from "./components/sidebar/AppearanceSection";
 import { SnippetsSection } from "./components/sidebar/SnippetsSection";
 import {
   inferAttachedSessionFromWorkspace,
-  isAwaitingSessionAttachment,
-  isAwaitingSessionSelection,
-  resolveActiveSession,
   shouldUsePaneViewportCols
 } from "./ui-state";
 import {
@@ -27,8 +24,6 @@ import {
 } from "./snippets";
 import {
   getTabOrderKey,
-  orderSessions,
-  orderTabs,
   reorderSessionState,
   reorderSessionTabs,
 } from "./workspace-order";
@@ -41,6 +36,7 @@ import { buildControlAuthHint } from "./launch-context";
 import { useTerminalRuntime } from "./hooks/useTerminalRuntime";
 import { useRemuxConnection } from "./hooks/useRemuxConnection";
 import { useClientPreferences } from "./hooks/useClientPreferences";
+import { useWorkspaceState } from "./hooks/useWorkspaceState";
 import {
   buildInspectSnapshotFromServerHistory,
   type TabInspectSnapshot
@@ -56,11 +52,11 @@ import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import type {
   PaneState,
   SessionState,
-  SessionSummary,
-  WorkspaceSnapshot,
   TabState,
-  ClientView
 } from "../shared/protocol";
+import { AppShell } from "./screens/AppShell";
+import { SessionPickerScreen } from "./screens/SessionPickerScreen";
+import { WorkspaceScreen } from "./screens/WorkspaceScreen";
 
 declare global {
   interface Window {
@@ -75,7 +71,6 @@ declare global {
 
 const LazyBandwidthStatsModal = lazy(() => import("./components/BandwidthStatsModal"));
 const LazyPasswordOverlay = lazy(() => import("./components/PasswordOverlay"));
-const LazySessionPickerOverlay = lazy(() => import("./components/SessionPickerOverlay"));
 const LazyUploadToast = lazy(() => import("./components/UploadToast"));
 
 export const App = () => {
@@ -86,13 +81,7 @@ export const App = () => {
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
 
-  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>({ sessions: [], capturedAt: "" });
-  const deferredSnapshot = useDeferredValue(snapshot);
-  const [clientView, setClientView] = useState<ClientView | null>(null);
-  const [attachedSession, setAttachedSession] = useState<string>("");
   const attachedSessionRef = useRef("");
-  const [pendingSessionAttachment, setPendingSessionAttachment] = useState<string | null>(null);
-  const [sessionChoices, setSessionChoices] = useState<SessionSummary[] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
 
@@ -141,13 +130,9 @@ export const App = () => {
         case "attached": {
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
-          setAttachedSession(message.session);
+          workspace.onAttached(message.session);
           attachedSessionRef.current = message.session;
           launchContextRef.current = null;
-          setPendingSessionAttachment(null);
-          setSelectedWindowIndex(null);
-          setSelectedPaneId(null);
-          setSessionChoices(null);
           setDrawerOpen(false);
           connectionActionsRef.current.setStatusMessage(`attached: ${message.session}`);
           if (pendingTerminalAuthRef.current) {
@@ -167,12 +152,8 @@ export const App = () => {
           launchContextRef.current = null;
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
-          setAttachedSession("");
           attachedSessionRef.current = "";
-          setPendingSessionAttachment(null);
-          setSelectedWindowIndex(null);
-          setSelectedPaneId(null);
-          setSessionChoices(message.sessions);
+          workspace.onSessionPicker(message.sessions);
           return;
         }
         case "workspace_state": {
@@ -183,18 +164,10 @@ export const App = () => {
           if (inferredAttachedSession) {
             attachedSessionRef.current = inferredAttachedSession;
           }
-          startTransition(() => {
-            setSnapshot(message.workspace);
-            if (message.clientView) setClientView(message.clientView);
-            if (inferredAttachedSession) {
-              setAttachedSession(inferredAttachedSession);
-              setPendingSessionAttachment(null);
-              setSessionChoices(null);
-              connectionActionsRef.current.setStatusMessage(`attached: ${inferredAttachedSession}`);
-            }
-            setSelectedWindowIndex(null);
-            setSelectedPaneId(null);
-          });
+          workspace.onWorkspaceState(message.workspace, message.clientView ?? null);
+          if (inferredAttachedSession) {
+            connectionActionsRef.current.setStatusMessage(`attached: ${inferredAttachedSession}`);
+          }
           if (message.clientView && shouldUsePaneViewportCols(connectionActionsRef.current.serverConfig?.backendKind)) {
             const session = message.workspace.sessions.find((entry) => entry.name === message.clientView!.sessionName);
             const tab = session?.tabs.find((entry: TabState) => entry.index === message.clientView!.tabIndex);
@@ -265,7 +238,6 @@ export const App = () => {
 
   const toolbarRef = useRef<ToolbarHandle>(null);
   const {
-    copySelection,
     fileInputRef,
     focusTerminal,
     requestTerminalFit,
@@ -351,7 +323,6 @@ export const App = () => {
   const [pendingSnippetExecution, setPendingSnippetExecution] = useState<PendingSnippetExecution | null>(null);
 
   const [statsVisible, setStatsVisible] = useState(false);
-  const rttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inspectRequestRef = useRef<{
     requestKey: string;
     sessionName: string;
@@ -381,53 +352,21 @@ export const App = () => {
   const [tabDropTarget, setTabDropTarget] = useState<string | null>(null);
   const [snippetDropTarget, setSnippetDropTarget] = useState<string | null>(null);
 
-  // Local selection state for instant UI feedback before server snapshot arrives
-  const [selectedWindowIndex, setSelectedWindowIndex] = useState<number | null>(null);
-  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
-  const awaitingSessionSelection = isAwaitingSessionSelection(sessionChoices, attachedSession);
-  const awaitingSessionAttachment = isAwaitingSessionAttachment(
+  const workspace = useWorkspaceState(workspaceOrder);
+  const {
+    snapshot,
+    clientView,
+    attachedSession,
     pendingSessionAttachment,
-    attachedSession
-  );
-
-  const activeSession: SessionState | undefined = useMemo(() => {
-    return resolveActiveSession(
-      deferredSnapshot.sessions,
-      attachedSession,
-      awaitingSessionSelection,
-      awaitingSessionAttachment
-    );
-  }, [deferredSnapshot.sessions, attachedSession, awaitingSessionSelection, awaitingSessionAttachment]);
-
-  const activeTab: TabState | undefined = useMemo(() => {
-    if (!activeSession) {
-      return undefined;
-    }
-    // Use local selection if it still exists in the snapshot
-    if (selectedWindowIndex !== null) {
-      const selected = activeSession.tabs.find(
-        (tab) => tab.index === selectedWindowIndex
-      );
-      if (selected) {
-        return selected;
-      }
-    }
-    return activeSession.tabs.find((tab) => tab.active) ?? activeSession.tabs[0];
-  }, [activeSession, selectedWindowIndex]);
-
-  const activePane: PaneState | undefined = useMemo(() => {
-    if (!activeTab) {
-      return undefined;
-    }
-    // Use local selection if it still exists in the snapshot
-    if (selectedPaneId !== null) {
-      const selected = activeTab.panes.find((pane) => pane.id === selectedPaneId);
-      if (selected) {
-        return selected;
-      }
-    }
-    return activeTab.panes.find((pane) => pane.active) ?? activeTab.panes[0];
-  }, [activeTab, selectedPaneId]);
+    sessionChoices,
+    awaitingSessionSelection,
+    awaitingSessionAttachment,
+    activeSession,
+    activeTab,
+    activePane,
+    orderedSessions,
+    orderedActiveTabs,
+  } = workspace;
   const uploadFile = useFileUpload({
     activePane,
     password,
@@ -437,14 +376,6 @@ export const App = () => {
     token
   });
 
-  const orderedSessions = useMemo(
-    () => orderSessions(deferredSnapshot.sessions, workspaceOrder),
-    [deferredSnapshot.sessions, workspaceOrder]
-  );
-  const orderedActiveTabs = useMemo(
-    () => activeSession ? orderTabs(activeSession.name, activeSession.tabs, workspaceOrder) : [],
-    [activeSession, workspaceOrder]
-  );
   const headerTabs = useMemo(
     () => orderedActiveTabs.map((tab) => ({
       canClose: orderedActiveTabs.length > 1,
@@ -600,7 +531,7 @@ export const App = () => {
 
   useEffect(() => {
     if (attachedSession) {
-      setSessionChoices(null);
+      attachedSessionRef.current = attachedSession;
     }
   }, [attachedSession]);
 
@@ -624,11 +555,12 @@ export const App = () => {
     }
 
     const [onlySession] = snapshot.sessions;
-    setPendingSessionAttachment(onlySession.name);
+    workspace.beginSessionAttachment(onlySession.name);
+    workspace.clearLocalSelection();
     connection.setStatusMessage(`attaching: ${onlySession.name}`);
     setDrawerOpen(false);
     sendControl({ type: "select_session", session: onlySession.name });
-  }, [attachedSession, pendingSessionAttachment, sessionChoices, snapshot.sessions]);
+  }, [attachedSession, pendingSessionAttachment, sessionChoices, snapshot.sessions, sendControl, workspace, connection]);
 
   useEffect(() => {
     return () => {
@@ -754,9 +686,9 @@ export const App = () => {
     if (!name) {
       return;
     }
-    setPendingSessionAttachment(name);
+    workspace.beginSessionAttachment(name);
+    workspace.clearLocalSelection();
     connection.setStatusMessage(`attaching: ${name}`);
-    setSessionChoices(null);
     sendControl({ type: "new_session", name });
   };
 
@@ -812,8 +744,7 @@ export const App = () => {
     if (!activeSession) {
       return;
     }
-    setSelectedWindowIndex(tab.index);
-    setSelectedPaneId(null);
+    workspace.selectWindowIndex(tab.index);
     sendControl({ type: "select_tab", session: activeSession.name, tabIndex: tab.index });
     if (stickyZoom && capabilities?.supportsFullscreenPane && !tab.active) {
       const pane = tab.panes.find((p) => p.active) ?? tab.panes[0];
@@ -828,8 +759,7 @@ export const App = () => {
       return;
     }
     if (tabIndex === activeTab?.index) {
-      setSelectedWindowIndex(null);
-      setSelectedPaneId(null);
+      workspace.clearLocalSelection();
     }
     if (renamingWindow?.session === activeSession.name && renamingWindow.index === tabIndex) {
       setRenamingWindow(null);
@@ -929,12 +859,133 @@ export const App = () => {
   }, [serverConfig?.scrollbackLines]);
 
   return (
-    <div
-      className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileLayout ? " mobile-layout" : ""}${mobileLandscape ? " mobile-landscape" : ""}`}
-      style={{ "--app-height": `${viewportHeight}px` } as CSSProperties}
+    <AppShell
+      drawerOpen={drawerOpen}
+      mobileLandscape={mobileLandscape}
+      mobileLayout={mobileLayout}
+      onCloseDrawer={() => setDrawerOpen(false)}
+      sidebarCollapsed={sidebarCollapsed}
+      viewportHeight={viewportHeight}
+      sidebar={(
+        <aside className={`sidebar drawer${drawerOpen ? " open" : ""}`}>
+          <div className="sidebar-header">
+            <span className="sidebar-brand">REMUX</span>
+          </div>
+          <SessionSection
+            attachedSession={attachedSession}
+            bellSessions={bellSessions}
+            createSession={createSession}
+            mobileLayout={mobileLayout}
+            renameHandledByKeyRef={renameHandledByKeyRef}
+            renameSessionValue={renameSessionValue}
+            renamingSession={renamingSession}
+            selectedSessionName={activeSession?.name}
+            sessionDropTarget={sessionDropTarget}
+            sessions={orderedSessions}
+            setDraggedSessionName={setDraggedSessionName}
+            setRenameSessionValue={setRenameSessionValue}
+            setRenamingSession={setRenamingSession}
+            setSelectedPaneId={workspace.selectPaneId}
+            setSelectedWindowIndex={workspace.selectWindowIndex}
+            setSessionDropTarget={setSessionDropTarget}
+            snapshot={snapshot}
+            beginDrag={beginDrag}
+            draggedSessionName={draggedSessionName}
+            onCloseSession={(sessionName) => sendControl({ type: "close_session", session: sessionName })}
+            onRenameSession={(sessionName, newName) => sendControl({ type: "rename_session", session: sessionName, newName })}
+            onReorderSessions={(draggedName, targetName) => setWorkspaceOrder((current) => reorderSessionState(current, draggedName, targetName))}
+            onSelectSession={(sessionName) => {
+              workspace.beginSessionAttachment(sessionName);
+              workspace.clearLocalSelection();
+              sendControl({ type: "select_session", session: sessionName });
+            }}
+            supportsSessionRename={capabilities?.supportsSessionRename ?? false}
+          />
+
+          <AppearanceSection
+            followBackendFocus={clientView?.followBackendFocus ?? false}
+            onToggleFollowBackendFocus={() => sendControl({
+              type: "set_follow_focus",
+              follow: !(clientView?.followBackendFocus ?? false)
+            })}
+            onResetScrollFontSize={prefs.resetScrollFontSize}
+            onSetTheme={prefs.setTheme}
+            onUpdateScrollFontSize={prefs.setScrollFontSize}
+            scrollFontSize={scrollFontSize}
+            showFollowFocus={serverConfig?.backendKind === "zellij"}
+            theme={theme}
+          />
+
+          <SnippetsSection
+            beginDrag={beginDrag}
+            collapsedSnippetGroups={collapsedSnippetGroups}
+            draggedSnippetId={draggedSnippetId}
+            editingSnippet={editingSnippet}
+            groupedSnippetList={groupedSnippetList}
+            mobileLayout={mobileLayout}
+            onDeleteSnippet={(snippetId) => persistSnippetPatch((current) => current.filter((entry) => entry.id !== snippetId))}
+            onPersistSnippetPatch={persistSnippetPatch}
+            onSetCollapsedSnippetGroups={setCollapsedSnippetGroups}
+            onSetDraggedSnippetId={setDraggedSnippetId}
+            onSetEditingSnippet={setEditingSnippet}
+            onSetSnippetDropTarget={setSnippetDropTarget}
+            snippetDropTarget={snippetDropTarget}
+            snippets={snippets}
+          />
+
+          {serverConfig?.version && (
+            <div className="drawer-footer-info">
+              <p className="drawer-version">v{serverConfig.version}</p>
+              {(serverConfig.gitBranch || serverConfig.gitCommitSha || serverConfig.gitDirty !== undefined) && (
+                <p className="drawer-runtime-meta">
+                  {[serverConfig.gitBranch, serverConfig.gitCommitSha?.slice(0, 8), serverConfig.gitDirty ? "dirty" : undefined]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              )}
+              {serverConfig.backendKind && (
+                <div className="drawer-backend-switcher">
+                  <span className="drawer-backend-label">Backend:</span>
+                  {(["tmux", "zellij", "conpty"] as const).map((kind) => (
+                    <button
+                      key={kind}
+                      className={`drawer-backend-btn${serverConfig.backendKind === kind ? " active" : ""}`}
+                      disabled={serverConfig.backendKind === kind}
+                      onClick={async () => {
+                        const token = new URLSearchParams(window.location.search).get("token");
+                        try {
+                          const resp = await fetch("/api/switch-backend", {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                              ...(password ? { "X-Password": password } : {})
+                            },
+                            body: JSON.stringify({ backend: kind })
+                          });
+                          if (resp.ok) {
+                            await fetch("/api/config").then((r) => r.json());
+                            window.location.reload();
+                          } else {
+                            const err = await resp.json().catch(() => ({}));
+                            connection.setErrorMessage(`Switch failed: ${(err as {error?: string}).error ?? resp.statusText}`);
+                          }
+                        } catch {
+                          connection.setErrorMessage("Failed to switch backend");
+                        }
+                      }}
+                    >{kind}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </aside>
+      )}
     >
-      <div className="main-content">
-      <AppHeader
+      <WorkspaceScreen
+        header={(
+          <AppHeader
         activeTabLabel={activeTab ? `${activeTab.index}: ${activeTab.name}` : "-"}
         awaitingSessionSelection={awaitingSessionSelection}
         bandwidthStats={bandwidthStats}
@@ -976,9 +1027,10 @@ export const App = () => {
         viewMode={viewMode}
         supportsPreciseScrollback={capabilities?.supportsPreciseScrollback ?? true}
         formatBytes={formatBytes}
-      />
-
-      <TerminalStage
+          />
+        )}
+        terminalStage={(
+          <TerminalStage
         dragOver={dragOver}
         inspectErrorMessage={inspectErrorMessage}
         inspectLineCount={inspectLineCount}
@@ -1007,9 +1059,10 @@ export const App = () => {
         scrollbackContentRef={scrollbackContentRef}
         terminalContainerRef={terminalContainerRef}
         viewMode={viewMode}
-      />
-
-      <input
+          />
+        )}
+        fileInput={(
+          <input
         ref={fileInputRef}
         type="file"
         style={{ display: "none" }}
@@ -1020,9 +1073,10 @@ export const App = () => {
           }
           event.target.value = "";
         }}
-      />
-
-      <Toolbar
+          />
+        )}
+        toolbar={(
+          <Toolbar
         ref={toolbarRef}
         sendRaw={sendRawToSocket}
         onFocusTerminal={focusTerminal}
@@ -1031,16 +1085,18 @@ export const App = () => {
         snippets={snippets}
         onExecuteSnippet={executeSnippet}
         hidden={viewMode !== "terminal"}
-      />
-
-      <PinnedSnippetsBar
+          />
+        )}
+        pinnedSnippetsBar={(
+          <PinnedSnippetsBar
         snippets={pinnedSnippets}
         onEditSnippet={setEditingSnippet}
         onExecuteSnippet={executeSnippet}
         onOpenDrawer={() => setDrawerOpen(true)}
-      />
-
-      <SnippetTemplatePanel
+          />
+        )}
+        snippetTemplatePanel={(
+          <SnippetTemplatePanel
         pendingExecution={pendingSnippetExecution}
         onCancel={() => setPendingSnippetExecution(null)}
         onChangeValue={(variable, value) => setPendingSnippetExecution((current) => (
@@ -1055,157 +1111,38 @@ export const App = () => {
             : current
         ))}
         onRun={runPendingSnippet}
-      />
-
-      <ComposeBar
+          />
+        )}
+        composeBar={(
+          <ComposeBar
         composeText={composeText}
         onChange={setComposeText}
         onFilePaste={handleComposeFilePaste}
         onKeyDown={handleComposeKeyDown}
         onSend={sendCompose}
-      />
-      <SnippetPicker
+          />
+        )}
+        snippetPicker={(
+          <SnippetPicker
         activeIndex={quickSnippetIndex}
         onExecuteSnippet={executeSnippet}
         onHoverIndex={setQuickSnippetIndex}
         onPickComplete={() => setComposeText("")}
         query={snippetPickerQuery}
         snippets={visibleQuickSnippetResults}
+          />
+        )}
       />
 
-      </div>{/* end main-content */}
-
-      <aside className={`sidebar drawer${drawerOpen ? " open" : ""}`}>
-        <div className="sidebar-header">
-          <span className="sidebar-brand">REMUX</span>
-        </div>
-        <SessionSection
-          attachedSession={attachedSession}
-          bellSessions={bellSessions}
-          createSession={createSession}
-          mobileLayout={mobileLayout}
-          renameHandledByKeyRef={renameHandledByKeyRef}
-          renameSessionValue={renameSessionValue}
-          renamingSession={renamingSession}
-          selectedSessionName={activeSession?.name}
-          sessionDropTarget={sessionDropTarget}
-          sessions={orderedSessions}
-          setDraggedSessionName={setDraggedSessionName}
-          setRenameSessionValue={setRenameSessionValue}
-          setRenamingSession={setRenamingSession}
-          setSelectedPaneId={setSelectedPaneId}
-          setSelectedWindowIndex={setSelectedWindowIndex}
-          setSessionDropTarget={setSessionDropTarget}
-          snapshot={snapshot}
-          beginDrag={beginDrag}
-          draggedSessionName={draggedSessionName}
-          onCloseSession={(sessionName) => sendControl({ type: "close_session", session: sessionName })}
-          onRenameSession={(sessionName, newName) => sendControl({ type: "rename_session", session: sessionName, newName })}
-          onReorderSessions={(draggedName, targetName) => setWorkspaceOrder((current) => reorderSessionState(current, draggedName, targetName))}
-          onSelectSession={(sessionName) => sendControl({ type: "select_session", session: sessionName })}
-          supportsSessionRename={capabilities?.supportsSessionRename ?? false}
-        />
-
-        <AppearanceSection
-          followBackendFocus={clientView?.followBackendFocus ?? false}
-          onToggleFollowBackendFocus={() => sendControl({
-            type: "set_follow_focus",
-            follow: !(clientView?.followBackendFocus ?? false)
-          })}
-          onResetScrollFontSize={prefs.resetScrollFontSize}
-          onSetTheme={prefs.setTheme}
-          onUpdateScrollFontSize={prefs.setScrollFontSize}
-          scrollFontSize={scrollFontSize}
-          showFollowFocus={serverConfig?.backendKind === "zellij"}
-          theme={theme}
-        />
-
-        <SnippetsSection
-          beginDrag={beginDrag}
-          collapsedSnippetGroups={collapsedSnippetGroups}
-          draggedSnippetId={draggedSnippetId}
-          editingSnippet={editingSnippet}
-          groupedSnippetList={groupedSnippetList}
-          mobileLayout={mobileLayout}
-          onDeleteSnippet={(snippetId) => persistSnippetPatch((current) => current.filter((entry) => entry.id !== snippetId))}
-          onPersistSnippetPatch={persistSnippetPatch}
-          onSetCollapsedSnippetGroups={setCollapsedSnippetGroups}
-          onSetDraggedSnippetId={setDraggedSnippetId}
-          onSetEditingSnippet={setEditingSnippet}
-          onSetSnippetDropTarget={setSnippetDropTarget}
-          snippetDropTarget={snippetDropTarget}
-          snippets={snippets}
-        />
-
-            {serverConfig?.version && (
-              <div className="drawer-footer-info">
-                <p className="drawer-version">v{serverConfig.version}</p>
-                {(serverConfig.gitBranch || serverConfig.gitCommitSha || serverConfig.gitDirty !== undefined) && (
-                  <p className="drawer-runtime-meta">
-                    {[serverConfig.gitBranch, serverConfig.gitCommitSha?.slice(0, 8), serverConfig.gitDirty ? "dirty" : undefined]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                )}
-                {serverConfig.backendKind && (
-                  <div className="drawer-backend-switcher">
-                    <span className="drawer-backend-label">Backend:</span>
-                    {(["tmux", "zellij", "conpty"] as const).map((kind) => (
-                      <button
-                        key={kind}
-                        className={`drawer-backend-btn${serverConfig.backendKind === kind ? " active" : ""}`}
-                        disabled={serverConfig.backendKind === kind}
-                        onClick={async () => {
-                          const token = new URLSearchParams(window.location.search).get("token");
-                          try {
-                            const resp = await fetch("/api/switch-backend", {
-                              method: "POST",
-                              headers: {
-                                "Content-Type": "application/json",
-                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                                ...(password ? { "X-Password": password } : {})
-                              },
-                              body: JSON.stringify({ backend: kind })
-                            });
-                            if (resp.ok) {
-                              // Refresh config to update backendKind display
-                              const newConfig = await fetch("/api/config").then((r) => r.json());
-                              // serverConfig is managed by the connection hook — trigger a page reload
-                              window.location.reload();
-                            } else {
-                              const err = await resp.json().catch(() => ({}));
-                              connection.setErrorMessage(`Switch failed: ${(err as {error?: string}).error ?? resp.statusText}`);
-                            }
-                          } catch {
-                            connection.setErrorMessage("Failed to switch backend");
-                          }
-                        }}
-                      >{kind}</button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-      </aside>
-
-      {mobileLayout && drawerOpen && (
-        <button
-          className="sidebar-close mobile-drawer-close"
-          onClick={() => setDrawerOpen(false)}
-          data-testid="drawer-close"
-          aria-label="Close sidebar"
-        >
-          <span className="sidebar-close-icon" aria-hidden="true">×</span>
-        </button>
-      )}
-
-      {drawerOpen && <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} data-testid="drawer-backdrop" />}
-
       <Suspense fallback={null}>
-        <LazySessionPickerOverlay
+        <SessionPickerScreen
           mobileLayout={mobileLayout}
           sessions={sessionChoices}
-          onSelectSession={(sessionName) => sendControl({ type: "select_session", session: sessionName })}
+          onSelectSession={(sessionName) => {
+            workspace.beginSessionAttachment(sessionName);
+            workspace.clearLocalSelection();
+            sendControl({ type: "select_session", session: sessionName });
+          }}
         />
       </Suspense>
 
@@ -1247,6 +1184,6 @@ export const App = () => {
           <div className="card">URL missing `token` query parameter.</div>
         </div>
       )}
-    </div>
+    </AppShell>
   );
 };

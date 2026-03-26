@@ -1,12 +1,18 @@
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { WebSocket, type RawData } from "ws";
+import { AdapterRegistry } from "../../src/backend/adapters/registry.js";
+import { createGenericShellAdapter } from "../../src/backend/adapters/generic-shell-adapter.js";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
 import type { RuntimeConfig } from "../../src/backend/config.js";
+import { DeviceIdentityStore } from "../../src/backend/device/identity-store.js";
+import { PairingService } from "../../src/backend/device/pairing-service.js";
 import { createRemuxServer, type RunningServer } from "../../src/backend/server.js";
+import { SemanticEventBroadcaster } from "../../src/backend/server/semantic-event-transport.js";
 import { buildSnapshot } from "../../src/backend/multiplexer/types.js";
 import { FakePtyFactory } from "../harness/fakePty.js";
 import { FakeSessionGateway } from "../harness/fakeTmux.js";
+import { connectNativeControlClient } from "../harness/nativeClient.js";
 import { openSocket, waitForMessage } from "../harness/ws.js";
 
 const buildConfig = (token: string): RuntimeConfig => ({
@@ -99,6 +105,85 @@ describe("tmux mobile server", () => {
       (msg) => msg.type === "auth_error"
     );
     expect(response.reason).toContain("invalid token");
+
+    control.close();
+  });
+
+  test("auth_ok reports wired native and semantic capabilities", async () => {
+    await runningServer.stop();
+
+    tmux = new FakeSessionGateway(["main"]);
+    ptyFactory = new FakePtyFactory();
+    const auth = new AuthService({ token: "test-token" });
+    const registry = new AdapterRegistry();
+    registry.register(createGenericShellAdapter());
+
+    runningServer = createRemuxServer(buildConfig("test-token"), {
+      backend: tmux,
+      ptyFactory,
+      authService: auth,
+      logger: { log: () => undefined, error: () => undefined },
+      notificationTransport: {
+        supportsPushNotifications: () => true,
+      },
+      device: {
+        identityStore: new DeviceIdentityStore(),
+        pairingService: new PairingService(),
+      },
+      adapterRegistry: registry,
+      semanticTransport: new SemanticEventBroadcaster(),
+    });
+
+    await runningServer.start();
+    const address = runningServer.server.address() as AddressInfo;
+    baseWsUrl = `ws://127.0.0.1:${address.port}`;
+
+    const { control, authOk } = await connectNativeControlClient({
+      baseWsUrl,
+      token: "test-token",
+    });
+    const authMessage = authOk as {
+      serverCapabilities: {
+        notifications: { supportsPushNotifications: boolean };
+        transport: {
+          supportsTrustedReconnect: boolean;
+          supportsPairingBootstrap: boolean;
+          supportsDeviceIdentity: boolean;
+        };
+        semantic: {
+          adaptersAvailable: string[];
+          supportsEventStream: boolean;
+        };
+      };
+    };
+
+    expect(authMessage.serverCapabilities.notifications.supportsPushNotifications).toBe(true);
+    expect(authMessage.serverCapabilities.transport.supportsTrustedReconnect).toBe(false);
+    expect(authMessage.serverCapabilities.transport.supportsPairingBootstrap).toBe(true);
+    expect(authMessage.serverCapabilities.transport.supportsDeviceIdentity).toBe(true);
+    expect(authMessage.serverCapabilities.semantic.adaptersAvailable).toEqual(["generic-shell"]);
+    expect(authMessage.serverCapabilities.semantic.supportsEventStream).toBe(true);
+
+    control.close();
+  });
+
+  test("native harness receives workspace_state after auth", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const { control } = await connectNativeControlClient({
+      baseWsUrl,
+      token: "test-token",
+    });
+
+    const workspaceState = await waitForMessage<{
+      type: "workspace_state";
+      workspace: { sessions: Array<{ name: string }> };
+      clientView: { sessionName: string };
+    }>(control, (message) => message.type === "workspace_state");
+
+    expect(workspaceState.workspace.sessions[0]?.name).toBe("main");
+    expect(workspaceState.clientView.sessionName).toBe("main");
 
     control.close();
   });

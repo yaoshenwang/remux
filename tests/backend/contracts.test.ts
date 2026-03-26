@@ -14,7 +14,8 @@ import {
   type WorkspaceCapabilities,
   type NotificationCapabilities,
   type TransportCapabilities,
-  type SemanticCapabilitySummary
+  type SemanticCapabilitySummary,
+  type SemanticAdapterHealthSummary
 } from "../../src/shared/contracts/core.js";
 import type {
   SessionSummary,
@@ -76,9 +77,13 @@ describe("ServerCapabilities contract", () => {
     },
     transport: {
       supportsTrustedReconnect: false,
+      supportsPairingBootstrap: false,
+      supportsDeviceIdentity: false,
     },
     semantic: {
       adaptersAvailable: [],
+      adapterHealth: [],
+      supportsEventStream: false,
     },
   };
 
@@ -96,6 +101,7 @@ describe("ServerCapabilities contract", () => {
 
   it("semantic capabilities should list available adapters", () => {
     expect(Array.isArray(validCapabilities.semantic.adaptersAvailable)).toBe(true);
+    expect(Array.isArray(validCapabilities.semantic.adapterHealth)).toBe(true);
   });
 
   it("should be JSON-serializable", () => {

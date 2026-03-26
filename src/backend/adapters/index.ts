@@ -8,3 +8,4 @@ export type {
   SemanticClientAction,
   SemanticActionResult
 } from "./types.js";
+export { createGenericShellAdapter } from "./generic-shell-adapter.js";

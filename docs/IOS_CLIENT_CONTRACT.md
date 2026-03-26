@@ -7,6 +7,8 @@ Status: Draft — based on protocol revision from Milestone 1
 
 This document defines the contract a native iOS client needs to implement against the Remux server. It covers: API endpoints, WebSocket protocol, authentication, workspace model, terminal embedding strategy, notification payloads, and pairing bootstrap.
 
+Reference fixtures live in `tests/harness/nativeClientFixtures.ts`. The JSON examples below should stay aligned with those tested fixtures.
+
 ## Server Discovery
 
 The iOS client connects to a Remux server via:
@@ -24,7 +26,7 @@ Returns server configuration. Call this first to determine auth requirements.
 
 ```json
 {
-  "version": "0.1.49",
+  "version": "0.1.55",
   "passwordRequired": false,
   "scrollbackLines": 1000,
   "pollIntervalMs": 2500,
@@ -38,10 +40,20 @@ Returns server configuration. Call this first to determine auth requirements.
 Upload a file to the server. The file is written to the CWD of the active pane.
 
 - Max size: 50 MB
-- Content-Type: `multipart/form-data`
+- Content-Type: `application/octet-stream`
 - Auth: `Authorization: Bearer <token>` header + optional `X-Password` header
-- Body: `file` field with the file data + optional `targetDir` field
-- Response: `{ ok: true, path: "/absolute/path/to/file" }`
+- Required header: `X-Filename: <filename>`
+- Optional header: `X-Pane-Cwd: <pane cwd>`
+
+**Upload response example:**
+
+```json
+{
+  "ok": true,
+  "path": "/Users/wangyaoshen/dev/remux/notes.txt",
+  "filename": "notes.txt"
+}
+```
 
 ## WebSocket Protocol
 
@@ -55,6 +67,50 @@ JSON-based control plane. Handles auth, session management, workspace state.
 Client → { "type": "auth", "token": "<token>", "password": "<optional>" }
 Server → { "type": "auth_ok", "clientId": "abc123", "requiresPassword": false,
            "capabilities": { ... }, "serverCapabilities": { ... }, "backendKind": "tmux" }
+```
+
+**Auth success example:**
+
+```json
+{
+  "type": "auth_ok",
+  "clientId": "native-client-001",
+  "requiresPassword": false,
+  "backendKind": "tmux",
+  "capabilities": {
+    "supportsPaneFocusById": true,
+    "supportsTabRename": true,
+    "supportsSessionRename": true,
+    "supportsPreciseScrollback": true,
+    "supportsFloatingPanes": false,
+    "supportsFullscreenPane": true
+  },
+  "serverCapabilities": {
+    "protocolVersion": 1,
+    "workspace": {
+      "supportsPaneFocusById": true,
+      "supportsTabRename": true,
+      "supportsSessionRename": true,
+      "supportsPreciseScrollback": true,
+      "supportsFloatingPanes": false,
+      "supportsFullscreenPane": true,
+      "supportsUpload": true
+    },
+    "notifications": {
+      "supportsPushNotifications": false
+    },
+    "transport": {
+      "supportsTrustedReconnect": false,
+      "supportsPairingBootstrap": false,
+      "supportsDeviceIdentity": false
+    },
+    "semantic": {
+      "adaptersAvailable": [],
+      "adapterHealth": [],
+      "supportsEventStream": false
+    }
+  }
+}
 ```
 
 Or on failure:
@@ -81,10 +137,14 @@ Server → { "type": "auth_error", "reason": "invalid password" }
     "supportsPushNotifications": true
   },
   "transport": {
-    "supportsTrustedReconnect": false
+    "supportsTrustedReconnect": false,
+    "supportsPairingBootstrap": false,
+    "supportsDeviceIdentity": false
   },
   "semantic": {
-    "adaptersAvailable": []
+    "adaptersAvailable": [],
+    "adapterHealth": [],
+    "supportsEventStream": false
   }
 }
 ```
@@ -99,6 +159,106 @@ Server → { "type": "auth_error", "reason": "invalid password" }
 | `tab_history` | Tab history/scrollback response |
 | `error` | `{ message: string }` |
 | `info` | `{ message: string }` |
+
+**Session picker example:**
+
+```json
+{
+  "type": "session_picker",
+  "sessions": [
+    {
+      "name": "main",
+      "attached": false,
+      "tabCount": 2
+    },
+    {
+      "name": "ops",
+      "attached": false,
+      "tabCount": 1
+    }
+  ]
+}
+```
+
+**Workspace state example:**
+
+```json
+{
+  "type": "workspace_state",
+  "workspace": {
+    "capturedAt": "2026-03-26T13:00:00.000Z",
+    "sessions": [
+      {
+        "name": "main",
+        "attached": true,
+        "tabCount": 1,
+        "tabs": [
+          {
+            "index": 0,
+            "name": "shell",
+            "active": true,
+            "paneCount": 1,
+            "panes": [
+              {
+                "index": 0,
+                "id": "%0",
+                "currentCommand": "bash",
+                "active": true,
+                "width": 120,
+                "height": 40,
+                "zoomed": false,
+                "currentPath": "/Users/wangyaoshen/dev/remux"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "clientView": {
+    "sessionName": "main",
+    "tabIndex": 0,
+    "paneId": "%0",
+    "followBackendFocus": false
+  }
+}
+```
+
+**Tab history example:**
+
+```json
+{
+  "type": "tab_history",
+  "sessionName": "main",
+  "tabIndex": 0,
+  "tabName": "shell",
+  "lines": 1000,
+  "source": "server_tab_history",
+  "precision": "precise",
+  "capturedAt": "2026-03-26T13:00:02.000Z",
+  "panes": [
+    {
+      "paneId": "%0",
+      "paneIndex": 0,
+      "title": "Pane 0 · bash · %0",
+      "command": "bash",
+      "text": "npm test\nAll green.\n",
+      "paneWidth": 120,
+      "isApproximate": false,
+      "archived": false,
+      "lines": 1000,
+      "capturedAt": "2026-03-26T13:00:02.000Z"
+    }
+  ],
+  "events": [
+    {
+      "id": "evt-1",
+      "text": "Viewed tab 0",
+      "createdAt": "2026-03-26T13:00:02.000Z"
+    }
+  ]
+}
+```
 
 **Client commands:**
 

@@ -17,10 +17,20 @@ export interface NotificationCapabilities {
 
 export interface TransportCapabilities {
   supportsTrustedReconnect: boolean;
+  supportsPairingBootstrap: boolean;
+  supportsDeviceIdentity: boolean;
+}
+
+export interface SemanticAdapterHealthSummary {
+  adapterId: string;
+  available: boolean;
+  healthy: boolean;
 }
 
 export interface SemanticCapabilitySummary {
   adaptersAvailable: string[];
+  adapterHealth: SemanticAdapterHealthSummary[];
+  supportsEventStream: boolean;
 }
 
 export interface ServerCapabilities {

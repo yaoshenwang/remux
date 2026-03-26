@@ -27,6 +27,12 @@ interface ActiveAdapter {
   paneId: string;
 }
 
+export interface AdapterHealthSummary {
+  adapterId: string;
+  available: boolean;
+  healthy: boolean;
+}
+
 export class AdapterRegistry {
   private readonly adapters: SemanticAdapter[] = [];
   private readonly active = new Map<string, ActiveAdapter>();
@@ -49,6 +55,15 @@ export class AdapterRegistry {
   /** List all registered adapter IDs. */
   listAdapterIds(): string[] {
     return this.adapters.map((a) => a.id);
+  }
+
+  /** List coarse health for registered adapters. */
+  listAdapterHealth(): AdapterHealthSummary[] {
+    return this.adapters.map((adapter) => ({
+      adapterId: adapter.id,
+      available: true,
+      healthy: true,
+    }));
   }
 
   /** Detect the best adapter for a given context. Returns null if no match. */

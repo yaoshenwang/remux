@@ -28,6 +28,7 @@ export type {
   NotificationCapabilities,
   TransportCapabilities,
   SemanticCapabilitySummary,
+  SemanticAdapterHealthSummary,
   RemuxMessageEnvelope,
   MessageDomain
 } from "./contracts/core.js";

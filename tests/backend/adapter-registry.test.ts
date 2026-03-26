@@ -110,6 +110,16 @@ describe("AdapterRegistry", () => {
     expect(Object.keys(map)).toEqual(["a", "b"]);
   });
 
+  it("should return coarse adapter health for registered adapters", () => {
+    registry.register(createMockAdapter("a"));
+    registry.register(createMockAdapter("b"));
+
+    expect(registry.listAdapterHealth()).toEqual([
+      { adapterId: "a", available: true, healthy: true },
+      { adapterId: "b", available: true, healthy: true },
+    ]);
+  });
+
   it("should dispose all active adapters", async () => {
     registry.register(createMockAdapter("test", 1));
     const context: AdapterRuntimeContext = {
