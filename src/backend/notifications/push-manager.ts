@@ -11,11 +11,11 @@
  * ~/.remux/vapid.json. Clients subscribe via the /api/push/* endpoints.
  */
 
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import express, { type Router } from "express";
+import webpush from "web-push";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,14 +41,25 @@ interface VapidKeys {
   privateKey: string;
 }
 
-/** Injectable web-push client for testability. */
+interface PushResultLike {
+  statusCode?: number;
+}
+
 export interface WebPushClient {
-  generateVAPIDKeys(): { publicKey: string; privateKey: string };
+  generateVAPIDKeys(): VapidKeys;
   sendNotification(
     subscription: PushSubscription,
-    payload: string,
-    options: { vapidDetails: { subject: string; publicKey: string; privateKey: string }; TTL: number; urgency: string }
-  ): Promise<{ statusCode: number }>;
+    payload?: string | Buffer,
+    options?: {
+      vapidDetails: {
+        subject: string;
+        publicKey: string;
+        privateKey: string;
+      };
+      TTL?: number;
+      urgency?: "very-low" | "low" | "normal" | "high";
+    }
+  ): Promise<PushResultLike>;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,17 +70,15 @@ export class NotificationManager {
   private subscriptions = new Map<string, PushSubscription>();
   private vapidKeys: VapidKeys;
   private readonly configDir: string;
-  private readonly pushClient?: WebPushClient;
+  private readonly vapidSubject: string;
 
   constructor(
     private readonly logger?: Pick<Console, "log" | "error">,
-    pushClient?: WebPushClient
+    private readonly pushClient: WebPushClient = webpush
   ) {
-    this.pushClient = pushClient;
     this.configDir = path.join(os.homedir(), ".remux");
-    this.vapidKeys = pushClient
-      ? pushClient.generateVAPIDKeys()
-      : this.loadOrGenerateVapidKeys();
+    this.vapidSubject = process.env.REMUX_PUSH_SUBJECT || "mailto:remux@localhost.invalid";
+    this.vapidKeys = this.loadOrGenerateVapidKeys();
   }
 
   /** Get the VAPID public key (clients need this to subscribe). */
@@ -150,12 +159,12 @@ export class NotificationManager {
     const router = express.Router();
 
     // GET /api/push/vapid-key — client needs this to subscribe.
-    router.get("/api/push/vapid-key", (_req, res) => {
+    router.get("/vapid-key", (_req, res) => {
       res.json({ publicKey: this.publicKey });
     });
 
     // POST /api/push/subscribe — register a push subscription.
-    router.post("/api/push/subscribe", (req, res) => {
+    router.post("/subscribe", (req, res) => {
       const { id, subscription } = req.body as {
         id?: string;
         subscription?: PushSubscription;
@@ -171,7 +180,7 @@ export class NotificationManager {
     });
 
     // POST /api/push/unsubscribe — remove a push subscription.
-    router.post("/api/push/unsubscribe", (req, res) => {
+    router.post("/unsubscribe", (req, res) => {
       const { id } = req.body as { id?: string };
       if (!id) {
         res.status(400).json({ error: "missing id" });
@@ -183,7 +192,7 @@ export class NotificationManager {
     });
 
     // POST /api/push/test — send a test notification.
-    router.post("/api/push/test", async (_req, res) => {
+    router.post("/test", async (_req, res) => {
       await this.notify({
         title: "🧪 Test Notification",
         body: "Push notifications are working!",
@@ -229,40 +238,24 @@ export class NotificationManager {
   }
 
   private generateVapidKeys(): VapidKeys {
-    // Generate ECDH P-256 key pair for VAPID.
-    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", {
-      namedCurve: "P-256",
-    });
-
-    return {
-      publicKey: publicKey
-        .export({ type: "spki", format: "der" })
-        .toString("base64url"),
-      privateKey: privateKey
-        .export({ type: "pkcs8", format: "der" })
-        .toString("base64url"),
-    };
+    return this.pushClient.generateVAPIDKeys();
   }
 
   private async sendPush(
     subscription: PushSubscription,
     body: string
   ): Promise<void> {
-    if (this.pushClient) {
-      await this.pushClient.sendNotification(subscription, body, {
-        vapidDetails: {
-          subject: "mailto:remux@example.com",
-          publicKey: this.vapidKeys.publicKey,
-          privateKey: this.vapidKeys.privateKey,
-        },
-        TTL: 60,
-        urgency: "high",
-      });
-      return;
-    }
-
+    const result = await this.pushClient.sendNotification(subscription, body, {
+      vapidDetails: {
+        subject: this.vapidSubject,
+        publicKey: this.vapidKeys.publicKey,
+        privateKey: this.vapidKeys.privateKey
+      },
+      TTL: 60,
+      urgency: "high"
+    });
     this.logger?.log(
-      `[push] would send to ${subscription.endpoint}: ${body}`
+      `[push] sent notification to ${subscription.endpoint} (status=${result.statusCode ?? "unknown"})`
     );
   }
 }

@@ -3,8 +3,13 @@ import { App } from "./App";
 import { initSnapfeed } from "@microsoft/snapfeed";
 import "@xterm/xterm/css/xterm.css";
 import "./styles/app.css";
+import { buildGitHubIssueApiUrl, buildRemuxAuthHeaders } from "./feedback/github";
+import { token as remuxToken } from "./remux-runtime";
 
 const GITHUB_CLIENT_ID = "Ov23ctnKbEALA3WUk14j";
+
+const getRemuxAuthHeaders = (): Record<string, string> =>
+  buildRemuxAuthHeaders(remuxToken, sessionStorage.getItem("remux-password") ?? undefined);
 
 /** Show a styled GitHub Device Flow dialog. Returns true if user wants to proceed. */
 function showDeviceFlowDialog(userCode: string, verificationUri: string): Promise<boolean> {
@@ -88,7 +93,11 @@ async function githubDeviceFlow(): Promise<string | null> {
     // Use server proxy to avoid CORS (GitHub doesn't allow browser requests).
     const codeResp = await fetch("/api/auth/github/device-code", {
       method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...getRemuxAuthHeaders(),
+      },
       body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, scope: "public_repo" }),
     });
     const codeData = await codeResp.json() as {
@@ -103,7 +112,11 @@ async function githubDeviceFlow(): Promise<string | null> {
       await new Promise((r) => setTimeout(r, interval));
       const resp = await fetch("/api/auth/github/access-token", {
         method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...getRemuxAuthHeaders(),
+        },
         body: JSON.stringify({
           client_id: GITHUB_CLIENT_ID,
           device_code: codeData.device_code,
@@ -116,7 +129,10 @@ async function githubDeviceFlow(): Promise<string | null> {
         (window as unknown as Record<string, (() => void) | undefined>).__ghAuthDismiss?.();
         fetch("/api/auth/github-token", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getRemuxAuthHeaders(),
+          },
           body: JSON.stringify({ token: data.access_token }),
         }).catch(() => {});
         localStorage.setItem("remux-github-token", data.access_token);
@@ -139,135 +155,136 @@ function lazyGithubAdapter(): { name: string; send: (event: Record<string, unkno
         console.log("[github-adapter] send called with event:", JSON.stringify(event).substring(0, 500));
         let token = localStorage.getItem("remux-github-token");
 
-      // Try server-side storage.
-      if (!token) {
-        try {
-          const resp = await fetch("/api/auth/github-token");
-          const data = await resp.json() as { token: string | null };
-          if (data.token) {
-            token = data.token;
-            localStorage.setItem("remux-github-token", token);
+        // Try server-side storage.
+        if (!token) {
+          try {
+            const resp = await fetch("/api/auth/github-token", {
+              headers: getRemuxAuthHeaders(),
+            });
+            const data = await resp.json() as { token: string | null };
+            if (data.token) {
+              token = data.token;
+              localStorage.setItem("remux-github-token", token);
+            }
+          } catch {}
+        }
+
+        // Trigger Device Flow if still no token.
+        if (!token) {
+          token = await githubDeviceFlow();
+          if (!token) return { ok: false, error: "User cancelled GitHub authorization" };
+        }
+
+        // Create issue via GitHub API — include all snapfeed context.
+        const detail = (event.detail ?? {}) as Record<string, unknown>;
+        const message = String(detail.message || event.target || "No message");
+        const category = String(detail.category ?? "feedback");
+        const page = String(event.page ?? "/");
+        const labels = ["feedback"];
+        const categoryMap: Record<string, string> = { bug: "bug", idea: "enhancement", question: "question", praise: "praise" };
+        if (categoryMap[category]) labels.push(categoryMap[category]);
+
+        const lines = [
+          `**Category:** ${category}`,
+          `**Page:** \`${page}\``,
+          `**Timestamp:** ${String(event.ts ?? new Date().toISOString())}`,
+          `**Session:** \`${String(event.session_id ?? "")}\``,
+        ];
+
+        // User info.
+        if (detail.user) {
+          const user = detail.user as Record<string, unknown>;
+          if (user.name) lines.push(`**User:** ${user.name}`);
+          if (user.email) lines.push(`**Email:** ${user.email}`);
+        }
+
+        lines.push("", "### Message", "", message);
+
+        // Element context (breadcrumb).
+        const contextFields: Array<[string, string]> = [
+          ["tag", "Element"],
+          ["path", "CSS Path"],
+          ["text", "Text"],
+          ["label", "Label"],
+          ["component", "Component"],
+          ["source_file", "Source File"],
+          ["url", "URL"],
+        ];
+        const hasContext = contextFields.some(([key]) => detail[key]);
+        if (hasContext) {
+          lines.push("", "### Context", "");
+          lines.push("| Property | Value |", "|----------|-------|");
+          for (const [key, label] of contextFields) {
+            if (detail[key]) lines.push(`| ${label} | \`${String(detail[key]).substring(0, 200)}\` |`);
           }
-        } catch {}
-      }
-
-      // Trigger Device Flow if still no token.
-      if (!token) {
-        token = await githubDeviceFlow();
-        if (!token) return { ok: false, error: "User cancelled GitHub authorization" };
-      }
-
-      // Create issue via GitHub API — include all snapfeed context.
-      const detail = (event.detail ?? {}) as Record<string, unknown>;
-      const message = String(detail.message || event.target || "No message");
-      const category = String(detail.category ?? "feedback");
-      const page = String(event.page ?? "/");
-      const labels = ["feedback"];
-      const categoryMap: Record<string, string> = { bug: "bug", idea: "enhancement", question: "question", praise: "praise" };
-      if (categoryMap[category]) labels.push(categoryMap[category]);
-
-      const lines = [
-        `**Category:** ${category}`,
-        `**Page:** \`${page}\``,
-        `**Timestamp:** ${String(event.ts ?? new Date().toISOString())}`,
-        `**Session:** \`${String(event.session_id ?? "")}\``,
-      ];
-
-      // User info.
-      if (detail.user) {
-        const user = detail.user as Record<string, unknown>;
-        if (user.name) lines.push(`**User:** ${user.name}`);
-        if (user.email) lines.push(`**Email:** ${user.email}`);
-      }
-
-      lines.push("", "### Message", "", message);
-
-      // Element context (breadcrumb).
-      const contextFields: Array<[string, string]> = [
-        ["tag", "Element"],
-        ["path", "CSS Path"],
-        ["text", "Text"],
-        ["label", "Label"],
-        ["component", "Component"],
-        ["source_file", "Source File"],
-        ["url", "URL"],
-      ];
-      const hasContext = contextFields.some(([key]) => detail[key]);
-      if (hasContext) {
-        lines.push("", "### Context", "");
-        lines.push("| Property | Value |", "|----------|-------|");
-        for (const [key, label] of contextFields) {
-          if (detail[key]) lines.push(`| ${label} | \`${String(detail[key]).substring(0, 200)}\` |`);
+          if (detail.source_line) lines.push(`| Line | ${detail.source_line} |`);
         }
-        if (detail.source_line) lines.push(`| Line | ${detail.source_line} |`);
-      }
 
-      // Console errors.
-      const consoleErrors = detail.console_errors;
-      if (Array.isArray(consoleErrors) && consoleErrors.length > 0) {
-        lines.push("", "### Console Errors", "", "```", ...consoleErrors.slice(0, 10).map(String), "```");
-      }
-
-      // Network log.
-      const networkLog = detail.network_log;
-      if (Array.isArray(networkLog) && networkLog.length > 0) {
-        lines.push("", "### Network Log", "", "| Method | URL | Status | Duration |", "|--------|-----|--------|----------|");
-        for (const entry of networkLog.slice(-10)) {
-          const e = entry as Record<string, unknown>;
-          lines.push(`| ${e.method ?? ""} | \`${String(e.url ?? "").substring(0, 80)}\` | ${e.status ?? ""} | ${e.durationMs ?? ""}ms |`);
+        // Console errors.
+        const consoleErrors = detail.console_errors;
+        if (Array.isArray(consoleErrors) && consoleErrors.length > 0) {
+          lines.push("", "### Console Errors", "", "```", ...consoleErrors.slice(0, 10).map(String), "```");
         }
-      }
 
-      // Session replay summary.
-      const replayData = detail.replay_data;
-      if (Array.isArray(replayData) && replayData.length > 0) {
-        lines.push("", `### Session Replay (${replayData.length} events)`, "",
-          "<details><summary>Click to expand</summary>", "",
-          "```json", JSON.stringify(replayData.slice(-20), null, 2), "```",
-          "", "</details>");
-      }
-
-      // Screenshot.
-      const screenshot = event.screenshot as string | undefined;
-      if (screenshot) {
-        const dataUrl = screenshot.startsWith("data:") ? screenshot : `data:image/jpeg;base64,${screenshot}`;
-        lines.push("", "### Screenshot", "", `![feedback screenshot](${dataUrl})`);
-      }
-
-      const body = lines.join("\n");
-      const title = `[Feedback] ${message.substring(0, 80)}${message.length > 80 ? "…" : ""}`;
-
-      const resp = await fetch("https://api.github.com/repos/eisber/remux/issues", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "application/vnd.github.v3+json",
-        },
-        body: JSON.stringify({ title, body, labels }),
-      });
-
-      if (!resp.ok) {
-        const errBody = await resp.text();
-        console.error("[github-adapter] GitHub API error:", resp.status, errBody);
-        if (resp.status === 401) {
-          localStorage.removeItem("remux-github-token");
-          fetch("/api/auth/github-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: "" }),
-          }).catch(() => {});
+        // Network log.
+        const networkLog = detail.network_log;
+        if (Array.isArray(networkLog) && networkLog.length > 0) {
+          lines.push("", "### Network Log", "", "| Method | URL | Status | Duration |", "|--------|-----|--------|----------|");
+          for (const entry of networkLog.slice(-10)) {
+            const e = entry as Record<string, unknown>;
+            lines.push(`| ${e.method ?? ""} | \`${String(e.url ?? "").substring(0, 80)}\` | ${e.status ?? ""} | ${e.durationMs ?? ""}ms |`);
+          }
         }
-        return { ok: false, error: `GitHub API ${resp.status}` };
-      }
 
-      const issue = await resp.json() as { number?: number; html_url?: string };
-      console.log("[github-adapter] issue created:", issue.number);
-      return { ok: true, deliveryId: String(issue.number ?? ""), deliveryUrl: issue.html_url };
-    } catch (err) {
-      console.error("[github-adapter] unexpected error:", err);
-      return { ok: false, error: String(err) };
-    }
+        // Session replay summary.
+        const replayData = detail.replay_data;
+        if (Array.isArray(replayData) && replayData.length > 0) {
+          lines.push("", `### Session Replay (${replayData.length} events)`, "",
+            "<details><summary>Click to expand</summary>", "",
+            "```json", JSON.stringify(replayData.slice(-20), null, 2), "```",
+            "", "</details>");
+        }
+
+        // Screenshot.
+        const screenshot = event.screenshot as string | undefined;
+        if (screenshot) {
+          const dataUrl = screenshot.startsWith("data:") ? screenshot : `data:image/jpeg;base64,${screenshot}`;
+          lines.push("", "### Screenshot", "", `![feedback screenshot](${dataUrl})`);
+        }
+
+        const body = lines.join("\n");
+        const title = `[Feedback] ${message.substring(0, 80)}${message.length > 80 ? "…" : ""}`;
+
+        const resp = await fetch(buildGitHubIssueApiUrl(), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/vnd.github.v3+json",
+          },
+          body: JSON.stringify({ title, body, labels }),
+        });
+
+        if (!resp.ok) {
+          const errBody = await resp.text();
+          console.error("[github-adapter] GitHub API error:", resp.status, errBody);
+          if (resp.status === 401) {
+            localStorage.removeItem("remux-github-token");
+            fetch("/api/auth/github-token", {
+              method: "DELETE",
+              headers: getRemuxAuthHeaders(),
+            }).catch(() => {});
+          }
+          return { ok: false, error: `GitHub API ${resp.status}` };
+        }
+
+        const issue = await resp.json() as { number?: number; html_url?: string };
+        console.log("[github-adapter] issue created:", issue.number);
+        return { ok: true, deliveryId: String(issue.number ?? ""), deliveryUrl: issue.html_url };
+      } catch (err) {
+        console.error("[github-adapter] unexpected error:", err);
+        return { ok: false, error: String(err) };
+      }
     },
   };
 }

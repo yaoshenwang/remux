@@ -89,67 +89,7 @@ export const createRemuxServer = (
   const app = express();
   app.use(express.json());
 
-  // GitHub token storage — persists across origins/sessions.
-  const tokenFile = path.join(os.homedir(), ".remux", "github-token");
-
-  app.get("/api/auth/github-token", (_req, res) => {
-    try {
-      const token = fs.readFileSync(tokenFile, "utf8").trim();
-      res.json({ token });
-    } catch {
-      res.json({ token: null });
-    }
-  });
-
-  app.post("/api/auth/github-token", (req, res) => {
-    const { token } = req.body as { token?: string };
-    if (!token || typeof token !== "string") {
-      res.status(400).json({ error: "missing token" });
-      return;
-    }
-    try {
-      fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
-      fs.writeFileSync(tokenFile, token, { mode: 0o600 });
-      res.json({ ok: true });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  // GitHub OAuth Device Flow proxy (GitHub doesn't support CORS).
-  app.post("/api/auth/github/device-code", async (req, res) => {
-    try {
-      const { client_id, scope } = req.body as { client_id: string; scope: string };
-      const resp = await fetch("https://github.com/login/device/code", {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id, scope }),
-      });
-      const data = await resp.json();
-      res.json(data);
-    } catch (err) {
-      res.status(502).json({ error: String(err) });
-    }
-  });
-
-  app.post("/api/auth/github/access-token", async (req, res) => {
-    try {
-      const { client_id, device_code, grant_type } = req.body as {
-        client_id: string; device_code: string; grant_type: string;
-      };
-      const resp = await fetch("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id, device_code, grant_type }),
-      });
-      const data = await resp.json();
-      res.json(data);
-    } catch (err) {
-      res.status(502).json({ error: String(err) });
-    }
-  });
-
-  const readAuthHeaders= (req: express.Request): { token?: string; password?: string } => {
+  const readAuthHeaders = (req: express.Request): { token?: string; password?: string } => {
     const authHeader = req.headers.authorization;
     return {
       token: authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined,
@@ -165,6 +105,75 @@ export const createRemuxServer = (
     }
     next();
   };
+
+  // GitHub token storage — persists across origins/sessions.
+  const tokenFile = path.join(os.homedir(), ".remux", "github-token");
+
+  app.get("/api/auth/github-token", requireApiAuth, (_req, res) => {
+    try {
+      const token = fs.readFileSync(tokenFile, "utf8").trim();
+      res.json({ token: token || null });
+    } catch {
+      res.json({ token: null });
+    }
+  });
+
+  app.post("/api/auth/github-token", requireApiAuth, (req, res) => {
+    const { token } = req.body as { token?: string };
+    if (typeof token !== "string" || token.trim().length === 0) {
+      res.status(400).json({ error: "missing token" });
+      return;
+    }
+    try {
+      fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+      fs.writeFileSync(tokenFile, token.trim(), { mode: 0o600 });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.delete("/api/auth/github-token", requireApiAuth, (_req, res) => {
+    try {
+      fs.rmSync(tokenFile, { force: true });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // GitHub OAuth Device Flow proxy (GitHub doesn't support CORS).
+  app.post("/api/auth/github/device-code", requireApiAuth, async (req, res) => {
+    try {
+      const { client_id, scope } = req.body as { client_id: string; scope: string };
+      const resp = await fetch("https://github.com/login/device/code", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id, scope }),
+      });
+      const data = await resp.json();
+      res.json(data);
+    } catch (err) {
+      res.status(502).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/auth/github/access-token", requireApiAuth, async (req, res) => {
+    try {
+      const { client_id, device_code, grant_type } = req.body as {
+        client_id: string; device_code: string; grant_type: string;
+      };
+      const resp = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id, device_code, grant_type }),
+      });
+      const data = await resp.json();
+      res.json(data);
+    } catch (err) {
+      res.status(502).json({ error: String(err) });
+    }
+  });
 
   const UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
