@@ -3,6 +3,11 @@ import type { ClientView, WorkspaceSnapshot } from "../../shared/protocol.js";
 export class ClientViewStore {
   private views = new Map<string, ClientView>();
   private missingSessionCounts = new Map<string, number>();
+  private defaultFollowFocus: boolean;
+
+  constructor(options?: { defaultFollowFocus?: boolean }) {
+    this.defaultFollowFocus = options?.defaultFollowFocus ?? false;
+  }
 
   initView(clientId: string, session: string, snapshot: WorkspaceSnapshot): ClientView {
     const sessionState = snapshot.sessions.find((s) => s.name === session);
@@ -13,7 +18,7 @@ export class ClientViewStore {
       sessionName: session,
       tabIndex: activeTab?.index ?? 0,
       paneId: activePane?.id ?? "terminal_0",
-      followBackendFocus: false,
+      followBackendFocus: this.defaultFollowFocus,
     };
     this.views.set(clientId, view);
     this.missingSessionCounts.set(clientId, 0);
