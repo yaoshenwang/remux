@@ -1,0 +1,11 @@
+[package]
+name = "zellij-bridge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Native pane-render bridge for Remux zellij integration"
+
+[dependencies]
+serde_json = "1.0"
+zellij-client = "0.44.0"
+zellij-utils = "0.44.0"

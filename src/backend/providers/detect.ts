@@ -112,7 +112,7 @@ function isTmuxAvailable(
 
 function createZellijBackend(
   logger?: Pick<Console, "log" | "error">,
-  options?: { socketDir?: string }
+  options?: { socketDir?: string; scrollbackLines?: number }
 ): SessionBackend {
   // Resolve path to remux-focus.wasm relative to this module
   const thisDir = path.dirname(fileURLToPath(import.meta.url));
@@ -124,7 +124,8 @@ function createZellijBackend(
   });
   const ptyFactory = new ZellijPtyFactory({
     logger,
-    socketDir: options?.socketDir
+    socketDir: options?.socketDir,
+    scrollbackLines: options?.scrollbackLines
   });
   return { gateway, ptyFactory, kind: "zellij" };
 }

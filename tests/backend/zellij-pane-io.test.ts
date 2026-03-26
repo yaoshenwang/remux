@@ -1,39 +1,85 @@
-import { EventEmitter } from "node:events";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const nodePtySpawnMock = vi.fn();
-const childSpawnMock = vi.fn();
 const execFileMock = vi.fn();
+const execFileWithPromisify = Object.assign(execFileMock, {
+  [promisify.custom]: (...args: unknown[]) => new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    execFileMock(...args, (error: Error | null, stdout: string, stderr: string) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  })
+});
 
 vi.mock("node-pty", () => ({
   spawn: nodePtySpawnMock
 }));
 
 vi.mock("node:child_process", () => ({
-  spawn: childSpawnMock,
-  execFile: execFileMock
+  execFile: execFileWithPromisify
 }));
 
-class FakeSubscribeProcess extends EventEmitter {
-  public readonly stdout = new EventEmitter();
-  public readonly stderr = new EventEmitter();
+class FakeNativeBridge {
+  private dataHandlers: Array<(event: unknown) => void> = [];
+  private exitHandlers: Array<(code: number | null) => void> = [];
   public readonly kill = vi.fn();
+
+  onEvent(handler: (event: unknown) => void): void {
+    this.dataHandlers.push(handler);
+  }
+
+  onExit(handler: (code: number | null) => void): void {
+    this.exitHandlers.push(handler);
+  }
+
+  emit(event: unknown): void {
+    for (const handler of this.dataHandlers) {
+      handler(event);
+    }
+  }
+
+  emitExit(code: number | null): void {
+    for (const handler of this.exitHandlers) {
+      handler(code);
+    }
+  }
 }
 
 describe("ZellijPaneIO", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.useFakeTimers();
     nodePtySpawnMock.mockReset();
-    childSpawnMock.mockReset();
     execFileMock.mockReset();
-    execFileMock.mockImplementation((_file, _args, _options, callback) => {
-      callback?.(null, { stdout: "", stderr: "" });
-    });
-    childSpawnMock.mockImplementation(() => new FakeSubscribeProcess());
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  const flushAsyncWork = async (): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  test("renders a full viewport frame with explicit cursor positioning", async () => {
+    const { buildViewportFrame } = await import("../../src/backend/zellij/pane-io.js");
+
+    expect(buildViewportFrame(
+      ["\u001b[mhello", "\u001b[mworld\u001b[m"],
+      { col: 3, row: 2 }
+    )).toBe(
+      "\x1b[?25l\x1b[3J\x1b[H\x1b[2J"
+      + "\x1b[1;1H\x1b[2K\u001b[mhello"
+      + "\x1b[2;1H\x1b[2K\u001b[mworld\u001b[m"
+      + "\x1b[m\x1b[2;3H\x1b[?25h"
+    );
   });
 
   test("uses a dedicated hidden client per runtime and forwards resize to it", async () => {
@@ -53,6 +99,21 @@ describe("ZellijPaneIO", () => {
       .mockReturnValueOnce(firstClient)
       .mockReturnValueOnce(secondClient);
 
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("dump-screen")) {
+        callback?.(null, "", "");
+        return;
+      }
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          { id: 1, is_plugin: false, cursor_coordinates_in_pane: [1, 1] },
+          { id: 2, is_plugin: false, cursor_coordinates_in_pane: [1, 1] }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
     const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
 
     const first = new ZellijPaneIO({ session: "main", paneId: "terminal_1" });
@@ -71,5 +132,327 @@ describe("ZellijPaneIO", () => {
 
     expect(firstClient.kill).toHaveBeenCalledTimes(1);
     expect(secondClient.kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("serializes write batches so Enter cannot overtake earlier text", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const pendingWriteCallbacks: Array<() => void> = [];
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("dump-screen")) {
+        callback?.(null, "\u001b[mprompt\u001b[m", "");
+        return;
+      }
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 0,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [7, 1]
+          }
+        ]), "");
+        return;
+      }
+      if (args.includes("write") || args.includes("write-chars")) {
+        pendingWriteCallbacks.push(() => callback?.(null, "", ""));
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({ session: "main", paneId: "terminal_0" });
+
+    await flushAsyncWork();
+    execFileMock.mockClear();
+
+    io.write("e");
+    await vi.advanceTimersByTimeAsync(12);
+
+    io.write("cho");
+    await vi.advanceTimersByTimeAsync(12);
+
+    io.write("\r");
+    await vi.advanceTimersByTimeAsync(12);
+
+    const currentWriteCalls = () => execFileMock.mock.calls.filter(([, args]) =>
+      (args as string[]).includes("write") || (args as string[]).includes("write-chars")
+    );
+
+    expect(currentWriteCalls()).toHaveLength(1);
+    expect(currentWriteCalls()[0]?.[1]).toEqual([
+      "--session", "main",
+      "action", "write-chars",
+      "--pane-id", "terminal_0",
+      "--",
+      "e"
+    ]);
+
+    pendingWriteCallbacks.shift()?.();
+    await flushAsyncWork();
+
+    expect(currentWriteCalls()).toHaveLength(2);
+    expect(currentWriteCalls()[1]?.[1]).toEqual([
+      "--session", "main",
+      "action", "write-chars",
+      "--pane-id", "terminal_0",
+      "--",
+      "cho"
+    ]);
+
+    pendingWriteCallbacks.shift()?.();
+    await flushAsyncWork();
+
+    expect(currentWriteCalls()).toHaveLength(3);
+    expect(currentWriteCalls()[2]?.[1]).toEqual([
+      "--session", "main",
+      "action", "write",
+      "--pane-id", "terminal_0",
+      "13"
+    ]);
+
+    pendingWriteCallbacks.shift()?.();
+    await flushAsyncWork();
+
+    io.kill();
+  });
+
+  test("passes write-chars payloads after -- so leading dashes are treated as text", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("dump-screen")) {
+        callback?.(null, "\u001b[mprompt\u001b[m", "");
+        return;
+      }
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 0,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [7, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({ session: "main", paneId: "terminal_0" });
+
+    await flushAsyncWork();
+    execFileMock.mockClear();
+
+    io.write("-n");
+    await vi.advanceTimersByTimeAsync(12);
+    await flushAsyncWork();
+
+    const writeCall = execFileMock.mock.calls.find(([, args]) =>
+      (args as string[]).includes("write-chars")
+    );
+
+    expect(writeCall?.[1]).toEqual([
+      "--session", "main",
+      "action", "write-chars",
+      "--pane-id", "terminal_0",
+      "--",
+      "-n"
+    ]);
+
+    io.kill();
+  });
+
+  test("renders bridge pane updates and only polls pane metadata for cursor", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const fakeBridge = new FakeNativeBridge();
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("dump-screen")) {
+        callback?.(new Error("dump-screen should not be used in bridge mode"), "", "");
+        return;
+      }
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 7,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [6, 2]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const { createZellijNativeBridgeStateStore } = await import("../../src/backend/zellij/native-bridge-state.js");
+    const nativeBridgeStateStore = createZellijNativeBridgeStateStore();
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_7",
+      nativeBridgeFactory: async (options) => {
+        expect(options.scrollbackLines).toBe(256);
+        return fakeBridge;
+      },
+      nativeBridgeStateStore,
+      scrollbackLines: 256
+    });
+
+    const frames: string[] = [];
+    io.onData((data) => frames.push(data));
+
+    await flushAsyncWork();
+    execFileMock.mockClear();
+
+    fakeBridge.emit({
+      type: "pane_render",
+      paneId: "terminal_7",
+      viewport: ["\u001b[mhello", "\u001b[mworld"],
+      scrollback: null,
+      isInitial: true
+    });
+
+    await flushAsyncWork();
+
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock.mock.calls[0]?.[1]).toEqual([
+      "--session", "main",
+      "action", "list-panes",
+      "--json",
+      "--all"
+    ]);
+    expect(frames.at(-1)).toBe(
+      "\x1b[?25l\x1b[3J\x1b[H\x1b[2J"
+      + "\x1b[1;1H\x1b[2K\u001b[mhello"
+      + "\x1b[2;1H\x1b[2K\u001b[mworld"
+      + "\x1b[m\x1b[2;6H\x1b[?25h"
+    );
+    expect(nativeBridgeStateStore.getPaneSnapshot("main", "terminal_7")).toEqual({
+      session: "main",
+      paneId: "terminal_7",
+      viewport: ["\u001b[mhello", "\u001b[mworld"],
+      scrollback: null,
+      updatedAt: expect.any(Number)
+    });
+
+    io.kill();
+    expect(fakeBridge.kill).toHaveBeenCalledTimes(1);
+    expect(nativeBridgeStateStore.getPaneSnapshot("main", "terminal_7")).toBeNull();
+  });
+
+  test("falls back to CLI viewport polling when native bridge startup fails", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("dump-screen")) {
+        callback?.(null, "\u001b[mprompt", "");
+        return;
+      }
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 0,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [7, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_0",
+      nativeBridgeFactory: async () => {
+        throw new Error("bridge unavailable");
+      }
+    });
+
+    const frames: string[] = [];
+    io.onData((data) => frames.push(data));
+
+    await flushAsyncWork();
+
+    expect(execFileMock.mock.calls.some(([, args]) => (args as string[]).includes("dump-screen"))).toBe(true);
+    expect(frames.at(-1)).toBe(
+      "\x1b[?25l\x1b[3J\x1b[H\x1b[2J"
+      + "\x1b[1;1H\x1b[2K\u001b[mprompt"
+      + "\x1b[m\x1b[1;7H\x1b[?25h"
+    );
+
+    io.kill();
+  });
+
+  test("falls back to CLI polling if the native bridge exits unexpectedly", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const fakeBridge = new FakeNativeBridge();
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("dump-screen")) {
+        callback?.(null, "\u001b[mfallback", "");
+        return;
+      }
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 3,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [9, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_3",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+    execFileMock.mockClear();
+
+    fakeBridge.emitExit(1);
+    await flushAsyncWork();
+
+    expect(execFileMock.mock.calls.some(([, args]) => (args as string[]).includes("dump-screen"))).toBe(true);
+
+    io.kill();
   });
 });

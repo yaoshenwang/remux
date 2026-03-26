@@ -9,6 +9,32 @@ vi.mock("node-pty", () => ({
   spawn: spawnMock
 }));
 
+class FakeNativeBridge {
+  private dataHandlers: Array<(event: unknown) => void> = [];
+  private exitHandlers: Array<(code: number | null) => void> = [];
+  public readonly kill = vi.fn();
+
+  onEvent(handler: (event: unknown) => void): void {
+    this.dataHandlers.push(handler);
+  }
+
+  onExit(handler: (code: number | null) => void): void {
+    this.exitHandlers.push(handler);
+  }
+
+  emit(event: unknown): void {
+    for (const handler of this.dataHandlers) {
+      handler(event);
+    }
+  }
+
+  emitExit(code: number | null): void {
+    for (const handler of this.exitHandlers) {
+      handler(code);
+    }
+  }
+}
+
 describe("ZellijCliExecutor", () => {
   const tempDirs: string[] = [];
 
@@ -110,6 +136,38 @@ describe("ZellijCliExecutor", () => {
       REMUX_ORIGINAL_SHELL: process.env.SHELL?.trim() || "/bin/sh",
       REMUX: "1"
     }));
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("waits for PTY bootstrap sessions to become live before createSession resolves", async () => {
+    const kill = vi.fn();
+    const onExit = vi.fn();
+    spawnMock.mockReturnValue({ kill, onExit });
+
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const executor = new ZellijCliExecutor({
+      timeoutMs: 800,
+      logger: { log: vi.fn(), error: vi.fn() }
+    });
+
+    const executorWithInternals = executor as unknown as {
+      listSessionSummaries: () => Promise<Array<{ name: string; lifecycle?: string }>>;
+      tryCreateSessionInBackground: (name: string) => Promise<boolean>;
+      listSessionSummariesImmediate: () => Promise<Array<{ name: string; lifecycle?: string }>>;
+    };
+
+    executorWithInternals.listSessionSummaries = vi.fn().mockResolvedValue([]);
+    executorWithInternals.tryCreateSessionInBackground = vi.fn().mockRejectedValue(
+      new Error("attach -b failed")
+    );
+    executorWithInternals.listSessionSummariesImmediate = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ name: "live-later", lifecycle: "exited" }])
+      .mockResolvedValueOnce([{ name: "live-later", lifecycle: "live" }]);
+
+    await expect(executor.createSession("live-later")).resolves.toBeUndefined();
+
+    expect(executorWithInternals.listSessionSummariesImmediate).toHaveBeenCalledTimes(3);
     expect(kill).toHaveBeenCalledTimes(1);
   });
 
@@ -269,6 +327,145 @@ describe("ZellijCliExecutor", () => {
     });
   });
 
+  test("uses native bridge scrollback cache for precise capture when available", async () => {
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const { createZellijNativeBridgeStateStore } = await import("../../src/backend/zellij/native-bridge-state.js");
+    const nativeBridgeStateStore = createZellijNativeBridgeStateStore();
+    nativeBridgeStateStore.updatePaneRender("main", "terminal_3", {
+      viewport: ["prompt", "latest"],
+      scrollback: ["line 1", "line 2"]
+    });
+
+    const executor = new ZellijCliExecutor({
+      logger: { log: vi.fn(), error: vi.fn() },
+      nativeBridgeStateStore
+    });
+
+    const executorWithInternals = executor as unknown as {
+      paneSessionMap: Map<string, string>;
+      runZellij: (args: string[], session?: string, options?: { raw?: boolean }) => Promise<string>;
+    };
+    executorWithInternals.paneSessionMap.set("terminal_3", "main");
+    executorWithInternals.runZellij = vi.fn().mockResolvedValueOnce(JSON.stringify([
+      { id: 3, is_plugin: false, pane_content_columns: 118 }
+    ]));
+
+    await expect(executor.capturePane("terminal_3", { lines: 3 })).resolves.toEqual({
+      text: "line 2\nprompt\nlatest",
+      paneWidth: 118,
+      isApproximate: false
+    });
+
+    expect(executorWithInternals.runZellij).toHaveBeenCalledTimes(1);
+    expect(executorWithInternals.runZellij).toHaveBeenCalledWith(
+      ["action", "list-panes", "--json", "--all"],
+      "main"
+    );
+  });
+
+  test("falls back to CLI capture when native bridge cache has no scrollback payload", async () => {
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const { createZellijNativeBridgeStateStore } = await import("../../src/backend/zellij/native-bridge-state.js");
+    const nativeBridgeStateStore = createZellijNativeBridgeStateStore();
+    nativeBridgeStateStore.updatePaneRender("main", "terminal_3", {
+      viewport: ["visible only"],
+      scrollback: null
+    });
+
+    const executor = new ZellijCliExecutor({
+      logger: { log: vi.fn(), error: vi.fn() },
+      nativeBridgeStateStore
+    });
+
+    const executorWithInternals = executor as unknown as {
+      paneSessionMap: Map<string, string>;
+      runZellij: (args: string[], session?: string, options?: { raw?: boolean }) => Promise<string>;
+    };
+    executorWithInternals.paneSessionMap.set("terminal_3", "main");
+    executorWithInternals.runZellij = vi.fn()
+      .mockResolvedValueOnce("line 1\nline 2\n")
+      .mockResolvedValueOnce(JSON.stringify([
+        { id: 3, is_plugin: false, pane_content_columns: 118 }
+      ]));
+
+    await expect(executor.capturePane("terminal_3", { lines: 10 })).resolves.toEqual({
+      text: "line 1\nline 2\n",
+      paneWidth: 118,
+      isApproximate: true
+    });
+
+    expect(executorWithInternals.runZellij).toHaveBeenCalledTimes(2);
+  });
+
+  test("uses the uniquely tracked native bridge pane when the pane session cache is empty", async () => {
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const { createZellijNativeBridgeStateStore } = await import("../../src/backend/zellij/native-bridge-state.js");
+    const nativeBridgeStateStore = createZellijNativeBridgeStateStore();
+    nativeBridgeStateStore.updatePaneRender("main", "terminal_3", {
+      viewport: ["prompt", "latest"],
+      scrollback: ["line 1", "line 2"]
+    });
+
+    const executor = new ZellijCliExecutor({
+      logger: { log: vi.fn(), error: vi.fn() },
+      nativeBridgeStateStore
+    });
+
+    const executorWithInternals = executor as unknown as {
+      runZellij: (args: string[], session?: string, options?: { raw?: boolean }) => Promise<string>;
+    };
+    executorWithInternals.runZellij = vi.fn().mockResolvedValueOnce(JSON.stringify([
+      { id: 3, is_plugin: false, pane_content_columns: 118 }
+    ]));
+
+    await expect(executor.capturePane("terminal_3", { lines: 4 })).resolves.toEqual({
+      text: "line 1\nline 2\nprompt\nlatest",
+      paneWidth: 118,
+      isApproximate: false
+    });
+
+    expect(executorWithInternals.runZellij).toHaveBeenCalledWith(
+      ["action", "list-panes", "--json", "--all"],
+      "main"
+    );
+  });
+
+  test("captures precise scrollback through an on-demand native bridge snapshot when cache is unavailable", async () => {
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const executor = new ZellijCliExecutor({
+      logger: { log: vi.fn(), error: vi.fn() },
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    const executorWithInternals = executor as unknown as {
+      paneSessionMap: Map<string, string>;
+      runZellij: (args: string[], session?: string, options?: { raw?: boolean }) => Promise<string>;
+    };
+    executorWithInternals.paneSessionMap.set("terminal_3", "main");
+    executorWithInternals.runZellij = vi.fn().mockResolvedValueOnce(JSON.stringify([
+      { id: 3, is_plugin: false, pane_content_columns: 118 }
+    ]));
+
+    const capturePromise = executor.capturePane("terminal_3", { lines: 3 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    fakeBridge.emit({
+      type: "pane_render",
+      paneId: "terminal_3",
+      viewport: ["prompt", "latest"],
+      scrollback: ["line 1", "line 2"],
+      isInitial: true
+    });
+
+    await expect(capturePromise).resolves.toEqual({
+      text: "line 2\nprompt\nlatest",
+      paneWidth: 118,
+      isApproximate: false
+    });
+    expect(fakeBridge.kill).toHaveBeenCalledTimes(1);
+  });
+
   test("passes the remux shell wrapper to background session creation", async () => {
     const socketDir = makeSocketDir();
     const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
@@ -304,6 +501,31 @@ describe("ZellijCliExecutor", () => {
         })
       }
     );
+  });
+
+  test("waits for background-created sessions to become live", async () => {
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const executor = new ZellijCliExecutor({
+      timeoutMs: 800,
+      logger: { log: vi.fn(), error: vi.fn() }
+    });
+
+    const executorWithInternals = executor as unknown as {
+      runZellij: (args: string[], session?: string) => Promise<string>;
+      listSessionSummariesImmediate: () => Promise<Array<{ name: string; lifecycle?: string }>>;
+      tryCreateSessionInBackground: (name: string) => Promise<boolean>;
+    };
+
+    executorWithInternals.runZellij = vi.fn().mockResolvedValue("");
+    executorWithInternals.listSessionSummariesImmediate = vi.fn()
+      .mockResolvedValueOnce([{ name: "background-session", lifecycle: "exited" }])
+      .mockResolvedValueOnce([{ name: "background-session", lifecycle: "live" }]);
+
+    await expect(
+      executorWithInternals.tryCreateSessionInBackground("background-session")
+    ).resolves.toBe(true);
+
+    expect(executorWithInternals.listSessionSummariesImmediate).toHaveBeenCalledTimes(2);
   });
 
   afterEach(() => {

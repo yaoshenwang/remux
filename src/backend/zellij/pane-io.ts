@@ -1,26 +1,76 @@
-import { spawn, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as pty from "node-pty";
 import type { PtyProcess, PtyFactory } from "../pty/pty-adapter.js";
-import type { ZellijSubscribeEvent } from "./parser.js";
+import type { ZellijPaneJson } from "./parser.js";
+import {
+  createZellijNativeBridge,
+  type CreateZellijNativeBridgeOptions,
+  type ZellijNativeBridge,
+  type ZellijNativeBridgeFactory
+} from "./native-bridge.js";
+import {
+  getDefaultZellijNativeBridgeStateStore,
+  type ZellijNativeBridgeStateStore
+} from "./native-bridge-state.js";
 
 const execFileAsync = promisify(execFile);
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
+interface ZellijCursorPosition {
+  col: number;
+  row: number;
+}
+
+type StreamMode = "pending" | "native-bridge" | "cli-polling";
+
+export function parseDumpScreenViewport(output: string): string[] {
+  const normalized = output
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n");
+  const lines = normalized.split("\n");
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+export function buildViewportFrame(
+  viewport: string[],
+  cursor: ZellijCursorPosition | null
+): string {
+  const parts: string[] = ["\x1b[?25l", "\x1b[3J\x1b[H\x1b[2J"];
+
+  for (let index = 0; index < viewport.length; index += 1) {
+    parts.push(`\x1b[${index + 1};1H\x1b[2K`);
+    parts.push(viewport[index]);
+  }
+
+  parts.push("\x1b[m");
+  if (cursor) {
+    parts.push(`\x1b[${cursor.row};${cursor.col}H`);
+    parts.push("\x1b[?25h");
+  }
+
+  return parts.join("");
+}
+
 /**
- * A PtyProcess that uses `zellij subscribe` for output and
- * `zellij action write` (raw bytes) for input.
+ * A PtyProcess that mirrors a zellij pane.
  *
- * Output model:
- * - Viewport snapshots from subscribe are diffed and sent as cursor-addressed
- *   terminal updates. This is a viewport viewer, not a full PTY stream.
- * - No server-side reflow: raw viewport lines are sent directly to xterm.js.
- *   The CSS grid constraint ensures xterm fits its container, and xterm
- *   handles column sizing via FitAddon.
+ * Preferred output mode:
+ * - native bridge subscription to zellij pane-render updates
+ * - low-frequency CLI cursor refresh via `list-panes --json --all`
+ *
+ * Fallback output mode:
+ * - CLI viewport polling via `dump-screen --ansi`
+ * - cursor polling via `list-panes --json --all`
  *
  * Input model:
- * - Batched `zellij action write/write-chars` for keystroke delivery.
+ * - Batched `zellij action write/write-chars` delivery.
+ * - Writes are serialized so later Enter/control keys cannot overtake
+ *   earlier text chunks.
  */
 export class ZellijPaneIO implements PtyProcess {
   private readonly binary: string;
@@ -28,21 +78,43 @@ export class ZellijPaneIO implements PtyProcess {
   private readonly paneId: string;
   private readonly logger?: Pick<Console, "log" | "error">;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly nativeBridgeFactory: ZellijNativeBridgeFactory;
+  private readonly nativeBridgeStateStore: ZellijNativeBridgeStateStore;
+  private readonly scrollbackLines?: number;
 
   private dataHandlers: Array<(data: string) => void> = [];
   private exitHandlers: Array<(code: number) => void> = [];
   private hiddenClient: pty.IPty | null = null;
-  private subscribeProc: ReturnType<typeof spawn> | null = null;
+  private nativeBridge: ZellijNativeBridge | null = null;
   private killed = false;
+  private streamMode: StreamMode = "pending";
 
-  /** Previous viewport for diffing (avoid sending unchanged lines). */
-  private prevViewport: string[] = [];
+  /** Last full-frame payload sent to the frontend. */
+  private lastFrame = "";
+  private lastNativeViewport: string[] | null = null;
+  private lastNativeScrollback: string[] | null = null;
+  private lastCursor: ZellijCursorPosition | null = null;
 
-  /** Write buffer for batching keystrokes into fewer process spawns. */
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshInFlight = false;
+  private refreshQueued = false;
+
+  private cursorTimer: ReturnType<typeof setTimeout> | null = null;
+  private cursorInFlight = false;
+  private cursorQueued = false;
+
+  private refreshBurstUntil = 0;
+  private missingPaneCount = 0;
+
   private writeBuf = "";
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
-  private writeInFlight = false;
-  private static readonly WRITE_BATCH_MS = 8;
+  private writeQueue: Promise<void> = Promise.resolve();
+
+  private static readonly WRITE_BATCH_MS = 12;
+  private static readonly ACTIVE_REFRESH_MS = 40;
+  private static readonly IDLE_REFRESH_MS = 250;
+  private static readonly ACTIVE_REFRESH_WINDOW_MS = 1_200;
+  private static readonly MAX_MISSING_PANE_POLLS = 3;
 
   constructor(options: {
     binary?: string;
@@ -50,18 +122,112 @@ export class ZellijPaneIO implements PtyProcess {
     paneId: string;
     logger?: Pick<Console, "log" | "error">;
     socketDir?: string;
+    nativeBridgeFactory?: ZellijNativeBridgeFactory;
+    nativeBridgeStateStore?: ZellijNativeBridgeStateStore;
+    scrollbackLines?: number;
   }) {
     this.binary = options.binary ?? "zellij";
     this.session = options.session;
     this.paneId = options.paneId;
     this.logger = options.logger;
+    this.nativeBridgeFactory = options.nativeBridgeFactory ?? createZellijNativeBridge;
+    this.nativeBridgeStateStore = options.nativeBridgeStateStore ?? getDefaultZellijNativeBridgeStateStore();
+    this.scrollbackLines = options.scrollbackLines;
     this.env = {
       ...process.env,
       ...(options.socketDir ? { ZELLIJ_SOCKET_DIR: options.socketDir } : {})
     };
 
     this.acquireHiddenClient();
-    this.startSubscribe();
+    void this.initializeStream(options.socketDir);
+  }
+
+  private async initializeStream(socketDir?: string): Promise<void> {
+    let bridge: ZellijNativeBridge | null = null;
+    try {
+      bridge = await this.nativeBridgeFactory(this.buildNativeBridgeOptions(socketDir));
+    } catch (error) {
+      this.logger?.error?.(`[zellij-native-bridge] ${String(error)}`);
+    }
+
+    if (this.killed) {
+      bridge?.kill();
+      return;
+    }
+
+    if (bridge) {
+      this.attachNativeBridge(bridge);
+      return;
+    }
+
+    this.enableCliPollingMode();
+  }
+
+  private buildNativeBridgeOptions(socketDir?: string): CreateZellijNativeBridgeOptions {
+    return {
+      session: this.session,
+      paneId: this.paneId,
+      zellijBinary: this.binary,
+      socketDir,
+      logger: this.logger,
+      env: this.env,
+      scrollbackLines: this.scrollbackLines
+    };
+  }
+
+  private attachNativeBridge(bridge: ZellijNativeBridge): void {
+    this.streamMode = "native-bridge";
+    this.nativeBridge = bridge;
+    this.missingPaneCount = 0;
+
+    bridge.onEvent((event) => {
+      if (this.killed) {
+        return;
+      }
+      if (event.type === "pane_render" && event.paneId === this.paneId) {
+        this.lastNativeViewport = event.viewport;
+        this.lastNativeScrollback = event.scrollback;
+        this.nativeBridgeStateStore.updatePaneRender(this.session, this.paneId, {
+          viewport: event.viewport,
+          scrollback: event.scrollback
+        });
+        this.emitNativeFrame();
+        this.requestCursorRefresh({ immediate: true, boost: true });
+        return;
+      }
+      if (event.type === "pane_closed" && event.paneId === this.paneId) {
+        this.nativeBridgeStateStore.clearPane(this.session, this.paneId);
+        this.emitExit(0);
+        return;
+      }
+      if (event.type === "error") {
+        this.logger?.error?.(`[zellij-native-bridge] ${event.message}`);
+      }
+    });
+
+    bridge.onExit((code) => {
+      if (this.killed || this.streamMode !== "native-bridge") {
+        return;
+      }
+      this.nativeBridge = null;
+      this.lastNativeViewport = null;
+      this.lastNativeScrollback = null;
+      this.nativeBridgeStateStore.clearPane(this.session, this.paneId);
+      if (code !== 0 && code !== null) {
+        this.logger?.error?.(
+          `[zellij-native-bridge] bridge exited with code ${code}, falling back to CLI viewport mode`
+        );
+      }
+      this.enableCliPollingMode();
+    });
+  }
+
+  private enableCliPollingMode(): void {
+    if (this.killed || this.streamMode === "cli-polling") {
+      return;
+    }
+    this.streamMode = "cli-polling";
+    this.requestRefresh({ immediate: true, boost: true });
   }
 
   private acquireHiddenClient(): void {
@@ -102,127 +268,223 @@ export class ZellijPaneIO implements PtyProcess {
     this.hiddenClient = null;
   }
 
-  private startSubscribe(): void {
-    const args = [
-      "--session", this.session,
-      "subscribe",
-      "--pane-id", this.paneId,
-      "--format", "json",
-      "--ansi",
-      "--scrollback"
-    ];
-
-    this.subscribeProc = spawn(this.binary, args, {
-      env: this.env,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-
-    let buffer = "";
-    this.subscribeProc.stdout?.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        this.handleSubscribeEvent(line);
-      }
-    });
-
-    this.subscribeProc.stderr?.on("data", (chunk: Buffer) => {
-      this.logger?.error(`[zellij-subscribe] ${chunk.toString()}`);
-    });
-
-    this.subscribeProc.on("exit", (code) => {
-      if (!this.killed) {
-        this.logger?.log(`[zellij-subscribe] exited code=${code}`);
-        for (const h of this.exitHandlers) h(code ?? 1);
-      }
-    });
+  private boostRefresh(): void {
+    this.refreshBurstUntil = Date.now() + ZellijPaneIO.ACTIVE_REFRESH_WINDOW_MS;
   }
 
-  private handleSubscribeEvent(jsonLine: string): void {
-    let event: ZellijSubscribeEvent;
+  private currentRefreshDelay(): number {
+    return Date.now() < this.refreshBurstUntil
+      ? ZellijPaneIO.ACTIVE_REFRESH_MS
+      : ZellijPaneIO.IDLE_REFRESH_MS;
+  }
+
+  private scheduleRefresh(delay: number): void {
+    if (this.killed || this.refreshTimer || this.streamMode !== "cli-polling") {
+      return;
+    }
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refreshViewport();
+    }, delay);
+  }
+
+  private requestRefresh(options: { immediate?: boolean; boost?: boolean } = {}): void {
+    if (this.killed) {
+      return;
+    }
+
+    if (options.boost) {
+      this.boostRefresh();
+    }
+
+    if (this.streamMode === "native-bridge") {
+      this.requestCursorRefresh(options);
+      return;
+    }
+
+    if (this.streamMode !== "cli-polling") {
+      return;
+    }
+
+    if (options.immediate) {
+      if (this.refreshTimer) {
+        clearTimeout(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+      if (this.refreshInFlight) {
+        this.refreshQueued = true;
+        return;
+      }
+      this.scheduleRefresh(0);
+      return;
+    }
+
+    if (!this.refreshTimer) {
+      this.scheduleRefresh(this.currentRefreshDelay());
+    }
+  }
+
+  private async refreshViewport(): Promise<void> {
+    if (this.killed || this.streamMode !== "cli-polling") {
+      return;
+    }
+
+    if (this.refreshInFlight) {
+      this.refreshQueued = true;
+      return;
+    }
+
+    this.refreshInFlight = true;
     try {
-      event = JSON.parse(jsonLine);
-    } catch {
-      return;
-    }
+      const [screenResult, panesResult] = await Promise.all([
+        execFileAsync(this.binary, [
+          "--session", this.session,
+          "action", "dump-screen",
+          "--pane-id", this.paneId,
+          "--ansi"
+        ], {
+          timeout: 3_000,
+          env: this.env,
+          encoding: "utf8"
+        }),
+        execFileAsync(this.binary, [
+          "--session", this.session,
+          "action", "list-panes",
+          "--json",
+          "--all"
+        ], {
+          timeout: 3_000,
+          env: this.env,
+          encoding: "utf8"
+        })
+      ]);
 
-    if (event.event === "pane_closed") {
-      this.killed = true;
-      if (this.subscribeProc) {
-        this.subscribeProc.kill("SIGTERM");
-        this.subscribeProc = null;
+      const pane = findPaneFromList(panesResult.stdout, this.paneId);
+      if (!pane) {
+        this.handleMissingPane(0);
+        return;
       }
-      for (const h of this.exitHandlers) h(0);
-      this.dataHandlers = [];
-      this.exitHandlers = [];
-      return;
-    }
 
-    if (event.event !== "pane_update") return;
-
-    const viewport = event.viewport ?? [];
-    const output = this.renderViewport(viewport, event.scrollback, event.is_initial);
-    if (output) {
-      for (const h of this.dataHandlers) h(output);
+      this.missingPaneCount = 0;
+      const viewport = parseDumpScreenViewport(screenResult.stdout);
+      const frame = buildViewportFrame(viewport, parseCursorCoordinates(pane.cursor_coordinates_in_pane));
+      this.emitFrame(frame);
+    } catch (error) {
+      if (isTerminalGoneError(error)) {
+        this.handleMissingPane(1);
+        return;
+      }
+      this.logger?.error?.(`[zellij-viewport] ${String(error)}`);
+    } finally {
+      this.refreshInFlight = false;
+      if (this.killed || this.streamMode !== "cli-polling") {
+        return;
+      }
+      if (this.refreshQueued) {
+        this.refreshQueued = false;
+        this.scheduleRefresh(0);
+        return;
+      }
+      this.scheduleRefresh(this.currentRefreshDelay());
     }
-    this.prevViewport = viewport;
   }
 
-  /**
-   * Convert viewport lines into a terminal byte stream for xterm.js.
-   * Initial: clear + full write. Subsequent: cursor-addressed diff.
-   */
-  private renderViewport(
-    viewport: string[],
-    scrollback: string[] | null,
-    isInitial: boolean
-  ): string {
-    const parts: string[] = [];
+  private scheduleCursorRefresh(delay: number): void {
+    if (this.killed || this.cursorTimer || this.streamMode !== "native-bridge") {
+      return;
+    }
+    this.cursorTimer = setTimeout(() => {
+      this.cursorTimer = null;
+      void this.refreshCursor();
+    }, delay);
+  }
 
-    if (isInitial) {
-      if (scrollback?.length) {
-        for (const line of scrollback) {
-          parts.push(line + "\r\n");
-        }
-      }
-      parts.push("\x1b[2J\x1b[H");
-      for (let i = 0; i < viewport.length; i++) {
-        if (i > 0) parts.push("\r\n");
-        parts.push(viewport[i]);
-      }
-      parts.push("\x1b[m");
-      return parts.join("");
+  private requestCursorRefresh(options: { immediate?: boolean; boost?: boolean } = {}): void {
+    if (this.killed || this.streamMode !== "native-bridge") {
+      return;
     }
 
-    const maxLines = Math.max(viewport.length, this.prevViewport.length);
-    let hasChanges = false;
-
-    for (let i = 0; i < maxLines; i++) {
-      const newLine = viewport[i] ?? "";
-      const oldLine = this.prevViewport[i] ?? "";
-      if (newLine !== oldLine) {
-        parts.push("\x1b[m");
-        parts.push(`\x1b[${i + 1};1H`);
-        parts.push("\x1b[2K");
-        parts.push(newLine);
-        hasChanges = true;
-      }
+    if (options.boost) {
+      this.boostRefresh();
     }
 
-    if (!hasChanges) return "";
-    parts.push("\x1b[m");
-    return parts.join("");
+    if (options.immediate) {
+      if (this.cursorTimer) {
+        clearTimeout(this.cursorTimer);
+        this.cursorTimer = null;
+      }
+      if (this.cursorInFlight) {
+        this.cursorQueued = true;
+        return;
+      }
+      this.scheduleCursorRefresh(0);
+      return;
+    }
+
+    if (!this.cursorTimer) {
+      this.scheduleCursorRefresh(this.currentRefreshDelay());
+    }
+  }
+
+  private async refreshCursor(): Promise<void> {
+    if (this.killed || this.streamMode !== "native-bridge") {
+      return;
+    }
+
+    if (this.cursorInFlight) {
+      this.cursorQueued = true;
+      return;
+    }
+
+    this.cursorInFlight = true;
+    try {
+      const panesResult = await execFileAsync(this.binary, [
+        "--session", this.session,
+        "action", "list-panes",
+        "--json",
+        "--all"
+      ], {
+        timeout: 3_000,
+        env: this.env,
+        encoding: "utf8"
+      });
+
+      const pane = findPaneFromList(panesResult.stdout, this.paneId);
+      if (!pane) {
+        this.handleMissingPane(0);
+        return;
+      }
+
+      this.missingPaneCount = 0;
+      this.lastCursor = parseCursorCoordinates(pane.cursor_coordinates_in_pane);
+      this.emitNativeFrame();
+    } catch (error) {
+      if (isTerminalGoneError(error)) {
+        this.handleMissingPane(1);
+        return;
+      }
+      this.logger?.error?.(`[zellij-cursor] ${String(error)}`);
+    } finally {
+      this.cursorInFlight = false;
+      if (this.killed || this.streamMode !== "native-bridge") {
+        return;
+      }
+      if (this.cursorQueued) {
+        this.cursorQueued = false;
+        this.scheduleCursorRefresh(0);
+        return;
+      }
+      this.scheduleCursorRefresh(this.currentRefreshDelay());
+    }
   }
 
   write(data: string): void {
     if (this.killed) return;
     this.writeBuf += data;
     if (!this.writeTimer) {
-      const delay = this.writeInFlight ? ZellijPaneIO.WRITE_BATCH_MS : 0;
-      this.writeTimer = setTimeout(() => this.flushWriteBuffer(), delay);
+      this.writeTimer = setTimeout(() => this.flushWriteBuffer(), ZellijPaneIO.WRITE_BATCH_MS);
     }
+    this.requestRefresh({ boost: true });
   }
 
   private flushWriteBuffer(): void {
@@ -231,33 +493,45 @@ export class ZellijPaneIO implements PtyProcess {
 
     const data = this.writeBuf;
     this.writeBuf = "";
-    this.writeInFlight = true;
 
-    const hasControlChars = /[\x00-\x1f]/.test(data);
-    const bytes = Buffer.from(data, "utf8");
+    const runWrite = async (): Promise<void> => {
+      const hasControlChars = /[\x00-\x1f]/.test(data);
+      const bytes = Buffer.from(data, "utf8");
 
-    const args = (hasControlChars && bytes.length <= 256)
-      ? [
-          "--session", this.session,
-          "action", "write",
-          "--pane-id", this.paneId,
-          ...Array.from(bytes).map(String)
-        ]
-      : [
-          "--session", this.session,
-          "action", "write-chars",
-          "--pane-id", this.paneId,
-          data
-        ];
+      const args = (hasControlChars && bytes.length <= 256)
+        ? [
+            "--session", this.session,
+            "action", "write",
+            "--pane-id", this.paneId,
+            ...Array.from(bytes).map(String)
+          ]
+        : [
+            "--session", this.session,
+            "action", "write-chars",
+            "--pane-id", this.paneId,
+            "--",
+            data
+          ];
 
-    execFileAsync(this.binary, args, { timeout: 3_000, env: this.env })
-      .catch((err) => {
-        this.logger?.error(`[zellij-write] ${err}`);
+      await execFileAsync(this.binary, args, {
+        timeout: 3_000,
+        env: this.env,
+        encoding: "utf8"
+      });
+    };
+
+    this.writeQueue = this.writeQueue
+      .then(runWrite, runWrite)
+      .catch((error) => {
+        this.logger?.error?.(`[zellij-write] ${String(error)}`);
       })
       .finally(() => {
-        this.writeInFlight = false;
+        if (this.killed) {
+          return;
+        }
+        this.requestRefresh({ immediate: true, boost: true });
         if (this.writeBuf && !this.writeTimer) {
-          this.writeTimer = setTimeout(() => this.flushWriteBuffer(), 0);
+          this.writeTimer = setTimeout(() => this.flushWriteBuffer(), ZellijPaneIO.WRITE_BATCH_MS);
         }
       });
   }
@@ -267,6 +541,7 @@ export class ZellijPaneIO implements PtyProcess {
       return;
     }
     this.hiddenClient.resize(Math.max(2, Math.floor(_cols)), Math.max(2, Math.floor(_rows)));
+    this.requestRefresh({ immediate: true, boost: true });
   }
 
   onData(handler: (data: string) => void): void {
@@ -277,19 +552,78 @@ export class ZellijPaneIO implements PtyProcess {
     this.exitHandlers.push(handler);
   }
 
+  private emitNativeFrame(): void {
+    if (!this.lastNativeViewport) {
+      return;
+    }
+    const frame = buildViewportFrame(this.lastNativeViewport, this.lastCursor);
+    this.emitFrame(frame);
+  }
+
+  private emitFrame(frame: string): void {
+    if (frame === this.lastFrame) {
+      return;
+    }
+    this.lastFrame = frame;
+    for (const handler of this.dataHandlers) {
+      handler(frame);
+    }
+  }
+
+  private handleMissingPane(exitCode: number): void {
+    this.missingPaneCount += 1;
+    if (this.missingPaneCount >= ZellijPaneIO.MAX_MISSING_PANE_POLLS) {
+      this.emitExit(exitCode);
+    }
+  }
+
+  private emitExit(code: number): void {
+    if (this.killed) {
+      return;
+    }
+    this.killed = true;
+    this.clearTimers();
+    this.releaseNativeBridge();
+    this.releaseHiddenClient();
+    const exitHandlers = [...this.exitHandlers];
+    this.dataHandlers = [];
+    this.exitHandlers = [];
+    for (const handler of exitHandlers) {
+      handler(code);
+    }
+  }
+
   kill(): void {
     this.killed = true;
+    this.clearTimers();
+    this.dataHandlers = [];
+    this.exitHandlers = [];
+    this.releaseNativeBridge();
+    this.releaseHiddenClient();
+  }
+
+  private releaseNativeBridge(): void {
+    this.nativeBridgeStateStore.clearPane(this.session, this.paneId);
+    if (!this.nativeBridge) {
+      return;
+    }
+    this.nativeBridge.kill();
+    this.nativeBridge = null;
+  }
+
+  private clearTimers(): void {
     if (this.writeTimer) {
       clearTimeout(this.writeTimer);
       this.writeTimer = null;
     }
-    if (this.subscribeProc) {
-      this.subscribeProc.kill("SIGTERM");
-      this.subscribeProc = null;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
     }
-    this.dataHandlers = [];
-    this.exitHandlers = [];
-    this.releaseHiddenClient();
+    if (this.cursorTimer) {
+      clearTimeout(this.cursorTimer);
+      this.cursorTimer = null;
+    }
   }
 }
 
@@ -300,15 +634,24 @@ export class ZellijPtyFactory implements PtyFactory {
   private readonly binary: string;
   private readonly logger?: Pick<Console, "log" | "error">;
   private readonly socketDir?: string;
+  private readonly nativeBridgeFactory?: ZellijNativeBridgeFactory;
+  private readonly nativeBridgeStateStore?: ZellijNativeBridgeStateStore;
+  private readonly scrollbackLines?: number;
 
   constructor(options?: {
     zellijBinary?: string;
     logger?: Pick<Console, "log" | "error">;
     socketDir?: string;
+    nativeBridgeFactory?: ZellijNativeBridgeFactory;
+    nativeBridgeStateStore?: ZellijNativeBridgeStateStore;
+    scrollbackLines?: number;
   }) {
     this.binary = options?.zellijBinary ?? "zellij";
     this.logger = options?.logger;
     this.socketDir = options?.socketDir;
+    this.nativeBridgeFactory = options?.nativeBridgeFactory;
+    this.nativeBridgeStateStore = options?.nativeBridgeStateStore;
+    this.scrollbackLines = options?.scrollbackLines;
   }
 
   spawnAttach(session: string): PtyProcess {
@@ -321,7 +664,59 @@ export class ZellijPtyFactory implements PtyFactory {
       session: sessionName,
       paneId,
       logger: this.logger,
-      socketDir: this.socketDir
+      socketDir: this.socketDir,
+      nativeBridgeFactory: this.nativeBridgeFactory,
+      nativeBridgeStateStore: this.nativeBridgeStateStore,
+      scrollbackLines: this.scrollbackLines
     });
   }
+}
+
+function parseCursorCoordinates(
+  cursorCoordinates: [number, number] | null
+): ZellijCursorPosition | null {
+  if (!cursorCoordinates) {
+    return null;
+  }
+  const [col, row] = cursorCoordinates;
+  if (!Number.isFinite(col) || !Number.isFinite(row)) {
+    return null;
+  }
+  return {
+    col: Math.max(1, Math.floor(col)),
+    row: Math.max(1, Math.floor(row))
+  };
+}
+
+function findPaneFromList(json: string, paneId: string): ZellijPaneJson | null {
+  const targetId = extractPaneNumericId(paneId);
+  if (targetId < 0) {
+    return null;
+  }
+
+  let panes: ZellijPaneJson[];
+  try {
+    panes = JSON.parse(json);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(panes)) {
+    return null;
+  }
+
+  return panes.find((pane) => !pane.is_plugin && pane.id === targetId) ?? null;
+}
+
+function extractPaneNumericId(paneId: string): number {
+  const match = paneId.match(/^(?:terminal_)?(\d+)$/);
+  return match ? parseInt(match[1], 10) : -1;
+}
+
+function isTerminalGoneError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("No pane")
+    || message.includes("No session named")
+    || message.includes("There is no active session")
+    || message.includes("not found");
 }
