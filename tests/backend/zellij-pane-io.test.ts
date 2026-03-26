@@ -27,6 +27,7 @@ class FakeNativeBridge {
   private dataHandlers: Array<(event: unknown) => void> = [];
   private exitHandlers: Array<(code: number | null) => void> = [];
   public readonly kill = vi.fn();
+  public readonly sendCommand = vi.fn(() => true);
 
   onEvent(handler: (event: unknown) => void): void {
     this.dataHandlers.push(handler);
@@ -82,7 +83,7 @@ describe("ZellijPaneIO", () => {
     );
   });
 
-  test("uses a dedicated hidden client per runtime and forwards resize to it", async () => {
+  test("creates a hidden client only when CLI resize fallback is needed", async () => {
     const firstClient = {
       resize: vi.fn(),
       write: vi.fn(),
@@ -119,11 +120,13 @@ describe("ZellijPaneIO", () => {
     const first = new ZellijPaneIO({ session: "main", paneId: "terminal_1" });
     const second = new ZellijPaneIO({ session: "main", paneId: "terminal_2" });
 
-    expect(nodePtySpawnMock).toHaveBeenCalledTimes(2);
+    expect(nodePtySpawnMock).not.toHaveBeenCalled();
 
     first.resize(120, 40);
     second.resize(90, 30);
+    await flushAsyncWork();
 
+    expect(nodePtySpawnMock).toHaveBeenCalledTimes(2);
     expect(firstClient.resize).toHaveBeenCalledWith(120, 40);
     expect(secondClient.resize).toHaveBeenCalledWith(90, 30);
 
@@ -132,6 +135,43 @@ describe("ZellijPaneIO", () => {
 
     expect(firstClient.kill).toHaveBeenCalledTimes(1);
     expect(secondClient.kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("holds the initial resize until the native bridge is ready", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const fakeBridge = new FakeNativeBridge();
+    let resolveBridge: ((bridge: FakeNativeBridge) => void) | null = null;
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_2",
+      nativeBridgeFactory: async () => new Promise((resolve) => {
+        resolveBridge = resolve;
+      })
+    });
+
+    io.resize(132, 41);
+    expect(nodePtySpawnMock).not.toHaveBeenCalled();
+
+    resolveBridge?.(fakeBridge);
+    await flushAsyncWork();
+
+    expect(fakeBridge.sendCommand).toHaveBeenCalledWith({
+      type: "terminal_resize",
+      cols: 132,
+      rows: 41
+    });
+    expect(hiddenClient.resize).not.toHaveBeenCalled();
+
+    io.kill();
   });
 
   test("serializes write batches so Enter cannot overtake earlier text", async () => {
@@ -357,6 +397,173 @@ describe("ZellijPaneIO", () => {
     io.kill();
     expect(fakeBridge.kill).toHaveBeenCalledTimes(1);
     expect(nativeBridgeStateStore.getPaneSnapshot("main", "terminal_7")).toBeNull();
+  });
+
+  test("emits exit when the native bridge reports that the pane closed", async () => {
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_4",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    const exits: number[] = [];
+    io.onExit((code) => exits.push(code));
+
+    await flushAsyncWork();
+
+    fakeBridge.emit({
+      type: "pane_closed",
+      paneId: "terminal_4"
+    });
+
+    expect(exits).toEqual([0]);
+    expect(fakeBridge.kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("prefers bridge commands for writes when the native bridge is active", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const fakeBridge = new FakeNativeBridge();
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 9,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [1, 1]
+          }
+        ]), "");
+        return;
+      }
+      if (args.includes("dump-screen")) {
+        callback?.(new Error("dump-screen should not be used in bridge mode"), "", "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_9",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+    execFileMock.mockClear();
+
+    io.write("echo");
+    await vi.advanceTimersByTimeAsync(12);
+    await flushAsyncWork();
+
+    io.write("\r");
+    await vi.advanceTimersByTimeAsync(12);
+    await flushAsyncWork();
+
+    expect(fakeBridge.sendCommand).toHaveBeenNthCalledWith(1, {
+      type: "write_chars",
+      chars: "echo"
+    });
+    expect(fakeBridge.sendCommand).toHaveBeenNthCalledWith(2, {
+      type: "write_bytes",
+      bytes: [13]
+    });
+    expect(execFileMock.mock.calls.some(([, args]) => {
+      const finalArgs = args as string[];
+      return finalArgs.includes("write") || finalArgs.includes("write-chars");
+    })).toBe(false);
+
+    io.kill();
+  });
+
+  test("falls back to CLI writes if the bridge command path rejects a write", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const fakeBridge = new FakeNativeBridge();
+    fakeBridge.sendCommand.mockReturnValue(false);
+    execFileMock.mockImplementation((_file, args, _options, callback) => {
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 5,
+            is_plugin: false,
+            cursor_coordinates_in_pane: [1, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_5",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+    execFileMock.mockClear();
+
+    io.write("echo");
+    await vi.advanceTimersByTimeAsync(12);
+    await flushAsyncWork();
+
+    expect(fakeBridge.sendCommand).toHaveBeenCalledWith({
+      type: "write_chars",
+      chars: "echo"
+    });
+    expect(execFileMock.mock.calls.some(([, args]) => (args as string[]).includes("write-chars"))).toBe(true);
+
+    io.kill();
+  });
+
+  test("prefers bridge resize and safely falls back to the hidden client", async () => {
+    const hiddenClient = {
+      resize: vi.fn(),
+      write: vi.fn(),
+      kill: vi.fn(),
+      onExit: vi.fn()
+    };
+    nodePtySpawnMock.mockReturnValue(hiddenClient);
+
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_7",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+
+    io.resize(120, 40);
+    expect(fakeBridge.sendCommand).toHaveBeenCalledWith({
+      type: "terminal_resize",
+      cols: 120,
+      rows: 40
+    });
+    expect(hiddenClient.resize).not.toHaveBeenCalled();
+
+    fakeBridge.sendCommand.mockReturnValue(false);
+    io.resize(80, 24);
+    expect(hiddenClient.resize).toHaveBeenCalledWith(80, 24);
+
+    io.kill();
   });
 
   test("falls back to CLI viewport polling when native bridge startup fails", async () => {

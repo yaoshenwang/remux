@@ -47,9 +47,31 @@ export type ZellijNativeBridgeEvent =
   | ZellijNativeBridgePaneClosedEvent
   | ZellijNativeBridgeErrorEvent;
 
+export interface ZellijNativeBridgeWriteCharsCommand {
+  type: "write_chars";
+  chars: string;
+}
+
+export interface ZellijNativeBridgeWriteBytesCommand {
+  type: "write_bytes";
+  bytes: number[];
+}
+
+export interface ZellijNativeBridgeTerminalResizeCommand {
+  type: "terminal_resize";
+  cols: number;
+  rows: number;
+}
+
+export type ZellijNativeBridgeCommand =
+  | ZellijNativeBridgeWriteCharsCommand
+  | ZellijNativeBridgeWriteBytesCommand
+  | ZellijNativeBridgeTerminalResizeCommand;
+
 export interface ZellijNativeBridge {
   onEvent(handler: (event: ZellijNativeBridgeEvent) => void): void;
   onExit(handler: (code: number | null) => void): void;
+  sendCommand(command: ZellijNativeBridgeCommand): boolean;
   kill(): void;
 }
 
@@ -60,6 +82,18 @@ export interface CreateZellijNativeBridgeOptions {
   socketDir?: string;
   scrollbackLines?: number;
   ansi?: boolean;
+  logger?: Pick<Console, "log" | "error">;
+  env?: NodeJS.ProcessEnv;
+  bridgeBinaryPath?: string;
+}
+
+export interface BootstrapZellijSessionOptions {
+  session: string;
+  defaultShell: string;
+  zellijBinary?: string;
+  socketDir?: string;
+  cwd?: string;
+  timeoutMs?: number;
   logger?: Pick<Console, "log" | "error">;
   env?: NodeJS.ProcessEnv;
   bridgeBinaryPath?: string;
@@ -169,6 +203,10 @@ export function parseZellijBridgeEventLine(line: string): ZellijNativeBridgeEven
   throw new Error(`unknown zellij bridge event type: ${String(event.type)}`);
 }
 
+export function serializeZellijBridgeCommand(command: ZellijNativeBridgeCommand): string {
+  return `${JSON.stringify(command)}\n`;
+}
+
 export async function createZellijNativeBridge(
   options: CreateZellijNativeBridgeOptions
 ): Promise<ZellijNativeBridge | null> {
@@ -224,7 +262,7 @@ export async function createZellijNativeBridge(
         spawn(bridgeBinary, args, {
           cwd: process.cwd(),
           env,
-          stdio: ["ignore", "pipe", "pipe"]
+          stdio: ["pipe", "pipe", "pipe"]
         }) as unknown as ChildProcessWithoutNullStreams,
         options.logger
       )
@@ -245,6 +283,58 @@ export async function createZellijNativeBridge(
     return null;
   }
   return bridge;
+}
+
+export async function bootstrapZellijSession(
+  options: BootstrapZellijSessionOptions
+): Promise<boolean> {
+  const env = { ...process.env, ...options.env };
+  const bridgeBinary = resolveZellijNativeBridgeBinary({
+    env,
+    explicitPath: options.bridgeBinaryPath
+  });
+  if (!bridgeBinary) {
+    options.logger?.log?.("[zellij-native-bridge] bootstrap helper binary not found");
+    return false;
+  }
+
+  const zellijBinary = options.zellijBinary ?? "zellij";
+  const versionOutput = await getZellijVersionOutput(zellijBinary, env, options.logger);
+  const parsedVersion = versionOutput ? parseZellijVersion(versionOutput) : null;
+  if (!parsedVersion || !isSupportedZellijVersion(parsedVersion)) {
+    const displayVersion = versionOutput?.trim() || "unknown";
+    options.logger?.log?.(
+      `[zellij-native-bridge] zellij ${displayVersion} does not satisfy >= `
+      + `${MIN_SUPPORTED_ZELLIJ_VERSION.major}.${MIN_SUPPORTED_ZELLIJ_VERSION.minor}.${MIN_SUPPORTED_ZELLIJ_VERSION.patch}, `
+      + "skipping detached bootstrap helper"
+    );
+    return false;
+  }
+
+  const args = [
+    "bootstrap-session",
+    "--session", options.session,
+    "--zellij-binary", zellijBinary,
+    "--default-shell", options.defaultShell
+  ];
+  if (options.socketDir) {
+    args.push("--socket-dir", options.socketDir);
+  }
+  if (options.cwd) {
+    args.push("--cwd", options.cwd);
+  }
+
+  try {
+    await execFileAsync(bridgeBinary, args, {
+      env,
+      timeout: options.timeoutMs ?? 5_000,
+      encoding: "utf8"
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`zellij detached bootstrap helper failed: ${message}`);
+  }
 }
 
 function isNativeBridgeEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -272,9 +362,9 @@ function resolveZellijNativeBridgeBinary(options: {
     ? ["zellij-bridge.exe", "remux-zellij-bridge.exe"]
     : ["zellij-bridge", "remux-zellij-bridge"];
   const candidates = [
-    ...packagedBinaryNames.map((binaryName) => path.resolve(moduleDir, binaryName)),
     ...devBinaryNames.map((binaryName) => path.resolve(moduleDir, "../../../native/zellij-bridge/target/release", binaryName)),
-    ...devBinaryNames.map((binaryName) => path.resolve(moduleDir, "../../../native/zellij-bridge/target/debug", binaryName))
+    ...devBinaryNames.map((binaryName) => path.resolve(moduleDir, "../../../native/zellij-bridge/target/debug", binaryName)),
+    ...packagedBinaryNames.map((binaryName) => path.resolve(moduleDir, binaryName))
   ];
 
   for (const candidate of candidates) {
@@ -372,6 +462,20 @@ class ManagedChildProcessZellijNativeBridge implements ZellijNativeBridge {
 
   onExit(handler: (code: number | null) => void): void {
     this.exitHandlers.push(handler);
+  }
+
+  sendCommand(command: ZellijNativeBridgeCommand): boolean {
+    if (this.exited || this.child.killed || this.child.stdin.destroyed || !this.child.stdin.writable) {
+      return false;
+    }
+
+    try {
+      this.child.stdin.write(serializeZellijBridgeCommand(command), "utf8");
+      return true;
+    } catch (error) {
+      this.logger?.error?.(`[zellij-native-bridge] failed to send command: ${String(error)}`);
+      return false;
+    }
   }
 
   kill(): void {
@@ -476,6 +580,20 @@ class ManagedPtyZellijNativeBridge implements ZellijNativeBridge {
 
   onExit(handler: (code: number | null) => void): void {
     this.exitHandlers.push(handler);
+  }
+
+  sendCommand(command: ZellijNativeBridgeCommand): boolean {
+    if (this.exited) {
+      return false;
+    }
+
+    try {
+      this.child.write(serializeZellijBridgeCommand(command));
+      return true;
+    } catch (error) {
+      this.logger?.error?.(`[zellij-native-bridge] failed to send command: ${String(error)}`);
+      return false;
+    }
   }
 
   kill(): void {

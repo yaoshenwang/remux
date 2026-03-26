@@ -4,7 +4,8 @@ import {
   compareZellijVersions,
   isSupportedZellijVersion,
   parseZellijBridgeEventLine,
-  parseZellijVersion
+  parseZellijVersion,
+  serializeZellijBridgeCommand
 } from "../../src/backend/zellij/native-bridge.js";
 
 describe("zellij native bridge helpers", () => {
@@ -73,5 +74,23 @@ describe("zellij native bridge helpers", () => {
     expect(() => parseZellijBridgeEventLine(JSON.stringify({
       type: "mystery"
     }))).toThrow(/unknown/i);
+  });
+
+  test("serializes bridge write and resize commands as NDJSON", () => {
+    expect(serializeZellijBridgeCommand({
+      type: "write_chars",
+      chars: "echo hello"
+    })).toBe("{\"type\":\"write_chars\",\"chars\":\"echo hello\"}\n");
+
+    expect(serializeZellijBridgeCommand({
+      type: "write_bytes",
+      bytes: [13, 27]
+    })).toBe("{\"type\":\"write_bytes\",\"bytes\":[13,27]}\n");
+
+    expect(serializeZellijBridgeCommand({
+      type: "terminal_resize",
+      cols: 120,
+      rows: 40
+    })).toBe("{\"type\":\"terminal_resize\",\"cols\":120,\"rows\":40}\n");
   });
 });
