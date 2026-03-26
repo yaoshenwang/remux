@@ -27,6 +27,8 @@ export interface ConnectionCallbacks {
   onControlMessage: (message: ControlServerMessage) => void;
   /** Called when control socket closes. */
   onControlClose: () => void;
+  /** Returns the current attached session name for reconnect auth. */
+  getAttachedSession: () => string;
 }
 
 export interface UseRemuxConnectionResult {
@@ -122,10 +124,12 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     const socket = new WebSocket(`${wsOrigin}/ws/control`);
     socket.onopen = () => {
       debugLog("control_socket.onopen");
+      const session = cbRef.current.getAttachedSession();
       socket.send(JSON.stringify({
         type: "auth",
         token,
         password: passwordValue || undefined,
+        ...(session ? { session } : {}),
       }));
     };
     socket.onmessage = (event) => {

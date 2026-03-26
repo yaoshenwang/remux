@@ -7,13 +7,14 @@
 
 import type {
   SemanticAdapter,
+  SemanticAdapterInstance,
   AdapterDetectContext,
   AdapterMatch,
   AdapterRuntimeContext,
   SemanticClientAction,
   SemanticActionResult
 } from "./types.js";
-import type { SemanticCapabilities, SemanticSessionState, SemanticEvent } from "../../shared/contracts/semantic.js";
+import type { SemanticCapabilities } from "../../shared/contracts/semantic.js";
 
 export interface AdapterRegistryOptions {
   logger?: Pick<Console, "log" | "error">;
@@ -21,6 +22,7 @@ export interface AdapterRegistryOptions {
 
 interface ActiveAdapter {
   adapter: SemanticAdapter;
+  instance: SemanticAdapterInstance;
   sessionName: string;
   paneId: string;
 }
@@ -84,8 +86,8 @@ export class AdapterRegistry {
     }
 
     try {
-      await adapter.start(context);
-      this.active.set(key, { adapter, sessionName: context.sessionName, paneId: context.paneId });
+      const instance = await adapter.start(context);
+      this.active.set(key, { adapter, instance, sessionName: context.sessionName, paneId: context.paneId });
       this.logger?.log(`[adapter-registry] started ${adapterId} for ${key}`);
       return true;
     } catch (err) {
@@ -101,7 +103,7 @@ export class AdapterRegistry {
     if (!entry) return;
 
     try {
-      await entry.adapter.stop();
+      await entry.instance.stop();
     } catch (err) {
       this.logger?.error(`[adapter-registry] stop error for ${entry.adapter.id}:`, err);
     }
@@ -111,8 +113,8 @@ export class AdapterRegistry {
   /** Handle a client action for an active adapter. */
   async handleAction(action: SemanticClientAction): Promise<SemanticActionResult> {
     for (const entry of this.active.values()) {
-      if (entry.adapter.id === action.adapterId && entry.adapter.handleClientAction) {
-        return entry.adapter.handleClientAction(action);
+      if (entry.adapter.id === action.adapterId && entry.instance.handleClientAction) {
+        return entry.instance.handleClientAction(action);
       }
     }
     return { ok: false, error: `no active adapter with id: ${action.adapterId}` };
@@ -129,9 +131,9 @@ export class AdapterRegistry {
 
   /** Clean up all active adapters. */
   async dispose(): Promise<void> {
-    for (const [key, entry] of this.active) {
+    for (const [, entry] of this.active) {
       try {
-        await entry.adapter.stop();
+        await entry.instance.stop();
       } catch (err) {
         this.logger?.error(`[adapter-registry] dispose error for ${entry.adapter.id}:`, err);
       }

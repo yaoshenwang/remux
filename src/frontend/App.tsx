@@ -232,6 +232,7 @@ export const App = () => {
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
     },
+    getAttachedSession: () => attachedSessionRef.current,
   });
 
   const { authReady, serverConfig, capabilities, errorMessage, statusMessage, password,

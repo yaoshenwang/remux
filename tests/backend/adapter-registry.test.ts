@@ -17,7 +17,6 @@ const nullCapabilities: SemanticCapabilities = {
 };
 
 function createMockAdapter(id: string, matchConfidence = 0): SemanticAdapter {
-  let started = false;
   return {
     id,
     displayName: `Mock ${id}`,
@@ -25,8 +24,11 @@ function createMockAdapter(id: string, matchConfidence = 0): SemanticAdapter {
       return { matched: matchConfidence > 0, confidence: matchConfidence, suggestedMode: "passive" };
     },
     getCapabilities() { return nullCapabilities; },
-    async start() { started = true; },
-    async stop() { started = false; },
+    async start() {
+      return {
+        async stop() {},
+      };
+    },
   };
 }
 

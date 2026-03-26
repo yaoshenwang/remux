@@ -67,6 +67,20 @@ export interface SemanticActionResult {
 
 // ── Adapter interface ──
 
+/** A running adapter instance for a specific session/pane. */
+export interface SemanticAdapterInstance {
+  /** Stop observing and clean up. */
+  stop(): Promise<void>;
+  /** Handle a client action (optional — only for active mode). */
+  handleClientAction?(action: SemanticClientAction): Promise<SemanticActionResult>;
+}
+
+/**
+ * Semantic adapter definition.
+ *
+ * `start()` returns a new instance per session/pane, so concurrent
+ * panes running the same adapter do not share state.
+ */
 export interface SemanticAdapter {
   /** Unique adapter identifier (e.g. "codex", "claude-code"). */
   id: string;
@@ -76,10 +90,6 @@ export interface SemanticAdapter {
   detect(context: AdapterDetectContext): Promise<AdapterMatch>;
   /** Get the capabilities this adapter provides. */
   getCapabilities(): SemanticCapabilities;
-  /** Start observing a session. */
-  start(context: AdapterRuntimeContext): Promise<void>;
-  /** Stop observing and clean up. */
-  stop(): Promise<void>;
-  /** Handle a client action (optional — only for active mode). */
-  handleClientAction?(action: SemanticClientAction): Promise<SemanticActionResult>;
+  /** Start observing a session/pane. Returns a new instance. */
+  start(context: AdapterRuntimeContext): Promise<SemanticAdapterInstance>;
 }
