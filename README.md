@@ -139,6 +139,7 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
+- [docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md](./docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md): native-client and semantic-adapter evolution plan
 - [docs/ZELLIJ_MODE_AUDIT_2026-03-25.md](./docs/ZELLIJ_MODE_AUDIT_2026-03-25.md): current zellij backend audit
 
 ## Development
