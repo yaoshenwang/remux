@@ -121,7 +121,9 @@ sync_instance() {
   fi
 
   echo "[sync] quality gate for $name"
-  (cd "$dir" && npm run typecheck && npm test && npm run build)
+  run_runtime_npm "$dir" run typecheck
+  run_runtime_npm "$dir" test
+  run_runtime_npm "$dir" run build
 
   echo "[sync] restarting $name"
   restart_runtime_service "$name"
