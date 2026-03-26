@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -63,31 +62,6 @@ class NodePtyProcess implements PtyProcess {
   }
 }
 
-class ScriptPtyProcess implements PtyProcess {
-  public constructor(private readonly process: ChildProcessWithoutNullStreams) {}
-
-  public write(data: string): void {
-    this.process.stdin.write(data);
-  }
-
-  public resize(_cols: number, _rows: number): void {
-    // script(1) wrapper does not expose dynamic resize hooks portably.
-  }
-
-  public onData(handler: (data: string) => void): void {
-    this.process.stdout.on("data", (chunk: Buffer) => handler(chunk.toString("utf8")));
-    this.process.stderr.on("data", (chunk: Buffer) => handler(chunk.toString("utf8")));
-  }
-
-  public onExit(handler: (code: number) => void): void {
-    this.process.on("exit", (code) => handler(code ?? 0));
-  }
-
-  public kill(): void {
-    this.process.kill("SIGTERM");
-  }
-}
-
 interface NodePtyFactoryOptions {
   logger?: Pick<Console, "log" | "error">;
   socketName?: string;
@@ -114,9 +88,18 @@ export class NodePtyFactory implements PtyFactory {
     ensureNodePtySpawnHelperExecutable(this.logger);
   }
 
+  private createResizeInvariantError(cause?: unknown): Error {
+    const message = "tmux backend requires node-pty; script(1) fallback is disabled because it cannot preserve terminal resize invariants";
+    const error = new Error(message);
+    if (cause !== undefined) {
+      (error as Error & { cause?: unknown }).cause = cause;
+    }
+    return error;
+  }
+
   public spawnAttach(session: string): PtyProcess {
     if (os.platform() !== "win32" && (this.forceScriptFallback || this.nodePtyUnavailable)) {
-      return this.spawnViaScript(session);
+      throw this.createResizeInvariantError();
     }
 
     try {
@@ -139,46 +122,15 @@ export class NodePtyFactory implements PtyFactory {
     } catch (error) {
       if (os.platform() !== "win32") {
         this.nodePtyUnavailable = true;
-        this.logger?.error("node-pty unavailable; falling back to script(1)", error);
-        return this.spawnViaScript(session);
+        this.logger?.error("node-pty unavailable for tmux backend; refusing degraded PTY attach", error);
+        throw this.createResizeInvariantError(error);
       }
 
       throw error;
     }
   }
 
-  private spawnViaScript(session: string): PtyProcess {
-    const env = withoutTmuxEnv(process.env);
-
-    if (os.platform() === "darwin") {
-      const command = "script";
-      const args = ["-q", "/dev/null", this.tmuxBinary, ...this.socketArgs, "attach-session", "-t", session];
-      this.logger?.log("[pty-fallback] spawn", command, args.join(" "));
-      const child = spawn(command, args, {
-        cwd: process.cwd(),
-        env,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-      return new ScriptPtyProcess(child);
-    }
-
-    if (os.platform() === "linux") {
-      const command = "script";
-      const attachCommand = this.buildAttachCommand(session, false);
-      const args = ["-qfc", attachCommand, "/dev/null"];
-      this.logger?.log("[pty-fallback] spawn", command, args.join(" "));
-      const child = spawn(command, args, {
-        cwd: process.cwd(),
-        env,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-      return new ScriptPtyProcess(child);
-    }
-
-    throw new Error(`PTY fallback unsupported on ${os.platform()}`);
-  }
-
-  private buildAttachCommand(session: string, includeExec = true): string {
+  private buildAttachCommand(session: string): string {
     const commandParts = [
       this.tmuxBinary,
       ...this.socketArgs,
@@ -186,6 +138,6 @@ export class NodePtyFactory implements PtyFactory {
       "-t",
       session
     ].map(shellQuote);
-    return `${includeExec ? "exec " : ""}${commandParts.join(" ")}`;
+    return `exec ${commandParts.join(" ")}`;
   }
 }

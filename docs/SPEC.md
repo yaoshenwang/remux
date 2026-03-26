@@ -139,7 +139,7 @@ Characteristics:
 
 - grouped sessions are used to isolate window focus per client where possible
 - tmux CLI calls are executed through `execFile` argument arrays
-- PTY attachment is handled through the node-pty adapter or `script(1)` fallback
+- PTY attachment is handled through the node-pty adapter; degraded `script(1)` fallback is rejected because it cannot preserve terminal resize invariants
 
 ### zellij
 

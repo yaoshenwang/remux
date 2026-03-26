@@ -49,7 +49,7 @@
     "runner:install": "scripts/install-github-runner.sh",
     "runner:remove": "scripts/remove-github-runner.sh",
     "runner:status": "scripts/github-runner-status.sh",
-    "test:smoke": "REAL_TMUX_SMOKE=1 vitest run tests/smoke/real-tmux.test.ts",
+    "test:smoke": "REAL_TMUX_SMOKE=1 vitest run tests/smoke",
     "test:e2e": "npm run build && playwright test",
     "test": "vitest run",
     "test:watch": "vitest",

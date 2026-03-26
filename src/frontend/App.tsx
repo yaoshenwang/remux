@@ -151,8 +151,7 @@ export const App = () => {
             );
             pendingTerminalAuthRef.current = null;
           }
-          fitAddonRefForConnection.current?.fit();
-          notifyTerminalResizeRef.current();
+          notifyTerminalResizeRef.current({ notify: true, retryUntilVisible: true });
           return;
         }
         case "session_picker": {
@@ -188,11 +187,7 @@ export const App = () => {
             const paneWidth = pane?.width ?? 0;
             if (paneWidth > 0) {
               paneViewportColsRef.current = paneWidth;
-              const terminal = terminalRefForConnection.current;
-              if (terminal && terminal.cols !== paneWidth) {
-                terminal.resize(paneWidth, terminal.rows);
-                notifyTerminalResizeRef.current();
-              }
+              notifyTerminalResizeRef.current({ notify: true, retryUntilVisible: true });
             }
           } else {
             paneViewportColsRef.current = 0;
@@ -247,19 +242,16 @@ export const App = () => {
 
   // Forward refs for use in connection callbacks (avoids stale closures)
   const resetTerminalBufferRef = useRef(() => {});
-  const notifyTerminalResizeRef = useRef(() => {});
-  const fitAddonRefForConnection = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
-  const terminalRefForConnection = useRef<import("@xterm/xterm").Terminal | null>(null);
+  const notifyTerminalResizeRef = useRef((_: { notify?: boolean; retryUntilVisible?: boolean } = {}) => {});
 
   const toolbarRef = useRef<ToolbarHandle>(null);
   const {
     copySelection,
     fileInputRef,
-    fitAddonRef,
     focusTerminal,
+    requestTerminalFit,
     resetTerminalBuffer,
     scrollbackContentRef,
-    sendTerminalResize,
     terminalContainerRef,
     terminalRef
   } = useTerminalRuntime({
@@ -268,6 +260,7 @@ export const App = () => {
     paneViewportColsRef,
     serverConfig,
     setStatusMessage: connection.setStatusMessage,
+    terminalVisible: viewMode === "terminal",
     terminalSocketRef,
     theme,
     toolbarRef
@@ -278,16 +271,8 @@ export const App = () => {
     resetTerminalBufferRef.current = resetTerminalBuffer;
   }, [resetTerminalBuffer]);
   useEffect(() => {
-    fitAddonRefForConnection.current = fitAddonRef.current;
-    terminalRefForConnection.current = terminalRef.current;
-  });
-
-  const notifyTerminalResize = useCallback(() => {
-    sendTerminalResize(terminalSocketRef);
-  }, [sendTerminalResize]);
-  useEffect(() => {
-    notifyTerminalResizeRef.current = notifyTerminalResize;
-  }, [notifyTerminalResize]);
+    notifyTerminalResizeRef.current = requestTerminalFit;
+  }, [requestTerminalFit]);
 
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
@@ -302,22 +287,7 @@ export const App = () => {
       debugLog("terminal_socket.onopen");
       socket.send(JSON.stringify({ type: "auth", token, password: passwordValue || undefined, clientId }));
       connectionActionsRef.current.setStatusMessage("terminal connected");
-      let retries = 0;
-      const tryFit = () => {
-        if (fitAddonRef.current && terminalRef.current) {
-          fitAddonRef.current.fit();
-          if (terminalRef.current.cols < 20 && retries < 5) {
-            retries++;
-            setTimeout(tryFit, 200);
-            return;
-          }
-          if (terminalRef.current.cols < 20) {
-            terminalRef.current.resize(80, 24);
-          }
-        }
-        notifyTerminalResize();
-      };
-      setTimeout(tryFit, 300);
+      requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
     socket.onmessage = (event) => {
       debugLog("terminal_socket.onmessage", {
@@ -340,7 +310,7 @@ export const App = () => {
       debugLog("terminal_socket.onerror");
     };
     terminalSocketRef.current = socket;
-  }, [connection, fitAddonRef, notifyTerminalResize, terminalRef]);
+  }, [connection, requestTerminalFit, terminalRef]);
 
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {
@@ -628,17 +598,14 @@ export const App = () => {
 
   // Re-fit terminal when switching to terminal mode
   useEffect(() => {
-    if (viewMode === "terminal" && fitAddonRef.current) {
-      // Double-fit: once immediately, once after CSS settles
-      const doFit = () => {
-        fitAddonRef.current?.fit();
-        notifyTerminalResize();
-      };
-      requestAnimationFrame(doFit);
-      const timer = setTimeout(doFit, 150);
+    if (viewMode === "terminal") {
+      requestTerminalFit({ notify: true, retryUntilVisible: true });
+      const timer = setTimeout(() => {
+        requestTerminalFit({ notify: true, retryUntilVisible: true });
+      }, 150);
       return () => clearTimeout(timer);
     }
-  }, [fitAddonRef, notifyTerminalResize, viewMode]);
+  }, [requestTerminalFit, viewMode]);
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
 

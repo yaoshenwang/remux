@@ -124,7 +124,7 @@ Options:
 | `REMUX_SOCKET_PATH` | Custom tmux socket path (`tmux -S`) |
 | `REMUX_TRACE_TMUX=1` | Print tmux CLI calls |
 | `REMUX_VERBOSE_DEBUG=1` | Enable verbose server logging |
-| `REMUX_FORCE_SCRIPT_PTY=1` | Force `script(1)` PTY fallback on Unix |
+| `REMUX_FORCE_SCRIPT_PTY=1` | Force a fail-fast check for degraded tmux PTY mode; Remux refuses `script(1)` because it breaks resize invariants |
 | `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
 | `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
 
