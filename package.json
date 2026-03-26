@@ -1,7 +1,7 @@
 {
   "name": "remux",
-  "version": "0.1.48",
-  "description": "Remote terminal multiplexer web client for tmux, zellij, and conpty",
+  "version": "0.1.49",
+  "description": "Remote workspace cockpit for terminal-first work, with tmux, zellij, and conpty backends",
   "license": "MIT",
   "repository": {
     "type": "git",
