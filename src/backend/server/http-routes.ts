@@ -208,7 +208,7 @@ export const registerHttpRoutes = ({
 
   app.use(express.static(config.frontendDir));
   app.get(frontendFallbackRoute, (req, res) => {
-    if (isWebSocketPath(req.path)) {
+    if (isWebSocketPath(req.path) || req.path.startsWith("/api/")) {
       res.status(404).end();
       return;
     }

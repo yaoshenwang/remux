@@ -9,6 +9,7 @@ export const PROTOCOL_VERSION = 1;
 
 export interface WorkspaceCapabilities extends BackendCapabilities {
   supportsUpload: boolean;
+  supportsTerminalSnapshots: boolean;
 }
 
 export interface NotificationCapabilities {

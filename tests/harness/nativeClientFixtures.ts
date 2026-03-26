@@ -33,6 +33,7 @@ export const nativeAuthOkFixture: Extract<ControlServerMessage, { type: "auth_ok
       supportsFloatingPanes: false,
       supportsFullscreenPane: true,
       supportsUpload: true,
+      supportsTerminalSnapshots: false,
     },
     notifications: {
       supportsPushNotifications: false,

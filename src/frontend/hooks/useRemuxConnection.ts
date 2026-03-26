@@ -28,7 +28,7 @@ export interface ControlAuthPayload {
 
 export interface ConnectionCallbacks {
   /** Called after successful auth. Use to open terminal socket, etc. */
-  onAuthOk: (passwordValue: string, clientId: string) => void;
+  onAuthOk: (passwordValue: string, clientId: string, serverCapabilities: ServerCapabilities | null) => void;
   /** Called for all control messages except auth_ok/auth_error. */
   onControlMessage: (message: ControlServerMessage) => void;
   /** Called when control socket closes. */
@@ -176,8 +176,9 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
             sessionStorage.removeItem("remux-password");
           }
           if (message.capabilities) setCapabilities(message.capabilities);
-          if (message.serverCapabilities) setServerCapabilities(message.serverCapabilities);
-          cbRef.current.onAuthOk(passwordValue, message.clientId);
+          const nextServerCapabilities = message.serverCapabilities ?? null;
+          setServerCapabilities(nextServerCapabilities);
+          cbRef.current.onAuthOk(passwordValue, message.clientId, nextServerCapabilities);
           return;
         }
         case "auth_error": {

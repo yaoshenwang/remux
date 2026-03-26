@@ -71,6 +71,7 @@ describe("ServerCapabilities contract", () => {
       supportsFloatingPanes: false,
       supportsFullscreenPane: true,
       supportsUpload: true,
+      supportsTerminalSnapshots: true,
     },
     notifications: {
       supportsPushNotifications: false,
@@ -201,8 +202,10 @@ describe("workspace domain contracts", () => {
     const workspace: WorkspaceCapabilities = {
       ...backend,
       supportsUpload: true,
+      supportsTerminalSnapshots: true,
     };
     expect(workspace.supportsUpload).toBe(true);
+    expect(workspace.supportsTerminalSnapshots).toBe(true);
     expect(workspace.supportsPaneFocusById).toBe(backend.supportsPaneFocusById);
   });
 });

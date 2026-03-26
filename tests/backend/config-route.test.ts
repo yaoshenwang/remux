@@ -98,4 +98,16 @@ describe("GET /api/config", () => {
     const json = await res.json() as { gitBranch?: string };
     expect(json.gitBranch).toBe("dev");
   });
+
+  test("does not fall back to the frontend for unavailable API routes", async () => {
+    await startServer();
+
+    const res = await fetch(`${getBaseUrl()}/api/state/main`, {
+      headers: {
+        Authorization: `Bearer ${authToken}`
+      }
+    });
+
+    expect(res.status).toBe(404);
+  });
 });

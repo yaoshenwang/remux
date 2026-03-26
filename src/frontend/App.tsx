@@ -52,6 +52,7 @@ import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import type {
   PaneState,
   SessionState,
+  ServerCapabilities,
   TabState,
 } from "../shared/protocol";
 import { AppShell } from "./screens/AppShell";
@@ -79,6 +80,7 @@ export const App = () => {
   const terminalSocketRef = useRef<WebSocket | null>(null);
   /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
+  const serverCapabilitiesRef = useRef<ServerCapabilities | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
 
   const attachedSessionRef = useRef("");
@@ -122,8 +124,9 @@ export const App = () => {
   }>({ setStatusMessage: () => {}, setErrorMessage: () => {}, serverConfig: null });
 
   const connection = useRemuxConnection({
-    onAuthOk: (passwordValue, clientId) => {
+    onAuthOk: (passwordValue, clientId, nextServerCapabilities) => {
       pendingTerminalAuthRef.current = { password: passwordValue, clientId };
+      serverCapabilitiesRef.current = nextServerCapabilities;
     },
     onControlMessage: (message) => {
       switch (message.type) {
@@ -222,8 +225,12 @@ export const App = () => {
     getAuthPayload: () => buildControlAuthHint(attachedSessionRef.current, launchContextRef.current),
   });
 
-  const { authReady, serverConfig, capabilities, errorMessage, statusMessage, password,
+  const { authReady, serverConfig, capabilities, serverCapabilities, errorMessage, statusMessage, password,
     needsPasswordInput, passwordErrorMessage, bandwidthStats, sendControl } = connection;
+
+  useEffect(() => {
+    serverCapabilitiesRef.current = serverCapabilities;
+  }, [serverCapabilities]);
 
   // Keep connectionActionsRef in sync so callbacks always access latest
   connectionActionsRef.current = {
@@ -489,6 +496,10 @@ export const App = () => {
 
   const restoreTerminalState = useCallback(async (sessionName: string, passwordValue: string): Promise<void> => {
     if (!sessionName) {
+      return;
+    }
+
+    if (serverCapabilitiesRef.current?.workspace.supportsTerminalSnapshots === false) {
       return;
     }
 

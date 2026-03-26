@@ -94,7 +94,8 @@ Server → { "type": "auth_ok", "clientId": "abc123", "requiresPassword": false,
       "supportsPreciseScrollback": true,
       "supportsFloatingPanes": false,
       "supportsFullscreenPane": true,
-      "supportsUpload": true
+      "supportsUpload": true,
+      "supportsTerminalSnapshots": false
     },
     "notifications": {
       "supportsPushNotifications": false
@@ -131,7 +132,8 @@ Server → { "type": "auth_error", "reason": "invalid password" }
     "supportsPreciseScrollback": true,
     "supportsFloatingPanes": false,
     "supportsFullscreenPane": true,
-    "supportsUpload": true
+    "supportsUpload": true,
+    "supportsTerminalSnapshots": false
   },
   "notifications": {
     "supportsPushNotifications": true
@@ -401,6 +403,7 @@ The iOS client should render UI elements based on `serverCapabilities`:
 
 - Show rename buttons only if `workspace.supportsTabRename` / `supportsSessionRename`
 - Show upload button only if `workspace.supportsUpload`
+- Attempt terminal snapshot restore only if `workspace.supportsTerminalSnapshots`
 - Show fullscreen toggle only if `workspace.supportsFullscreenPane`
 - Show notification settings only if `notifications.supportsPushNotifications`
 - Show semantic timeline only if `semantic.adaptersAvailable.length > 0`

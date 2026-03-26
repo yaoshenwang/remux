@@ -42,6 +42,7 @@ export const buildServerCapabilities = (
     workspace: {
       ...options.backendCapabilities,
       supportsUpload: options.supportsUpload,
+      supportsTerminalSnapshots: Boolean(options.extensions),
     },
     notifications: {
       supportsPushNotifications,

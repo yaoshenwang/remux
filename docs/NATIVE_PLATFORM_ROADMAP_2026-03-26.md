@@ -877,6 +877,15 @@ Delivered:
 - capability matrix coverage in `tests/backend/client-capabilities.test.ts`
 - native/auth integration coverage in `tests/integration/server.test.ts`
 
+## Post-Merge Validation
+
+Updated: 2026-03-26 after merge verification on the `dev` integration branch.
+
+- `npm run typecheck && npm test && npm run build && npm run test:e2e` passed after merging the roadmap execution slices.
+- Merge validation found one browser-side regression: the web client attempted `/api/state/:session` even when terminal snapshot extensions were unavailable.
+- Fixed by reserving unknown `/api/*` paths from SPA fallback and adding `workspace.supportsTerminalSnapshots` so clients only request snapshot restore when the server explicitly supports it.
+- Updated `docs/IOS_CLIENT_CONTRACT.md` and tested fixtures to reflect the new capability bit.
+
 ## Suggested Data Models
 
 ### Workspace Domain
