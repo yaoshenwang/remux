@@ -320,10 +320,13 @@ test.describe("remux browser behavior", () => {
         await expect(addSnippet).toBeVisible();
         await expect(backendButton).toBeVisible();
 
+        const minimumTouchTargetSize = 44;
+        // Chromium can report 44px controls as 43.99999 because of subpixel rounding.
+        const touchTargetEpsilon = 0.1;
         const minimumTouchTarget = async (locator: Locator): Promise<void> => {
           const box = await locator.boundingBox();
-          expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
-          expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+          expect((box?.width ?? 0) + touchTargetEpsilon).toBeGreaterThanOrEqual(minimumTouchTargetSize);
+          expect((box?.height ?? 0) + touchTargetEpsilon).toBeGreaterThanOrEqual(minimumTouchTargetSize);
         };
 
         await minimumTouchTarget(sessionClose);
