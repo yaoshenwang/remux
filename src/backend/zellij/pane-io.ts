@@ -120,6 +120,8 @@ export class ZellijPaneIO implements PtyProcess {
 
   /** Stream mode change listeners (for exposing degraded state). */
   private streamModeHandlers: Array<(mode: StreamMode) => void> = [];
+  /** Workspace-level change listeners (for triggering state refresh). */
+  private workspaceChangeHandlers: Array<(reason: string) => void> = [];
 
   private static readonly WRITE_BATCH_MS = 12;
   private static readonly ACTIVE_REFRESH_MS = 40;
@@ -164,6 +166,11 @@ export class ZellijPaneIO implements PtyProcess {
   /** Register a listener for stream mode changes. */
   public onStreamModeChange(handler: (mode: StreamMode) => void): void {
     this.streamModeHandlers.push(handler);
+  }
+
+  /** Register a listener for workspace-level changes (session rename, switch). */
+  public onWorkspaceChange(handler: (reason: string) => void): void {
+    this.workspaceChangeHandlers.push(handler);
   }
 
   private async initializeStream(socketDir?: string): Promise<void> {
@@ -229,6 +236,13 @@ export class ZellijPaneIO implements PtyProcess {
       if (event.type === "pane_closed" && event.paneId === this.paneId) {
         this.nativeBridgeStateStore.clearPane(this.session, this.paneId);
         this.emitExit(0);
+        return;
+      }
+      if (event.type === "session_renamed" || event.type === "session_switch") {
+        // Workspace-level change detected — notify listeners
+        for (const handler of this.workspaceChangeHandlers) {
+          try { handler(event.type); } catch { /* ignore */ }
+        }
         return;
       }
       if (event.type === "error") {

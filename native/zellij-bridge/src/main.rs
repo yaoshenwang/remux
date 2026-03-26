@@ -147,6 +147,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
             }
+            Some((ServerToClientMsg::RenamedSession { name }, _)) => {
+                emit_json(serde_json::json!({
+                    "type": "session_renamed",
+                    "name": name,
+                }))?;
+            }
+            Some((ServerToClientMsg::SwitchSession { connect_to_session }, _)) => {
+                emit_json(serde_json::json!({
+                    "type": "session_switch",
+                    "session": connect_to_session.name,
+                }))?;
+            }
             Some((ServerToClientMsg::LogError { lines }, _)) => {
                 return Err(lines.join("\n").into());
             }

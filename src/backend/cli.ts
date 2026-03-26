@@ -136,18 +136,6 @@ const main = async (): Promise<void> => {
   const cliDir = path.dirname(fileURLToPath(import.meta.url));
   const frontendDir = path.resolve(cliDir, "../frontend");
 
-  const config: RuntimeConfig = {
-    port: args.port,
-    host: args.host,
-    password: effectivePassword,
-    tunnel: args.tunnel,
-    defaultSession: args.session,
-    scrollbackLines: args.scrollback,
-    pollIntervalMs: 2_500,
-    token: authService.token,
-    frontendDir
-  };
-
   const tunnelProvider = createTunnelProvider(args.tunnelProvider, logger);
 
   const extensions = createExtensions(logger);
@@ -162,6 +150,20 @@ const main = async (): Promise<void> => {
     scrollbackLines: args.scrollback,
   });
   logger.log(`Session backend: ${backend.kind}`);
+
+  const config: RuntimeConfig = {
+    port: args.port,
+    host: args.host,
+    password: effectivePassword,
+    tunnel: args.tunnel,
+    defaultSession: args.session,
+    scrollbackLines: args.scrollback,
+    // Zellij uses forcePublish after mutations; longer baseline poll is fine.
+    // Tmux/ConPTY rely more on polling for external changes.
+    pollIntervalMs: backend.kind === "zellij" ? 10_000 : 2_500,
+    token: authService.token,
+    frontendDir
+  };
   const launchContext = detectTmuxLaunchContext({ backendKind: backend.kind });
 
   const runningServer = createRemuxServer(config, {

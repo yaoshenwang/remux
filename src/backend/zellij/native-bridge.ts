@@ -42,11 +42,23 @@ export interface ZellijNativeBridgeErrorEvent {
   message: string;
 }
 
+export interface ZellijNativeBridgeSessionRenamedEvent {
+  type: "session_renamed";
+  name: string;
+}
+
+export interface ZellijNativeBridgeSessionSwitchEvent {
+  type: "session_switch";
+  session: string;
+}
+
 export type ZellijNativeBridgeEvent =
   | ZellijNativeBridgeHelloEvent
   | ZellijNativeBridgePaneRenderEvent
   | ZellijNativeBridgePaneClosedEvent
-  | ZellijNativeBridgeErrorEvent;
+  | ZellijNativeBridgeErrorEvent
+  | ZellijNativeBridgeSessionRenamedEvent
+  | ZellijNativeBridgeSessionSwitchEvent;
 
 export interface ZellijNativeBridgeWriteCharsCommand {
   type: "write_chars";
@@ -211,6 +223,20 @@ export function parseZellijBridgeEventLine(line: string): ZellijNativeBridgeEven
       type: "error",
       message: event.message
     };
+  }
+
+  if (event.type === "session_renamed") {
+    if (typeof event.name !== "string") {
+      throw new Error("invalid zellij bridge session_renamed event");
+    }
+    return { type: "session_renamed", name: event.name };
+  }
+
+  if (event.type === "session_switch") {
+    if (typeof event.session !== "string") {
+      throw new Error("invalid zellij bridge session_switch event");
+    }
+    return { type: "session_switch", session: event.session };
   }
 
   throw new Error(`unknown zellij bridge event type: ${String(event.type)}`);
