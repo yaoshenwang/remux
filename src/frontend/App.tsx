@@ -1210,14 +1210,6 @@ export const App = () => {
       <aside className={`sidebar drawer${drawerOpen ? " open" : ""}`}>
         <div className="sidebar-header">
           <span className="sidebar-brand">REMUX</span>
-          <button
-            className="sidebar-close"
-            onClick={() => setDrawerOpen(false)}
-            data-testid="drawer-close"
-            aria-label="Close sidebar"
-          >
-            <span className="sidebar-close-icon" aria-hidden="true">×</span>
-          </button>
         </div>
         <SessionSection
           attachedSession={attachedSession}
@@ -1286,6 +1278,13 @@ export const App = () => {
             {serverConfig?.version && (
               <div className="drawer-footer-info">
                 <p className="drawer-version">v{serverConfig.version}</p>
+                {(serverConfig.gitBranch || serverConfig.gitCommitSha || serverConfig.gitDirty !== undefined) && (
+                  <p className="drawer-runtime-meta">
+                    {[serverConfig.gitBranch, serverConfig.gitCommitSha?.slice(0, 8), serverConfig.gitDirty ? "dirty" : undefined]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                )}
                 {serverConfig.backendKind && (
                   <div className="drawer-backend-switcher">
                     <span className="drawer-backend-label">Backend:</span>
@@ -1325,6 +1324,17 @@ export const App = () => {
               </div>
             )}
       </aside>
+
+      {mobileLayout && drawerOpen && (
+        <button
+          className="sidebar-close mobile-drawer-close"
+          onClick={() => setDrawerOpen(false)}
+          data-testid="drawer-close"
+          aria-label="Close sidebar"
+        >
+          <span className="sidebar-close-icon" aria-hidden="true">×</span>
+        </button>
+      )}
 
       {drawerOpen && <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} data-testid="drawer-backdrop" />}
 

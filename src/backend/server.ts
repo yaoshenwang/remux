@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -24,6 +23,7 @@ import type { PtyFactory } from "./pty/pty-adapter.js";
 import { TmuxStateMonitor } from "./state/state-monitor.js";
 import { ClientViewStore } from "./view/client-view-store.js";
 import { TabHistoryStore } from "./history/tab-history-store.js";
+import { readRuntimeMetadata } from "./util/runtime-metadata.js";
 
 interface ControlContext {
   socket: WebSocket;
@@ -213,12 +213,14 @@ export const createRemuxServer = (
 
   const UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
-  const require = createRequire(import.meta.url);
-  const pkgVersion: string = (require("../../package.json") as { version: string }).version;
+  const runtimeMetadata = readRuntimeMetadata();
 
   app.get("/api/config", (_req, res) => {
     res.json({
-      version: pkgVersion,
+      version: runtimeMetadata.version,
+      gitBranch: runtimeMetadata.gitBranch,
+      gitCommitSha: runtimeMetadata.gitCommitSha,
+      gitDirty: runtimeMetadata.gitDirty,
       passwordRequired: authService.requiresPassword(),
       scrollbackLines: config.scrollbackLines,
       pollIntervalMs: config.pollIntervalMs,

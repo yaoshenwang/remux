@@ -1,7 +1,7 @@
 {
   "name": "remux",
-  "version": "0.1.49",
-  "description": "Remote terminal multiplexer web client for tmux, zellij, and conpty",
+  "version": "0.1.50",
+  "description": "Remote workspace cockpit for terminal-first work, with tmux, zellij, and conpty backends",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -42,6 +42,13 @@
     "build:frontend": "vite build --config vite.config.ts",
     "start": "npm run build && node dist/backend/cli.js",
     "typecheck": "tsc -p tsconfig.backend.json --noEmit && tsc -p tsconfig.frontend.json --noEmit",
+    "runtime:install-launchd": "scripts/install-launchd.sh",
+    "runtime:load-launchd": "scripts/load-launchd.sh all",
+    "runtime:status": "scripts/check-runtime-status.sh all",
+    "runtime:sync": "scripts/sync-runtime.sh all --verify-public",
+    "runner:install": "scripts/install-github-runner.sh",
+    "runner:remove": "scripts/remove-github-runner.sh",
+    "runner:status": "scripts/github-runner-status.sh",
     "test:smoke": "REAL_TMUX_SMOKE=1 vitest run tests/smoke/real-tmux.test.ts",
     "test:e2e": "npm run build && playwright test",
     "test": "vitest run",
