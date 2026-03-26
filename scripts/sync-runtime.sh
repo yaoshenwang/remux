@@ -127,14 +127,14 @@ sync_instance() {
   restart_runtime_service "$name"
 
   echo "[sync] waiting for local $name runtime"
-  if ! wait_for_runtime_api "$name" "$target_sha" "$branch"; then
+  if ! wait_for_runtime_api "$name" "$target_sha" "$branch" "$target_version"; then
     echo "[sync] local runtime verification failed for $name" >&2
     return 1
   fi
 
   if [[ "$VERIFY_PUBLIC" == true ]]; then
     echo "[sync] waiting for public $name runtime"
-    verify_public_runtime "$name" "$target_sha" "$branch"
+    verify_public_runtime "$name" "$target_sha" "$branch" "$target_version"
   fi
 
   echo "[sync] $name aligned at $target_version ($target_sha)"

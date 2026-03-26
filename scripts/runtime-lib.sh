@@ -248,7 +248,8 @@ wait_for_runtime_api() {
   local name="$1"
   local expected_sha="$2"
   local expected_branch="$3"
-  local url json actual_sha actual_branch actual_dirty
+  local expected_version="$4"
+  local url json actual_sha actual_branch actual_dirty actual_version
   local deadline=$((SECONDS + 60))
   url="$(runtime_local_config_url "$name")"
 
@@ -257,7 +258,11 @@ wait_for_runtime_api() {
       actual_sha="$(json_field_or_empty "$json" gitCommitSha 2>/dev/null || true)"
       actual_branch="$(json_field_or_empty "$json" gitBranch 2>/dev/null || true)"
       actual_dirty="$(json_field_or_empty "$json" gitDirty 2>/dev/null || true)"
+      actual_version="$(json_field_or_empty "$json" version 2>/dev/null || true)"
       if [[ "$actual_sha" == "$expected_sha" && "$actual_branch" == "$expected_branch" && "$actual_dirty" == "false" ]]; then
+        return 0
+      fi
+      if [[ -z "$actual_sha" && -z "$actual_branch" && -z "$actual_dirty" && "$actual_version" == "$expected_version" ]]; then
         return 0
       fi
     fi
@@ -272,16 +277,21 @@ verify_public_runtime() {
   local name="$1"
   local expected_sha="$2"
   local expected_branch="$3"
-  local json actual_sha actual_branch actual_dirty
+  local expected_version="$4"
+  local json actual_sha actual_branch actual_dirty actual_version
 
   json="$(fetch_json "$(runtime_public_config_url "$name")")"
-  actual_sha="$(json_field_or_empty "$json" gitCommitSha)"
-  actual_branch="$(json_field_or_empty "$json" gitBranch)"
-  actual_dirty="$(json_field_or_empty "$json" gitDirty)"
+  actual_sha="$(json_field_or_empty "$json" gitCommitSha 2>/dev/null || true)"
+  actual_branch="$(json_field_or_empty "$json" gitBranch 2>/dev/null || true)"
+  actual_dirty="$(json_field_or_empty "$json" gitDirty 2>/dev/null || true)"
+  actual_version="$(json_field_or_empty "$json" version 2>/dev/null || true)"
 
   if [[ "$actual_sha" != "$expected_sha" || "$actual_branch" != "$expected_branch" || "$actual_dirty" != "false" ]]; then
+    if [[ -z "$actual_sha" && -z "$actual_branch" && -z "$actual_dirty" && "$actual_version" == "$expected_version" ]]; then
+      return 0
+    fi
     echo "[runtime] public $name mismatch: expected branch=$expected_branch sha=$expected_sha dirty=false" >&2
-    echo "[runtime] public $name actual: branch=$actual_branch sha=$actual_sha dirty=$actual_dirty" >&2
+    echo "[runtime] public $name actual: version=${actual_version:-?} branch=${actual_branch:-?} sha=${actual_sha:-?} dirty=${actual_dirty:-?}" >&2
     return 1
   fi
 }

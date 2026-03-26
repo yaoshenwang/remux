@@ -67,7 +67,9 @@ EOF
 
 write_sync_plist() {
   local plist
+  local runtime_manager_dir
   plist="$(runtime_sync_plist_path)"
+  runtime_manager_dir="$(runtime_dir dev)"
 
   cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -79,12 +81,12 @@ write_sync_plist() {
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
-      <string>$PROJECT_DIR/scripts/sync-runtime.sh</string>
+      <string>$runtime_manager_dir/scripts/sync-runtime.sh</string>
       <string>all</string>
       <string>--verify-public</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>$PROJECT_DIR</string>
+    <string>$runtime_manager_dir</string>
     <key>RunAtLoad</key>
     <true/>
     <key>StartInterval</key>
