@@ -58,18 +58,8 @@ export const SessionSection = ({
 }: SessionSectionProps) => {
   const [savedExpanded, setSavedExpanded] = useState(false);
 
-  const liveSessions = sessions
-    .filter((session) => session.lifecycle !== "exited")
-    .sort((a, b) => {
-      // Attached/selected first, then by name
-      const aActive = a.name === attachedSession || a.name === selectedSessionName;
-      const bActive = b.name === attachedSession || b.name === selectedSessionName;
-      if (aActive !== bActive) return aActive ? -1 : 1;
-      const aAttached = a.attached;
-      const bAttached = b.attached;
-      if (aAttached !== bAttached) return aAttached ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+  // Preserve existing order (from workspaceOrder/drag reorder) — don't re-sort
+  const liveSessions = sessions.filter((session) => session.lifecycle !== "exited");
   const resurrectableSessions = sessions.filter((session) => session.lifecycle === "exited");
 
   const renderSession = (session: SessionState) => (
