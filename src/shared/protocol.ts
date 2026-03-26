@@ -91,7 +91,7 @@ export type ControlServerMessage =
   | { type: "auth_error"; reason: string }
   | { type: "attached"; session: string }
   | { type: "session_picker"; sessions: SessionSummary[] }
-  | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView }
+  | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView; streamMode?: string }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
   | {
       type: "tab_history";

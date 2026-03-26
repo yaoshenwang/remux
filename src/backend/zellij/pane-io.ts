@@ -113,11 +113,22 @@ export class ZellijPaneIO implements PtyProcess {
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
 
+  /** Bridge restart supervisor state */
+  private bridgeRestartAttempts = 0;
+  private bridgeRestartTimer: ReturnType<typeof setTimeout> | null = null;
+  private socketDir?: string;
+
+  /** Stream mode change listeners (for exposing degraded state). */
+  private streamModeHandlers: Array<(mode: StreamMode) => void> = [];
+
   private static readonly WRITE_BATCH_MS = 12;
   private static readonly ACTIVE_REFRESH_MS = 40;
   private static readonly IDLE_REFRESH_MS = 250;
   private static readonly ACTIVE_REFRESH_WINDOW_MS = 1_200;
   private static readonly MAX_MISSING_PANE_POLLS = 3;
+  private static readonly BRIDGE_RESTART_BASE_MS = 1_000;
+  private static readonly BRIDGE_RESTART_MAX_MS = 16_000;
+  private static readonly BRIDGE_RESTART_MAX_ATTEMPTS = 5;
 
   constructor(options: {
     binary?: string;
@@ -136,12 +147,23 @@ export class ZellijPaneIO implements PtyProcess {
     this.nativeBridgeFactory = options.nativeBridgeFactory ?? createZellijNativeBridge;
     this.nativeBridgeStateStore = options.nativeBridgeStateStore ?? getDefaultZellijNativeBridgeStateStore();
     this.scrollbackLines = options.scrollbackLines;
+    this.socketDir = options.socketDir;
     this.env = {
       ...process.env,
       ...(options.socketDir ? { ZELLIJ_SOCKET_DIR: options.socketDir } : {})
     };
 
     void this.initializeStream(options.socketDir);
+  }
+
+  /** Current stream mode: "pending", "native-bridge", or "cli-polling". */
+  public getStreamMode(): StreamMode {
+    return this.streamMode;
+  }
+
+  /** Register a listener for stream mode changes. */
+  public onStreamModeChange(handler: (mode: StreamMode) => void): void {
+    this.streamModeHandlers.push(handler);
   }
 
   private async initializeStream(socketDir?: string): Promise<void> {
@@ -178,7 +200,7 @@ export class ZellijPaneIO implements PtyProcess {
   }
 
   private attachNativeBridge(bridge: ZellijNativeBridge): void {
-    this.streamMode = "native-bridge";
+    this.setStreamMode("native-bridge");
     this.nativeBridge = bridge;
     this.missingPaneCount = 0;
     this.flushPendingResize();
@@ -224,20 +246,83 @@ export class ZellijPaneIO implements PtyProcess {
       this.nativeBridgeStateStore.clearPane(this.session, this.paneId);
       if (code !== 0 && code !== null) {
         this.logger?.error?.(
-          `[zellij-native-bridge] bridge exited with code ${code}, falling back to CLI viewport mode`
+          `[zellij-native-bridge] bridge exited with code ${code}, attempting restart`
         );
       }
+      // Fall back to CLI polling while we attempt restart
       this.enableCliPollingMode();
+      this.scheduleBridgeRestart();
     });
+  }
+
+  private setStreamMode(mode: StreamMode): void {
+    if (this.streamMode === mode) return;
+    this.streamMode = mode;
+    for (const handler of this.streamModeHandlers) {
+      try { handler(mode); } catch { /* ignore */ }
+    }
   }
 
   private enableCliPollingMode(): void {
     if (this.killed || this.streamMode === "cli-polling") {
       return;
     }
-    this.streamMode = "cli-polling";
+    this.setStreamMode("cli-polling");
     this.flushPendingResize();
     this.requestRefresh({ immediate: true, boost: true });
+  }
+
+  private scheduleBridgeRestart(): void {
+    if (this.killed || this.bridgeRestartTimer) {
+      return;
+    }
+    if (this.bridgeRestartAttempts >= ZellijPaneIO.BRIDGE_RESTART_MAX_ATTEMPTS) {
+      this.logger?.log?.(
+        `[zellij-native-bridge] giving up restart after ${this.bridgeRestartAttempts} attempts`
+      );
+      return;
+    }
+    const delay = Math.min(
+      ZellijPaneIO.BRIDGE_RESTART_BASE_MS * (2 ** this.bridgeRestartAttempts),
+      ZellijPaneIO.BRIDGE_RESTART_MAX_MS
+    );
+    this.bridgeRestartAttempts += 1;
+    this.logger?.log?.(
+      `[zellij-native-bridge] scheduling restart attempt ${this.bridgeRestartAttempts} in ${delay}ms`
+    );
+    this.bridgeRestartTimer = setTimeout(() => {
+      this.bridgeRestartTimer = null;
+      void this.attemptBridgeRestart();
+    }, delay);
+  }
+
+  private async attemptBridgeRestart(): Promise<void> {
+    if (this.killed || this.streamMode === "native-bridge") {
+      return;
+    }
+    let bridge: ZellijNativeBridge | null = null;
+    try {
+      bridge = await this.nativeBridgeFactory(this.buildNativeBridgeOptions(this.socketDir));
+    } catch (error) {
+      this.logger?.error?.(`[zellij-native-bridge] restart failed: ${String(error)}`);
+    }
+    if (this.killed) {
+      bridge?.kill();
+      return;
+    }
+    if (bridge) {
+      this.logger?.log?.("[zellij-native-bridge] restart succeeded, switching back to native bridge");
+      this.bridgeRestartAttempts = 0;
+      // Stop CLI polling timers
+      if (this.refreshTimer) {
+        clearTimeout(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+      this.attachNativeBridge(bridge);
+      return;
+    }
+    // Restart failed — schedule another attempt
+    this.scheduleBridgeRestart();
   }
 
   private ensureHiddenClient(): pty.IPty {
@@ -653,6 +738,10 @@ export class ZellijPaneIO implements PtyProcess {
     if (this.cursorTimer) {
       clearTimeout(this.cursorTimer);
       this.cursorTimer = null;
+    }
+    if (this.bridgeRestartTimer) {
+      clearTimeout(this.bridgeRestartTimer);
+      this.bridgeRestartTimer = null;
     }
   }
 
