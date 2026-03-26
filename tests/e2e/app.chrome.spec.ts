@@ -115,6 +115,28 @@ test.describe("remux browser behavior", () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByTestId("drawer-toggle").click();
       await expect(page.locator(".sidebar.open")).toBeVisible();
+      const drawerCloseBox = await page.getByTestId("drawer-close").boundingBox();
+      expect(drawerCloseBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect((drawerCloseBox?.x ?? -1) + (drawerCloseBox?.width ?? 0)).toBeLessThanOrEqual(390);
+      await page.getByTestId("drawer-close").click();
+      await expect(page.locator(".sidebar")).not.toHaveClass(/open/);
+    });
+
+    test("drawer close control stays inside the mobile viewport after switching from inspect", async ({ page }) => {
+      await page.goto(`${server.baseUrl}/?token=${server.token}`);
+      await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+      await page.getByRole("button", { name: "Inspect" }).click();
+      await expect(page.getByRole("heading", { name: "Inspect" })).toBeVisible();
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId("drawer-toggle").click();
+      await expect(page.locator(".sidebar.open")).toBeVisible();
+
+      const drawerCloseBox = await page.getByTestId("drawer-close").boundingBox();
+      expect(drawerCloseBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect((drawerCloseBox?.x ?? -1) + (drawerCloseBox?.width ?? 0)).toBeLessThanOrEqual(390);
+
       await page.getByTestId("drawer-close").click();
       await expect(page.locator(".sidebar")).not.toHaveClass(/open/);
     });

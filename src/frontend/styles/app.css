@@ -270,6 +270,15 @@ button, input {
   line-height: 1;
 }
 
+.mobile-drawer-close {
+  position: fixed;
+  top: max(1rem, env(safe-area-inset-top));
+  left: calc(min(84vw, 22rem) - 3.5rem);
+  z-index: 31;
+  border-radius: 999px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+}
+
 .sidebar-backdrop {
   display: none;
 }
@@ -1944,7 +1953,7 @@ button.danger {
   padding-top: max(1rem, env(safe-area-inset-top));
 }
 
-.app-shell.mobile-layout .sidebar-close {
+.app-shell.mobile-layout .mobile-drawer-close {
   display: inline-flex;
   width: 2.75rem;
   height: 2.75rem;
