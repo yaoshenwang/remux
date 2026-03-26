@@ -93,7 +93,7 @@ sync_instance() {
   if [[ "$needs_checkout" == false && "$needs_restart" == false ]]; then
     echo "[sync] $name already aligned at $target_version ($target_sha)"
     if [[ "$VERIFY_PUBLIC" == true ]]; then
-      verify_public_runtime "$name" "$target_sha" "$branch"
+      verify_public_runtime "$name" "$target_sha" "$branch" "$target_version"
       echo "[sync] verified public $name at $target_sha"
     fi
     return 0
