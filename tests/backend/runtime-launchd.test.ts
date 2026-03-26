@@ -38,6 +38,8 @@ describe("runtime launchd install", () => {
 
     const runtimeNodeDir = path.join(tempHome, "toolchains", "node-lts", "bin");
     const runtimeNodeBin = path.join(runtimeNodeDir, "node");
+    const cargoBinDir = path.join(tempHome, ".cargo", "bin");
+    const expectedPath = `${runtimeNodeDir}:${cargoBinDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`;
     await fs.promises.mkdir(runtimeNodeDir, { recursive: true });
     await fs.promises.writeFile(runtimeNodeBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
 
@@ -54,11 +56,11 @@ describe("runtime launchd install", () => {
     const runtimePlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.dev.plist");
     const runtimePlist = await fs.promises.readFile(runtimePlistPath, "utf8");
     expect(runtimePlist).toContain(runtimeNodeBin);
-    expect(runtimePlist).toContain(`${runtimeNodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`);
+    expect(runtimePlist).toContain(expectedPath);
 
     const syncPlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.runtime-sync.plist");
     const syncPlist = await fs.promises.readFile(syncPlistPath, "utf8");
-    expect(syncPlist).toContain(`${runtimeNodeDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`);
+    expect(syncPlist).toContain(expectedPath);
   });
 
   test("writes the runtime sync plist against the stable dev runtime worktree", async () => {

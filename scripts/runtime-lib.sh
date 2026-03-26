@@ -8,7 +8,8 @@ RUNTIME_STATE_ROOT="${REMUX_RUNTIME_STATE_ROOT:-$HOME/.remux}"
 RUNTIME_WORKTREE_ROOT="${REMUX_RUNTIME_WORKTREE_ROOT:-$RUNTIME_STATE_ROOT/runtime-worktrees}"
 # Keep the sync lock outside ephemeral checkouts so launchd sync and Actions deploys share it.
 SYNC_LOCK_DIR="${REMUX_RUNTIME_SYNC_LOCK_DIR:-$RUNTIME_STATE_ROOT/runtime-sync.lock}"
-RUNTIME_BASE_PATH="${REMUX_RUNTIME_BASE_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}"
+# Include Cargo so runtime deploys can build the native zellij bridge without shell init files.
+RUNTIME_BASE_PATH="${REMUX_RUNTIME_BASE_PATH:-${CARGO_HOME:-$HOME/.cargo}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}"
 LAUNCHD_GUI_DOMAIN="gui/$(id -u)"
 
 runtime_node_candidates() {
