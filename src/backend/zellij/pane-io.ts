@@ -58,6 +58,50 @@ export function buildViewportFrame(
 }
 
 /**
+ * Build a viewport frame that only updates lines that differ from the previous viewport.
+ * Falls back to full frame on first render or when dimensions change.
+ */
+export function buildViewportDiffFrame(
+  viewport: string[],
+  prevViewport: string[] | null,
+  cursor: ZellijCursorPosition | null
+): string {
+  // Full frame if no previous viewport or dimensions changed
+  if (!prevViewport || prevViewport.length !== viewport.length) {
+    return buildViewportFrame(viewport, cursor);
+  }
+
+  const parts: string[] = ["\x1b[?25l"];
+  let dirtyCount = 0;
+
+  for (let index = 0; index < viewport.length; index += 1) {
+    if (viewport[index] !== prevViewport[index]) {
+      parts.push(`\x1b[${index + 1};1H\x1b[2K`);
+      parts.push(viewport[index]);
+      dirtyCount += 1;
+    }
+  }
+
+  // If most lines changed, a full clear+redraw is more efficient
+  if (dirtyCount > viewport.length * 0.7) {
+    return buildViewportFrame(viewport, cursor);
+  }
+
+  // Only cursor changed, no lines dirty
+  if (dirtyCount === 0 && !cursor) {
+    return "";
+  }
+
+  parts.push("\x1b[m");
+  if (cursor) {
+    parts.push(`\x1b[${cursor.row};${cursor.col}H`);
+    parts.push("\x1b[?25h");
+  }
+
+  return parts.join("");
+}
+
+/**
  * A PtyProcess that mirrors a zellij pane.
  *
  * Preferred output mode:
@@ -681,12 +725,22 @@ export class ZellijPaneIO implements PtyProcess {
     this.exitHandlers.push(handler);
   }
 
+  /** Previous viewport used for diff rendering. */
+  private prevNativeViewport: string[] | null = null;
+
   private emitNativeFrame(): void {
     if (!this.lastNativeViewport) {
       return;
     }
-    const frame = buildViewportFrame(this.lastNativeViewport, this.lastCursor);
-    this.emitFrame(frame);
+    const frame = buildViewportDiffFrame(
+      this.lastNativeViewport,
+      this.prevNativeViewport,
+      this.lastCursor
+    );
+    this.prevNativeViewport = this.lastNativeViewport;
+    if (frame) {
+      this.emitFrame(frame);
+    }
   }
 
   private emitFrame(frame: string): void {

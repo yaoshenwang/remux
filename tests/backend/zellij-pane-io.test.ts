@@ -380,12 +380,16 @@ describe("ZellijPaneIO", () => {
       "--json",
       "--all"
     ]);
-    expect(frames.at(-1)).toBe(
+    // First frame: full clear + viewport (initial render, no previous viewport)
+    expect(frames[0]).toBe(
       "\x1b[?25l\x1b[3J\x1b[H\x1b[2J"
       + "\x1b[1;1H\x1b[2K\u001b[mhello"
       + "\x1b[2;1H\x1b[2K\u001b[mworld"
-      + "\x1b[m\x1b[2;6H\x1b[?25h"
+      + "\x1b[m"
     );
+    // Last frame: diff render with cursor only (viewport unchanged)
+    expect(frames.at(-1)).toContain("\x1b[2;6H");
+    expect(frames.at(-1)).toContain("\x1b[?25h");
     expect(nativeBridgeStateStore.getPaneSnapshot("main", "terminal_7")).toEqual({
       session: "main",
       paneId: "terminal_7",
