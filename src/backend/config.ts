@@ -20,4 +20,5 @@ export interface CliArgs {
   scrollback: number;
   debugLog?: string;
   backend?: string;
+  tunnelProvider: "auto" | "devtunnel" | "cloudflare";
 }
