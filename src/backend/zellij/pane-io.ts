@@ -6,6 +6,7 @@ import type { ZellijPaneJson } from "./parser.js";
 import {
   createZellijNativeBridge,
   type CreateZellijNativeBridgeOptions,
+  type ZellijNativeBridgeCommand,
   type ZellijNativeBridge,
   type ZellijNativeBridgeFactory
 } from "./native-bridge.js";
@@ -68,7 +69,8 @@ export function buildViewportFrame(
  * - cursor polling via `list-panes --json --all`
  *
  * Input model:
- * - Batched `zellij action write/write-chars` delivery.
+ * - Prefer native bridge write commands when available.
+ * - Safely fall back to serialized `zellij action write/write-chars`.
  * - Writes are serialized so later Enter/control keys cannot overtake
  *   earlier text chunks.
  */
@@ -105,6 +107,7 @@ export class ZellijPaneIO implements PtyProcess {
 
   private refreshBurstUntil = 0;
   private missingPaneCount = 0;
+  private pendingResize: { cols: number; rows: number } | null = null;
 
   private writeBuf = "";
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -138,7 +141,6 @@ export class ZellijPaneIO implements PtyProcess {
       ...(options.socketDir ? { ZELLIJ_SOCKET_DIR: options.socketDir } : {})
     };
 
-    this.acquireHiddenClient();
     void this.initializeStream(options.socketDir);
   }
 
@@ -179,6 +181,7 @@ export class ZellijPaneIO implements PtyProcess {
     this.streamMode = "native-bridge";
     this.nativeBridge = bridge;
     this.missingPaneCount = 0;
+    this.flushPendingResize();
 
     bridge.onEvent((event) => {
       if (this.killed) {
@@ -227,12 +230,13 @@ export class ZellijPaneIO implements PtyProcess {
       return;
     }
     this.streamMode = "cli-polling";
+    this.flushPendingResize();
     this.requestRefresh({ immediate: true, boost: true });
   }
 
-  private acquireHiddenClient(): void {
+  private ensureHiddenClient(): pty.IPty {
     if (this.hiddenClient) {
-      return;
+      return this.hiddenClient;
     }
     const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
     const args = process.platform === "win32"
@@ -258,6 +262,7 @@ export class ZellijPaneIO implements PtyProcess {
       }
     });
     this.hiddenClient = client;
+    return client;
   }
 
   private releaseHiddenClient(): void {
@@ -495,8 +500,13 @@ export class ZellijPaneIO implements PtyProcess {
     this.writeBuf = "";
 
     const runWrite = async (): Promise<void> => {
-      const hasControlChars = /[\x00-\x1f]/.test(data);
       const bytes = Buffer.from(data, "utf8");
+      const bridgeCommand = createBridgeWriteCommand(data, bytes);
+      if (this.nativeBridge?.sendCommand(bridgeCommand)) {
+        return;
+      }
+
+      const hasControlChars = /[\x00-\x1f]/.test(data);
 
       const args = (hasControlChars && bytes.length <= 256)
         ? [
@@ -537,10 +547,24 @@ export class ZellijPaneIO implements PtyProcess {
   }
 
   resize(_cols: number, _rows: number): void {
-    if (!_cols || !_rows || !this.hiddenClient) {
+    if (!_cols || !_rows) {
       return;
     }
-    this.hiddenClient.resize(Math.max(2, Math.floor(_cols)), Math.max(2, Math.floor(_rows)));
+
+    const cols = Math.max(2, Math.floor(_cols));
+    const rows = Math.max(2, Math.floor(_rows));
+    this.pendingResize = { cols, rows };
+
+    if (this.trySendResizeViaBridge()) {
+      this.requestRefresh({ immediate: true, boost: true });
+      return;
+    }
+
+    if (this.streamMode === "pending") {
+      return;
+    }
+
+    this.ensureHiddenClient().resize(cols, rows);
     this.requestRefresh({ immediate: true, boost: true });
   }
 
@@ -624,6 +648,35 @@ export class ZellijPaneIO implements PtyProcess {
       clearTimeout(this.cursorTimer);
       this.cursorTimer = null;
     }
+  }
+
+  private flushPendingResize(): void {
+    if (!this.pendingResize) {
+      return;
+    }
+
+    if (this.trySendResizeViaBridge()) {
+      this.requestRefresh({ immediate: true, boost: true });
+      return;
+    }
+
+    if (this.streamMode === "pending") {
+      return;
+    }
+
+    this.ensureHiddenClient().resize(this.pendingResize.cols, this.pendingResize.rows);
+  }
+
+  private trySendResizeViaBridge(): boolean {
+    if (!this.pendingResize) {
+      return false;
+    }
+
+    return this.nativeBridge?.sendCommand({
+      type: "terminal_resize",
+      cols: this.pendingResize.cols,
+      rows: this.pendingResize.rows
+    }) ?? false;
   }
 }
 
@@ -719,4 +772,18 @@ function isTerminalGoneError(error: unknown): boolean {
     || message.includes("No session named")
     || message.includes("There is no active session")
     || message.includes("not found");
+}
+
+function createBridgeWriteCommand(data: string, bytes: Buffer): ZellijNativeBridgeCommand {
+  if (/[\x00-\x1f]/.test(data)) {
+    return {
+      type: "write_bytes",
+      bytes: Array.from(bytes)
+    };
+  }
+
+  return {
+    type: "write_chars",
+    chars: data
+  };
 }

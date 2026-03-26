@@ -44,7 +44,8 @@ describe("ZellijCliExecutor", () => {
   });
 
   const makeSocketDir = (): string => {
-    const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), "remux-zellij-test-"));
+    const baseDir = process.platform === "win32" ? os.tmpdir() : "/tmp";
+    const socketDir = fs.mkdtempSync(path.join(baseDir, "rmx-zj-test-"));
     tempDirs.push(socketDir);
     return socketDir;
   };
@@ -96,6 +97,71 @@ describe("ZellijCliExecutor", () => {
     expect(executorWithInternals.spawnSessionBootstrap).toHaveBeenCalledWith("shared-name");
   });
 
+  test("fails fast when an isolated socket dir would exceed the unix socket path limit", async () => {
+    const socketDir = `/tmp/${"x".repeat(96)}`;
+
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const executor = new ZellijCliExecutor({
+      socketDir,
+      logger: { log: vi.fn(), error: vi.fn() }
+    });
+
+    const executorWithInternals = executor as unknown as {
+      listSessionSummaries: () => Promise<Array<{ name: string }>>;
+    };
+    executorWithInternals.listSessionSummaries = vi.fn().mockResolvedValue([]);
+
+    await expect(executor.createSession("short")).rejects.toThrow(/socket path.*too long/i);
+  });
+
+  test("prefers native detached bootstrap before CLI background attach", async () => {
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const executor = new ZellijCliExecutor({
+      timeoutMs: 500,
+      logger: { log: vi.fn(), error: vi.fn() }
+    });
+
+    const executorWithInternals = executor as unknown as {
+      listSessionSummaries: () => Promise<Array<{ name: string }>>;
+      tryCreateSessionWithNativeBridge: (name: string) => Promise<boolean>;
+      tryCreateSessionInBackground: (name: string) => Promise<boolean>;
+    };
+
+    executorWithInternals.listSessionSummaries = vi.fn().mockResolvedValue([]);
+    executorWithInternals.tryCreateSessionWithNativeBridge = vi.fn().mockResolvedValue(true);
+    executorWithInternals.tryCreateSessionInBackground = vi.fn().mockResolvedValue(false);
+
+    await expect(executor.createSession("native-bootstrap")).resolves.toBeUndefined();
+
+    expect(executorWithInternals.tryCreateSessionWithNativeBridge).toHaveBeenCalledWith("native-bootstrap");
+    expect(executorWithInternals.tryCreateSessionInBackground).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  test("falls back to CLI background attach when native detached bootstrap is unavailable", async () => {
+    const { ZellijCliExecutor } = await import("../../src/backend/zellij/cli-executor.js");
+    const executor = new ZellijCliExecutor({
+      timeoutMs: 500,
+      logger: { log: vi.fn(), error: vi.fn() }
+    });
+
+    const executorWithInternals = executor as unknown as {
+      listSessionSummaries: () => Promise<Array<{ name: string }>>;
+      tryCreateSessionWithNativeBridge: (name: string) => Promise<boolean>;
+      tryCreateSessionInBackground: (name: string) => Promise<boolean>;
+    };
+
+    executorWithInternals.listSessionSummaries = vi.fn().mockResolvedValue([]);
+    executorWithInternals.tryCreateSessionWithNativeBridge = vi.fn().mockResolvedValue(false);
+    executorWithInternals.tryCreateSessionInBackground = vi.fn().mockResolvedValue(true);
+
+    await expect(executor.createSession("cli-background")).resolves.toBeUndefined();
+
+    expect(executorWithInternals.tryCreateSessionWithNativeBridge).toHaveBeenCalledWith("cli-background");
+    expect(executorWithInternals.tryCreateSessionInBackground).toHaveBeenCalledWith("cli-background");
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   test("falls back to PTY bootstrap when attach -b fails", async () => {
     const kill = vi.fn();
     const onExit = vi.fn();
@@ -108,11 +174,13 @@ describe("ZellijCliExecutor", () => {
     });
 
     const executorWithInternals = executor as unknown as {
+      tryCreateSessionWithNativeBridge: (name: string) => Promise<boolean>;
       tryCreateSessionInBackground: (name: string) => Promise<boolean>;
       listSessionSummaries: () => Promise<Array<{ name: string }>>;
       listSessionSummariesImmediate: () => Promise<Array<{ name: string }>>;
     };
 
+    executorWithInternals.tryCreateSessionWithNativeBridge = vi.fn().mockResolvedValue(false);
     executorWithInternals.tryCreateSessionInBackground = vi.fn().mockRejectedValue(
       new Error("attach -b failed")
     );
@@ -128,9 +196,12 @@ describe("ZellijCliExecutor", () => {
 
     await expect(executor.createSession("fallback-session")).resolves.toBeUndefined();
 
+    expect(executorWithInternals.tryCreateSessionWithNativeBridge).toHaveBeenCalledWith("fallback-session");
     expect(executorWithInternals.tryCreateSessionInBackground).toHaveBeenCalledWith("fallback-session");
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(spawnMock.mock.calls[0]?.[1]?.[1]).toContain("'attach' '-c' 'fallback-session' 'options' '--default-shell'");
+    expect(spawnMock.mock.calls[0]?.[1]?.[1]).toContain("'--show-startup-tips' 'false'");
+    expect(spawnMock.mock.calls[0]?.[1]?.[1]).toContain("'--show-release-notes' 'false'");
     expect(spawnMock.mock.calls[0]?.[2]?.env).toEqual(expect.objectContaining({
       SHELL: shellCommand[0],
       REMUX_ORIGINAL_SHELL: process.env.SHELL?.trim() || "/bin/sh",
@@ -152,11 +223,13 @@ describe("ZellijCliExecutor", () => {
 
     const executorWithInternals = executor as unknown as {
       listSessionSummaries: () => Promise<Array<{ name: string; lifecycle?: string }>>;
+      tryCreateSessionWithNativeBridge: (name: string) => Promise<boolean>;
       tryCreateSessionInBackground: (name: string) => Promise<boolean>;
       listSessionSummariesImmediate: () => Promise<Array<{ name: string; lifecycle?: string }>>;
     };
 
     executorWithInternals.listSessionSummaries = vi.fn().mockResolvedValue([]);
+    executorWithInternals.tryCreateSessionWithNativeBridge = vi.fn().mockResolvedValue(false);
     executorWithInternals.tryCreateSessionInBackground = vi.fn().mockRejectedValue(
       new Error("attach -b failed")
     );
@@ -492,7 +565,13 @@ describe("ZellijCliExecutor", () => {
     ).resolves.toBe(true);
 
     expect(runZellij).toHaveBeenCalledWith(
-      ["attach", "-b", "background-session", "options", "--default-shell", shellCommand[0]],
+      [
+        "attach", "-b", "background-session",
+        "options",
+        "--default-shell", shellCommand[0],
+        "--show-startup-tips", "false",
+        "--show-release-notes", "false"
+      ],
       undefined,
       {
         env: expect.objectContaining({
