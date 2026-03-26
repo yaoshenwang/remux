@@ -82,10 +82,16 @@ class ScenarioZellijGateway implements MultiplexerBackend {
   private nextPaneId = 2;
   private readonly delayNewTabPanes: boolean;
   private readonly delayRenameSession: boolean;
+  private readonly keepCurrentTabActiveOnNewTab: boolean;
 
-  public constructor(options?: { delayNewTabPanes?: boolean; delayRenameSession?: boolean }) {
+  public constructor(options?: {
+    delayNewTabPanes?: boolean;
+    delayRenameSession?: boolean;
+    keepCurrentTabActiveOnNewTab?: boolean;
+  }) {
     this.delayNewTabPanes = options?.delayNewTabPanes ?? false;
     this.delayRenameSession = options?.delayRenameSession ?? false;
+    this.keepCurrentTabActiveOnNewTab = options?.keepCurrentTabActiveOnNewTab ?? false;
     this.sessions = [
       {
         name: "main",
@@ -150,23 +156,31 @@ class ScenarioZellijGateway implements MultiplexerBackend {
 
   public async newTab(session: string): Promise<void> {
     const sessionState = this.mustFindSession(session);
-    sessionState.tabs.forEach((tab) => {
-      tab.active = false;
-      tab.panes.forEach((pane) => {
-        pane.active = false;
+    if (!this.keepCurrentTabActiveOnNewTab) {
+      sessionState.tabs.forEach((tab) => {
+        tab.active = false;
+        tab.panes.forEach((pane) => {
+          pane.active = false;
+        });
       });
-    });
+    }
     const newTab: ScenarioTab = {
       index: sessionState.tabs.length,
       name: `tab-${sessionState.tabs.length}`,
-      active: true,
+      active: !this.keepCurrentTabActiveOnNewTab,
       panes: this.delayNewTabPanes ? [] : [{ id: `terminal_${this.nextPaneId++}`, active: true }]
     };
+    if (this.keepCurrentTabActiveOnNewTab && newTab.panes[0]) {
+      newTab.panes[0].active = false;
+    }
     sessionState.tabs.push(newTab);
     if (this.delayNewTabPanes) {
       setTimeout(() => {
         if (newTab.panes.length === 0) {
-          newTab.panes = [{ id: `terminal_${this.nextPaneId++}`, active: true }];
+          newTab.panes = [{
+            id: `terminal_${this.nextPaneId++}`,
+            active: !this.keepCurrentTabActiveOnNewTab
+          }];
         }
       }, 150);
     }
@@ -244,6 +258,10 @@ class ScenarioZellijGateway implements MultiplexerBackend {
 
   public async capturePane(): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
     return { text: "", paneWidth: 80, isApproximate: true };
+  }
+
+  public getActiveTabIndex(sessionName: string): number | undefined {
+    return this.mustFindSession(sessionName).tabs.find((tab) => tab.active)?.index;
   }
 
   private mustFindSession(name: string): ScenarioSession {
@@ -624,6 +642,115 @@ describe("zellij backend server", () => {
 
       expect(state.clientView.sessionName).toBe("renamed");
       expect(state.workspace.sessions.some((session) => session.name === "renamed")).toBe(true);
+    } finally {
+      control.close();
+    }
+  });
+
+  test("external session rename preserves the attached client view", async () => {
+    const scenarioGateway = new ScenarioZellijGateway({ delayRenameSession: true });
+    await scenarioGateway.createSession("other");
+    const authService = new AuthService({ token: "test-token" });
+    const config = buildConfig("test-token");
+    await runningServer.stop();
+    runningServer = createRemuxServer(config, {
+      backend: scenarioGateway,
+      ptyFactory,
+      authService,
+      logger: { log: () => {}, error: () => {} }
+    });
+    await runningServer.start();
+    const port = (runningServer.server.address() as AddressInfo).port;
+    baseWsUrl = `ws://127.0.0.1:${port}`;
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      const authOkPromise = waitForMessage<{ type: string }>(
+        control,
+        (msg) => msg.type === "auth_ok"
+      );
+      const pickerPromise = waitForMessage<{ type: string; sessions: Array<{ name: string }> }>(
+        control,
+        (msg) => msg.type === "session_picker"
+      );
+      control.send(JSON.stringify({ type: "auth", token: "test-token" }));
+      await authOkPromise;
+      await pickerPromise;
+
+      const attachedPromise = waitForMessage<{ type: string; session: string }>(
+        control,
+        (msg) => msg.type === "attached" && msg.session === "main"
+      );
+      control.send(JSON.stringify({ type: "select_session", session: "main" }));
+      await attachedPromise;
+
+      await scenarioGateway.renameSession("main", "renamed");
+
+      const state = await waitForMessage<{
+        type: string;
+        clientView: { sessionName: string };
+        workspace: { sessions: Array<{ name: string }> };
+      }>(control, (msg) => {
+        if (msg.type !== "workspace_state") return false;
+        return msg.clientView.sessionName === "renamed"
+          && msg.workspace.sessions.some((session) => session.name === "renamed")
+          && msg.workspace.sessions.some((session) => session.name === "other");
+      }, 5_000);
+
+      expect(state.clientView.sessionName).toBe("renamed");
+      expect(state.workspace.sessions.map((session) => session.name)).toEqual(
+        expect.arrayContaining(["renamed", "other"])
+      );
+      expect(ptyFactory.lastSpawnedSession).toContain("renamed:");
+    } finally {
+      control.close();
+    }
+  });
+
+  test("new_tab selects the created tab even when zellij leaves focus on the current tab", async () => {
+    const scenarioGateway = new ScenarioZellijGateway({
+      keepCurrentTabActiveOnNewTab: true
+    });
+    const authService = new AuthService({ token: "test-token" });
+    const config = buildConfig("test-token");
+    await runningServer.stop();
+    runningServer = createRemuxServer(config, {
+      backend: scenarioGateway,
+      ptyFactory,
+      authService,
+      logger: { log: () => {}, error: () => {} }
+    });
+    await runningServer.start();
+    const port = (runningServer.server.address() as AddressInfo).port;
+    baseWsUrl = `ws://127.0.0.1:${port}`;
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+      control.send(JSON.stringify({ type: "new_tab", session: "main" }));
+
+      const state = await waitForMessage<{
+        type: string;
+        clientView: { sessionName: string; tabIndex: number; paneId: string };
+        workspace: {
+          sessions: Array<{
+            name: string;
+            tabs: Array<{ index: number; active: boolean; panes: Array<{ id: string; active: boolean }> }>;
+          }>;
+        };
+      }>(control, (msg) => {
+        if (msg.type !== "workspace_state") return false;
+        const mainSession = msg.workspace.sessions.find((session) => session.name === "main");
+        const newTab = mainSession?.tabs.find((tab) => tab.index === 1);
+        return msg.clientView.sessionName === "main"
+          && msg.clientView.tabIndex === 1
+          && newTab?.active === true
+          && newTab.panes.some((pane) => pane.id === msg.clientView.paneId && pane.active);
+      }, 5_000);
+
+      expect(state.clientView.tabIndex).toBe(1);
+      expect(scenarioGateway.getActiveTabIndex("main")).toBe(1);
+      expect(ptyFactory.lastSpawnedSession).toContain(`${state.clientView.sessionName}:${state.clientView.paneId}`);
     } finally {
       control.close();
     }

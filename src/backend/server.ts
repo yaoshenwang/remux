@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -12,6 +11,7 @@ import type {
   ControlServerMessage,
   ClientView,
   SessionState,
+  TabState,
   WorkspaceSnapshot
 } from "../shared/protocol.js";
 import { randomToken } from "./util/random.js";
@@ -23,6 +23,7 @@ import type { PtyFactory } from "./pty/pty-adapter.js";
 import { TmuxStateMonitor } from "./state/state-monitor.js";
 import { ClientViewStore } from "./view/client-view-store.js";
 import { TabHistoryStore } from "./history/tab-history-store.js";
+import { readRuntimeMetadata } from "./util/runtime-metadata.js";
 
 interface ControlContext {
   socket: WebSocket;
@@ -141,6 +142,32 @@ const summarizeState = (state: WorkspaceSnapshot): string => {
   return `capturedAt=${state.capturedAt}; sessions=${sessions.join(" | ")}`;
 };
 
+const findCreatedTab = (
+  previousSession: SessionState | undefined,
+  nextSession: SessionState | undefined
+): TabState | undefined => {
+  if (!nextSession) {
+    return undefined;
+  }
+  const previousTabIndexes = new Set(previousSession?.tabs.map((tab) => tab.index) ?? []);
+  return nextSession.tabs.find((tab) => !previousTabIndexes.has(tab.index));
+};
+
+const sameSessionTopology = (left: SessionState, right: SessionState): boolean => {
+  const leftPaneIds = left.tabs
+    .flatMap((tab) => tab.panes.map((pane) => pane.id))
+    .sort();
+  const rightPaneIds = right.tabs
+    .flatMap((tab) => tab.panes.map((pane) => pane.id))
+    .sort();
+
+  if (leftPaneIds.length !== rightPaneIds.length) {
+    return false;
+  }
+
+  return leftPaneIds.every((paneId, index) => paneId === rightPaneIds[index]);
+};
+
 const REMUX_SESSION_PREFIX = "remux-client-";
 
 const isManagedMobileSession = (name: string): boolean => name.startsWith(REMUX_SESSION_PREFIX);
@@ -186,12 +213,14 @@ export const createRemuxServer = (
 
   const UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
-  const require = createRequire(import.meta.url);
-  const pkgVersion: string = (require("../../package.json") as { version: string }).version;
+  const runtimeMetadata = readRuntimeMetadata();
 
   app.get("/api/config", (_req, res) => {
     res.json({
-      version: pkgVersion,
+      version: runtimeMetadata.version,
+      gitBranch: runtimeMetadata.gitBranch,
+      gitCommitSha: runtimeMetadata.gitCommitSha,
+      gitDirty: runtimeMetadata.gitDirty,
       passwordRequired: authService.requiresPassword(),
       scrollbackLines: config.scrollbackLines,
       pollIntervalMs: config.pollIntervalMs,
@@ -447,6 +476,7 @@ export const createRemuxServer = (
   let stopPromise: Promise<void> | null = null;
   let latestSnapshot: WorkspaceSnapshot | undefined;
   const tabHistoryStore = new TabHistoryStore();
+  const knownSessionTopologies = new Map<string, SessionState>();
   const isNonGroupedBackend = (): boolean => !deps.backend.createGroupedSession;
 
   const waitForWorkspace = async (
@@ -647,6 +677,7 @@ export const createRemuxServer = (
   };
 
   const broadcastState = (state: WorkspaceSnapshot): void => {
+    const previousSnapshot = latestSnapshot;
     const baseSessions: WorkspaceSnapshot = {
       ...state,
       sessions: state.sessions.filter(
@@ -664,6 +695,30 @@ export const createRemuxServer = (
         const v = viewStore.getView(client.clientId);
         if (v) prevViews.set(client.clientId, { session: v.sessionName, paneId: v.paneId });
       }
+
+      const previousNames = new Set(previousSnapshot?.sessions.map((session) => session.name) ?? []);
+      const currentNames = new Set(baseSessions.sessions.map((session) => session.name));
+      const addedSessions = baseSessions.sessions.filter((session) => !previousNames.has(session.name));
+      const missingViewedSessions = Array.from(new Set(
+        Array.from(controlClients)
+          .filter((client) => client.authed)
+          .map((client) => viewStore.getView(client.clientId)?.sessionName)
+          .filter((sessionName): sessionName is string => (
+            typeof sessionName === "string" && !currentNames.has(sessionName)
+          ))
+      ));
+
+      if (addedSessions.length === 1 && missingViewedSessions.length === 1) {
+        const missingSession = missingViewedSessions[0];
+        const lastKnownSession = knownSessionTopologies.get(missingSession);
+        if (lastKnownSession && sameSessionTopology(lastKnownSession, addedSessions[0])) {
+          viewStore.renameSession(missingSession, addedSessions[0].name);
+        }
+      }
+    }
+
+    for (const session of baseSessions.sessions) {
+      knownSessionTopologies.set(session.name, session);
     }
 
     // For tmux: sync ClientViewStore from the grouped mobile session's
@@ -827,6 +882,9 @@ export const createRemuxServer = (
       // not wait on a full multi-session zellij workspace scan before sending
       // the authoritative "attached" event back to the client.
       const snapshot = snapshotForInit ?? await waitForSessionSnapshot(baseSession);
+      for (const session of snapshot.sessions) {
+        knownSessionTopologies.set(session.name, session);
+      }
       const view = viewStore.initView(context.clientId, baseSession, snapshot);
 
       // PTY expects "session:paneId" format
@@ -952,18 +1010,33 @@ export const createRemuxServer = (
         if (!sessionForNew) {
           throw new Error("no attached session");
         }
+        const previousSnapshot = latestSnapshot ?? await buildSnapshot(deps.backend);
+        const previousSession = previousSnapshot.sessions.find((session) => session.name === sessionForNew);
         await deps.backend.newTab(sessionForNew);
         // New tab becomes active — update view to the new tab
         if (isNonGroupedBackend()) {
-          const snapshot = await waitForWorkspace((candidate) => {
+          let snapshot = await waitForWorkspace((candidate) => {
             const session = candidate.sessions.find((s) => s.name === sessionForNew);
-            const activeTab = session?.tabs.find((t) => t.active) ?? session?.tabs.at(-1);
-            return Boolean(activeTab && activeTab.panes.length > 0);
+            const createdTab = findCreatedTab(previousSession, session);
+            return Boolean(createdTab && createdTab.panes.length > 0);
           });
-          const session = snapshot.sessions.find((s) => s.name === sessionForNew);
-          const activeTab = session?.tabs.find((t) => t.active) ?? session?.tabs.at(-1);
-          if (activeTab) {
-            viewStore.selectTab(context.clientId, activeTab.index, snapshot);
+          let session = snapshot.sessions.find((s) => s.name === sessionForNew);
+          let createdTab = findCreatedTab(previousSession, session) ?? session?.tabs.at(-1);
+
+          if (createdTab && !createdTab.active) {
+            const createdTabIndex = createdTab.index;
+            await deps.backend.selectTab(sessionForNew, createdTabIndex);
+            snapshot = await waitForWorkspace((candidate) => {
+              const candidateSession = candidate.sessions.find((entry) => entry.name === sessionForNew);
+              const candidateTab = candidateSession?.tabs.find((tab) => tab.index === createdTabIndex);
+              return Boolean(candidateTab?.active && candidateTab.panes.length > 0);
+            });
+            session = snapshot.sessions.find((entry) => entry.name === sessionForNew);
+            createdTab = session?.tabs.find((tab) => tab.index === createdTabIndex) ?? createdTab;
+          }
+
+          if (createdTab) {
+            viewStore.selectTab(context.clientId, createdTab.index, snapshot);
             const updatedView = viewStore.getView(context.clientId);
             if (updatedView) {
               const runtime = getOrCreateRuntime(context);
@@ -1194,6 +1267,9 @@ export const createRemuxServer = (
       }
       case "set_follow_focus":
         viewStore.setFollowFocus(context.clientId, message.follow);
+        if (latestSnapshot) {
+          broadcastSnapshotNow(latestSnapshot);
+        }
         return;
       case "auth":
         return;

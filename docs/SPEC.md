@@ -2,13 +2,16 @@
 
 ## Overview
 
-Remux is a browser-based remote control surface for terminal multiplexers. The current implementation is `tmux`-first, but the architecture is now multiplexer-neutral and can also run against `zellij` or a Windows `conpty` fallback.
+Remux is a remote workspace cockpit for terminal-first work. It helps users monitor, inspect, and control live terminal workspaces from another device without pretending the browser is a full desktop terminal.
+
+The workspace model is multiplexer-neutral, with `tmux` as the flagship backend, explicit `zellij` caveats, and `conpty` as a practical Windows fallback.
 
 Primary use cases:
 
-- monitor long-running shells, builds, and coding agents from another device
-- control a live session from mobile without relying on raw terminal gestures alone
-- keep terminal access session-aware instead of exposing a generic browser shell
+- understand the current state of an ongoing terminal workspace from another device
+- inspect readable history and catch up after reconnects or late joins
+- intervene quickly through a live terminal when direct input is needed
+- keep remote access session-aware instead of exposing a generic browser shell
 
 Distribution model:
 
@@ -20,11 +23,12 @@ Distribution model:
 
 The key design choice is that Remux is not just a streamed PTY. It combines:
 
-- a real terminal stream for interactive shell I/O
-- a structured control plane for session, tab, and pane operations
-- a mobile-oriented UI layer that makes common navigation and editing actions easier on touch devices
+- `Inspect`: readable history and context for catch-up, copy, and diagnosis
+- `Live`: a real terminal stream for interactive shell I/O when intervention is needed
+- `Control`: structured session, tab, and pane operations
+- a mobile-oriented UI layer that makes navigation and lightweight intervention practical on touch devices
 
-This lets the browser act as a remote control for the workspace instead of pretending to be a full desktop terminal emulator.
+This lets the browser act as a remote workspace cockpit instead of pretending to be a full desktop terminal emulator.
 
 ## Current Architecture
 
@@ -49,11 +53,11 @@ Key entry points:
 
 The frontend is a React app centered in `src/frontend/App.tsx` with:
 
-- xterm.js for terminal rendering
-- a drawer for workspace navigation
+- xterm.js for the Live terminal surface
+- a drawer for Control-oriented workspace navigation
 - a toolbar for modifier keys and mobile-friendly shortcuts
 - a compose box for native keyboard input
-- a scrollback mode for readable copy and selection
+- an inspect surface, currently backed by scrollback capture and terminal serialization, for readable copy and selection
 - local preferences for theme, snippets, and view behavior
 
 ### Shared Model
@@ -120,7 +124,7 @@ Required capabilities:
 Each backend also declares `BackendCapabilities`, which the frontend uses to adapt the UI for:
 
 - pane focus behavior
-- precise or approximate scrollback
+- precise or approximate inspect history backing
 - floating panes
 - fullscreen support
 - session and tab rename support
@@ -129,7 +133,7 @@ Each backend also declares `BackendCapabilities`, which the frontend uses to ada
 
 ### tmux
 
-`tmux` is the primary backend and the most mature path.
+`tmux` is the flagship backend and the most mature path.
 
 Characteristics:
 
@@ -143,7 +147,7 @@ Characteristics:
 
 Important caveat:
 
-- zellij semantics differ from tmux, so Remux cannot provide exact behavior parity
+- zellij semantics differ from tmux, so Remux cannot provide exact behavior or history fidelity parity
 - some UI logic contains zellij-specific handling
 - see `docs/ZELLIJ_MODE_AUDIT_2026-03-25.md` for current gaps and design pressure
 
@@ -201,9 +205,9 @@ The drawer is the structured workspace navigator. It exposes:
 - theme and snippet management
 - sticky zoom and focus-follow behavior
 
-### Terminal View
+### Live View
 
-The terminal view remains the primary interaction surface for shell I/O.
+Live is the direct intervention surface for shell I/O. It is optimized for immediacy, not for long-form reading.
 
 It supports:
 
@@ -212,9 +216,11 @@ It supports:
 - reconnect recovery
 - drag-and-drop upload
 
-### Scroll View
+### Inspect View
 
-Scrollback is rendered as HTML rather than relying on native multiplexer copy mode.
+The current Inspect surface renders captured history as HTML instead of relying on native multiplexer copy mode.
+
+Today it is still grounded in historical `scroll` naming in some APIs and UI labels, but the product semantics are moving toward `Inspect`.
 
 Goals:
 
@@ -222,6 +228,7 @@ Goals:
 - native text selection
 - configurable font size
 - predictable copy behavior
+- better catch-up than the visible terminal viewport alone
 
 ### Compose Input
 

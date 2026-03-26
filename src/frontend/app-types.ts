@@ -2,6 +2,9 @@ import type { SnippetRecord as Snippet } from "./snippets";
 
 export interface ServerConfig {
   version?: string;
+  gitBranch?: string;
+  gitCommitSha?: string;
+  gitDirty?: boolean;
   passwordRequired: boolean;
   scrollbackLines: number;
   pollIntervalMs: number;

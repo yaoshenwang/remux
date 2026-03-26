@@ -1,37 +1,40 @@
 # Remux
 
-**Remote terminal multiplexers from a phone, tablet, or second laptop.**
+![Remux hero](./docs/assets/hero.svg)
 
-Remux is a web client for `tmux`, with additional `zellij` and Windows `conpty` backends. It is built for checking long-running coding sessions, AI agents, builds, and remote shells without staying at your desk. Run `npx remux`, open the generated URL, and control the live workspace from a browser.
+**Monitor, inspect, and control live terminal workspaces from a phone, tablet, or second laptop.**
 
-Remux is intentionally not a generic SSH terminal. It focuses on session-aware navigation, mobile input ergonomics, and fast reconnect behavior for real terminal workflows.
+Remux is a remote workspace cockpit for terminal-first work. It helps you check on long-running coding sessions, AI agents, builds, and shells when you are away from the primary machine. Run `npx remux`, open the generated URL, and move between three complementary surfaces: `Inspect` for readable history and context, `Live` for direct terminal I/O, and `Control` for structured workspace operations.
+
+Remux is intentionally not a generic browser SSH client and not a thin browser wrapper around a multiplexer. It is designed for awareness first, comprehension second, and lightweight intervention when needed.
 
 ## Why Remux
 
+- Catch up on the current tab from another device without relying only on the visible terminal viewport
+- Read, copy, and inspect terminal history more comfortably on mobile
+- Jump into Live only when direct intervention is necessary
+- Navigate sessions, tabs, and panes through a structured Control surface
 - Browser-based access with no native app install
-- Mobile-first controls for sessions, tabs, panes, scrollback, and common terminal shortcuts
 - Password protection enabled by default, plus optional Cloudflare tunnel exposure
 - Separate control and terminal WebSocket channels for structured state sync and terminal streaming
-- Session-aware UI instead of raw terminal-only access
-- Workflow extras: compose box, snippets, file upload, themes, reconnect, and backend switching
+
+## Product Surfaces
+
+![Remux surfaces](./docs/assets/surfaces.svg)
+
+- `Inspect`: readable history and context for catching up, copying, and understanding what happened
+- `Live`: direct terminal I/O for quick fixes, command entry, and interactive tools
+- `Control`: structured session, tab, and pane navigation plus workspace operations
 
 ## Backend Support
 
-Remux uses a multiplexer-neutral model internally: sessions, tabs, and panes.
+Remux uses a multiplexer-neutral workspace model internally, but it does not promise equal fidelity across all backends.
 
-- `tmux`: primary backend and the most mature path today
-- `zellij`: supported, but some behavior differs because zellij semantics do not map cleanly to tmux
-- `conpty`: Windows fallback when tmux and zellij are unavailable
+- `tmux`: flagship backend and the most polished path today
+- `zellij`: supported with explicit capability and history-fidelity caveats
+- `conpty`: Windows fallback for simpler persistent shell access
 
 If you want the most polished experience, use `tmux`. For current zellij caveats, see [docs/ZELLIJ_MODE_AUDIT_2026-03-25.md](./docs/ZELLIJ_MODE_AUDIT_2026-03-25.md).
-
-## Screenshots
-
-### Amber
-![Remux screenshot - Amber](./docs/assets/screenshot.png)
-
-### Midnight
-![Remux screenshot - Midnight](./docs/assets/screenshot-midnight.png)
 
 ## Quick Start
 
@@ -84,9 +87,9 @@ tmux source-file ~/.tmux.conf
 
 ## Features
 
-- Session, tab, and pane management from the browser drawer
-- Full terminal streaming through xterm.js
-- Inline scrollback viewer with mobile-friendly text selection
+- Session, tab, and pane management from the browser control drawer
+- Full terminal streaming through xterm.js for Live interaction
+- Inspect view for readable history and mobile-friendly text selection
 - Compose input for native mobile keyboard entry
 - Custom snippets stored in local browser storage
 - Drag-and-drop or picker-based file upload into the active pane working directory
@@ -137,7 +140,7 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 
 ## Documentation
 
-- [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): proposed product architecture, inspect/history model, backend posture, and roadmap
+- [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
 - [docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md](./docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md): native-client and semantic-adapter evolution plan
@@ -148,6 +151,25 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 ```bash
 npm run dev
 ```
+
+Managed runtime sync for long-running `main` / `dev` instances:
+
+```bash
+npm run runtime:install-launchd
+npm run runtime:sync
+npm run runtime:status
+```
+
+See [docs/RUNTIME_SYNC.md](./docs/RUNTIME_SYNC.md) for the detached runtime worktree layout and launchd setup.
+
+Self-hosted deploy runner:
+
+```bash
+npm run runner:install
+npm run runner:status
+```
+
+See [docs/SELF_HOSTED_RUNNER.md](./docs/SELF_HOSTED_RUNNER.md) for the deploy workflow and security boundary.
 
 Quality gate before merging into `dev`:
 

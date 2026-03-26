@@ -7,29 +7,21 @@
 
 set -euo pipefail
 
-REMUX_DIR="/Users/wangyaoshen/dev/remux"
-MAIN_DIR="$REMUX_DIR/.worktrees/main"
-DEV_DIR="$REMUX_DIR"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./runtime-lib.sh
+source "$SCRIPT_DIR/runtime-lib.sh"
 
 deploy_instance() {
   local name="$1"
-  local dir="$2"
-  local service="com.remux.${name}"
-  local port
-  local gui_domain="gui/$(id -u)"
+  local dir service port gui_domain
+  ensure_instance_name "$name"
+  verify_runtime_plist "$name"
+  ensure_runtime_worktree "$name"
 
-  case "$name" in
-    dev)
-      port=3457
-      ;;
-    main)
-      port=3456
-      ;;
-    *)
-      echo "[deploy] unknown instance: $name"
-      exit 1
-      ;;
-  esac
+  dir="$(runtime_dir "$name")"
+  service="$(runtime_service "$name")"
+  port="$(runtime_port "$name")"
+  gui_domain="gui/$(id -u)"
 
   echo "[deploy] building $name in $dir ..."
   (cd "$dir" && npm run build 2>&1 | tail -3)
@@ -60,14 +52,14 @@ deploy_instance() {
 
 case "${1:-}" in
   dev)
-    deploy_instance "dev" "$DEV_DIR"
+    deploy_instance "dev"
     ;;
   main)
-    deploy_instance "main" "$MAIN_DIR"
+    deploy_instance "main"
     ;;
   all)
-    deploy_instance "dev" "$DEV_DIR"
-    deploy_instance "main" "$MAIN_DIR"
+    deploy_instance "dev"
+    deploy_instance "main"
     ;;
   *)
     echo "Usage: scripts/deploy.sh {dev|main|all}"

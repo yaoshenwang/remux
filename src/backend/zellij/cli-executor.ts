@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import * as pty from "node-pty";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import type { MultiplexerBackend } from "../multiplexer/types.js";
 import type { BackendCapabilities } from "../../shared/protocol.js";
 import { parseSessions, parseTabs, parsePanes, findTabId, type ZellijPaneJson } from "./parser.js";
@@ -25,18 +26,13 @@ interface ZellijCliExecutorOptions {
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-const getDefaultShellCommand = (): string[] => {
-  const shell = process.env.SHELL?.trim();
-  return shell ? [shell] : ["sh"];
-};
-
 export class ZellijCliExecutor implements MultiplexerBackend {
   public readonly kind = "zellij" as const;
   public readonly capabilities: BackendCapabilities = {
     supportsPaneFocusById: true,
     supportsTabRename: true,
     supportsSessionRename: true,
-    supportsPreciseScrollback: false,
+    supportsPreciseScrollback: true,
     supportsFloatingPanes: true,
     supportsFullscreenPane: true,
   };
@@ -47,6 +43,7 @@ export class ZellijCliExecutor implements MultiplexerBackend {
   private readonly trace: boolean;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly socketDir?: string;
+  private readonly remuxShellPath: string;
   private createBackgroundSupported: boolean | null = null;
   private commandQueue: Promise<void> = Promise.resolve();
 
@@ -66,10 +63,12 @@ export class ZellijCliExecutor implements MultiplexerBackend {
     this.trace = process.env.REMUX_TRACE_ZELLIJ === "1";
     this.focusPluginPath = options.focusPluginPath;
     this.socketDir = options.socketDir;
+    this.remuxShellPath = fileURLToPath(new URL("./remux-shell.sh", import.meta.url));
     this.baseEnv = {
       ...process.env,
       ...(this.socketDir ? { ZELLIJ_SOCKET_DIR: this.socketDir } : {})
     };
+    this.ensureRemuxShellIsExecutable();
   }
 
   /**
@@ -173,7 +172,7 @@ export class ZellijCliExecutor implements MultiplexerBackend {
   }
 
   public async newTab(session: string): Promise<void> {
-    await this.runZellij(["action", "new-tab", "--", ...getDefaultShellCommand()], session);
+    await this.runZellij(["action", "new-tab", "--", ...await this.getRemuxShellCommand()], session);
   }
 
   public async closeTab(session: string, tabIndex: number): Promise<void> {
@@ -249,7 +248,10 @@ export class ZellijCliExecutor implements MultiplexerBackend {
       throw new Error(`No session mapped for pane ${paneId}`);
     }
     await this.focusPane(paneId);
-    await this.runZellij(["action", "new-pane", "-d", direction], session);
+    await this.runZellij(
+      ["action", "new-pane", "-d", direction, "--", ...await this.getRemuxShellCommand()],
+      session
+    );
   }
 
   public async closePane(paneId: string): Promise<void> {
@@ -313,11 +315,11 @@ export class ZellijCliExecutor implements MultiplexerBackend {
       }
     }
     let panes: Array<{ id: number; is_plugin: boolean; pane_content_columns: number }>;
-    try { panes = JSON.parse(json); } catch { return { text, paneWidth: 80, isApproximate: true }; }
-    if (!Array.isArray(panes)) return { text, paneWidth: 80, isApproximate: true };
+    try { panes = JSON.parse(json); } catch { return { text, paneWidth: 80, isApproximate: false }; }
+    if (!Array.isArray(panes)) return { text, paneWidth: 80, isApproximate: false };
     const numId = extractPaneNumericId(paneId);
     const pane = panes.find((p) => !p.is_plugin && p.id === numId);
-    return { text, paneWidth: pane?.pane_content_columns ?? 80, isApproximate: true };
+    return { text, paneWidth: pane?.pane_content_columns ?? 80, isApproximate: false };
   }
 
   // ── Focus plugin helpers ──
@@ -360,15 +362,16 @@ export class ZellijCliExecutor implements MultiplexerBackend {
 
     await new Promise<void>((resolve, reject) => {
       const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+      const createArgs = this.getCreateSessionArgs(name);
       const args = process.platform === "win32"
-        ? ["/c", this.binary, "attach", "-c", name]
-        : ["-lc", `exec ${shellQuote(this.binary)} attach -c ${shellQuote(name)}`];
+        ? ["/c", this.binary, ...createArgs]
+        : ["-lc", `exec ${shellQuote(this.binary)} ${createArgs.map(shellQuote).join(" ")}`];
       const client = pty.spawn(shell, args, {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
         cwd: process.cwd(),
-        env: { ...this.baseEnv, REMUX: "1" }
+        env: { ...this.baseEnv, ...this.getRemuxShellEnv(), REMUX: "1" }
       });
       let settled = false;
 
@@ -423,7 +426,11 @@ export class ZellijCliExecutor implements MultiplexerBackend {
     }
 
     try {
-      await this.runZellij(["attach", "-b", name]);
+      await this.runZellij(
+        this.getCreateBackgroundArgs(name),
+        undefined,
+        { env: this.getRemuxShellEnv() }
+      );
       this.createBackgroundSupported = true;
     } catch (error) {
       if (!isUnsupportedCreateBackgroundError(error)) {
@@ -549,6 +556,34 @@ export class ZellijCliExecutor implements MultiplexerBackend {
       () => undefined
     );
     return run;
+  }
+
+  private ensureRemuxShellIsExecutable(): void {
+    try {
+      fs.chmodSync(this.remuxShellPath, 0o755);
+    } catch (error) {
+      this.logger?.error?.(`[zellij] failed to chmod remux shell wrapper: ${String(error)}`);
+    }
+  }
+
+  private async getRemuxShellCommand(): Promise<string[]> {
+    this.ensureRemuxShellIsExecutable();
+    return [this.remuxShellPath];
+  }
+
+  private getCreateBackgroundArgs(name: string): string[] {
+    return ["attach", "-b", name, "options", "--default-shell", this.remuxShellPath];
+  }
+
+  private getCreateSessionArgs(name: string): string[] {
+    return ["attach", "-c", name, "options", "--default-shell", this.remuxShellPath];
+  }
+
+  private getRemuxShellEnv(): Record<string, string> {
+    return {
+      SHELL: this.remuxShellPath,
+      REMUX_ORIGINAL_SHELL: process.env.SHELL?.trim() || "/bin/sh"
+    };
   }
 }
 

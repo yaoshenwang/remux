@@ -259,7 +259,10 @@ export const AppHeader = ({
         <div className="top-title">
           {awaitingSessionSelection ? "Select Session" : `Tab: ${activeTabLabel}`}
           {serverConfig?.backendKind === "zellij" && (
-            <span className="experimental-badge" title="Zellij support is experimental">(experimental)</span>
+            <>
+              {" "}
+              <span className="experimental-badge" title="Zellij support is experimental">(experimental)</span>
+            </>
           )}
         </div>
       )}

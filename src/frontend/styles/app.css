@@ -270,6 +270,15 @@ button, input {
   line-height: 1;
 }
 
+.mobile-drawer-close {
+  position: fixed;
+  top: max(1rem, env(safe-area-inset-top));
+  left: calc(min(84vw, 22rem) - 3.5rem);
+  z-index: 31;
+  border-radius: 999px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+}
+
 .sidebar-backdrop {
   display: none;
 }
@@ -449,6 +458,23 @@ button, input {
   margin-top: 0.4rem;
 }
 
+.drawer-toggle-row {
+  display: grid;
+  margin-top: 0.4rem;
+}
+
+.drawer-toggle-row button.active {
+  background: var(--active-btn-bg);
+  border-color: var(--border-active);
+}
+
+.drawer-toggle-copy {
+  margin: 0.45rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .drawer-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -622,6 +648,13 @@ button, input {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.6rem;
   color: var(--text-muted);
+}
+
+.drawer-runtime-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  margin-top: 0.2rem;
 }
 
 .drawer-backend-switcher {
@@ -1944,7 +1977,7 @@ button.danger {
   padding-top: max(1rem, env(safe-area-inset-top));
 }
 
-.app-shell.mobile-layout .sidebar-close {
+.app-shell.mobile-layout .mobile-drawer-close {
   display: inline-flex;
   width: 2.75rem;
   height: 2.75rem;

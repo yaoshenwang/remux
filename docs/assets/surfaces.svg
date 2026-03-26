@@ -1,0 +1,62 @@
+<svg width="1440" height="620" viewBox="0 0 1440 620" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Remux product surfaces</title>
+  <desc id="desc">Three cards describing the Inspect, Live, and Control surfaces in Remux.</desc>
+  <defs>
+    <linearGradient id="surfaceBg" x1="68" y1="46" x2="1368" y2="566" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="inspectAccent" x1="0" y1="0" x2="370" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F766E"/>
+      <stop offset="1" stop-color="#2DD4BF"/>
+    </linearGradient>
+    <linearGradient id="liveAccent" x1="0" y1="0" x2="370" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9A3412"/>
+      <stop offset="1" stop-color="#FB923C"/>
+    </linearGradient>
+    <linearGradient id="controlAccent" x1="0" y1="0" x2="370" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1D4ED8"/>
+      <stop offset="1" stop-color="#60A5FA"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="620" rx="36" fill="url(#surfaceBg)"/>
+  <text x="84" y="112" fill="#0F172A" font-size="48" font-weight="700" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Three product surfaces, one remote workflow</text>
+  <text x="84" y="156" fill="#475569" font-size="24" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Remux is strongest when reading, acting, and navigating each have an honest place in the UI.</text>
+
+  <g transform="translate(84 212)">
+    <rect x="0" y="0" width="390" height="330" rx="30" fill="#FFFFFF" stroke="#C7D2FE"/>
+    <rect x="24" y="24" width="342" height="48" rx="18" fill="url(#inspectAccent)"/>
+    <text x="148" y="55" fill="#F0FDFA" font-size="26" font-weight="700" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Inspect</text>
+    <text x="24" y="108" fill="#0F172A" font-size="24" font-weight="600" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Catch up before you type</text>
+    <text x="24" y="146" fill="#475569" font-size="20" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Readable history, copy-friendly output, and current-tab context for mobile check-ins.</text>
+    <rect x="24" y="192" width="342" height="108" rx="22" fill="#ECFEFF"/>
+    <rect x="48" y="220" width="92" height="14" rx="7" fill="#14B8A6"/>
+    <rect x="48" y="246" width="250" height="12" rx="6" fill="#8AB9C9"/>
+    <rect x="48" y="270" width="216" height="12" rx="6" fill="#8AB9C9"/>
+  </g>
+
+  <g transform="translate(524 212)">
+    <rect x="0" y="0" width="390" height="330" rx="30" fill="#FFFFFF" stroke="#FED7AA"/>
+    <rect x="24" y="24" width="342" height="48" rx="18" fill="url(#liveAccent)"/>
+    <text x="169" y="55" fill="#FFF7ED" font-size="26" font-weight="700" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Live</text>
+    <text x="24" y="108" fill="#0F172A" font-size="24" font-weight="600" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Intervene when it matters</text>
+    <text x="24" y="146" fill="#475569" font-size="20" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Jump into direct terminal I/O for quick fixes, command entry, and interactive tools.</text>
+    <rect x="24" y="192" width="342" height="108" rx="22" fill="#1E293B"/>
+    <text x="48" y="230" fill="#FDBA74" font-size="18" font-weight="600" font-family="'SFMono-Regular', Menlo, monospace">$ restart service</text>
+    <text x="48" y="258" fill="#FDE68A" font-size="18" font-weight="600" font-family="'SFMono-Regular', Menlo, monospace">reload complete</text>
+    <text x="48" y="286" fill="#86EFAC" font-size="18" font-weight="600" font-family="'SFMono-Regular', Menlo, monospace">tail healthy</text>
+  </g>
+
+  <g transform="translate(964 212)">
+    <rect x="0" y="0" width="390" height="330" rx="30" fill="#FFFFFF" stroke="#BFDBFE"/>
+    <rect x="24" y="24" width="342" height="48" rx="18" fill="url(#controlAccent)"/>
+    <text x="150" y="55" fill="#EFF6FF" font-size="26" font-weight="700" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Control</text>
+    <text x="24" y="108" fill="#0F172A" font-size="24" font-weight="600" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Navigate with structure</text>
+    <text x="24" y="146" fill="#475569" font-size="20" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Move across sessions, tabs, and panes without pretending the browser is a full desktop terminal.</text>
+    <rect x="24" y="192" width="342" height="108" rx="22" fill="#EFF6FF"/>
+    <rect x="48" y="214" width="100" height="18" rx="9" fill="#60A5FA"/>
+    <rect x="48" y="246" width="278" height="16" rx="8" fill="#DBEAFE"/>
+    <rect x="48" y="272" width="246" height="16" rx="8" fill="#DBEAFE"/>
+  </g>
+</svg>
