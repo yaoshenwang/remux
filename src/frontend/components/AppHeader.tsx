@@ -39,7 +39,7 @@ interface AppHeaderProps {
     name: string;
   }>;
   topStatus: TopStatus;
-  viewMode: "scroll" | "terminal";
+  viewMode: "inspect" | "terminal";
   supportsPreciseScrollback: boolean;
   formatBytes: (bytes: number) => string;
 }
@@ -299,13 +299,13 @@ export const AppHeader = ({
           </button>
         )}
         <button
-          className={`top-btn${viewMode === "terminal" ? " active" : ""}`}
-          title="Toggle between terminal view and scrollback history"
+          className={`top-btn${viewMode === "inspect" ? " active" : ""}`}
+          title="Toggle between live terminal and inspect history"
           onClick={onToggleViewMode}
         >
-          {viewMode === "scroll" ? "Term" : "Scroll"}
-          {viewMode === "scroll" && !supportsPreciseScrollback && (
-            <span className="experimental-badge" title="Scrollback is approximate for this backend"> (approx)</span>
+          {viewMode === "inspect" ? "Live" : "Inspect"}
+          {viewMode === "inspect" && !supportsPreciseScrollback && (
+            <span className="experimental-badge" title="Inspect history is approximate for this backend"> (approx)</span>
           )}
         </button>
       </div>

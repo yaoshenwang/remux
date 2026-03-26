@@ -40,8 +40,11 @@ import { deriveSnippetPickerState } from "./compose-picker";
 import type { BandwidthStats, PendingSnippetExecution, ServerConfig } from "./app-types";
 import { useFileUpload } from "./hooks/useFileUpload";
 import { matchesMobileLayout, useViewportLayout } from "./mobile-layout";
-import { useScrollbackView } from "./hooks/useScrollbackView";
 import { useTerminalRuntime } from "./hooks/useTerminalRuntime";
+import {
+  buildInspectSnapshotFromServerHistory,
+  type TabInspectSnapshot
+} from "./inspect-state";
 import {
   debugLog,
   debugMode,
@@ -122,10 +125,16 @@ export const App = () => {
   );
   const [composeText, setComposeText] = useState("");
 
-  const [viewMode, setViewMode] = useState<"scroll" | "terminal">("terminal");
+  const [viewMode, setViewMode] = useState<"inspect" | "terminal">("terminal");
   const [scrollFontSize, setScrollFontSize] = useState<number>(
     Number(localStorage.getItem("remux-scroll-font-size")) || 0
   );
+  const [inspectLineCount, setInspectLineCount] = useState(1000);
+  const [inspectPaneFilter, setInspectPaneFilter] = useState("all");
+  const [inspectSearchQuery, setInspectSearchQuery] = useState("");
+  const [inspectSnapshot, setInspectSnapshot] = useState<TabInspectSnapshot | null>(null);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [inspectErrorMessage, setInspectErrorMessage] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const stored = localStorage.getItem("remux-theme");
     if (stored === "light") return "light";
@@ -152,7 +161,6 @@ export const App = () => {
     fileInputRef,
     fitAddonRef,
     focusTerminal,
-    readTerminalBuffer,
     resetTerminalBuffer,
     scrollbackContentRef,
     sendTerminalResize,
@@ -199,6 +207,14 @@ export const App = () => {
   const [bandwidthStats, setBandwidthStats] = useState<BandwidthStats | null>(null);
   const [statsVisible, setStatsVisible] = useState(false);
   const rttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inspectRequestRef = useRef<{
+    requestKey: string;
+    sessionName: string;
+    tabIndex: number;
+  } | null>(null);
+  const inspectRequestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastInspectRequestKeyRef = useRef<string | null>(null);
+  const inspectLineCountInitializedRef = useRef(false);
 
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
   const [renameSessionValue, setRenameSessionValue] = useState("");
@@ -351,13 +367,51 @@ export const App = () => {
     setQuickSnippetIndex(0);
   }, [snippetPickerQuery]);
 
-  useScrollbackView({
-    authReady,
-    readTerminalBuffer,
-    scrollViewActive: viewMode === "scroll",
-    scrollbackContentRef,
-    terminalRef
-  });
+  const requestTabInspect = useCallback((session: SessionState, tab: TabState): void => {
+    if (!authReady || controlSocketRef.current?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (inspectRequestTimerRef.current) {
+      clearTimeout(inspectRequestTimerRef.current);
+      inspectRequestTimerRef.current = null;
+    }
+
+    const requestKey = `${session.name}:${tab.index}:${inspectLineCount}:${tab.panes.map((pane) => pane.id).join(",")}`;
+    inspectRequestRef.current = {
+      requestKey,
+      sessionName: session.name,
+      tabIndex: tab.index
+    };
+    lastInspectRequestKeyRef.current = requestKey;
+    setInspectLoading(true);
+    setInspectErrorMessage("");
+    setInspectSnapshot((current) => (
+      current && current.sessionName === session.name && current.tabIndex === tab.index
+        ? current
+        : null
+    ));
+
+    if (tab.panes.length === 0) {
+      setInspectLoading(false);
+      return;
+    }
+
+    inspectRequestTimerRef.current = setTimeout(() => {
+      const pending = inspectRequestRef.current;
+      if (!pending || pending.requestKey !== requestKey) {
+        return;
+      }
+      setInspectLoading(false);
+      setInspectErrorMessage("Inspect history request timed out");
+    }, 500);
+    sendControl({
+      type: "capture_tab_history",
+      session: session.name,
+      tabIndex: tab.index,
+      lines: inspectLineCount
+    });
+  }, [authReady, inspectLineCount, sendControl]);
 
   const cancelReconnect = (): void => {
     if (reconnectTimerRef.current) {
@@ -574,18 +628,41 @@ export const App = () => {
         }
         case "error":
           setErrorMessage(message.message);
+          if (viewMode === "inspect") {
+            setInspectErrorMessage(message.message);
+          }
           return;
         case "info":
           setStatusMessage(message.message);
           return;
         case "scrollback":
           return;
+        case "tab_history": {
+          const pending = inspectRequestRef.current;
+          if (!pending) {
+            return;
+          }
+          if (pending.sessionName !== message.sessionName || pending.tabIndex !== message.tabIndex) {
+            return;
+          }
+          if (inspectRequestTimerRef.current) {
+            clearTimeout(inspectRequestTimerRef.current);
+            inspectRequestTimerRef.current = null;
+          }
+          setInspectSnapshot(buildInspectSnapshotFromServerHistory(message));
+          setInspectLoading(false);
+          setInspectErrorMessage("");
+          return;
+        }
       }
     };
     socket.onclose = () => {
       debugLog("control_socket.onclose");
       setAuthReady(false);
       setErrorMessage("");
+      if (viewMode === "inspect") {
+        setInspectErrorMessage("Inspect disconnected. Reconnecting…");
+      }
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
       scheduleReconnect(passwordValue);
@@ -635,6 +712,14 @@ export const App = () => {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    if (!serverConfig?.scrollbackLines || inspectLineCountInitializedRef.current) {
+      return;
+    }
+    setInspectLineCount(serverConfig.scrollbackLines);
+    inspectLineCountInitializedRef.current = true;
+  }, [serverConfig?.scrollbackLines]);
+
+  useEffect(() => {
     if (!mobileLayout) {
       setDrawerOpen(false);
     }
@@ -645,6 +730,15 @@ export const App = () => {
       setSessionChoices(null);
     }
   }, [attachedSession]);
+
+  useEffect(() => {
+    if (inspectPaneFilter === "all") {
+      return;
+    }
+    if (!inspectSnapshot?.sections.some((section) => section.paneId === inspectPaneFilter)) {
+      setInspectPaneFilter("all");
+    }
+  }, [inspectPaneFilter, inspectSnapshot]);
 
   useEffect(() => {
     if (
@@ -665,10 +759,37 @@ export const App = () => {
 
   useEffect(() => {
     return () => {
+      if (inspectRequestTimerRef.current) {
+        clearTimeout(inspectRequestTimerRef.current);
+      }
       controlSocketRef.current?.close();
       terminalSocketRef.current?.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (viewMode !== "inspect") {
+      if (inspectRequestTimerRef.current) {
+        clearTimeout(inspectRequestTimerRef.current);
+        inspectRequestTimerRef.current = null;
+      }
+      inspectRequestRef.current = null;
+      lastInspectRequestKeyRef.current = null;
+      setInspectLoading(false);
+      return;
+    }
+
+    if (!authReady || !activeSession || !activeTab) {
+      return;
+    }
+
+    const requestKey = `${activeSession.name}:${activeTab.index}:${inspectLineCount}:${activeTab.panes.map((pane) => pane.id).join(",")}`;
+    if (lastInspectRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    requestTabInspect(activeSession, activeTab);
+  }, [activeSession, activeTab, authReady, inspectLineCount, requestTabInspect, viewMode]);
 
   // Re-fit terminal when switching to terminal mode
   useEffect(() => {
@@ -926,6 +1047,19 @@ export const App = () => {
     }
   };
 
+  const refreshInspect = useCallback((): void => {
+    if (!activeSession || !activeTab) {
+      return;
+    }
+    lastInspectRequestKeyRef.current = null;
+    requestTabInspect(activeSession, activeTab);
+  }, [activeSession, activeTab, requestTabInspect]);
+
+  const loadMoreInspect = useCallback((): void => {
+    const step = serverConfig?.scrollbackLines ?? 1000;
+    setInspectLineCount((current) => current + step);
+  }, [serverConfig?.scrollbackLines]);
+
   return (
     <div
       className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileLayout ? " mobile-layout" : ""}${mobileLandscape ? " mobile-landscape" : ""}`}
@@ -962,7 +1096,7 @@ export const App = () => {
         onToggleDrawer={() => setDrawerOpen((value) => !value)}
         onToggleSidebarCollapsed={() => setSidebarCollapsed((value) => !value)}
         onToggleStats={() => setStatsVisible((value) => !value)}
-        onToggleViewMode={() => setViewMode((mode) => mode === "scroll" ? "terminal" : "scroll")}
+        onToggleViewMode={() => setViewMode((mode) => mode === "inspect" ? "terminal" : "inspect")}
         renameHandledByKeyRef={renameHandledByKeyRef}
         renameTabValue={renameWindowValue}
         sidebarCollapsed={sidebarCollapsed}
@@ -978,6 +1112,16 @@ export const App = () => {
 
       <TerminalStage
         dragOver={dragOver}
+        inspectErrorMessage={inspectErrorMessage}
+        inspectLineCount={inspectLineCount}
+        inspectLoading={inspectLoading}
+        inspectPaneFilter={inspectPaneFilter}
+        inspectSearchQuery={inspectSearchQuery}
+        inspectSnapshot={inspectSnapshot}
+        onInspectLoadMore={loadMoreInspect}
+        onInspectPaneFilterChange={setInspectPaneFilter}
+        onInspectRefresh={refreshInspect}
+        onInspectSearchQueryChange={setInspectSearchQuery}
         onDragLeave={() => setDragOver(false)}
         onDragOver={(event) => {
           event.preventDefault();

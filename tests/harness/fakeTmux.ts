@@ -38,6 +38,12 @@ interface FakeTmuxOptions {
   failSwitchClient?: boolean;
 }
 
+interface PaneCapture {
+  text: string;
+  paneWidth?: number;
+  isApproximate?: boolean;
+}
+
 const buildDefaultSession = (name: string): SessionNode => ({
   name,
   attached: false,
@@ -74,6 +80,7 @@ export class FakeSessionGateway implements MultiplexerBackend {
 
   private sessions: SessionNode[] = [];
   private failSwitchClient = false;
+  private paneCaptures = new Map<string, PaneCapture>();
   public readonly calls: string[] = [];
 
   public constructor(seedSessions: string[] = [], options: FakeTmuxOptions = {}) {
@@ -282,7 +289,12 @@ export class FakeSessionGateway implements MultiplexerBackend {
   public async capturePane(paneId: string, options?: { lines?: number }): Promise<{ text: string; paneWidth: number; isApproximate: boolean }> {
     const lines = options?.lines ?? 1000;
     this.calls.push(`capturePane:${paneId}:${lines}`);
-    return { text: `captured ${lines} lines for ${paneId}`, paneWidth: 80, isApproximate: false };
+    const configured = this.paneCaptures.get(paneId);
+    return {
+      text: configured?.text ?? `captured ${lines} lines for ${paneId}`,
+      paneWidth: configured?.paneWidth ?? 80,
+      isApproximate: configured?.isApproximate ?? false
+    };
   }
 
   public async renameSession(name: string, newName: string): Promise<void> {
@@ -305,6 +317,18 @@ export class FakeSessionGateway implements MultiplexerBackend {
 
   public setFailSwitchClient(value: boolean): void {
     this.failSwitchClient = value;
+  }
+
+  public setPaneCapture(
+    paneId: string,
+    text: string,
+    options?: { paneWidth?: number; isApproximate?: boolean }
+  ): void {
+    this.paneCaptures.set(paneId, {
+      text,
+      paneWidth: options?.paneWidth,
+      isApproximate: options?.isApproximate
+    });
   }
 
   /** Get all sessions in the same group as the given session */

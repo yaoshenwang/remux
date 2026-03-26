@@ -157,7 +157,7 @@ test.describe("remux browser behavior", () => {
       await minimumTouchTarget(page.getByTestId("mobile-stats-toggle"));
       await minimumTouchTarget(page.locator(".tab-shell.active"));
       await minimumTouchTarget(page.getByRole("button", { name: "New tab" }));
-      await minimumTouchTarget(page.getByRole("button", { name: "Scroll" }));
+      await minimumTouchTarget(page.getByRole("button", { name: "Inspect" }));
       await expect(page.locator(".bandwidth-indicator")).toHaveCount(0);
     });
 

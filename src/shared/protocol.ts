@@ -59,6 +59,29 @@ export interface ClientView {
   followBackendFocus: boolean;
 }
 
+// ── Inspect / history types ──
+
+export interface TabHistoryEvent {
+  id: string;
+  at: string;
+  text: string;
+  kind: "event";
+  paneId?: string;
+}
+
+export interface TabHistoryPane {
+  paneId: string;
+  paneIndex: number;
+  command: string;
+  title: string;
+  text: string;
+  paneWidth: number;
+  isApproximate: boolean;
+  archived: boolean;
+  capturedAt: string;
+  lines: number;
+}
+
 // ── Protocol messages ──
 
 export type ControlClientMessage =
@@ -74,6 +97,7 @@ export type ControlClientMessage =
   | { type: "close_pane"; paneId: string }
   | { type: "toggle_fullscreen"; paneId: string }
   | { type: "capture_scrollback"; paneId: string; lines?: number }
+  | { type: "capture_tab_history"; session?: string; tabIndex: number; lines?: number }
   | { type: "send_compose"; text: string }
   | { type: "rename_session"; session: string; newName: string }
   | { type: "rename_tab"; session: string; tabIndex: number; newName: string }
@@ -86,6 +110,18 @@ export type ControlServerMessage =
   | { type: "session_picker"; sessions: SessionSummary[] }
   | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
+  | {
+      type: "tab_history";
+      sessionName: string;
+      tabIndex: number;
+      tabName: string;
+      lines: number;
+      source: "server_tab_history";
+      precision: "precise" | "approximate" | "partial";
+      capturedAt: string;
+      panes: TabHistoryPane[];
+      events: TabHistoryEvent[];
+    }
   | { type: "error"; message: string }
   | { type: "info"; message: string };
 

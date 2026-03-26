@@ -22,6 +22,7 @@ import { TerminalRuntime } from "./pty/terminal-runtime.js";
 import type { PtyFactory } from "./pty/pty-adapter.js";
 import { TmuxStateMonitor } from "./state/state-monitor.js";
 import { ClientViewStore } from "./view/client-view-store.js";
+import { TabHistoryStore } from "./history/tab-history-store.js";
 
 interface ControlContext {
   socket: WebSocket;
@@ -83,6 +84,7 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("close_pane"), paneId: z.string() }),
   z.object({ type: z.literal("toggle_fullscreen"), paneId: z.string() }),
   z.object({ type: z.literal("capture_scrollback"), paneId: z.string(), lines: z.number().optional() }),
+  z.object({ type: z.literal("capture_tab_history"), session: z.string().optional(), tabIndex: z.number(), lines: z.number().optional() }),
   z.object({ type: z.literal("send_compose"), text: z.string() }),
   z.object({ type: z.literal("rename_session"), session: z.string(), newName: z.string() }),
   z.object({ type: z.literal("rename_tab"), session: z.string(), tabIndex: z.number(), newName: z.string() }),
@@ -444,6 +446,7 @@ export const createRemuxServer = (
   let started = false;
   let stopPromise: Promise<void> | null = null;
   let latestSnapshot: WorkspaceSnapshot | undefined;
+  const tabHistoryStore = new TabHistoryStore();
   const isNonGroupedBackend = (): boolean => !deps.backend.createGroupedSession;
 
   const waitForWorkspace = async (
@@ -515,9 +518,72 @@ export const createRemuxServer = (
     return buildSingleSessionSnapshot(sessionName);
   };
 
+  const buildTabHistoryPayload = async (
+    sessionName: string,
+    tabIndex: number,
+    lines: number
+  ): Promise<Extract<ControlServerMessage, { type: "tab_history" }>> => {
+    const sessionSnapshot = await buildSingleSessionSnapshot(sessionName);
+    const session = sessionSnapshot.sessions[0];
+    const tab = session?.tabs.find((entry) => entry.index === tabIndex);
+    if (!tab) {
+      throw new Error(`tab not found: ${sessionName}:${tabIndex}`);
+    }
+
+    const paneCaptures = await Promise.all(
+      tab.panes.map(async (pane) => {
+        const result = await deps.backend.capturePane(pane.id, { lines });
+        const capture = {
+          paneId: pane.id,
+          paneIndex: pane.index,
+          command: pane.currentCommand,
+          title: `Pane ${pane.index} · ${pane.currentCommand} · ${pane.id}`,
+          text: result.text,
+          paneWidth: result.paneWidth,
+          isApproximate: result.isApproximate,
+          archived: false,
+          lines,
+          capturedAt: new Date().toISOString()
+        };
+        tabHistoryStore.recordPaneCapture({
+          sessionName,
+          tabIndex,
+          tabName: tab.name,
+          ...capture
+        });
+        return capture;
+      })
+    );
+
+    return {
+      type: "tab_history",
+      ...tabHistoryStore.buildTabHistory({
+        sessionName,
+        tab,
+        lines,
+        paneCaptures
+      })
+    };
+  };
+
   const broadcastSnapshotNow = (snapshot: WorkspaceSnapshot): void => {
     latestSnapshot = snapshot;
     broadcastState(snapshot);
+  };
+
+  const findPaneLocation = (
+    snapshot: WorkspaceSnapshot,
+    paneId: string
+  ): { sessionName: string; tab: SessionState["tabs"][number]; pane: SessionState["tabs"][number]["panes"][number] } | null => {
+    for (const session of snapshot.sessions) {
+      for (const tab of session.tabs) {
+        const pane = tab.panes.find((entry) => entry.id === paneId);
+        if (pane) {
+          return { sessionName: session.name, tab, pane };
+        }
+      }
+    }
+    return null;
   };
 
   const buildClientState = (
@@ -588,6 +654,7 @@ export const createRemuxServer = (
       )
     };
     latestSnapshot = baseSessions;
+    tabHistoryStore.recordSnapshot(baseSessions);
 
     // Snapshot prev views before reconcile to detect changes
     const prevViews = new Map<string, { session: string; paneId: string }>();
@@ -936,6 +1003,12 @@ export const createRemuxServer = (
             runtime.attachToSession(`${updatedView.sessionName}:${updatedView.paneId}`);
           }
         }
+        tabHistoryStore.recordEvent({
+          sessionName: view.sessionName,
+          tabIndex: message.tabIndex,
+          tabName: snapshot.sessions.find((session) => session.name === view.sessionName)?.tabs.find((tab) => tab.index === message.tabIndex)?.name ?? `tab-${message.tabIndex}`,
+          text: `Viewed tab ${message.tabIndex}`
+        });
         return;
       }
       case "close_tab": {
@@ -969,6 +1042,13 @@ export const createRemuxServer = (
           const runtime = getOrCreateRuntime(context);
           runtime.attachToSession(`${view.sessionName}:${message.paneId}`);
         }
+        tabHistoryStore.recordEvent({
+          sessionName: view.sessionName,
+          tabIndex: view.tabIndex,
+          tabName: latestSnapshot?.sessions.find((session) => session.name === view.sessionName)?.tabs.find((tab) => tab.index === view.tabIndex)?.name ?? `tab-${view.tabIndex}`,
+          text: `Focused pane ${message.paneId}`,
+          paneId: message.paneId
+        });
         return;
       }
       case "split_pane":
@@ -977,6 +1057,8 @@ export const createRemuxServer = (
         return;
       case "close_pane": {
         await primeViewPaneContext(view, message.paneId);
+        const snapshotForPane = latestSnapshot ?? await buildSnapshot(deps.backend);
+        const paneLocation = findPaneLocation(snapshotForPane, message.paneId);
         // Guard: prevent killing the last pane of the last tab (would destroy session)
         const baseForKillPane = view?.sessionName;
         if (baseForKillPane) {
@@ -995,17 +1077,61 @@ export const createRemuxServer = (
             }
           }
         }
+        if (paneLocation) {
+          const archived = await deps.backend.capturePane(message.paneId, { lines: config.scrollbackLines });
+          tabHistoryStore.recordPaneCapture({
+            sessionName: paneLocation.sessionName,
+            tabIndex: paneLocation.tab.index,
+            tabName: paneLocation.tab.name,
+            paneId: paneLocation.pane.id,
+            paneIndex: paneLocation.pane.index,
+            command: paneLocation.pane.currentCommand,
+            title: `Pane ${paneLocation.pane.index} · ${paneLocation.pane.currentCommand} · ${paneLocation.pane.id}`,
+            text: archived.text,
+            paneWidth: archived.paneWidth,
+            isApproximate: archived.isApproximate,
+            archived: true,
+            lines: config.scrollbackLines
+          });
+        }
         await deps.backend.closePane(message.paneId);
         return;
       }
       case "toggle_fullscreen":
         await primeViewPaneContext(view, message.paneId);
         await deps.backend.toggleFullscreen(message.paneId);
+        if (view) {
+          tabHistoryStore.recordEvent({
+            sessionName: view.sessionName,
+            tabIndex: view.tabIndex,
+            tabName: latestSnapshot?.sessions.find((session) => session.name === view.sessionName)?.tabs.find((tab) => tab.index === view.tabIndex)?.name ?? `tab-${view.tabIndex}`,
+            text: `Toggled fullscreen for ${message.paneId}`,
+            paneId: message.paneId
+          });
+        }
         return;
       case "capture_scrollback": {
         await primeViewPaneContext(view, message.paneId);
         const lines = message.lines ?? config.scrollbackLines;
         const result = await deps.backend.capturePane(message.paneId, { lines });
+        const paneSnapshot = latestSnapshot ?? await buildSnapshot(deps.backend);
+        const paneLocation = findPaneLocation(paneSnapshot, message.paneId);
+        if (paneLocation) {
+          tabHistoryStore.recordPaneCapture({
+            sessionName: paneLocation.sessionName,
+            tabIndex: paneLocation.tab.index,
+            tabName: paneLocation.tab.name,
+            paneId: paneLocation.pane.id,
+            paneIndex: paneLocation.pane.index,
+            command: paneLocation.pane.currentCommand,
+            title: `Pane ${paneLocation.pane.index} · ${paneLocation.pane.currentCommand} · ${paneLocation.pane.id}`,
+            text: result.text,
+            paneWidth: result.paneWidth,
+            isApproximate: result.isApproximate,
+            archived: false,
+            lines
+          });
+        }
         sendJson(context.socket, {
           type: "scrollback",
           paneId: message.paneId,
@@ -1014,6 +1140,15 @@ export const createRemuxServer = (
           paneWidth: result.paneWidth,
           isApproximate: result.isApproximate
         });
+        return;
+      }
+      case "capture_tab_history": {
+        const sessionName = message.session ?? view?.sessionName;
+        if (!sessionName) {
+          throw new Error("no attached session");
+        }
+        const lines = message.lines ?? config.scrollbackLines;
+        sendJson(context.socket, await buildTabHistoryPayload(sessionName, message.tabIndex, lines));
         return;
       }
       case "send_compose":

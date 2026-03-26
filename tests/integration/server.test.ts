@@ -267,6 +267,79 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("capture_tab_history returns pane history and timeline events", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    await authControl(control);
+    const snapshot = await buildSnapshot(tmux);
+    const mainTab = snapshot.sessions.find((session) => session.name === "main")?.tabs[0];
+    const paneId = mainTab?.panes[0]?.id ?? "";
+
+    control.send(JSON.stringify({ type: "split_pane", paneId, direction: "right" }));
+    await waitForTmuxCall((call) => call === `splitPane:${paneId}:right`);
+
+    const updatedSnapshot = await buildSnapshot(tmux);
+    const updatedTab = updatedSnapshot.sessions.find((session) => session.name === "main")?.tabs[0];
+    const panes = updatedTab?.panes ?? [];
+    tmux.setPaneCapture(panes[0]!.id, "left history");
+    tmux.setPaneCapture(panes[1]!.id, "right history");
+
+    const historyPromise = waitForMessage<{
+      type: string;
+      sessionName: string;
+      tabIndex: number;
+      panes: Array<{ paneId: string; text: string }>;
+      events: Array<{ text: string }>;
+    }>(control, (msg) => msg.type === "tab_history");
+
+    control.send(JSON.stringify({ type: "capture_tab_history", session: "main", tabIndex: 0, lines: 333 }));
+    const history = await historyPromise;
+
+    expect(history.sessionName).toBe("main");
+    expect(history.tabIndex).toBe(0);
+    expect(history.panes).toHaveLength(2);
+    expect(history.panes.map((pane) => pane.text)).toContain("left history");
+    expect(history.events.some((event) => event.text.startsWith("Pane added:"))).toBe(true);
+
+    control.close();
+  });
+
+  test("capture_tab_history keeps archived pane content after close_pane", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    await authControl(control);
+    const initialSnapshot = await buildSnapshot(tmux);
+    const paneId = initialSnapshot.sessions.find((session) => session.name === "main")?.tabs[0]?.panes[0]?.id ?? "";
+
+    control.send(JSON.stringify({ type: "split_pane", paneId, direction: "right" }));
+    await waitForTmuxCall((call) => call === `splitPane:${paneId}:right`);
+
+    const updatedSnapshot = await buildSnapshot(tmux);
+    const panes = updatedSnapshot.sessions.find((session) => session.name === "main")?.tabs[0]?.panes ?? [];
+    tmux.setPaneCapture(panes[0]!.id, "archived left pane");
+    tmux.setPaneCapture(panes[1]!.id, "live right pane");
+
+    control.send(JSON.stringify({ type: "close_pane", paneId: panes[0]!.id }));
+    await waitForTmuxCall((call) => call === `closePane:${panes[0]!.id}`);
+
+    const historyPromise = waitForMessage<{
+      type: string;
+      panes: Array<{ paneId: string; text: string; archived: boolean }>;
+    }>(control, (msg) => msg.type === "tab_history");
+
+    control.send(JSON.stringify({ type: "capture_tab_history", session: "main", tabIndex: 0, lines: 444 }));
+    const history = await historyPromise;
+
+    expect(history.panes.some((pane) => pane.paneId === panes[0]!.id && pane.archived && pane.text.includes("archived left pane"))).toBe(true);
+    expect(history.panes.some((pane) => pane.paneId === panes[1]!.id && !pane.archived && pane.text.includes("live right pane"))).toBe(true);
+
+    control.close();
+  });
+
   test("select_tab reflects per-client active tab from mobile session", async () => {
     await runningServer.stop();
     await startWithSessions(["main"]);

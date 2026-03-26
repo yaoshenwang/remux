@@ -1,7 +1,19 @@
-import type { CSSProperties, DragEvent, RefObject } from "react";
+import type { DragEvent, RefObject } from "react";
+import { InspectView } from "./InspectView";
+import type { TabInspectSnapshot } from "../inspect-state";
 
 interface TerminalStageProps {
   dragOver: boolean;
+  inspectErrorMessage: string;
+  inspectLineCount: number;
+  inspectLoading: boolean;
+  inspectPaneFilter: string;
+  inspectSearchQuery: string;
+  inspectSnapshot: TabInspectSnapshot | null;
+  onInspectLoadMore: () => void;
+  onInspectPaneFilterChange: (paneId: string) => void;
+  onInspectRefresh: () => void;
+  onInspectSearchQueryChange: (value: string) => void;
   onDragLeave: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
@@ -9,11 +21,21 @@ interface TerminalStageProps {
   scrollbackContentRef: RefObject<HTMLDivElement | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   uploadOverlayText?: string;
-  viewMode: "scroll" | "terminal";
+  viewMode: "inspect" | "terminal";
 }
 
 export const TerminalStage = ({
   dragOver,
+  inspectErrorMessage,
+  inspectLineCount,
+  inspectLoading,
+  inspectPaneFilter,
+  inspectSearchQuery,
+  inspectSnapshot,
+  onInspectLoadMore,
+  onInspectPaneFilterChange,
+  onInspectRefresh,
+  onInspectSearchQueryChange,
   onDragLeave,
   onDragOver,
   onDrop,
@@ -40,12 +62,20 @@ export const TerminalStage = ({
         </div>
       )}
     </div>
-    {viewMode === "scroll" && (
-      <div
-        className="scrollback-main"
-        ref={scrollbackContentRef}
-        data-testid="scrollback-main"
-        style={scrollFontSize > 0 ? { fontSize: `${scrollFontSize}px` } as CSSProperties : undefined}
+    {viewMode === "inspect" && (
+      <InspectView
+        errorMessage={inspectErrorMessage}
+        lineCount={inspectLineCount}
+        loading={inspectLoading}
+        onLoadMore={onInspectLoadMore}
+        onPaneFilterChange={onInspectPaneFilterChange}
+        onRefresh={onInspectRefresh}
+        onSearchQueryChange={onInspectSearchQueryChange}
+        paneFilter={inspectPaneFilter}
+        searchQuery={inspectSearchQuery}
+        scrollFontSize={scrollFontSize}
+        scrollbackContentRef={scrollbackContentRef}
+        snapshot={inspectSnapshot}
       />
     )}
   </main>
