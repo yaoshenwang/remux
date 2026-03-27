@@ -30,7 +30,7 @@ jobs:
             target: aarch64-apple-darwin
             artifact: remux-zellij-bridge-darwin-arm64
             binary_name: remux-zellij-bridge-darwin-arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: remux-zellij-bridge-darwin-x64
             binary_name: remux-zellij-bridge-darwin-x64
