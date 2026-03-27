@@ -254,6 +254,29 @@ describe("tmux mobile server", () => {
     control.close();
   });
 
+  test("initial auth applies provided terminal dimensions before the first attach", async () => {
+    await runningServer.stop();
+    await startWithSessions(["main"]);
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    const attachedPromise = waitForMessage<{ type: string; session: string }>(
+      control,
+      (msg) => msg.type === "attached"
+    );
+
+    control.send(JSON.stringify({
+      type: "auth",
+      token: "test-token",
+      cols: 140,
+      rows: 44
+    }));
+
+    await expect(attachedPromise).resolves.toMatchObject({ session: "main" });
+    expect(ptyFactory.latestProcess().resizes.at(0)).toEqual({ cols: 140, rows: 44 });
+
+    control.close();
+  });
+
   test("initial auth applies launch session, tab, and pane hints", async () => {
     await runningServer.stop();
     await startWithSessions(["main", "work"]);

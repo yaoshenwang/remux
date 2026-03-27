@@ -24,6 +24,8 @@ export interface ControlAuthPayload {
   session?: string;
   tabIndex?: number;
   paneId?: string;
+  cols?: number;
+  rows?: number;
 }
 
 export interface ConnectionCallbacks {
@@ -130,13 +132,22 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     const socket = new WebSocket(`${wsOrigin}/ws/control`);
     socket.onopen = () => {
       debugLog("control_socket.onopen");
-      const authPayload = cbRef.current.getAuthPayload();
-      socket.send(JSON.stringify({
-        type: "auth",
-        token,
-        password: passwordValue || undefined,
-        ...(authPayload ?? {}),
-      }));
+      const sendAuth = (retriesRemaining = 8): void => {
+        const authPayload = cbRef.current.getAuthPayload();
+        const hasTerminalSize = typeof authPayload?.cols === "number" && typeof authPayload?.rows === "number";
+        if (!hasTerminalSize && retriesRemaining > 0) {
+          requestAnimationFrame(() => sendAuth(retriesRemaining - 1));
+          return;
+        }
+        socket.send(JSON.stringify({
+          type: "auth",
+          token,
+          password: passwordValue || undefined,
+          ...(authPayload ?? {}),
+        }));
+      };
+
+      sendAuth();
     };
     socket.onmessage = (event) => {
       debugLog("control_socket.onmessage.raw", { bytes: String(event.data).length });

@@ -29,6 +29,7 @@ interface UseTerminalRuntimeResult {
   fileInputRef: RefObject<HTMLInputElement | null>;
   fitAddonRef: MutableRefObject<FitAddon | null>;
   focusTerminal: () => void;
+  readTerminalGeometry: () => { cols: number; rows: number } | null;
   readTerminalBuffer: () => string;
   requestTerminalFit: (options?: TerminalFitOptions) => void;
   resetTerminalBuffer: () => void;
@@ -159,6 +160,25 @@ export const useTerminalRuntime = ({
     const addon = serializeAddonRef.current;
     if (!addon) return "";
     return addon.serialize({ scrollback: 10000 });
+  }, []);
+
+  const readTerminalGeometry = useCallback((): { cols: number; rows: number } | null => {
+    const fitAddon = fitAddonRef.current;
+    const terminal = terminalRef.current;
+    const proposed = fitAddon?.proposeDimensions();
+    if (proposed && proposed.cols >= 2 && proposed.rows >= 2) {
+      return {
+        cols: proposed.cols,
+        rows: proposed.rows
+      };
+    }
+    if (terminal && terminal.cols >= 2 && terminal.rows >= 2) {
+      return {
+        cols: terminal.cols,
+        rows: terminal.rows
+      };
+    }
+    return null;
   }, []);
 
   const focusTerminal = useCallback((): void => {
@@ -320,6 +340,7 @@ export const useTerminalRuntime = ({
     fileInputRef,
     fitAddonRef,
     focusTerminal,
+    readTerminalGeometry,
     readTerminalBuffer,
     requestTerminalFit,
     resetTerminalBuffer,

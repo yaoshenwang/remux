@@ -4,20 +4,26 @@ export interface LaunchContextHint {
   paneId?: string;
 }
 
+export interface TerminalGeometryHint {
+  cols: number;
+  rows: number;
+}
+
 export const buildControlAuthHint = (
   attachedSession: string,
-  initialContext: LaunchContextHint | null
-): LaunchContextHint | { session: string } | null => {
+  initialContext: LaunchContextHint | null,
+  geometry: TerminalGeometryHint | null = null
+): (LaunchContextHint | { session: string } | TerminalGeometryHint) | (LaunchContextHint & TerminalGeometryHint) | ({ session: string } & TerminalGeometryHint) | null => {
   if (initialContext?.session) {
-    return initialContext;
+    return geometry ? { ...initialContext, ...geometry } : initialContext;
   }
 
   const session = attachedSession.trim();
-  if (!session) {
-    return null;
+  if (session) {
+    return geometry ? { session, ...geometry } : { session };
   }
 
-  return { session };
+  return geometry;
 };
 
 export const parseLaunchContext = (

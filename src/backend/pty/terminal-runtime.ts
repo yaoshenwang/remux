@@ -6,6 +6,7 @@ interface TerminalRuntimeEvents {
   data: (payload: string) => void;
   exit: (code: number) => void;
   attach: (session: string) => void;
+  resize: (cols: number, rows: number) => void;
   runtimeState: (state: WorkspaceRuntimeState) => void;
   workspaceChange: (reason: "session_switch" | "session_renamed") => void;
 }
@@ -76,6 +77,7 @@ export class TerminalRuntime {
       this.runtimeState = null;
     }
     processRef.resize(this.lastDimensions.cols, this.lastDimensions.rows);
+    this.events.emit("resize", this.lastDimensions.cols, this.lastDimensions.rows);
     this.process = processRef;
     this.events.emit("attach", session);
   }
@@ -96,7 +98,10 @@ export class TerminalRuntime {
       return;
     }
     this.lastDimensions = { cols: Math.floor(cols), rows: Math.floor(rows) };
-    this.process?.resize(this.lastDimensions.cols, this.lastDimensions.rows);
+    if (this.process) {
+      this.process.resize(this.lastDimensions.cols, this.lastDimensions.rows);
+      this.events.emit("resize", this.lastDimensions.cols, this.lastDimensions.rows);
+    }
   }
 
   public on<K extends keyof TerminalRuntimeEvents>(

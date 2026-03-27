@@ -83,6 +83,7 @@ export const App = () => {
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
   const serverCapabilitiesRef = useRef<ServerCapabilities | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
+  const readTerminalGeometryRef = useRef<() => { cols: number; rows: number } | null>(() => null);
 
   const attachedSessionRef = useRef("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -238,7 +239,11 @@ export const App = () => {
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
     },
-    getAuthPayload: () => buildControlAuthHint(attachedSessionRef.current, launchContextRef.current),
+    getAuthPayload: () => buildControlAuthHint(
+      attachedSessionRef.current,
+      launchContextRef.current,
+      readTerminalGeometryRef.current()
+    ),
   });
 
   const { authReady, serverConfig, capabilities, serverCapabilities, errorMessage, statusMessage, password,
@@ -263,6 +268,7 @@ export const App = () => {
   const {
     fileInputRef,
     focusTerminal,
+    readTerminalGeometry,
     requestTerminalFit,
     resetTerminalBuffer,
     scrollbackContentRef,
@@ -293,6 +299,9 @@ export const App = () => {
   useEffect(() => {
     notifyTerminalResizeRef.current = requestTerminalFit;
   }, [requestTerminalFit]);
+  useEffect(() => {
+    readTerminalGeometryRef.current = readTerminalGeometry;
+  }, [readTerminalGeometry]);
 
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
@@ -306,7 +315,14 @@ export const App = () => {
     const socket = new WebSocket(`${wsOrigin}/ws/terminal`);
     socket.onopen = () => {
       debugLog("terminal_socket.onopen");
-      socket.send(JSON.stringify({ type: "auth", token, password: passwordValue || undefined, clientId }));
+      const terminalGeometry = readTerminalGeometry();
+      socket.send(JSON.stringify({
+        type: "auth",
+        token,
+        password: passwordValue || undefined,
+        clientId,
+        ...(terminalGeometry ?? {})
+      }));
       connectionActionsRef.current.setStatusMessage("terminal connected");
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
@@ -332,7 +348,7 @@ export const App = () => {
       debugLog("terminal_socket.onerror");
     };
     terminalSocketRef.current = socket;
-  }, [requestTerminalFit]);
+  }, [readTerminalGeometry, requestTerminalFit]);
 
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {

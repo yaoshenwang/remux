@@ -18,12 +18,25 @@ describe("frontend launch context", () => {
   });
 
   test("prefers initial launch context and otherwise falls back to attached session", () => {
-    expect(buildControlAuthHint("main", { session: "work", tabIndex: 2, paneId: "%2" })).toEqual({
+    expect(buildControlAuthHint("main", { session: "work", tabIndex: 2, paneId: "%2" }, { cols: 140, rows: 40 })).toEqual({
       session: "work",
       tabIndex: 2,
-      paneId: "%2"
+      paneId: "%2",
+      cols: 140,
+      rows: 40
     });
-    expect(buildControlAuthHint("main", null)).toEqual({ session: "main" });
+    expect(buildControlAuthHint("main", null, { cols: 132, rows: 38 })).toEqual({
+      session: "main",
+      cols: 132,
+      rows: 38
+    });
     expect(buildControlAuthHint("", null)).toBeNull();
+  });
+
+  test("still includes terminal dimensions before a session is attached", () => {
+    expect(buildControlAuthHint("", null, { cols: 128, rows: 36 })).toEqual({
+      cols: 128,
+      rows: 36
+    });
   });
 });

@@ -3,7 +3,12 @@ import type { AuthService } from "../auth/auth-service.js";
 import type { BackendCapabilities, ControlClientMessage } from "../../shared/protocol.js";
 import type { ServerCapabilities } from "../../shared/contracts/core.js";
 import { randomToken } from "../util/random.js";
-import { parseClientMessage, sendJson, summarizeClientMessage } from "./socket-protocol.js";
+import {
+  extractTerminalDimensions,
+  parseClientMessage,
+  sendJson,
+  summarizeClientMessage
+} from "./socket-protocol.js";
 import type { SessionAttachService } from "./session-attach-service.js";
 import type { ControlContext } from "./types.js";
 
@@ -93,6 +98,10 @@ export const registerControlSocketHandlers = ({
             }
 
             context.authed = true;
+            const initialTerminalSize = extractTerminalDimensions(message);
+            if (initialTerminalSize) {
+              context.pendingResize = initialTerminalSize;
+            }
             logger.log("control ws auth ok", context.clientId);
             sendJson(socket, {
               type: "auth_ok",
