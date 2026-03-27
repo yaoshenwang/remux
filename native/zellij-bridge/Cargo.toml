@@ -5,6 +5,8 @@ edition = "2021"
 license = "MIT"
 description = "Native pane-render bridge for Remux zellij integration"
 
+[workspace]
+
 [dependencies]
 anyhow = "1.0"
 serde_json = "1.0"

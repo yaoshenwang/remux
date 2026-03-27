@@ -180,9 +180,14 @@ const waitForPort = async (): Promise<number> =>
 const waitForHealth = async (
   baseUrl: string,
   child: ChildProcessWithoutNullStreams | null,
+  getStartupError?: () => Error | null,
 ): Promise<void> => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30_000) {
+    const startupError = getStartupError?.();
+    if (startupError) {
+      throw startupError;
+    }
     if (child && child.exitCode !== null) {
       throw new Error(`remuxd exited before becoming healthy (code ${child.exitCode})`);
     }
@@ -195,6 +200,10 @@ const waitForHealth = async (
       // keep polling
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  const startupError = getStartupError?.();
+  if (startupError) {
+    throw startupError;
   }
   throw new Error("timed out waiting for remuxd health");
 };
@@ -233,6 +242,7 @@ const createManagedRuntimeTarget = async (
   const port = await waitForPort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const resolved = resolveRemuxdCommand();
+  let startupError: Error | null = null;
   const child = spawn(
     resolved.command,
     [
@@ -251,6 +261,10 @@ const createManagedRuntimeTarget = async (
     },
   );
 
+  child.once("error", (error) => {
+    startupError = new Error(`failed to start remuxd: ${String(error)}`);
+  });
+
   child.stdout.on("data", (chunk) => {
     logger.log(`[remuxd] ${chunk.toString("utf8").trimEnd()}`);
   });
@@ -258,7 +272,7 @@ const createManagedRuntimeTarget = async (
     logger.error(`[remuxd] ${chunk.toString("utf8").trimEnd()}`);
   });
 
-  await waitForHealth(baseUrl, child);
+  await waitForHealth(baseUrl, child, () => startupError);
 
   return {
     baseUrl,
