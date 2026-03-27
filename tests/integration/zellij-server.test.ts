@@ -83,15 +83,18 @@ class ScenarioZellijGateway implements MultiplexerBackend {
   private readonly delayNewTabPanes: boolean;
   private readonly delayRenameSession: boolean;
   private readonly keepCurrentTabActiveOnNewTab: boolean;
+  private readonly keepTabsInactiveOnSelect: boolean;
 
   public constructor(options?: {
     delayNewTabPanes?: boolean;
     delayRenameSession?: boolean;
     keepCurrentTabActiveOnNewTab?: boolean;
+    keepTabsInactiveOnSelect?: boolean;
   }) {
     this.delayNewTabPanes = options?.delayNewTabPanes ?? false;
     this.delayRenameSession = options?.delayRenameSession ?? false;
     this.keepCurrentTabActiveOnNewTab = options?.keepCurrentTabActiveOnNewTab ?? false;
+    this.keepTabsInactiveOnSelect = options?.keepTabsInactiveOnSelect ?? false;
     this.sessions = [
       {
         name: "main",
@@ -200,9 +203,9 @@ class ScenarioZellijGateway implements MultiplexerBackend {
   public async selectTab(session: string, tabIndex: number): Promise<void> {
     const sessionState = this.mustFindSession(session);
     sessionState.tabs.forEach((tab) => {
-      tab.active = tab.index === tabIndex;
+      tab.active = this.keepTabsInactiveOnSelect ? false : tab.index === tabIndex;
       tab.panes.forEach((pane, paneIndex) => {
-        pane.active = tab.active && paneIndex === 0;
+        pane.active = tab.index === tabIndex && paneIndex === 0;
       });
     });
   }
@@ -909,6 +912,55 @@ describe("zellij backend server", () => {
       const activeTab = state.workspace.sessions[0].tabs.find((tab) => tab.active);
       expect(activeTab?.panes.length).toBeGreaterThan(0);
       expect(state.clientView.tabIndex).toBe(activeTab?.index);
+      expect(ptyFactory.lastSpawnedSession).toContain(state.clientView.paneId);
+    } finally {
+      control.close();
+    }
+  });
+
+  test("new_tab reattaches promptly even when zellij never marks the selected tab active", async () => {
+    const scenarioGateway = new ScenarioZellijGateway({
+      keepCurrentTabActiveOnNewTab: true,
+      keepTabsInactiveOnSelect: true
+    });
+    const authService = new AuthService({ token: "test-token" });
+    const config = { ...buildConfig("test-token"), pollIntervalMs: 2_500 };
+    await runningServer.stop();
+    runningServer = createRemuxServer(config, {
+      backend: scenarioGateway,
+      ptyFactory,
+      authService,
+      logger: { log: () => {}, error: () => {} }
+    });
+    await runningServer.start();
+    const port = (runningServer.server.address() as AddressInfo).port;
+    baseWsUrl = `ws://127.0.0.1:${port}`;
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+      control.send(JSON.stringify({ type: "new_tab", session: "main" }));
+
+      const state = await waitForMessage<{
+        type: string;
+        workspace: {
+          sessions: Array<{
+            tabs: Array<{ index: number; active: boolean; panes: Array<{ id: string; active: boolean }> }>;
+          }>;
+        };
+        clientView: { paneId: string; tabIndex: number };
+      }>(control, (msg) => {
+        if (msg.type !== "workspace_state") return false;
+        const newTab = msg.workspace.sessions[0]?.tabs.find((tab) => tab.index === 1);
+        return Boolean(
+          newTab
+          && newTab.panes.length > 0
+          && newTab.panes.some((pane) => pane.id === msg.clientView.paneId && pane.active)
+        );
+      }, 5_000);
+
+      expect(state.clientView.tabIndex).toBe(1);
+      expect(state.workspace.sessions[0]?.tabs.find((tab) => tab.index === 1)?.active).toBe(false);
       expect(ptyFactory.lastSpawnedSession).toContain(state.clientView.paneId);
     } finally {
       control.close();

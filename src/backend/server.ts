@@ -413,7 +413,7 @@ export const createRemuxServer = (
             snapshot = await sessionAttachService.waitForWorkspace((candidate) => {
               const candidateSession = candidate.sessions.find((entry) => entry.name === sessionForNew);
               const candidateTab = candidateSession?.tabs.find((tab) => tab.index === createdTabIndex);
-              return Boolean(candidateTab?.active && candidateTab.panes.length > 0);
+              return Boolean(candidateTab && candidateTab.panes.length > 0);
             });
             session = snapshot.sessions.find((entry) => entry.name === sessionForNew);
             createdTab = session?.tabs.find((tab) => tab.index === createdTabIndex) ?? createdTab;
