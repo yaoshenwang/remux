@@ -17,7 +17,9 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
     clientId: z.string().optional(),
     session: z.string().optional(),
     tabIndex: z.number().int().min(0).optional(),
-    paneId: z.string().optional()
+    paneId: z.string().optional(),
+    cols: z.number().int().min(2).optional(),
+    rows: z.number().int().min(2).optional()
   }),
   z.object({ type: z.literal("select_session"), session: z.string() }),
   z.object({ type: z.literal("new_session"), name: z.string() }),
@@ -62,7 +64,9 @@ export const summarizeClientMessage = (message: ControlClientMessage): string =>
       type: message.type,
       tokenPresent: Boolean(message.token),
       passwordPresent: Boolean(message.password),
-      clientIdPresent: Boolean(message.clientId)
+      clientIdPresent: Boolean(message.clientId),
+      cols: message.cols,
+      rows: message.rows
     });
   }
   if (message.type === "send_compose") {
@@ -85,6 +89,26 @@ export const summarizeState = (state: WorkspaceSnapshot): string => {
       + `tabs=${session.tabs.length}}`;
   });
   return `capturedAt=${state.capturedAt}; sessions=${sessions.join(" | ")}`;
+};
+
+export const extractTerminalDimensions = (
+  message: { cols?: number; rows?: number }
+): { cols: number; rows: number } | null => {
+  if (
+    typeof message.cols !== "number" ||
+    typeof message.rows !== "number" ||
+    !Number.isFinite(message.cols) ||
+    !Number.isFinite(message.rows) ||
+    message.cols < 2 ||
+    message.rows < 2
+  ) {
+    return null;
+  }
+
+  return {
+    cols: Math.floor(message.cols),
+    rows: Math.floor(message.rows)
+  };
 };
 
 export { isObject };

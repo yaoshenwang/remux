@@ -72,7 +72,17 @@ import type {
 import type { ServerCapabilities } from "./contracts/core.js";
 
 export type ControlClientMessage =
-  | { type: "auth"; token?: string; password?: string; clientId?: string; session?: string; tabIndex?: number; paneId?: string }
+  | {
+      type: "auth";
+      token?: string;
+      password?: string;
+      clientId?: string;
+      session?: string;
+      tabIndex?: number;
+      paneId?: string;
+      cols?: number;
+      rows?: number;
+    }
   | { type: "select_session"; session: string }
   | { type: "new_session"; name: string }
   | { type: "close_session"; session: string }

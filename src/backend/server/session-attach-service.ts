@@ -250,6 +250,10 @@ export const createSessionAttachService = ({
     runtime.on("attach", (session) => {
       logger.log("runtime attached session", context.clientId, session);
     });
+    runtime.on("resize", (cols, rows) => {
+      const trackedSession = context.baseSession ?? context.clientId;
+      deps.extensions?.onSessionResize(trackedSession, cols, rows);
+    });
     runtime.on("exit", (code) => {
       logger.log(`PTY exited with code ${code} (${context.clientId})`);
       deps.extensions?.onSessionExit(context.baseSession ?? context.clientId, code);
@@ -370,6 +374,9 @@ export const createSessionAttachService = ({
     snapshotForInit?: WorkspaceSnapshot
   ): Promise<void> => {
     const runtime = getOrCreateRuntime(context);
+    const initialTrackerSize = context.pendingResize ?? { cols: 200, rows: 50 };
+    context.baseSession = baseSession;
+    deps.extensions?.onSessionCreated(baseSession, initialTrackerSize.cols, initialTrackerSize.rows);
 
     if (deps.backend.createGroupedSession) {
       const mobileSession = buildMobileSessionName(context.clientId);
@@ -422,11 +429,9 @@ export const createSessionAttachService = ({
       }
     }
 
-    context.baseSession = baseSession;
     context.attachedSession = deps.backend.createGroupedSession
       ? buildMobileSessionName(context.clientId)
       : undefined;
-    deps.extensions?.onSessionCreated(baseSession);
     sendJson(context.socket, { type: "attached", session: baseSession });
   };
 
