@@ -706,4 +706,184 @@ describe("ZellijPaneIO", () => {
 
     io.kill();
   });
+
+  test("calibrates resize overhead after first resize detects zellij chrome", async () => {
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+
+    // list-panes returns pane_content_columns=118 when 120 was sent
+    execFileMock.mockImplementation((_file: unknown, args: string[], _options: unknown, callback: Function) => {
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 7,
+            is_plugin: false,
+            pane_content_columns: 118,
+            pane_content_rows: 38,
+            cursor_coordinates_in_pane: [1, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_7",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+    fakeBridge.sendCommand.mockClear();
+
+    // First resize: overhead is 0, sends raw values
+    io.resize(120, 40);
+    expect(fakeBridge.sendCommand).toHaveBeenCalledWith({
+      type: "terminal_resize",
+      cols: 120,
+      rows: 40
+    });
+
+    // Advance past calibration delay (150ms)
+    await vi.advanceTimersByTimeAsync(200);
+    await flushAsyncWork();
+
+    // Calibration should have detected overhead: cols=2, rows=2
+    expect(io.getResizeOverhead()).toEqual({ cols: 2, rows: 2 });
+
+    // The calibration re-sent resize with compensation
+    expect(fakeBridge.sendCommand).toHaveBeenCalledWith({
+      type: "terminal_resize",
+      cols: 122,
+      rows: 42
+    });
+
+    io.kill();
+  });
+
+  test("does not calibrate when pane content matches requested dimensions", async () => {
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+
+    // Pane content matches exactly (no overhead)
+    execFileMock.mockImplementation((_file: unknown, args: string[], _options: unknown, callback: Function) => {
+      if (args.includes("list-panes")) {
+        callback?.(null, JSON.stringify([
+          {
+            id: 7,
+            is_plugin: false,
+            pane_content_columns: 120,
+            pane_content_rows: 40,
+            cursor_coordinates_in_pane: [1, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_7",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+    fakeBridge.sendCommand.mockClear();
+
+    io.resize(120, 40);
+    await vi.advanceTimersByTimeAsync(200);
+    await flushAsyncWork();
+
+    // No overhead detected, no re-send
+    expect(io.getResizeOverhead()).toEqual({ cols: 0, rows: 0 });
+    expect(fakeBridge.sendCommand).toHaveBeenCalledTimes(1);
+
+    io.kill();
+  });
+
+  test("applies cached overhead to subsequent resizes without re-calibration round-trip", async () => {
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+
+    let callCount = 0;
+    execFileMock.mockImplementation((_file: unknown, args: string[], _options: unknown, callback: Function) => {
+      if (args.includes("list-panes")) {
+        callCount += 1;
+        // First calibration: 120 sent, 118 actual → overhead 2
+        // Second calibration: 160+2=162 sent, 160 actual → overhead stays 2
+        const cols = callCount <= 2 ? 118 : 160;
+        const rows = callCount <= 2 ? 38 : 50;
+        callback?.(null, JSON.stringify([
+          {
+            id: 7,
+            is_plugin: false,
+            pane_content_columns: cols,
+            pane_content_rows: rows,
+            cursor_coordinates_in_pane: [1, 1]
+          }
+        ]), "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_7",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+    fakeBridge.sendCommand.mockClear();
+
+    // First resize triggers calibration
+    io.resize(120, 40);
+    await vi.advanceTimersByTimeAsync(200);
+    await flushAsyncWork();
+
+    expect(io.getResizeOverhead()).toEqual({ cols: 2, rows: 2 });
+    fakeBridge.sendCommand.mockClear();
+
+    // Second resize immediately applies cached overhead
+    io.resize(160, 50);
+    expect(fakeBridge.sendCommand).toHaveBeenCalledWith({
+      type: "terminal_resize",
+      cols: 162,
+      rows: 52
+    });
+
+    io.kill();
+  });
+
+  test("overhead calibration ignores errors gracefully", async () => {
+    const fakeBridge = new FakeNativeBridge();
+    const { ZellijPaneIO } = await import("../../src/backend/zellij/pane-io.js");
+
+    execFileMock.mockImplementation((_file: unknown, args: string[], _options: unknown, callback: Function) => {
+      if (args.includes("list-panes")) {
+        callback?.(new Error("zellij not responding"), "", "");
+        return;
+      }
+      callback?.(null, "", "");
+    });
+
+    const io = new ZellijPaneIO({
+      session: "main",
+      paneId: "terminal_7",
+      nativeBridgeFactory: async () => fakeBridge
+    });
+
+    await flushAsyncWork();
+
+    io.resize(120, 40);
+    await vi.advanceTimersByTimeAsync(200);
+    await flushAsyncWork();
+
+    // Overhead stays at 0 — calibration error is silently ignored
+    expect(io.getResizeOverhead()).toEqual({ cols: 0, rows: 0 });
+
+    io.kill();
+  });
 });

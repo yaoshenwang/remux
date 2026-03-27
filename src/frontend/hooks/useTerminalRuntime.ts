@@ -123,7 +123,24 @@ export const useTerminalRuntime = ({
     fitAddon.fit();
 
     if (notify) {
+      // Send the unconstrained (full container) size to the backend first.
+      // The backend's overhead calibration will compensate for zellij chrome.
       sendTerminalResize();
+    }
+
+    // For zellij: if the backend has reported the actual pane content
+    // dimensions and xterm ended up wider/taller, constrain xterm to
+    // match the real pane.  This avoids the "half-width" rendering
+    // where xterm thinks it has more columns than the PTY.
+    // This is applied AFTER sending the resize so the backend receives
+    // the full container dimensions for correct overhead compensation.
+    if (shouldUsePaneViewportCols(serverConfig?.backendKind)) {
+      const paneCols = paneViewportColsRef.current;
+      const paneRows = paneViewportRowsRef.current;
+      if (paneCols > 0 && terminal.cols !== paneCols) {
+        const rows = paneRows > 0 ? paneRows : terminal.rows;
+        terminal.resize(paneCols, rows);
+      }
     }
 
     return true;

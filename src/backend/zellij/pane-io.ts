@@ -156,6 +156,12 @@ export class ZellijPaneIO implements PtyProcess {
   private missingPaneCount = 0;
   private pendingResize: { cols: number; rows: number } | null = null;
 
+  /** Overhead compensation for zellij layout chrome (tab bar, status bar, borders). */
+  private resizeOverhead = { cols: 0, rows: 0 };
+  /** The cols/rows the frontend actually requested (before overhead compensation). */
+  private lastRequestedDims: { cols: number; rows: number } | null = null;
+  private calibrationTimer: ReturnType<typeof setTimeout> | null = null;
+
   private writeBuf = "";
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
@@ -674,10 +680,18 @@ export class ZellijPaneIO implements PtyProcess {
 
     const cols = Math.max(2, Math.floor(_cols));
     const rows = Math.max(2, Math.floor(_rows));
-    this.pendingResize = { cols, rows };
+    this.lastRequestedDims = { cols, rows };
+
+    // Apply overhead compensation so that after zellij subtracts its
+    // chrome (tab bar, status bar, pane borders) the actual pane content
+    // area matches what the frontend requested.
+    const compensatedCols = cols + this.resizeOverhead.cols;
+    const compensatedRows = rows + this.resizeOverhead.rows;
+    this.pendingResize = { cols: compensatedCols, rows: compensatedRows };
 
     if (this.trySendResizeViaBridge()) {
       this.requestRefresh({ immediate: true, boost: true });
+      this.scheduleOverheadCalibration();
       return;
     }
 
@@ -685,8 +699,9 @@ export class ZellijPaneIO implements PtyProcess {
       return;
     }
 
-    this.ensureHiddenClient().resize(cols, rows);
+    this.ensureHiddenClient().resize(compensatedCols, compensatedRows);
     this.requestRefresh({ immediate: true, boost: true });
+    this.scheduleOverheadCalibration();
   }
 
   onData(handler: (data: string) => void): void {
@@ -782,6 +797,10 @@ export class ZellijPaneIO implements PtyProcess {
       clearTimeout(this.bridgeRestartTimer);
       this.bridgeRestartTimer = null;
     }
+    if (this.calibrationTimer) {
+      clearTimeout(this.calibrationTimer);
+      this.calibrationTimer = null;
+    }
   }
 
   private flushPendingResize(): void {
@@ -811,6 +830,85 @@ export class ZellijPaneIO implements PtyProcess {
       cols: this.pendingResize.cols,
       rows: this.pendingResize.rows
     }) ?? false;
+  }
+
+  private static readonly CALIBRATION_DELAY_MS = 150;
+
+  /**
+   * After sending a resize to zellij, query the actual pane content
+   * dimensions and adjust the overhead for future resizes.
+   */
+  private scheduleOverheadCalibration(): void {
+    if (this.calibrationTimer) {
+      clearTimeout(this.calibrationTimer);
+    }
+    this.calibrationTimer = setTimeout(() => {
+      this.calibrationTimer = null;
+      void this.calibrateOverhead();
+    }, ZellijPaneIO.CALIBRATION_DELAY_MS);
+  }
+
+  private async calibrateOverhead(): Promise<void> {
+    if (this.killed || !this.lastRequestedDims) {
+      return;
+    }
+    try {
+      const result = await execFileAsync(this.binary, [
+        "--session", this.session,
+        "action", "list-panes",
+        "--json",
+        "--all"
+      ], {
+        timeout: 3_000,
+        env: this.env,
+        encoding: "utf8"
+      });
+
+      if (this.killed || !this.lastRequestedDims) {
+        return;
+      }
+
+      const pane = findPaneFromList(result.stdout, this.paneId);
+      if (!pane) {
+        return;
+      }
+
+      const actualCols = pane.pane_content_columns;
+      const actualRows = pane.pane_content_rows;
+      if (!actualCols || !actualRows) {
+        return;
+      }
+
+      const { cols: requestedCols, rows: requestedRows } = this.lastRequestedDims;
+      const colDelta = requestedCols - actualCols;
+      const rowDelta = requestedRows - actualRows;
+
+      if (colDelta === 0 && rowDelta === 0) {
+        return;
+      }
+
+      const newColOverhead = Math.max(0, this.resizeOverhead.cols + colDelta);
+      const newRowOverhead = Math.max(0, this.resizeOverhead.rows + rowDelta);
+
+      if (newColOverhead === this.resizeOverhead.cols && newRowOverhead === this.resizeOverhead.rows) {
+        return;
+      }
+
+      this.resizeOverhead = { cols: newColOverhead, rows: newRowOverhead };
+      this.logger?.log?.(
+        `[zellij-resize] calibrated overhead: cols=${newColOverhead}, rows=${newRowOverhead}`
+      );
+
+      // Re-send resize with corrected overhead
+      this.resize(requestedCols, requestedRows);
+    } catch {
+      // Calibration is best-effort; ignore failures.
+    }
+  }
+
+  /** Expose overhead for testing. */
+  public getResizeOverhead(): { cols: number; rows: number } {
+    return { ...this.resizeOverhead };
   }
 }
 
