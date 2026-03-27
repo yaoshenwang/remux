@@ -1,0 +1,25 @@
+[package]
+name = "remux-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+futures-util.workspace = true
+remux-core = { path = "../remux-core" }
+remux-inspect = { path = "../remux-inspect" }
+remux-pty = { path = "../remux-pty" }
+remux-protocol = { path = "../remux-protocol" }
+remux-session = { path = "../remux-session" }
+remux-terminal = { path = "../remux-terminal" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true
