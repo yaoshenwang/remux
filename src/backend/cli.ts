@@ -56,7 +56,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
     .option("session", {
       type: "string",
       default: "main",
-      describe: "Default tmux session name"
+      describe: "Default workspace session name"
     })
     .option("scrollback", {
       type: "number",
@@ -71,7 +71,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       type: "string",
       choices: ["auto", "tmux", "zellij", "conpty"] as const,
       default: "auto",
-      describe: "Session backend (auto-detect by default)"
+      describe: "Force a legacy fallback backend"
     })
     .option("tunnel-provider", {
       type: "string",
@@ -80,6 +80,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       describe: "Tunnel provider (auto-detects devtunnel, falls back to cloudflare)"
     })
     .strict()
+    .hide("backend")
     .help()
     .parseAsync();
 

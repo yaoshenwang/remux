@@ -4,7 +4,7 @@
 
 Remux is a remote workspace cockpit for terminal-first work. It helps users monitor, inspect, and control live terminal workspaces from another device without pretending the browser is a full desktop terminal.
 
-The workspace model is multiplexer-neutral, with `tmux` as the flagship backend, explicit `zellij` caveats, and `conpty` as a practical Windows fallback.
+The active product contract is the unified `runtime-v2` backend. Legacy `tmux` / `zellij` / `conpty` code remains only as a shrinking compatibility boundary and is not part of the default release path.
 
 Primary use cases:
 
@@ -38,16 +38,16 @@ The backend is a Node.js service built around:
 
 - Express for HTTP routes and static frontend serving
 - `ws` for WebSocket transport
-- a `MultiplexerBackend` abstraction for structured workspace operations
-- a `PtyFactory` abstraction for attaching terminal I/O to the selected pane/session
-- a polling state monitor that snapshots sessions, tabs, and panes and broadcasts diffs
+- a runtime-v2 gateway that proxies workspace state, inspect snapshots, and terminal streams
+- a translation layer that maps runtime-v2 data into the browser-facing workspace model
+- optional compatibility adapters kept outside the default contract
 
 Key entry points:
 
-- `src/backend/cli.ts`: CLI bootstrap, auth setup, backend detection, tunnel startup
-- `src/backend/server.ts`: HTTP routes, WebSocket lifecycle, auth gates, upload endpoint
-- `src/backend/providers/detect.ts`: backend auto-detection and forced backend selection
-- `src/backend/multiplexer/types.ts`: backend-neutral workspace contract
+- `src/backend/cli.ts`: CLI bootstrap, auth setup, runtime-v2 startup, tunnel startup
+- `src/backend/server-v2.ts`: runtime-v2 gateway HTTP routes, WebSocket lifecycle, auth gates, upload endpoint
+- `src/backend/v2/translation.ts`: runtime-v2 to browser model translation
+- `src/backend/v2/types.ts`: runtime-v2 protocol-facing workspace contract
 
 ### Frontend
 
@@ -108,20 +108,19 @@ Rationale:
 - control messages remain typed and inspectable
 - both channels can authenticate independently
 
-## Backend Abstraction
+## Runtime Contract
 
-The core backend contract is `MultiplexerBackend`.
+The active backend contract is `runtime-v2`.
 
-Required capabilities:
+Required behavior:
 
-- list, create, close, and rename sessions
-- list, create, close, select, and rename tabs
-- list panes and focus or split them
-- close panes
-- toggle fullscreen when supported
-- capture scrollback
+- publish workspace summaries for sessions, tabs, panes, and layout
+- expose inspect snapshots with explicit scope and precision
+- stream terminal output through a dedicated terminal channel
+- accept structured control mutations such as create, rename, split, select, and close
+- report capability support explicitly instead of relying on implicit backend assumptions
 
-Each backend also declares `BackendCapabilities`, which the frontend uses to adapt the UI for:
+The frontend still consumes translated `BackendCapabilities`, which it uses to adapt the UI for:
 
 - pane focus behavior
 - precise or approximate inspect history backing
@@ -129,37 +128,18 @@ Each backend also declares `BackendCapabilities`, which the frontend uses to ada
 - fullscreen support
 - session and tab rename support
 
-## Supported Backends
+## Compatibility Boundary
 
-### tmux
+The old `tmux` / `zellij` / `conpty` adapters remain in the repository only as migration-era compatibility code.
 
-`tmux` is the flagship backend and the most mature path.
+They are intentionally outside the default contract:
 
-Characteristics:
+- hidden from the normal CLI help
+- excluded from the default CI matrix
+- excluded from the default `npm test` and default Playwright path
+- retained only for debugging, migration, and staged removal work
 
-- grouped sessions are used to isolate window focus per client where possible
-- tmux CLI calls are executed through `execFile` argument arrays
-- PTY attachment is handled through the node-pty adapter; degraded `script(1)` fallback is rejected because it cannot preserve terminal resize invariants
-
-### zellij
-
-`zellij` support exists through a dedicated backend, PTY factory, and native bridge.
-
-Current characteristics:
-
-- live pane rendering prefers the native bridge and degrades explicitly to CLI fallback when needed
-- the UI exposes the current zellij runtime mode instead of hiding bridge failures behind static capability flags
-- Focus Sync can follow external zellij tab and pane changes when the user enables it
-- zellij semantics still differ from tmux, so Remux does not promise exact behavior or history fidelity parity
-
-### conpty
-
-`conpty` is the fallback backend for Windows environments.
-
-Characteristics:
-
-- used when tmux and zellij are not available, or when forced explicitly
-- capability surface is narrower than tmux
+See `docs/LEGACY_COMPAT.md` for the remaining escape hatches.
 
 ## Runtime Flow
 
@@ -168,10 +148,14 @@ Characteristics:
 1. User runs `npx remux`
 2. CLI parses flags and environment variables
 3. Auth token is created, and password is generated unless disabled or supplied
-4. Backend is auto-detected or forced
+4. The runtime-v2 gateway starts and connects to `remuxd`
 5. HTTP and WebSocket server start
 6. Optional Cloudflare tunnel starts
 7. CLI prints launch URLs and QR code
+
+Compatibility note:
+
+- if runtime-v2 is explicitly disabled or fails to start, Remux can still fall back to the old adapters during migration work
 
 ### Frontend Connection
 
@@ -184,9 +168,9 @@ Characteristics:
 
 ### Session Attach
 
-The attach flow depends on the selected backend and available sessions:
+The attach flow depends on runtime-v2 workspace state:
 
-- if no session exists, the backend creates the default one
+- if no session exists, the gateway creates or requests the default one
 - if one session exists, the server can attach directly
 - if multiple sessions exist, the frontend shows a picker
 - once attached, the terminal plane starts streaming
@@ -202,9 +186,8 @@ The drawer is the structured workspace navigator. It exposes:
 - panes
 - create, rename, and close actions
 - split and fullscreen actions when supported
-- backend switch controls
 - theme and snippet management
-- sticky zoom and focus-follow behavior
+- sticky zoom and view behavior controls
 
 ### Live View
 
@@ -246,26 +229,26 @@ Behavior:
 Current server endpoints include:
 
 - `GET /api/config`
-  - returns version, password requirement, scrollback defaults, upload limit, backend kind
+  - returns version, password requirement, scrollback defaults, upload limit, and runtime mode metadata
 - `POST /api/upload`
   - uploads a file into the active pane working directory after auth
 - `POST /api/switch-backend`
-  - switches between `tmux`, `zellij`, and `conpty` when supported and authenticated
+  - returns `501` under runtime-v2 and exists only as a compatibility stub
 
 The frontend bundle is served statically, and all non-API non-WS paths fall back to the app shell.
 
 ## State Synchronization
 
-`TmuxStateMonitor` is still the historical name, but it now serves the generic backend model.
+The primary state path is a runtime-v2 workspace subscription translated into the browser-facing snapshot model.
 
 Behavior:
 
-- snapshots the full workspace on an interval
-- compares state over time
-- broadcasts only when meaningful changes happen
-- includes `clientView` so each frontend can maintain local focus state
+- the gateway subscribes to workspace summaries from the upstream runtime
+- runtime-v2 terminal and inspect state are translated into browser-facing payloads
+- only meaningful workspace changes are rebroadcast
+- `clientView` remains separate so each frontend can preserve its local selection state
 
-This separation matters because the rendered terminal and the structured workspace snapshot can diverge temporarily during attach, reconnect, or backend-specific focus changes.
+This separation matters because the rendered terminal and the structured workspace snapshot can diverge temporarily during attach, reconnect, or terminal retargeting.
 
 ## Security-Relevant Constraints
 
@@ -285,7 +268,7 @@ The current implementation still carries some transitional complexity:
 - `src/frontend/App.tsx` is a large monolith and should eventually be split
 - protocol types are shared logically but still maintained manually
 - zod is used for inbound control messages, but validation is not yet universal across all boundaries
-- zellij support is useful but not yet as coherent as the tmux path
+- legacy compatibility code still adds complexity that should continue shrinking
 
 ## Non-Goals
 

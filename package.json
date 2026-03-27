@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Remote workspace cockpit for terminal-first work, powered by the unified runtime-v2 backend",
   "license": "MIT",
   "repository": {
@@ -53,13 +53,17 @@
     "runner:install": "scripts/install-github-runner.sh",
     "runner:remove": "scripts/remove-github-runner.sh",
     "runner:status": "scripts/github-runner-status.sh",
+    "test:gate": "npm run typecheck && npm test && npm run native:v2:check && npm run build && npm run test:e2e",
     "test:legacy:tmux-smoke": "REAL_TMUX_SMOKE=1 vitest run tests/smoke/real-tmux.test.ts tests/smoke/real-tmux-pty-resize.test.ts",
+    "test:legacy": "vitest run --config vitest.legacy.config.ts",
     "test:e2e": "npm run build && npm run test:e2e:functional && npm run test:e2e:width",
     "test:e2e:functional": "playwright test tests/e2e/runtime-v2.browser.spec.ts",
+    "test:e2e:legacy-ui": "playwright test --config playwright.legacy.config.ts",
     "test:e2e:width": "playwright test tests/e2e/terminal-width.spec.ts",
     "test:e2e:screenshots": "playwright test tests/e2e/screenshot.spec.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test:release": "npm run test:gate && npm run test:e2e:screenshots && npm pack --dry-run",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
     "prepack": "npm run build"
   },
   "engines": {

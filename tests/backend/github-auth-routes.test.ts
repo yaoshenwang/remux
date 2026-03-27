@@ -2,15 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { AuthService } from "../../src/backend/auth/auth-service.js";
-import { createRemuxServer, type RunningServer } from "../../src/backend/server.js";
-import { FakePtyFactory } from "../harness/fakePty.js";
-import { FakeSessionGateway } from "../harness/fakeTmux.js";
-
-const silentLogger = { log: () => undefined, error: () => undefined };
+import type { StartedRuntimeV2GatewayTestServer } from "../harness/runtimeV2GatewayTestServer.js";
+import { startRuntimeV2GatewayTestServer } from "../harness/runtimeV2GatewayTestServer.js";
 
 describe("GitHub auth routes", () => {
-  let server: RunningServer;
+  let server: StartedRuntimeV2GatewayTestServer;
   let tmpDir: string;
   let tmpHome: string;
   const originalHome = process.env.HOME;
@@ -23,25 +19,12 @@ describe("GitHub auth routes", () => {
     process.env.HOME = tmpHome;
     process.env.USERPROFILE = tmpHome;
 
-    server = createRemuxServer(
-      {
-        port: 0,
-        host: "127.0.0.1",
-        tunnel: false,
-        defaultSession: "main",
-        scrollbackLines: 100,
-        pollIntervalMs: 60_000,
-        token: authToken,
-        frontendDir: tmpDir
-      },
-      {
-        backend: new FakeSessionGateway(["main"]),
-        ptyFactory: new FakePtyFactory(),
-        authService: new AuthService({ token: authToken }),
-        logger: silentLogger
-      }
-    );
-    await server.start();
+    server = await startRuntimeV2GatewayTestServer({
+      frontendDir: tmpDir,
+      pollIntervalMs: 60_000,
+      scrollbackLines: 100,
+      token: authToken,
+    });
   });
 
   afterEach(async () => {
@@ -62,10 +45,7 @@ describe("GitHub auth routes", () => {
     await fs.promises.rm(tmpHome, { recursive: true, force: true });
   });
 
-  const getBaseUrl = (): string => {
-    const addr = server.server.address() as { port: number };
-    return `http://127.0.0.1:${addr.port}`;
-  };
+  const getBaseUrl = (): string => server.baseUrl;
 
   const authHeaders = (): HeadersInit => ({
     Authorization: `Bearer ${authToken}`,

@@ -124,11 +124,11 @@ Implication: browser compromise on that origin can expose the current-session pa
 
 ### Positive Controls
 
-- tmux control commands use `execFile` argument arrays, not shell interpolation (`src/backend/tmux/cli-executor.ts`).
-- PTY attach commands quote session names when a shell path is used (`src/backend/pty/node-pty-adapter.ts`).
-- Backend strips inherited `TMUX` and `TMUX_PANE` env vars for child processes (`src/backend/util/env.ts`).
-- Control-plane JSON messages are validated with `zod` before dispatch in `src/backend/server.ts`.
-- Upload and backend-switch HTTP endpoints require auth before action.
+- Runtime-v2 gateway control messages are validated and translated before dispatch in `src/backend/server-v2.ts`.
+- Control and terminal channels authenticate independently before they can operate on the live workspace.
+- Upload and other authenticated HTTP endpoints require the same auth checks before action.
+- Legacy tmux control commands still use `execFile` argument arrays, not shell interpolation (`src/backend/tmux/cli-executor.ts`).
+- Compatibility HTTP stubs such as `/api/switch-backend` remain authenticated even though runtime-v2 does not surface them in the UI.
 
 ### Current Gaps
 
@@ -162,7 +162,7 @@ Operational implication: terminal scrollback, shell history captures, or screens
 7. Single trust domain: authenticated user gets full workspace control.
 8. Local non-HTTPS mode can expose traffic to local network attackers.
 9. File upload writes into the active pane working directory, so an authenticated client can place files on disk where that shell context can reach them.
-10. Backend switching is authenticated but disruptive: it disconnects clients and changes runtime semantics.
+10. Legacy backend switching remains disruptive in compatibility mode. In runtime-v2 the endpoint returns `501`, but the stub still exists for compatibility.
 
 ## Recommended Operating Practices
 
@@ -172,7 +172,7 @@ Operational implication: terminal scrollback, shell history captures, or screens
 4. Rotate quickly by stopping and restarting Remux after a sharing incident.
 5. Avoid storing credentials in screenshots, chat logs, and shell logs.
 6. Run under a dedicated low-privilege OS user where possible.
-7. Use isolated tmux socket settings (`REMUX_SOCKET_NAME` or `REMUX_SOCKET_PATH`) for blast-radius control.
+7. If you still run legacy compatibility mode, use isolated tmux socket settings (`REMUX_SOCKET_NAME` or `REMUX_SOCKET_PATH`) for blast-radius control.
 8. Disable tunnel with `--no-tunnel` for local-only workflows.
 9. Clear browser storage on shared or untrusted devices.
 10. Keep dependencies and `cloudflared` updated.
@@ -210,20 +210,21 @@ When changing security-sensitive behavior, review and update this document and t
 ### Security-Sensitive Files
 
 - `src/backend/auth/auth-service.ts`
-- `src/backend/server.ts`
+- `src/backend/server-v2.ts`
 - `src/backend/cli.ts`
 - `src/backend/tunnels/`
+- `src/frontend/App.tsx`
+- `src/backend/util/random.ts`
+- `src/backend/server.ts`
 - `src/backend/providers/detect.ts`
 - `src/backend/providers/conpty-provider.ts`
-- `src/frontend/App.tsx`
 - `src/backend/tmux/cli-executor.ts`
 - `src/backend/pty/node-pty-adapter.ts`
-- `src/backend/util/random.ts`
 
 ### Regression Tests To Keep Green
 
-- `tests/integration/server.test.ts` for auth handshake and invalid token behavior
-- `tests/e2e/app.chrome.spec.ts` for password UX and retry flows
+- `tests/integration/runtime-v2-gateway.test.ts` for auth handshake, upload, inspect, and switch-backend compatibility behavior
+- `tests/e2e/runtime-v2.browser.spec.ts` for password/auth UX and browser contract behavior
 - `tests/backend/upload.test.ts` for authenticated upload handling
 
 ### Change Checklist

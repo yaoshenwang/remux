@@ -133,7 +133,7 @@ export const AppHeader = ({
   const mobileRenameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextSelectRef = useRef<number | null>(null);
   const inspectPrecisionBadge = formatInspectPrecisionBadge(inspectPrecision);
-  const runtimeBadge = serverConfig?.backendKind === "runtime-v2" || serverConfig?.backendKind === "zellij"
+  const runtimeBadge = serverConfig?.backendKind === "runtime-v2"
     ? describeRuntimeState(runtimeState)
     : null;
   const mobileStatsTitle = bandwidthStats

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { startE2EServer, type StartedE2EServer } from './harness/test-server.js';
+import { startE2EServer, type StartedE2EServer } from '../harness/test-server.js';
 
 let server: StartedE2EServer;
 

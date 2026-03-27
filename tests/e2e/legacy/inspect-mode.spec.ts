@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { startE2EServer } from "./harness/test-server.js";
+import { startE2EServer } from "../harness/test-server.js";
 
 test.describe("inspect mode", () => {
   test("assembles current tab history from backend pane captures", async ({ page }) => {

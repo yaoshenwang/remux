@@ -158,4 +158,41 @@ describe("runtime v2 gateway server", () => {
     expect(config.runtimeMode).toBe("runtime-v2");
     expect(config.backendKind).toBe("runtime-v2");
   });
+
+  test("rejects invalid control auth and keeps backend switching disabled", async () => {
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      control.send(JSON.stringify({ type: "auth", token: "bad-token" }));
+      const authError = await waitForMessage<{ type: "auth_error"; reason?: string }>(
+        control,
+        (message) => message.type === "auth_error",
+      );
+      expect(authError.reason).toContain("invalid token");
+    } finally {
+      control.close();
+    }
+
+    const unauthorized = await fetch(`${baseUrl}/api/switch-backend`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ backend: "tmux" }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const disabled = await fetch(`${baseUrl}/api/switch-backend`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ backend: "tmux" }),
+    });
+    expect(disabled.status).toBe(501);
+    await expect(disabled.json()).resolves.toEqual({
+      ok: false,
+      error: "runtime-v2 backend switching is not supported",
+    });
+  });
 });

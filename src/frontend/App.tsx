@@ -1021,41 +1021,6 @@ export const App = () => {
                     .join(" · ")}
                 </p>
               )}
-              {serverConfig.backendKind && serverConfig.backendKind !== "runtime-v2" && (
-                <div className="drawer-backend-switcher">
-                  <span className="drawer-backend-label">Backend:</span>
-                  {(["tmux", "zellij", "conpty"] as const).map((kind) => (
-                    <button
-                      key={kind}
-                      className={`drawer-backend-btn${serverConfig.backendKind === kind ? " active" : ""}`}
-                      disabled={serverConfig.backendKind === kind}
-                      onClick={async () => {
-                        const token = new URLSearchParams(window.location.search).get("token");
-                        try {
-                          const resp = await fetch("/api/switch-backend", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                              ...(password ? { "X-Password": password } : {})
-                            },
-                            body: JSON.stringify({ backend: kind })
-                          });
-                          if (resp.ok) {
-                            await fetch("/api/config").then((r) => r.json());
-                            window.location.reload();
-                          } else {
-                            const err = await resp.json().catch(() => ({}));
-                            connection.setErrorMessage(`Switch failed: ${(err as {error?: string}).error ?? resp.statusText}`);
-                          }
-                        } catch {
-                          connection.setErrorMessage("Failed to switch backend");
-                        }
-                      }}
-                    >{kind}</button>
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </aside>

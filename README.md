@@ -31,11 +31,11 @@ Remux is intentionally not a generic browser SSH client and not a thin browser w
 
 ## Runtime Model
 
-Remux is moving to a unified `runtime-v2` backend model.
+Remux now ships around a unified `runtime-v2` backend.
 
 - `runtime-v2` is now the primary product path, the default browser contract, and the main CI target
 - the UI, docs, and test flow are centered on `runtime-v2` semantics rather than backend-specific behavior
-- legacy `tmux` / `zellij` / `conpty` adapters still exist as transitional fallback code paths, but they are no longer the main product narrative
+- legacy compatibility code still exists temporarily, but it is hidden from the normal product surface and release gate
 
 If you are working on current product behavior, assume `runtime-v2` first.
 
@@ -67,23 +67,7 @@ npm start
 
 - Node.js 20+
 - Rust toolchain when running or checking the native `runtime-v2` workspace from source
-
-If you are explicitly using the transitional legacy fallback on macOS / Linux:
-
-```bash
-# macOS
-brew install tmux
-
-# Ubuntu / Debian
-sudo apt install tmux
-```
-
-Recommended for tap-to-focus in the legacy `tmux` fallback:
-
-```bash
-echo 'set -g mouse on' >> ~/.tmux.conf
-tmux source-file ~/.tmux.conf
-```
+- Legacy compatibility setup notes live in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md)
 
 ## Features
 
@@ -111,9 +95,9 @@ Options:
   --session <name>                 Default session name (default: main)
   --scrollback <lines>             Default scrollback capture lines (default: 1000)
   --debug-log <path>               Write backend debug logs to a file
-  --backend <auto|tmux|zellij|conpty>
-                                   Force a legacy fallback backend
 ```
+
+Advanced legacy compatibility flags are documented in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Environment Variables
 
@@ -122,14 +106,11 @@ Options:
 | `REMUX_DEBUG_LOG` | Debug log file path |
 | `REMUXD_BIN` | Path to an explicit `remuxd` binary for the runtime-v2 gateway |
 | `REMUXD_BASE_URL` | Connect the gateway to an already-running runtime-v2 service |
-| `REMUX_RUNTIME_V2=0` | Disable runtime-v2 startup and force legacy fallback detection |
 | `REMUX_VERBOSE_DEBUG=1` | Enable verbose server logging |
-| `REMUX_SOCKET_NAME` | Legacy tmux socket name (`tmux -L`) |
-| `REMUX_SOCKET_PATH` | Legacy tmux socket path (`tmux -S`) |
-| `REMUX_TRACE_TMUX=1` | Print legacy tmux CLI calls |
-| `REMUX_FORCE_SCRIPT_PTY=1` | Force a fail-fast check for degraded legacy tmux PTY mode |
 | `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
 | `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
+
+Legacy-only environment variables are listed in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Security Defaults
 
@@ -144,6 +125,7 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 ## Documentation
 
 - [docs/TESTING.md](./docs/TESTING.md): current runtime-v2-first test flow and release gate
+- [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md): hidden compatibility flags, fallback env vars, and non-default legacy tests
 - [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
@@ -174,14 +156,10 @@ npm run runner:status
 
 See [docs/SELF_HOSTED_RUNNER.md](./docs/SELF_HOSTED_RUNNER.md) for the deploy workflow and security boundary.
 
-Quality gate before merging into `dev`:
+Default pre-merge gate:
 
 ```bash
-npm run typecheck
-npm test
-npm run native:v2:check
-npm run build
-npm run test:e2e:width
+npm run test:gate
 ```
 
 Additional test commands:
@@ -190,9 +168,10 @@ Additional test commands:
 npm run test:e2e
 npm run test:e2e:functional
 npm run test:e2e:screenshots
-npm run test:legacy:tmux-smoke
-npm run build:legacy:zellij-bridge
+npm run test:release
 ```
+
+Legacy compatibility commands are documented in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Tech Stack
 

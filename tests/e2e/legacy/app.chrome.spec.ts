@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { startE2EServer, type StartedE2EServer } from "./harness/test-server.js";
+import { startE2EServer, type StartedE2EServer } from "../harness/test-server.js";
 
 test.describe("remux browser behavior", () => {
   test.describe("auto attach + drawer + terminal", () => {
