@@ -770,6 +770,41 @@ describe("zellij backend server", () => {
     }
   });
 
+  test("enabling follow-focus immediately rebuilds the workspace and re-arms fast polling", async () => {
+    const slowGateway = createFakeZellijGateway(["main"]);
+    await slowGateway.newTab("main");
+    await slowGateway.selectTab("main", 0);
+    const authService = new AuthService({ token: "test-token" });
+    const config = { ...buildConfig("test-token"), pollIntervalMs: 10_000 };
+    await runningServer.stop();
+    runningServer = createRemuxServer(config, {
+      backend: slowGateway,
+      ptyFactory,
+      authService,
+      logger: { log: () => {}, error: () => {} }
+    });
+    await runningServer.start();
+    const address = runningServer.server.address() as AddressInfo;
+    baseWsUrl = `ws://127.0.0.1:${address.port}`;
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+      const snapshotCallsBefore = slowGateway.calls.filter((call) => call.startsWith("listTabs:main")).length;
+      control.send(JSON.stringify({ type: "set_follow_focus", follow: true }));
+      await waitForMessage<{ type: "workspace_state"; clientView: { followBackendFocus: boolean } }>(
+        control,
+        (message) => message.type === "workspace_state" && message.clientView.followBackendFocus === true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const snapshotCallsAfter = slowGateway.calls.filter((call) => call.startsWith("listTabs:main")).length;
+      expect(snapshotCallsAfter).toBeGreaterThan(snapshotCallsBefore);
+    } finally {
+      control.close();
+    }
+  });
+
   test("auth auto-attaches the only live session even when exited sessions exist", async () => {
     const scenarioGateway = new LifecycleZellijGateway();
     scenarioGateway.setSessionLifecycle("other", "exited");

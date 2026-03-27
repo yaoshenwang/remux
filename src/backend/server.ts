@@ -678,7 +678,9 @@ export const createRemuxServer = (
       }
       case "set_follow_focus":
         viewStore.setFollowFocus(context.clientId, message.follow);
-        if (latestSnapshotRef.current) {
+        if (monitor) {
+          await monitor.forcePublish();
+        } else if (latestSnapshotRef.current) {
           broadcastSnapshotNow(latestSnapshotRef.current);
         }
         return;

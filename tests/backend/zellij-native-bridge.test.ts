@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   compareZellijVersions,
+  isLikelyZellijBridgeCommandEchoLine,
   isSupportedZellijVersion,
   parseZellijBridgeEventLine,
   parseZellijVersion,
@@ -92,6 +93,13 @@ describe("zellij native bridge helpers", () => {
       cols: 120,
       rows: 40
     })).toBe("{\"type\":\"terminal_resize\",\"cols\":120,\"rows\":40}\n");
+  });
+
+  test("detects PTY command echoes so they can be ignored", () => {
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"write_chars\",\"chars\":\"pwd\"}")).toBe(true);
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"terminal_resize\",\"cols\":120,\"rows\":40}")).toBe(true);
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"write_chars\",\"chars\":\"\b \b\"}")).toBe(true);
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"pane_render\",\"paneId\":\"terminal_0\"}")).toBe(false);
   });
 
   test("parses pane render events with cursor", () => {

@@ -10,6 +10,13 @@ const execFileAsync = promisify(execFile);
 
 const BRIDGE_STARTUP_TIMEOUT_MS = 1_500;
 const DISABLED_VALUES = new Set(["0", "false", "off", "disable", "disabled"]);
+const BRIDGE_COMMAND_ECHO_TOKENS = [
+  "\"type\":\"write\"",
+  "\"type\":\"write_chars\"",
+  "\"type\":\"write_bytes\"",
+  "\"type\":\"resize\"",
+  "\"type\":\"terminal_resize\""
+];
 
 export interface ZellijVersion {
   major: number;
@@ -240,6 +247,14 @@ export function parseZellijBridgeEventLine(line: string): ZellijNativeBridgeEven
   }
 
   throw new Error(`unknown zellij bridge event type: ${String(event.type)}`);
+}
+
+export function isLikelyZellijBridgeCommandEchoLine(line: string): boolean {
+  const normalized = line.trim();
+  if (!normalized) {
+    return false;
+  }
+  return BRIDGE_COMMAND_ECHO_TOKENS.some((token) => normalized.includes(token));
 }
 
 export function serializeZellijBridgeCommand(command: ZellijNativeBridgeCommand): string {
@@ -487,6 +502,9 @@ class ManagedChildProcessZellijNativeBridge implements ZellijNativeBridge {
           this.resolveReady(true);
         }
       } catch (error) {
+        if (isLikelyZellijBridgeCommandEchoLine(line)) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         clearTimeout(timeout);
         this.logger?.error?.(`[zellij-native-bridge] ${message}`);
@@ -615,6 +633,9 @@ class ManagedPtyZellijNativeBridge implements ZellijNativeBridge {
               this.resolveReady(true);
             }
           } catch (error) {
+            if (isLikelyZellijBridgeCommandEchoLine(line)) {
+              return;
+            }
             const message = error instanceof Error ? error.message : String(error);
             clearTimeout(timeout);
             this.logger?.error?.(`[zellij-native-bridge] ${message}`);
