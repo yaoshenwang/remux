@@ -122,30 +122,6 @@ export const useTerminalRuntime = ({
 
     fitAddon.fit();
 
-    const paneCols = paneViewportColsRef.current;
-    const paneRows = paneViewportRowsRef.current;
-    if (
-      shouldUsePaneViewportCols(serverConfig?.backendKind) &&
-      paneCols > 0
-    ) {
-      if (paneRows > 0 && terminal.cols > 0 && terminal.rows > 0) {
-        const scaledFontSize = preferredFontSize * Math.min(
-          terminal.cols / paneCols,
-          terminal.rows / paneRows
-        );
-        const clampedFontSize = Math.max(8, Math.min(32, scaledFontSize));
-        if (Math.abs(terminal.options.fontSize - clampedFontSize) > 0.1) {
-          terminal.options.fontSize = clampedFontSize;
-          fitAddon.fit();
-        }
-      }
-
-      const nextRows = paneRows > 0 ? paneRows : terminal.rows;
-      if (terminal.cols !== paneCols || terminal.rows !== nextRows) {
-        terminal.resize(paneCols, nextRows);
-      }
-    }
-
     if (notify) {
       sendTerminalResize();
     }

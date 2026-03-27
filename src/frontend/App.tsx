@@ -76,7 +76,7 @@ const LazyPasswordOverlay = lazy(() => import("./components/PasswordOverlay"));
 const LazyUploadToast = lazy(() => import("./components/UploadToast"));
 
 export const App = () => {
-  /** Zellij pane viewport width — used to match xterm cols to pane content. */
+  /** Zellij pane viewport width — tracked so the browser can re-send its own fit after pane changes. */
   const paneViewportColsRef = useRef(0);
   const paneViewportRowsRef = useRef(0);
   const terminalSocketRef = useRef<WebSocket | null>(null);

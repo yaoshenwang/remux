@@ -119,7 +119,10 @@ export interface StartedRealZellijE2EServer {
   stop: () => Promise<void>;
 }
 
-export const startRealZellijE2EServer = async (): Promise<StartedRealZellijE2EServer> => {
+export const startRealZellijE2EServer = async (options?: {
+  externalClientCols?: number;
+  externalClientRows?: number;
+}): Promise<StartedRealZellijE2EServer> => {
   const bridgeBinary = resolveBridgeBinary();
   if (!bridgeBinary) {
     throw new Error("missing zellij bridge binary for real e2e");
@@ -150,6 +153,8 @@ export const startRealZellijE2EServer = async (): Promise<StartedRealZellijE2ESe
   });
   const authService = new AuthService({ token });
   let externalClient: pty.IPty | null = null;
+  const externalClientCols = options?.externalClientCols ?? 120;
+  const externalClientRows = options?.externalClientRows ?? 40;
   const config: RuntimeConfig = {
     port: 0,
     host: "127.0.0.1",
@@ -174,8 +179,8 @@ export const startRealZellijE2EServer = async (): Promise<StartedRealZellijE2ESe
     await waitForSessionReady(socketDir, sessionName);
     externalClient = pty.spawn("zellij", ["attach", sessionName], {
       name: "xterm-256color",
-      cols: 120,
-      rows: 40,
+      cols: externalClientCols,
+      rows: externalClientRows,
       cwd: process.cwd(),
       env: {
         ...process.env,
