@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 
 import {
   compareZellijVersions,
+  isLikelyZellijBridgeCommandEchoLine,
   isSupportedZellijVersion,
   parseZellijBridgeEventLine,
-  parseZellijVersion
+  parseZellijVersion,
+  serializeZellijBridgeCommand
 } from "../../src/backend/zellij/native-bridge.js";
 
 describe("zellij native bridge helpers", () => {
@@ -73,5 +75,60 @@ describe("zellij native bridge helpers", () => {
     expect(() => parseZellijBridgeEventLine(JSON.stringify({
       type: "mystery"
     }))).toThrow(/unknown/i);
+  });
+
+  test("serializes bridge write and resize commands as NDJSON", () => {
+    expect(serializeZellijBridgeCommand({
+      type: "write_chars",
+      chars: "echo hello"
+    })).toBe("{\"type\":\"write_chars\",\"chars\":\"echo hello\"}\n");
+
+    expect(serializeZellijBridgeCommand({
+      type: "write_bytes",
+      bytes: [13, 27]
+    })).toBe("{\"type\":\"write_bytes\",\"bytes\":[13,27]}\n");
+
+    expect(serializeZellijBridgeCommand({
+      type: "terminal_resize",
+      cols: 120,
+      rows: 40
+    })).toBe("{\"type\":\"terminal_resize\",\"cols\":120,\"rows\":40}\n");
+  });
+
+  test("detects PTY command echoes so they can be ignored", () => {
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"write_chars\",\"chars\":\"pwd\"}")).toBe(true);
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"terminal_resize\",\"cols\":120,\"rows\":40}")).toBe(true);
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"write_chars\",\"chars\":\"\b \b\"}")).toBe(true);
+    expect(isLikelyZellijBridgeCommandEchoLine("{\"type\":\"pane_render\",\"paneId\":\"terminal_0\"}")).toBe(false);
+  });
+
+  test("parses pane render events with cursor", () => {
+    const event = parseZellijBridgeEventLine(JSON.stringify({
+      type: "pane_render",
+      paneId: "terminal_0",
+      viewport: ["$ "],
+      scrollback: null,
+      isInitial: false,
+      cursor: { row: 1, col: 3 }
+    }));
+    expect(event).toEqual({
+      type: "pane_render",
+      paneId: "terminal_0",
+      viewport: ["$ "],
+      scrollback: null,
+      isInitial: false,
+      cursor: { row: 1, col: 3 }
+    });
+  });
+
+  test("pane render without cursor field omits cursor", () => {
+    const event = parseZellijBridgeEventLine(JSON.stringify({
+      type: "pane_render",
+      paneId: "terminal_0",
+      viewport: ["$ "],
+      scrollback: null,
+      isInitial: false
+    }));
+    expect((event as any).cursor).toBeUndefined();
   });
 });

@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { startE2EServer, type StartedE2EServer } from "./harness/test-server.js";
+import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harness/runtime-v2-server.js";
 
-let server: StartedE2EServer | undefined;
+let server: StartedRuntimeV2E2EServer | undefined;
 
 test.beforeAll(async () => {
-  server = await startE2EServer({ sessions: ["main"], defaultSession: "main" });
+  server = await startRuntimeV2E2EServer();
 });
 
 test.afterAll(async () => {
@@ -21,8 +21,9 @@ test("capture UI screenshot for PR preview", async ({ page }) => {
   await expect(page.getByTestId("terminal-host")).toBeVisible();
 
   // Emit some sample content so the terminal isn't blank
-  await expect.poll(() => server.ptyFactory.processes.length).toBeGreaterThan(0);
-  server.ptyFactory.latestProcess().emitData("$ remux running\r\n");
+  server.upstream.setPaneContent("pane-1", "$ remuxd running\r\n");
+  await page.reload();
+  await expect(page.getByTestId("terminal-host")).toBeVisible();
 
   // Small delay for render
   await page.waitForTimeout(500);

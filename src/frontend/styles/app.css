@@ -217,6 +217,7 @@ button, input {
   box-shadow: var(--glass-inset);
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 0 0.75rem 1rem;
   z-index: 25;
 }
@@ -467,12 +468,35 @@ button, input {
   margin-top: 0.85rem;
 }
 
-.drawer-session-subgroup h4 {
+.drawer-collapsible-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   margin: 0 0 0.45rem;
+  padding: 0.3rem 0.5rem;
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.drawer-collapsible-header:hover {
+  color: var(--text-secondary);
+}
+
+.collapse-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 0.7rem;
+}
+
+.collapse-chevron.expanded {
+  transform: rotate(90deg);
 }
 
 .drawer-session-subgroup ul {
@@ -794,6 +818,45 @@ button, input {
   opacity: 0.5;
   margin-left: 0.4em;
   font-weight: 400;
+}
+
+.mode-badge {
+  font-size: 0.64em;
+  color: var(--accent-warning, #f5a623);
+  margin-left: 0.4em;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stream-badge {
+  font-size: 0.6em;
+  margin-left: 0.4em;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.18em 0.55em;
+}
+
+.stream-badge.native {
+  color: var(--accent-success, #3cb371);
+  border-color: color-mix(in srgb, var(--accent-success, #3cb371) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-success, #3cb371) 10%, transparent);
+}
+
+.stream-badge.degraded {
+  color: var(--accent-warning, #f5a623);
+  border-color: color-mix(in srgb, var(--accent-warning, #f5a623) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-warning, #f5a623) 10%, transparent);
+}
+
+.stream-badge.pending,
+.stream-badge.unsupported {
+  color: var(--muted-text);
+  border-color: color-mix(in srgb, var(--muted-text) 35%, transparent);
+  background: color-mix(in srgb, var(--muted-text) 10%, transparent);
 }
 
 .tab-bar-actions {
@@ -2023,6 +2086,10 @@ button.danger {
   backdrop-filter: none;
   padding: 0 max(0.75rem, env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  /* Mobile scroll fixes */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .app-shell.mobile-layout .sidebar.open {

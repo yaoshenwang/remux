@@ -1,0 +1,407 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
+import type {
+  RuntimeV2InspectSnapshot,
+  RuntimeV2SplitDirection,
+  RuntimeV2TerminalSize,
+  RuntimeV2WorkspaceSummary,
+} from "../../src/backend/v2/types.js";
+
+const encodeBase64 = (text: string): string => Buffer.from(text, "utf8").toString("base64");
+
+type FakeRuntimeV2ControlClientMessage =
+  | { type: "subscribe_workspace" }
+  | { type: "split_pane"; pane_id: string; direction: "vertical" | "horizontal" }
+  | {
+      type: "request_inspect";
+      scope:
+        | { type: "pane"; pane_id: string }
+        | { type: "tab"; tab_id: string }
+        | { type: "session"; session_id: string };
+    };
+
+type FakeRuntimeV2TerminalClientMessage =
+  | {
+      type: "attach";
+      pane_id: string;
+      mode: "interactive" | "read_only";
+      size: { cols: number; rows: number };
+    }
+  | {
+      type: "input";
+      data_base64: string;
+    }
+  | {
+      type: "resize";
+      size: { cols: number; rows: number };
+    }
+  | {
+      type: "request_snapshot";
+    };
+
+export interface TerminalObservation {
+  attachCount: number;
+  paneId: string;
+  sizes: RuntimeV2TerminalSize[];
+  writes: string[];
+}
+
+export interface FakeRuntimeV2ServerOptions {
+  initialPaneContent?: Record<string, string>;
+  sessionName?: string;
+  tabTitle?: string;
+}
+
+export class FakeRuntimeV2Server {
+  private readonly server = http.createServer(this.handleHttpRequest.bind(this));
+  private readonly wss = new WebSocketServer({ noServer: true });
+  private readonly controlSockets = new Set<WebSocket>();
+  private readonly sockets = new Set<WebSocket>();
+  private readonly terminalObservations = new Map<string, TerminalObservation>();
+  private readonly paneContent = new Map<string, string>();
+  private terminalClientSequence = 0;
+  private paneSequence = 1;
+  private workspace: RuntimeV2WorkspaceSummary;
+
+  constructor(options: FakeRuntimeV2ServerOptions = {}) {
+    const sessionName = options.sessionName ?? "main";
+    const tabTitle = options.tabTitle ?? "Shell";
+    this.workspace = {
+      sessionId: "session-1",
+      tabId: "tab-1",
+      paneId: "pane-1",
+      sessionName,
+      tabTitle,
+      sessionState: "live",
+      sessionCount: 1,
+      tabCount: 1,
+      paneCount: 1,
+      activeSessionId: "session-1",
+      activeTabId: "tab-1",
+      activePaneId: "pane-1",
+      zoomedPaneId: null,
+      layout: { type: "leaf", paneId: "pane-1" },
+      leaseHolderClientId: "terminal-client-1",
+      sessions: [
+        {
+          sessionId: "session-1",
+          sessionName,
+          sessionState: "live",
+          isActive: true,
+          activeTabId: "tab-1",
+          tabCount: 1,
+          tabs: [
+            {
+              tabId: "tab-1",
+              tabTitle,
+              isActive: true,
+              activePaneId: "pane-1",
+              zoomedPaneId: null,
+              paneCount: 1,
+              layout: { type: "leaf", paneId: "pane-1" },
+              panes: [
+                {
+                  paneId: "pane-1",
+                  isActive: true,
+                  isZoomed: false,
+                  leaseHolderClientId: "terminal-client-1",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const initialPaneContent = options.initialPaneContent ?? {
+      "pane-1": "PANE_ONE_READY\r\n",
+    };
+    for (const [paneId, text] of Object.entries(initialPaneContent)) {
+      this.paneContent.set(paneId, text);
+    }
+    if (!this.paneContent.has("pane-1")) {
+      this.paneContent.set("pane-1", "RUNTIME_V2_READY\r\n");
+    }
+
+    this.server.on("upgrade", (request, socket, head) => {
+      const url = new URL(request.url ?? "/", "http://localhost");
+      if (url.pathname !== "/v2/control" && url.pathname !== "/v2/terminal") {
+        socket.destroy();
+        return;
+      }
+      this.wss.handleUpgrade(request, socket, head, (ws) => {
+        this.wss.emit("connection", ws, request);
+      });
+    });
+
+    this.wss.on("connection", (socket, request) => {
+      this.sockets.add(socket);
+      socket.on("close", () => {
+        this.sockets.delete(socket);
+      });
+      const url = new URL(request.url ?? "/", "http://localhost");
+      if (url.pathname === "/v2/control") {
+        this.handleControlSocket(socket);
+        return;
+      }
+      this.handleTerminalSocket(socket);
+    });
+  }
+
+  async start(): Promise<string> {
+    await new Promise<void>((resolve) => {
+      this.server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = this.server.address() as AddressInfo;
+    return `http://127.0.0.1:${address.port}`;
+  }
+
+  async stop(): Promise<void> {
+    for (const socket of this.controlSockets) {
+      socket.close();
+    }
+    this.controlSockets.clear();
+    for (const socket of this.sockets) {
+      socket.close();
+    }
+    this.sockets.clear();
+    this.wss.close();
+    await new Promise<void>((resolve, reject) => {
+      this.server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  setPaneContent(paneId: string, text: string): void {
+    this.paneContent.set(paneId, text);
+  }
+
+  getPaneContent(paneId: string): string {
+    return this.paneContent.get(paneId) ?? "";
+  }
+
+  activePaneId(): string {
+    return this.workspace.activePaneId ?? this.workspace.paneId;
+  }
+
+  latestTerminal(paneId = this.activePaneId()): TerminalObservation | null {
+    return this.terminalObservations.get(paneId) ?? null;
+  }
+
+  splitActivePane(direction: RuntimeV2SplitDirection = "right"): string {
+    const activeSession = this.workspace.sessions[0]!;
+    const activeTab = activeSession.tabs[0]!;
+    const sourcePaneId = activeTab.activePaneId ?? activeTab.panes[0]?.paneId ?? "pane-1";
+    const newPaneId = `pane-${++this.paneSequence}`;
+    const layoutDirection = direction === "down" ? "down" : "right";
+    const sourcePane = activeTab.panes.find((pane) => pane.paneId === sourcePaneId);
+
+    activeTab.activePaneId = newPaneId;
+    activeTab.paneCount = activeTab.panes.length + 1;
+    activeTab.layout = {
+      type: "split",
+      direction: layoutDirection,
+      ratio: 50,
+      children: [
+        { type: "leaf", paneId: sourcePaneId },
+        { type: "leaf", paneId: newPaneId },
+      ],
+    };
+    activeTab.panes = activeTab.panes.map((pane) => ({
+      ...pane,
+      isActive: false,
+      leaseHolderClientId: pane.paneId === sourcePaneId ? sourcePane?.leaseHolderClientId ?? null : pane.leaseHolderClientId,
+    }));
+    activeTab.panes.push({
+      paneId: newPaneId,
+      isActive: true,
+      isZoomed: false,
+      leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+    });
+
+    this.workspace = {
+      ...this.workspace,
+      paneId: newPaneId,
+      activePaneId: newPaneId,
+      paneCount: activeTab.paneCount,
+      layout: activeTab.layout,
+      leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+      sessions: [
+        {
+          ...activeSession,
+          tabs: [activeTab],
+        },
+      ],
+    };
+
+    this.paneContent.set(newPaneId, newPaneId === "pane-2" ? "PANE_TWO_READY\r\n" : `READY_${newPaneId}\r\n`);
+    this.broadcastWorkspace();
+    return newPaneId;
+  }
+
+  private handleHttpRequest(request: http.IncomingMessage, response: http.ServerResponse): void {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    if (request.method === "GET" && url.pathname === "/healthz") {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("ok");
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/v2/meta") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        service: "remuxd",
+        protocolVersion: "2",
+        controlWebsocketPath: "/v2/control",
+        terminalWebsocketPath: "/v2/terminal",
+        publicBaseUrl: null,
+      }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  }
+
+  private handleControlSocket(socket: WebSocket): void {
+    this.controlSockets.add(socket);
+    socket.send(JSON.stringify({
+      type: "hello",
+      protocol_version: "2",
+      write_lease_model: "single-active-writer",
+    }));
+    socket.send(JSON.stringify({
+      type: "workspace_snapshot",
+      summary: this.workspace,
+    }));
+
+    socket.on("close", () => {
+      this.controlSockets.delete(socket);
+    });
+
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString("utf8")) as FakeRuntimeV2ControlClientMessage;
+      switch (message.type) {
+        case "subscribe_workspace":
+          socket.send(JSON.stringify({ type: "workspace_snapshot", summary: this.workspace }));
+          return;
+        case "split_pane": {
+          if (message.pane_id !== this.activePaneId() && message.pane_id !== "pane-1") {
+            socket.send(JSON.stringify({ type: "command_rejected", reason: "unexpected split target" }));
+            return;
+          }
+          this.splitActivePane(message.direction === "horizontal" ? "down" : "right");
+          return;
+        }
+        case "request_inspect": {
+          const paneId = message.scope.type === "pane"
+            ? message.scope.pane_id
+            : this.activePaneId();
+          const snapshot: RuntimeV2InspectSnapshot = {
+            scope: { type: "pane", paneId },
+            precision: paneId === this.activePaneId() ? "precise" : "approximate",
+            summary: paneId,
+            previewText: this.getPaneContent(paneId).trim(),
+            visibleRows: this.getPaneContent(paneId).trim().split("\n").filter(Boolean),
+            byteCount: this.getPaneContent(paneId).length,
+            size: this.latestTerminal(paneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
+          };
+          socket.send(JSON.stringify({ type: "inspect_snapshot", snapshot }));
+          return;
+        }
+        default:
+          socket.send(JSON.stringify({ type: "workspace_snapshot", summary: this.workspace }));
+      }
+    });
+  }
+
+  private handleTerminalSocket(socket: WebSocket): void {
+    let attachedPaneId = "pane-1";
+    let terminalClientId = "terminal-client-1";
+
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString("utf8")) as FakeRuntimeV2TerminalClientMessage;
+      switch (message.type) {
+        case "attach": {
+          attachedPaneId = message.pane_id;
+          terminalClientId = `terminal-client-${++this.terminalClientSequence}`;
+          const observation = this.observeTerminal(attachedPaneId);
+          observation.attachCount += 1;
+          observation.sizes.push(message.size);
+
+          socket.send(JSON.stringify({
+            type: "hello",
+            protocol_version: "2",
+            pane_id: attachedPaneId,
+          }));
+          socket.send(JSON.stringify({
+            type: "snapshot",
+            size: message.size,
+            sequence: observation.attachCount,
+            content_base64: encodeBase64(this.getPaneContent(attachedPaneId)),
+          }));
+          socket.send(JSON.stringify({
+            type: "lease_state",
+            client_id: terminalClientId,
+          }));
+          return;
+        }
+        case "input": {
+          const chunk = Buffer.from(message.data_base64, "base64").toString("utf8");
+          const observation = this.observeTerminal(attachedPaneId);
+          observation.writes.push(chunk);
+          const next = `${this.getPaneContent(attachedPaneId)}${chunk}`;
+          this.setPaneContent(attachedPaneId, next);
+          socket.send(JSON.stringify({
+            type: "stream",
+            sequence: observation.writes.length + observation.attachCount,
+            chunk_base64: encodeBase64(chunk),
+          }));
+          return;
+        }
+        case "resize": {
+          const observation = this.observeTerminal(attachedPaneId);
+          observation.sizes.push(message.size);
+          socket.send(JSON.stringify({ type: "resize_confirmed", size: message.size }));
+          return;
+        }
+        case "request_snapshot":
+          socket.send(JSON.stringify({
+            type: "snapshot",
+            size: this.latestTerminal(attachedPaneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
+            sequence: (this.latestTerminal(attachedPaneId)?.attachCount ?? 0) + 10,
+            content_base64: encodeBase64(this.getPaneContent(attachedPaneId)),
+          }));
+      }
+    });
+  }
+
+  private broadcastWorkspace(): void {
+    const payload = JSON.stringify({ type: "workspace_snapshot", summary: this.workspace });
+    for (const socket of this.controlSockets) {
+      if (socket.readyState === socket.OPEN) {
+        socket.send(payload);
+      }
+    }
+  }
+
+  private observeTerminal(paneId: string): TerminalObservation {
+    let observation = this.terminalObservations.get(paneId);
+    if (!observation) {
+      observation = {
+        attachCount: 0,
+        paneId,
+        sizes: [],
+        writes: [],
+      };
+      this.terminalObservations.set(paneId, observation);
+    }
+    return observation;
+  }
+}

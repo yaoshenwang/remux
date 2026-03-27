@@ -29,14 +29,23 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@latest
 
       - name: Install Dependencies
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Test
         run: npm test
+
+      - name: Check runtime-v2 native workspace
+        run: npm run native:v2:check
 
       - name: Build
         run: npm run build

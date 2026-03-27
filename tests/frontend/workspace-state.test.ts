@@ -212,4 +212,29 @@ describe("workspace state reducer", () => {
     expect(derived.activeTab?.index).toBe(0);
     expect(derived.activePane?.id).toBe("%main-0");
   });
+
+  test("derived view falls back to the active pane when clientView no longer carries paneId", () => {
+    const state = {
+      ...createInitialWorkspaceState(),
+      snapshot: buildWorkspace([buildSession("main", {
+        attached: true,
+        activeTabIndex: 1,
+        activePaneId: "%main-2",
+      })]),
+      attachedSession: "main",
+      clientView: {
+        sessionName: "main",
+        tabIndex: 1,
+        followBackendFocus: false,
+      },
+    };
+
+    const derived = deriveWorkspaceStateView(state, {
+      sessions: [],
+      tabsBySession: {},
+    });
+
+    expect(derived.activeTab?.index).toBe(1);
+    expect(derived.activePane?.id).toBe("%main-2");
+  });
 });

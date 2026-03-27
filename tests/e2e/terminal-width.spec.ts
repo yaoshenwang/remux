@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { startE2EServer, type StartedE2EServer } from "./harness/test-server.js";
+import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harness/runtime-v2-server.js";
 
 interface TerminalWidthSnapshot {
   appClassName: string;
@@ -17,7 +17,7 @@ interface TerminalWidthSnapshot {
 
 const readTerminalWidthSnapshot = async (
   page: Page,
-  server: StartedE2EServer
+  server: StartedRuntimeV2E2EServer
 ): Promise<TerminalWidthSnapshot & {
   backendCols: number;
   backendRows: number;
@@ -55,9 +55,10 @@ const readTerminalWidthSnapshot = async (
     };
   });
 
-  const latestResize = server.ptyFactory.latestProcess().resizes.at(-1);
+  const latestResize = server.upstream.latestTerminal()?.sizes.at(-1);
   const backendCols = latestResize?.cols ?? 0;
   const backendRows = latestResize?.rows ?? 0;
+  const resizeCount = server.upstream.latestTerminal()?.sizes.length ?? 0;
 
   return {
     ...geometry,
@@ -65,13 +66,13 @@ const readTerminalWidthSnapshot = async (
     backendRows,
     pixelHeightDelta: Math.abs(geometry.screenHeight - (backendRows * geometry.cellHeight)),
     pixelWidthDelta: Math.abs(geometry.screenWidth - (backendCols * geometry.cellWidth)),
-    resizeCount: server.ptyFactory.latestProcess().resizes.length
+    resizeCount
   };
 };
 
 const waitForTerminalWidthInvariant = async (
   page: Page,
-  server: StartedE2EServer,
+  server: StartedRuntimeV2E2EServer,
   label: string
 ): Promise<void> => {
   const deadline = Date.now() + 7_000;
@@ -115,10 +116,10 @@ const waitForTerminalWidthInvariant = async (
 };
 
 test.describe("terminal width invariants", () => {
-  let server: StartedE2EServer;
+  let server: StartedRuntimeV2E2EServer;
 
   test.beforeAll(async () => {
-    server = await startE2EServer({ sessions: ["main"], defaultSession: "main" });
+    server = await startRuntimeV2E2EServer();
   });
 
   test.afterAll(async () => {
@@ -132,7 +133,7 @@ test.describe("terminal width invariants", () => {
     await page.waitForTimeout(1_800);
 
     await waitForTerminalWidthInvariant(page, server, "narrow viewport");
-    const resizes = server.ptyFactory.latestProcess().resizes;
+    const resizes = server.upstream.latestTerminal()?.sizes ?? [];
     const firstNonDefaultResizeIndex = resizes.findIndex((entry) => entry.cols !== 80 || entry.rows !== 24);
     expect(firstNonDefaultResizeIndex).toBeGreaterThanOrEqual(0);
     expect(resizes.slice(firstNonDefaultResizeIndex + 1)).not.toContainEqual({ cols: 80, rows: 24 });

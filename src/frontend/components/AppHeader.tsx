@@ -2,6 +2,7 @@ import { useRef } from "react";
 import type { DragEvent, MutableRefObject } from "react";
 import type { TopStatus } from "../app-status";
 import type { BandwidthStats, ServerConfig } from "../app-types";
+import type { WorkspaceRuntimeState } from "../../shared/protocol.js";
 
 interface AppHeaderProps {
   activeTabLabel: string;
@@ -40,9 +41,60 @@ interface AppHeaderProps {
   }>;
   topStatus: TopStatus;
   viewMode: "inspect" | "terminal";
-  supportsPreciseScrollback: boolean;
+  inspectPrecision?: "precise" | "approximate" | "partial";
+  runtimeState?: WorkspaceRuntimeState | null;
   formatBytes: (bytes: number) => string;
 }
+
+export const describeRuntimeState = (
+  runtimeState: WorkspaceRuntimeState | null | undefined
+): { className: string; label: string; title: string } | null => {
+  if (!runtimeState) {
+    return null;
+  }
+
+  switch (runtimeState.streamMode) {
+    case "native-bridge":
+      return {
+        className: "stream-badge native",
+        label: "precise live",
+        title: "Using the runtime-v2 live stream with precise scrollback"
+      };
+    case "cli-polling":
+      return {
+        className: "stream-badge degraded",
+        label: "degraded live",
+        title: runtimeState.degradedReason
+          ? `Runtime live stream degraded (${runtimeState.degradedReason}) - falling back to snapshot polling`
+          : "Runtime live stream degraded - falling back to snapshot polling"
+      };
+    case "unsupported":
+      return {
+        className: "stream-badge unsupported",
+        label: "limited",
+        title: runtimeState.degradedReason
+          ? `Runtime live stream unavailable (${runtimeState.degradedReason})`
+          : "Runtime live stream unavailable for this backend"
+      };
+    case "pending":
+      return {
+        className: "stream-badge pending",
+        label: "starting",
+        title: "Starting the runtime-v2 live stream"
+      };
+    default:
+      return null;
+  }
+};
+
+export const formatInspectPrecisionBadge = (
+  inspectPrecision: "precise" | "approximate" | "partial" | undefined
+): string | null => {
+  if (!inspectPrecision || inspectPrecision === "precise") {
+    return null;
+  }
+  return inspectPrecision === "approximate" ? "approx" : inspectPrecision;
+};
 
 export const AppHeader = ({
   activeTabLabel,
@@ -73,12 +125,17 @@ export const AppHeader = ({
   tabs,
   topStatus,
   viewMode,
-  supportsPreciseScrollback,
+  inspectPrecision,
+  runtimeState,
   formatBytes
 }: AppHeaderProps) => {
   const showTabs = !awaitingSessionSelection && tabs.length > 0;
   const mobileRenameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextSelectRef = useRef<number | null>(null);
+  const inspectPrecisionBadge = formatInspectPrecisionBadge(inspectPrecision);
+  const runtimeBadge = serverConfig?.backendKind === "runtime-v2"
+    ? describeRuntimeState(runtimeState)
+    : null;
   const mobileStatsTitle = bandwidthStats
     ? `${topStatus.label}. ${formatBytes(bandwidthStats.compressedBytesPerSec)}/s, ${bandwidthStats.savedPercent}% saved.`
     : topStatus.label;
@@ -258,12 +315,6 @@ export const AppHeader = ({
       ) : (
         <div className="top-title">
           {awaitingSessionSelection ? "Select Session" : `Tab: ${activeTabLabel}`}
-          {serverConfig?.backendKind === "zellij" && (
-            <>
-              {" "}
-              <span className="experimental-badge" title="Zellij support is experimental">(experimental)</span>
-            </>
-          )}
         </div>
       )}
       <div className="tab-bar-actions">
@@ -307,8 +358,21 @@ export const AppHeader = ({
           onClick={onToggleViewMode}
         >
           {viewMode === "inspect" ? "Live" : "Inspect"}
-          {viewMode === "inspect" && !supportsPreciseScrollback && (
-            <span className="experimental-badge" title="Inspect history is approximate for this backend"> (approx)</span>
+          {viewMode === "inspect" && inspectPrecisionBadge && (
+            <>
+              {" "}
+              <span className="mode-badge" title={`Inspect history is ${inspectPrecision}`}>
+                {inspectPrecisionBadge}
+              </span>
+            </>
+          )}
+          {runtimeBadge && (
+            <>
+              {" "}
+              <span className={runtimeBadge.className} title={runtimeBadge.title}>
+                {runtimeBadge.label}
+              </span>
+            </>
           )}
         </button>
       </div>

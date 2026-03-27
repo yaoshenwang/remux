@@ -126,4 +126,27 @@ describe("state monitor", () => {
     expect(onUpdate.mock.calls.at(-1)?.[0].sessions[0].tabs[0].panes[0].zoomed).toBe(true);
     expect(onError).not.toHaveBeenCalled();
   });
+
+  test("supports a dynamic poll interval callback", async () => {
+    const tmux = new FakeSessionGateway(["main"]);
+    const onUpdate = vi.fn();
+    const onError = vi.fn();
+    let currentIntervalMs = 200;
+
+    const monitor = new TmuxStateMonitor(tmux, () => currentIntervalMs, onUpdate, onError);
+    await monitor.start();
+
+    const firstCount = onUpdate.mock.calls.length;
+    await delay(80);
+    expect(onUpdate.mock.calls.length).toBe(firstCount);
+
+    currentIntervalMs = 20;
+    await monitor.forcePublish();
+    await tmux.newTab("main");
+    await delay(40);
+
+    expect(onUpdate.mock.calls.length).toBeGreaterThan(firstCount);
+    monitor.stop();
+    expect(onError).not.toHaveBeenCalled();
+  });
 });

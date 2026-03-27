@@ -8,6 +8,11 @@ export type {
   TabState,
   SessionState,
   WorkspaceSnapshot,
+  WorkspaceStreamMode,
+  WorkspaceDegradedReason,
+  WorkspaceRuntimeState,
+  TerminalGeometryState,
+  TerminalGeometryStatus,
   BackendCapabilities,
   ClientView,
   TabHistoryEvent,
@@ -60,6 +65,8 @@ import type {
   BackendCapabilities,
   SessionSummary,
   WorkspaceSnapshot,
+  WorkspaceRuntimeState,
+  TerminalGeometryState,
   ClientView,
   TabHistoryPane,
   TabHistoryEvent
@@ -68,7 +75,17 @@ import type {
 import type { ServerCapabilities } from "./contracts/core.js";
 
 export type ControlClientMessage =
-  | { type: "auth"; token?: string; password?: string; clientId?: string; session?: string; tabIndex?: number; paneId?: string }
+  | {
+      type: "auth";
+      token?: string;
+      password?: string;
+      clientId?: string;
+      session?: string;
+      tabIndex?: number;
+      paneId?: string;
+      cols?: number;
+      rows?: number;
+    }
   | { type: "select_session"; session: string }
   | { type: "new_session"; name: string }
   | { type: "close_session"; session: string }
@@ -91,7 +108,8 @@ export type ControlServerMessage =
   | { type: "auth_error"; reason: string }
   | { type: "attached"; session: string }
   | { type: "session_picker"; sessions: SessionSummary[] }
-  | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView }
+  | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView; streamMode?: string; runtimeState?: WorkspaceRuntimeState }
+  | { type: "runtime_geometry"; geometry: TerminalGeometryState }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
   | {
       type: "tab_history";

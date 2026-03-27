@@ -83,15 +83,18 @@ class ScenarioZellijGateway implements MultiplexerBackend {
   private readonly delayNewTabPanes: boolean;
   private readonly delayRenameSession: boolean;
   private readonly keepCurrentTabActiveOnNewTab: boolean;
+  private readonly keepTabsInactiveOnSelect: boolean;
 
   public constructor(options?: {
     delayNewTabPanes?: boolean;
     delayRenameSession?: boolean;
     keepCurrentTabActiveOnNewTab?: boolean;
+    keepTabsInactiveOnSelect?: boolean;
   }) {
     this.delayNewTabPanes = options?.delayNewTabPanes ?? false;
     this.delayRenameSession = options?.delayRenameSession ?? false;
     this.keepCurrentTabActiveOnNewTab = options?.keepCurrentTabActiveOnNewTab ?? false;
+    this.keepTabsInactiveOnSelect = options?.keepTabsInactiveOnSelect ?? false;
     this.sessions = [
       {
         name: "main",
@@ -200,9 +203,9 @@ class ScenarioZellijGateway implements MultiplexerBackend {
   public async selectTab(session: string, tabIndex: number): Promise<void> {
     const sessionState = this.mustFindSession(session);
     sessionState.tabs.forEach((tab) => {
-      tab.active = tab.index === tabIndex;
+      tab.active = this.keepTabsInactiveOnSelect ? false : tab.index === tabIndex;
       tab.panes.forEach((pane, paneIndex) => {
-        pane.active = tab.active && paneIndex === 0;
+        pane.active = tab.index === tabIndex && paneIndex === 0;
       });
     });
   }
@@ -585,11 +588,11 @@ describe("zellij backend server", () => {
     }
   });
 
-  test("attaches PTY with session:paneId format", async () => {
+  test("attaches PTY with session+tab runtime target", async () => {
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     try {
       await authControl(control);
-      expect(ptyFactory.lastSpawnedSession).toMatch(/^main:/);
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#0");
     } finally {
       control.close();
     }
@@ -609,7 +612,6 @@ describe("zellij backend server", () => {
 
   test("select_tab updates view and re-attaches PTY", async () => {
     await gateway.newTab("main");
-    const p0 = await gateway.listPanes("main", 0);
 
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     try {
@@ -630,15 +632,15 @@ describe("zellij backend server", () => {
       );
       await statePromise;
 
-      // A new PTY process should have been spawned for tab 0's pane
+      // A new PTY process should have been spawned for tab 0
       expect(ptyFactory.processes.length).toBe(processCountBefore + 1);
-      expect(ptyFactory.lastSpawnedSession).toContain(p0[0].id);
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#0");
     } finally {
       control.close();
     }
   });
 
-  test("select_pane updates view and re-attaches PTY", async () => {
+  test("select_pane is disabled in zellij tab-only live mode", async () => {
     // Get the first pane ID from the gateway, then split to get a second
     const initialPanes = await gateway.listPanes("main", 0);
     const firstPaneId = initialPanes[0].id;
@@ -650,17 +652,19 @@ describe("zellij backend server", () => {
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     try {
       await authControl(control);
+      const processCountBefore = ptyFactory.processes.length;
 
-      const statePromise = waitForMessage<{ type: string }>(
+      const infoPromise = waitForMessage<{ type: string; message: string }>(
         control,
-        (msg) => msg.type === "workspace_state"
+        (msg) => msg.type === "info" && msg.message.includes("pane selection is disabled")
       );
       control.send(
         JSON.stringify({ type: "select_pane", paneId: secondPane.id })
       );
-      await statePromise;
+      await infoPromise;
 
-      expect(ptyFactory.lastSpawnedSession).toContain(secondPane.id);
+      expect(ptyFactory.processes.length).toBe(processCountBefore);
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#0");
     } finally {
       control.close();
     }
@@ -715,6 +719,129 @@ describe("zellij backend server", () => {
     }
   });
 
+  test("workspace_state includes runtime state emitted by the attached PTY", async () => {
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+
+      ptyFactory.latestProcess().emitRuntimeState({
+        streamMode: "native-bridge",
+        scrollbackPrecision: "precise"
+      });
+
+      const state = await waitForMessage<{
+        type: "workspace_state";
+        runtimeState: { streamMode: string; scrollbackPrecision: string };
+      }>(
+        control,
+        (message) => message.type === "workspace_state" && message.runtimeState?.streamMode === "native-bridge"
+      );
+
+      expect(state.runtimeState).toEqual({
+        streamMode: "native-bridge",
+        scrollbackPrecision: "precise"
+      });
+    } finally {
+      control.close();
+    }
+  });
+
+  test("runtime geometry is sent on a dedicated control message", async () => {
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+
+      ptyFactory.latestProcess().emitRuntimeGeometry({
+        requested: { cols: 140, rows: 40 },
+        confirmed: { cols: 136, rows: 38 },
+        status: "syncing"
+      });
+
+      const geometry = await waitForMessage<{
+        type: "runtime_geometry";
+        geometry: {
+          requested: { cols: number; rows: number };
+          confirmed: { cols: number; rows: number };
+          status: string;
+        };
+      }>(
+        control,
+        (message) => message.type === "runtime_geometry" && message.geometry.confirmed.cols === 136
+      );
+
+      expect(geometry.geometry).toEqual({
+        requested: { cols: 140, rows: 40 },
+        confirmed: { cols: 136, rows: 38 },
+        status: "syncing"
+      });
+    } finally {
+      control.close();
+    }
+  });
+
+  test("workspace change events trigger an immediate workspace refresh for follow-focus clients", async () => {
+    await gateway.newTab("main");
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+      control.send(JSON.stringify({ type: "set_follow_focus", follow: true }));
+      await waitForMessage<{ type: "workspace_state"; clientView: { followBackendFocus: boolean } }>(
+        control,
+        (message) => message.type === "workspace_state" && message.clientView.followBackendFocus === true
+      );
+
+      await gateway.selectTab("main", 1);
+      ptyFactory.latestProcess().emitWorkspaceChange("session_switch");
+
+      const state = await waitForMessage<{
+        type: "workspace_state";
+        clientView: { tabIndex: number };
+      }>(
+        control,
+        (message) => message.type === "workspace_state" && message.clientView.tabIndex === 1
+      );
+
+      expect(state.clientView.tabIndex).toBe(1);
+    } finally {
+      control.close();
+    }
+  });
+
+  test("enabling follow-focus immediately rebuilds the workspace and re-arms fast polling", async () => {
+    const slowGateway = createFakeZellijGateway(["main"]);
+    await slowGateway.newTab("main");
+    await slowGateway.selectTab("main", 0);
+    const authService = new AuthService({ token: "test-token" });
+    const config = { ...buildConfig("test-token"), pollIntervalMs: 10_000 };
+    await runningServer.stop();
+    runningServer = createRemuxServer(config, {
+      backend: slowGateway,
+      ptyFactory,
+      authService,
+      logger: { log: () => {}, error: () => {} }
+    });
+    await runningServer.start();
+    const address = runningServer.server.address() as AddressInfo;
+    baseWsUrl = `ws://127.0.0.1:${address.port}`;
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+      const snapshotCallsBefore = slowGateway.calls.filter((call) => call.startsWith("listTabs:main")).length;
+      control.send(JSON.stringify({ type: "set_follow_focus", follow: true }));
+      await waitForMessage<{ type: "workspace_state"; clientView: { followBackendFocus: boolean } }>(
+        control,
+        (message) => message.type === "workspace_state" && message.clientView.followBackendFocus === true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const snapshotCallsAfter = slowGateway.calls.filter((call) => call.startsWith("listTabs:main")).length;
+      expect(snapshotCallsAfter).toBeGreaterThan(snapshotCallsBefore);
+    } finally {
+      control.close();
+    }
+  });
+
   test("auth auto-attaches the only live session even when exited sessions exist", async () => {
     const scenarioGateway = new LifecycleZellijGateway();
     scenarioGateway.setSessionLifecycle("other", "exited");
@@ -735,7 +862,7 @@ describe("zellij backend server", () => {
     try {
       const { attachedSession } = await authControl(control);
       expect(attachedSession).toBe("main");
-      expect(ptyFactory.lastSpawnedSession).toContain("main:terminal_1");
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#0");
     } finally {
       control.close();
     }
@@ -780,7 +907,7 @@ describe("zellij backend server", () => {
 
       expect(attached.session).toBe("saved");
       expect(scenarioGateway.reviveCalls).toEqual(["saved"]);
-      expect(ptyFactory.lastSpawnedSession).toContain("saved:terminal_3");
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://saved#0");
     } finally {
       control.close();
     }
@@ -809,17 +936,74 @@ describe("zellij backend server", () => {
       const state = await waitForMessage<{
         type: string;
         workspace: { sessions: Array<{ tabs: Array<{ index: number; active: boolean; panes: Array<{ id: string }> }> }> };
-        clientView: { paneId: string; tabIndex: number };
+        clientView: { paneId?: string; tabIndex: number };
       }>(control, (msg) => {
         if (msg.type !== "workspace_state") return false;
         const activeTab = msg.workspace.sessions[0]?.tabs.find((tab) => tab.active);
-        return Boolean(activeTab && activeTab.panes.length > 0 && msg.clientView.paneId === activeTab.panes[0]?.id);
+        return Boolean(
+          activeTab
+          && activeTab.index === 1
+          && activeTab.panes.length > 0
+          && msg.clientView.tabIndex === activeTab.index
+        );
       }, 5_000);
 
       const activeTab = state.workspace.sessions[0].tabs.find((tab) => tab.active);
       expect(activeTab?.panes.length).toBeGreaterThan(0);
       expect(state.clientView.tabIndex).toBe(activeTab?.index);
-      expect(ptyFactory.lastSpawnedSession).toContain(state.clientView.paneId);
+      expect(state.clientView.paneId).toBeUndefined();
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#1");
+    } finally {
+      control.close();
+    }
+  });
+
+  test("new_tab reattaches promptly even when zellij never marks the selected tab active", async () => {
+    const scenarioGateway = new ScenarioZellijGateway({
+      keepCurrentTabActiveOnNewTab: true,
+      keepTabsInactiveOnSelect: true
+    });
+    const authService = new AuthService({ token: "test-token" });
+    const config = { ...buildConfig("test-token"), pollIntervalMs: 2_500 };
+    await runningServer.stop();
+    runningServer = createRemuxServer(config, {
+      backend: scenarioGateway,
+      ptyFactory,
+      authService,
+      logger: { log: () => {}, error: () => {} }
+    });
+    await runningServer.start();
+    const port = (runningServer.server.address() as AddressInfo).port;
+    baseWsUrl = `ws://127.0.0.1:${port}`;
+
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+    try {
+      await authControl(control);
+      control.send(JSON.stringify({ type: "new_tab", session: "main" }));
+
+      const state = await waitForMessage<{
+        type: string;
+        workspace: {
+          sessions: Array<{
+            tabs: Array<{ index: number; active: boolean; panes: Array<{ id: string; active: boolean }> }>;
+          }>;
+        };
+        clientView: { paneId?: string; tabIndex: number };
+      }>(control, (msg) => {
+        if (msg.type !== "workspace_state") return false;
+        const newTab = msg.workspace.sessions[0]?.tabs.find((tab) => tab.index === 1);
+        return Boolean(
+          newTab
+          && newTab.panes.length > 0
+          && msg.clientView.tabIndex === 1
+          && newTab.panes.some((pane) => pane.active)
+        );
+      }, 5_000);
+
+      expect(state.clientView.tabIndex).toBe(1);
+      expect(state.workspace.sessions[0]?.tabs.find((tab) => tab.index === 1)?.active).toBe(false);
+      expect(state.clientView.paneId).toBeUndefined();
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#1");
     } finally {
       control.close();
     }
@@ -923,7 +1107,7 @@ describe("zellij backend server", () => {
       expect(state.workspace.sessions.map((session) => session.name)).toEqual(
         expect.arrayContaining(["renamed", "other"])
       );
-      expect(ptyFactory.lastSpawnedSession).toContain("renamed:");
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://renamed#0");
     } finally {
       control.close();
     }
@@ -953,7 +1137,7 @@ describe("zellij backend server", () => {
 
       const state = await waitForMessage<{
         type: string;
-        clientView: { sessionName: string; tabIndex: number; paneId: string };
+        clientView: { sessionName: string; tabIndex: number; paneId?: string };
         workspace: {
           sessions: Array<{
             name: string;
@@ -967,18 +1151,19 @@ describe("zellij backend server", () => {
         return msg.clientView.sessionName === "main"
           && msg.clientView.tabIndex === 1
           && newTab?.active === true
-          && newTab.panes.some((pane) => pane.id === msg.clientView.paneId && pane.active);
+          && newTab.panes.some((pane) => pane.active);
       }, 5_000);
 
       expect(state.clientView.tabIndex).toBe(1);
       expect(scenarioGateway.getActiveTabIndex("main")).toBe(1);
-      expect(ptyFactory.lastSpawnedSession).toContain(`${state.clientView.sessionName}:${state.clientView.paneId}`);
+      expect(state.clientView.paneId).toBeUndefined();
+      expect(ptyFactory.lastSpawnedSession).toBe("zellij-tab://main#1");
     } finally {
       control.close();
     }
   });
 
-  test("split_pane uses the attached session when pane ids collide across sessions", async () => {
+  test("split_pane is blocked in zellij tab-only live mode even when pane ids collide across sessions", async () => {
     const gateway = new DuplicatePaneIdZellijGateway();
     const ptyFactory = new FakePtyFactory();
     const authService = new AuthService({ token: "test-token" });
@@ -1007,10 +1192,14 @@ describe("zellij backend server", () => {
         await authOkPromise;
         await attachedPromise;
 
+        const infoPromise = waitForMessage<{ type: string; message: string }>(
+          control,
+          (msg) => msg.type === "info" && msg.message.includes("pane splitting")
+        );
         control.send(JSON.stringify({ type: "split_pane", paneId: "terminal_0", direction: "right" }));
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        await infoPromise;
 
-        expect(gateway.splitCalls.at(-1)).toBe("beta");
+        expect(gateway.splitCalls).toEqual([]);
       } finally {
         control.close();
       }

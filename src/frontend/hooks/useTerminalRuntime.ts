@@ -3,14 +3,15 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "../themes";
-import { shouldUsePaneViewportCols } from "../ui-state";
 import type { ServerConfig } from "../app-types";
 import type { ToolbarHandle } from "../components/Toolbar";
+import type { TerminalGeometryState } from "../../shared/protocol.js";
 
 interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
   onSendRaw: (data: string) => void;
-  paneViewportColsRef: MutableRefObject<number>;
+  runtimeGeometryRef: MutableRefObject<TerminalGeometryState | null>;
+  runtimeGeometryVersion: number;
   serverConfig: ServerConfig | null;
   setStatusMessage: Dispatch<SetStateAction<string>>;
   terminalVisible: boolean;
@@ -29,6 +30,7 @@ interface UseTerminalRuntimeResult {
   fileInputRef: RefObject<HTMLInputElement | null>;
   fitAddonRef: MutableRefObject<FitAddon | null>;
   focusTerminal: () => void;
+  readTerminalGeometry: () => { cols: number; rows: number } | null;
   readTerminalBuffer: () => string;
   requestTerminalFit: (options?: TerminalFitOptions) => void;
   resetTerminalBuffer: () => void;
@@ -43,7 +45,8 @@ const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLa
 export const useTerminalRuntime = ({
   mobileLayout,
   onSendRaw,
-  paneViewportColsRef,
+  runtimeGeometryRef,
+  runtimeGeometryVersion,
   serverConfig,
   setStatusMessage,
   terminalVisible,
@@ -117,21 +120,14 @@ export const useTerminalRuntime = ({
 
     fitAddon.fit();
 
-    const paneCols = paneViewportColsRef.current;
-    if (
-      shouldUsePaneViewportCols(serverConfig?.backendKind) &&
-      paneCols > 0 &&
-      terminal.cols !== paneCols
-    ) {
-      terminal.resize(paneCols, terminal.rows);
-    }
-
     if (notify) {
+      // Send the unconstrained (full container) size to the backend first.
+      // Runtime-specific geometry calibration will compensate downstream.
       sendTerminalResize();
     }
 
     return true;
-  }, [mobileLayout, paneViewportColsRef, sendTerminalResize, serverConfig?.backendKind]);
+  }, [mobileLayout, sendTerminalResize]);
 
   const requestTerminalFit = useCallback((options: TerminalFitOptions = {}): void => {
     const { notify = true, retryUntilVisible = false } = options;
@@ -159,6 +155,25 @@ export const useTerminalRuntime = ({
     const addon = serializeAddonRef.current;
     if (!addon) return "";
     return addon.serialize({ scrollback: 10000 });
+  }, []);
+
+  const readTerminalGeometry = useCallback((): { cols: number; rows: number } | null => {
+    const fitAddon = fitAddonRef.current;
+    const terminal = terminalRef.current;
+    const proposed = fitAddon?.proposeDimensions();
+    if (proposed && proposed.cols >= 2 && proposed.rows >= 2) {
+      return {
+        cols: proposed.cols,
+        rows: proposed.rows
+      };
+    }
+    if (terminal && terminal.cols >= 2 && terminal.rows >= 2) {
+      return {
+        cols: terminal.cols,
+        rows: terminal.rows
+      };
+    }
+    return null;
   }, []);
 
   const focusTerminal = useCallback((): void => {
@@ -302,24 +317,45 @@ export const useTerminalRuntime = ({
   }, [theme]);
 
   useEffect(() => {
-    if (shouldUsePaneViewportCols(serverConfig?.backendKind)) {
-      return;
-    }
-    paneViewportColsRef.current = 0;
-  }, [paneViewportColsRef, serverConfig?.backendKind]);
-
-  useEffect(() => {
     if (!terminalVisible) {
       return;
     }
     requestTerminalFit({ notify: true, retryUntilVisible: true });
   }, [mobileLayout, requestTerminalFit, terminalVisible]);
 
+  useEffect(() => {
+    if (!terminalVisible || serverConfig?.backendKind !== "zellij") {
+      return;
+    }
+    const geometry = runtimeGeometryRef.current;
+    if (!geometry || geometry.status !== "stable") {
+      return;
+    }
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    const cols = geometry.confirmed.cols;
+    const rows = geometry.confirmed.rows;
+    if (cols < 2 || rows < 2) {
+      return;
+    }
+    if (terminal.cols !== cols || terminal.rows !== rows) {
+      terminal.resize(cols, rows);
+    }
+  }, [
+    runtimeGeometryRef,
+    runtimeGeometryVersion,
+    serverConfig?.backendKind,
+    terminalVisible
+  ]);
+
   return {
     copySelection,
     fileInputRef,
     fitAddonRef,
     focusTerminal,
+    readTerminalGeometry,
     readTerminalBuffer,
     requestTerminalFit,
     resetTerminalBuffer,

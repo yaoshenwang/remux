@@ -3083,6 +3083,7 @@ dependencies = [
 name = "zellij-bridge"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde_json",
  "zellij-client",
  "zellij-utils",

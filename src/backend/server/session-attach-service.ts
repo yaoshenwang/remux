@@ -5,6 +5,7 @@ import type {
   TabState,
   WorkspaceSnapshot,
 } from "../../shared/protocol.js";
+import type { TerminalGeometryState, WorkspaceRuntimeState } from "../../shared/contracts/workspace.js";
 import type { RuntimeConfig } from "../config.js";
 import type { ServerDependencies } from "../server.js";
 import { buildSnapshot } from "../multiplexer/types.js";
@@ -18,10 +19,24 @@ const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 const REMUX_SESSION_PREFIX = "remux-client-";
+const ZELLIJ_TAB_TARGET_PREFIX = "zellij-tab://";
 
 export const isManagedMobileSession = (name: string): boolean => name.startsWith(REMUX_SESSION_PREFIX);
 
 export const buildMobileSessionName = (clientId: string): string => `${REMUX_SESSION_PREFIX}${clientId}`;
+
+export const buildZellijTabRuntimeTarget = (sessionName: string, tabIndex: number): string =>
+  `${ZELLIJ_TAB_TARGET_PREFIX}${encodeURIComponent(sessionName)}#${tabIndex}`;
+
+export const buildRuntimeTargetForView = (
+  view: Pick<ClientView, "sessionName" | "tabIndex" | "paneId">,
+  backendKind: ServerDependencies["backend"]["kind"]
+): string => {
+  if (backendKind === "zellij") {
+    return buildZellijTabRuntimeTarget(view.sessionName, view.tabIndex);
+  }
+  return `${view.sessionName}:${view.paneId ?? "terminal_0"}`;
+};
 
 export const findCreatedTab = (
   previousSession: SessionState | undefined,
@@ -57,6 +72,18 @@ export interface SessionAttachServiceOptions {
   knownSessionTopologies: Map<string, SessionState>;
   latestSnapshotRef: { current: WorkspaceSnapshot | undefined };
   logger: Pick<Console, "log" | "error">;
+  onRuntimeStateChange?: (
+    context: ControlContext,
+    state: WorkspaceRuntimeState | null
+  ) => void | Promise<void>;
+  onRuntimeGeometryChange?: (
+    context: ControlContext,
+    geometry: TerminalGeometryState | null
+  ) => void | Promise<void>;
+  onRuntimeWorkspaceChange?: (
+    context: ControlContext,
+    reason: "session_switch" | "session_renamed"
+  ) => void | Promise<void>;
   tabHistoryStore: TabHistoryStore;
   viewStore: ClientViewStore;
 }
@@ -72,7 +99,11 @@ export interface SessionAttachService {
     baseSessions: WorkspaceSnapshot,
     fullState: WorkspaceSnapshot,
     client: ControlContext
-  ) => { workspace: WorkspaceSnapshot; clientView: ClientView };
+  ) => {
+    workspace: WorkspaceSnapshot;
+    clientView: ClientView;
+    runtimeState: WorkspaceRuntimeState | null;
+  };
   buildTabHistoryPayload: (
     sessionName: string,
     tabIndex: number,
@@ -105,6 +136,9 @@ export const createSessionAttachService = ({
   knownSessionTopologies,
   latestSnapshotRef,
   logger,
+  onRuntimeStateChange,
+  onRuntimeGeometryChange,
+  onRuntimeWorkspaceChange,
   tabHistoryStore,
   viewStore,
 }: SessionAttachServiceOptions): SessionAttachService => {
@@ -200,7 +234,13 @@ export const createSessionAttachService = ({
   ): SessionState["tabs"][number]["panes"][number] | null => {
     const session = snapshot.sessions.find((entry) => entry.name === view.sessionName);
     const tab = session?.tabs.find((entry) => entry.index === view.tabIndex);
-    return tab?.panes.find((entry) => entry.id === view.paneId) ?? null;
+    if (!tab) {
+      return null;
+    }
+    if (!view.paneId) {
+      return tab.panes.find((entry) => entry.active) ?? tab.panes[0] ?? null;
+    }
+    return tab.panes.find((entry) => entry.id === view.paneId) ?? null;
   };
 
   const resolveViewCwd = async (view: ClientView | undefined): Promise<string | undefined> => {
@@ -235,12 +275,35 @@ export const createSessionAttachService = ({
     runtime.on("attach", (session) => {
       logger.log("runtime attached session", context.clientId, session);
     });
+    runtime.on("resize", (cols, rows) => {
+      const trackedSession = context.baseSession ?? context.clientId;
+      deps.extensions?.onSessionResize(trackedSession, cols, rows);
+    });
     runtime.on("exit", (code) => {
       logger.log(`PTY exited with code ${code} (${context.clientId})`);
       deps.extensions?.onSessionExit(context.baseSession ?? context.clientId, code);
       sendJson(context.socket, { type: "info", message: "terminal client exited" });
     });
+    runtime.on("runtimeState", (state) => {
+      context.runtimeState = state;
+      void Promise.resolve(onRuntimeStateChange?.(context, state)).catch((error) => {
+        logger.error("runtime state callback failed", error);
+      });
+    });
+    runtime.on("geometry", (geometry) => {
+      context.runtimeGeometry = geometry;
+      void Promise.resolve(onRuntimeGeometryChange?.(context, geometry)).catch((error) => {
+        logger.error("runtime geometry callback failed", error);
+      });
+    });
+    runtime.on("workspaceChange", (reason) => {
+      void Promise.resolve(onRuntimeWorkspaceChange?.(context, reason)).catch((error) => {
+        logger.error("workspace change callback failed", error);
+      });
+    });
     context.runtime = runtime;
+    context.runtimeState = runtime.currentRuntimeState();
+    context.runtimeGeometry = runtime.currentGeometry();
     if (context.pendingResize) {
       runtime.resize(context.pendingResize.cols, context.pendingResize.rows);
     }
@@ -251,22 +314,24 @@ export const createSessionAttachService = ({
     baseSessions: WorkspaceSnapshot,
     fullState: WorkspaceSnapshot,
     client: ControlContext
-  ): { workspace: WorkspaceSnapshot; clientView: ClientView } => {
+  ): { workspace: WorkspaceSnapshot; clientView: ClientView; runtimeState: WorkspaceRuntimeState | null } => {
+    const runtimeState = client.runtimeState ?? client.runtime?.currentRuntimeState() ?? null;
     const view = viewStore.getView(client.clientId);
     if (!view) {
       const defaultView: ClientView = {
         sessionName: "",
         tabIndex: 0,
-        paneId: "terminal_0",
+        paneId: deps.backend.kind === "zellij" ? undefined : "terminal_0",
         followBackendFocus: false,
       };
-      return { workspace: baseSessions, clientView: defaultView };
+      return { workspace: baseSessions, clientView: defaultView, runtimeState };
     }
 
     if (deps.backend.kind === "zellij") {
       return {
         workspace: baseSessions,
         clientView: view,
+        runtimeState,
       };
     }
 
@@ -301,6 +366,7 @@ export const createSessionAttachService = ({
     return {
       workspace: { ...baseSessions, sessions },
       clientView: view,
+      runtimeState,
     };
   };
 
@@ -317,6 +383,8 @@ export const createSessionAttachService = ({
   const resetControlAttachment = async (context: ControlContext): Promise<void> => {
     await context.runtime?.shutdown();
     context.runtime = undefined;
+    context.runtimeState = null;
+    context.runtimeGeometry = null;
     context.baseSession = undefined;
     context.attachedSession = undefined;
     context.pendingResize = undefined;
@@ -339,6 +407,9 @@ export const createSessionAttachService = ({
     snapshotForInit?: WorkspaceSnapshot
   ): Promise<void> => {
     const runtime = getOrCreateRuntime(context);
+    const initialTrackerSize = context.pendingResize ?? { cols: 200, rows: 50 };
+    context.baseSession = baseSession;
+    deps.extensions?.onSessionCreated(baseSession, initialTrackerSize.cols, initialTrackerSize.rows);
 
     if (deps.backend.createGroupedSession) {
       const mobileSession = buildMobileSessionName(context.clientId);
@@ -374,12 +445,14 @@ export const createSessionAttachService = ({
         knownSessionTopologies.set(session.name, session);
       }
       const view = viewStore.initView(context.clientId, baseSession, snapshot);
-      runtime.attachToSession(`${baseSession}:${view.paneId}`);
+      runtime.attachToSession(buildRuntimeTargetForView(view, deps.backend.kind));
 
       if (deps.backend.kind === "zellij") {
         const sessionState = snapshot.sessions.find((session) => session.name === baseSession);
         const activeTab = sessionState?.tabs.find((tab) => tab.index === view.tabIndex);
-        const activePane = activeTab?.panes.find((pane) => pane.id === view.paneId);
+        const activePane = view.paneId
+          ? activeTab?.panes.find((pane) => pane.id === view.paneId)
+          : activeTab?.panes.find((pane) => pane.active) ?? activeTab?.panes[0];
         if (activePane?.currentCommand && /\btmux\b/.test(activePane.currentCommand)) {
           sendJson(context.socket, {
             type: "info",
@@ -391,11 +464,9 @@ export const createSessionAttachService = ({
       }
     }
 
-    context.baseSession = baseSession;
     context.attachedSession = deps.backend.createGroupedSession
       ? buildMobileSessionName(context.clientId)
       : undefined;
-    deps.extensions?.onSessionCreated(baseSession);
     sendJson(context.socket, { type: "attached", session: baseSession });
   };
 
@@ -455,7 +526,8 @@ export const createSessionAttachService = ({
     context: ControlContext,
     hint: { tabIndex?: number; paneId?: string }
   ): Promise<void> => {
-    if (hint.tabIndex === undefined && !hint.paneId) {
+    const allowPaneHint = deps.backend.kind !== "zellij";
+    if (hint.tabIndex === undefined && (!allowPaneHint || !hint.paneId)) {
       return;
     }
 
@@ -474,7 +546,7 @@ export const createSessionAttachService = ({
       ? session.tabs.find((entry) => entry.index === hint.tabIndex)
       : undefined;
 
-    if (!targetTab && hint.paneId) {
+    if (!targetTab && allowPaneHint && hint.paneId) {
       targetTab = session.tabs.find((entry) => entry.panes.some((pane) => pane.id === hint.paneId));
     }
 
@@ -491,7 +563,7 @@ export const createSessionAttachService = ({
       }
     }
 
-    const targetPane = hint.paneId
+    const targetPane = allowPaneHint && hint.paneId
       ? targetTab.panes.find((pane) => pane.id === hint.paneId)
       : undefined;
     if (targetPane) {
@@ -505,7 +577,7 @@ export const createSessionAttachService = ({
       const updatedView = viewStore.getView(context.clientId);
       if (updatedView) {
         const runtime = getOrCreateRuntime(context);
-        runtime.attachToSession(`${updatedView.sessionName}:${updatedView.paneId}`);
+        runtime.attachToSession(buildRuntimeTargetForView(updatedView, deps.backend.kind));
       }
     }
   };

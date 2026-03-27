@@ -14,6 +14,7 @@ interface TerminalStageProps {
   onInspectPaneFilterChange: (paneId: string) => void;
   onInspectRefresh: () => void;
   onInspectSearchQueryChange: (value: string) => void;
+  onFocusTerminal: () => void;
   onDragLeave: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
@@ -36,6 +37,7 @@ export const TerminalStage = ({
   onInspectPaneFilterChange,
   onInspectRefresh,
   onInspectSearchQueryChange,
+  onFocusTerminal,
   onDragLeave,
   onDragOver,
   onDrop,
@@ -51,6 +53,7 @@ export const TerminalStage = ({
       ref={terminalContainerRef}
       data-testid="terminal-host"
       style={viewMode !== "terminal" ? { display: "none" } : undefined}
+      onPointerDown={onFocusTerminal}
       onContextMenu={(event) => event.preventDefault()}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

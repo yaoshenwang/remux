@@ -11,7 +11,7 @@ export class TmuxStateMonitor {
 
   public constructor(
     private readonly backend: MultiplexerBackend,
-    private readonly pollIntervalMs: number,
+    private readonly pollIntervalMs: number | (() => number),
     private readonly onUpdate: (state: WorkspaceSnapshot) => void,
     private readonly onError: (error: Error) => void
   ) {}
@@ -58,7 +58,17 @@ export class TmuxStateMonitor {
       this.tick().finally(() => {
         this.scheduleNextTick();
       });
-    }, this.pollIntervalMs);
+    }, this.resolvePollIntervalMs());
+  }
+
+  private resolvePollIntervalMs(): number {
+    const value = typeof this.pollIntervalMs === "function"
+      ? this.pollIntervalMs()
+      : this.pollIntervalMs;
+    if (!Number.isFinite(value) || value < 1) {
+      return 1;
+    }
+    return Math.floor(value);
   }
 
   private async tick(): Promise<void> {

@@ -65,6 +65,27 @@ export const registerHttpRoutes = ({
     });
   });
 
+  app.get("/api/diagnostics", requireApiAuth, (_req, res) => {
+    const diag: Record<string, unknown> = {
+      version: runtimeMetadata.version,
+      backendKind: deps.backend.kind,
+      capabilities: deps.backend.capabilities,
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+      uptime: Math.round(process.uptime()),
+      pollIntervalMs: config.pollIntervalMs,
+    };
+
+    // Zellij-specific diagnostics
+    if (deps.backend.kind === "zellij") {
+      diag.zellijSocketDir = process.env.REMUX_ZELLIJ_SOCKET_DIR ?? "(auto-isolated)";
+      diag.nativeBridgeEnabled = process.env.REMUX_ZELLIJ_NATIVE_BRIDGE !== "0";
+    }
+
+    res.json(diag);
+  });
+
   app.post("/api/switch-backend", handleSwitchBackend);
 
   app.post(

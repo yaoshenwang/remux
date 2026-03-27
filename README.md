@@ -29,27 +29,15 @@ Remux is intentionally not a generic browser SSH client and not a thin browser w
 - `Live`: direct terminal I/O for quick fixes, command entry, and interactive tools
 - `Control`: structured session, tab, and pane navigation plus workspace operations
 
-## Backend Support
+## Runtime Model
 
-Remux uses a multiplexer-neutral workspace model internally, but it does not promise equal fidelity across all backends.
+Remux now ships around a unified `runtime-v2` backend.
 
-- `tmux`: flagship backend and the most polished path today
-- `zellij`: supported with explicit capability and history-fidelity caveats
-- `conpty`: Windows fallback for simpler persistent shell access
+- `runtime-v2` is now the primary product path, the default browser contract, and the main CI target
+- the UI, docs, and test flow are centered on `runtime-v2` semantics rather than backend-specific behavior
+- legacy compatibility code still exists temporarily, but it is hidden from the normal product surface and release gate
 
-If you want the most polished experience, use `tmux`. For current zellij caveats, see [docs/ZELLIJ_MODE_AUDIT_2026-03-25.md](./docs/ZELLIJ_MODE_AUDIT_2026-03-25.md).
-
-## Remux vs Zellij
-
-`zellij` and Remux are complementary, not substitutes.
-
-- `zellij` is a terminal multiplexer you run on the machine itself
-- Remux is a remote awareness and control layer you open from another device
-- `zellij` gives you native local pane and tab management
-- Remux gives you mobile-friendly Inspect, browser control surfaces, remote attach flows, and structured workspace navigation
-
-If you want the best local terminal multiplexer experience, use `zellij` or `tmux` directly.
-If you want to monitor and intervene from a phone, tablet, or second laptop, Remux is the product layer on top.
+If you are working on current product behavior, assume `runtime-v2` first.
 
 ## Quick Start
 
@@ -78,27 +66,8 @@ npm start
 ## Requirements
 
 - Node.js 20+
-- One supported backend:
-  - `tmux` on macOS / Linux
-  - `zellij` on macOS / Linux
-  - Windows terminal environment for `conpty`
-
-For the best current experience:
-
-```bash
-# macOS
-brew install tmux
-
-# Ubuntu / Debian
-sudo apt install tmux
-```
-
-Recommended for tap-to-focus in `tmux`:
-
-```bash
-echo 'set -g mouse on' >> ~/.tmux.conf
-tmux source-file ~/.tmux.conf
-```
+- Rust toolchain when running or checking the native `runtime-v2` workspace from source
+- Legacy compatibility setup notes live in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md)
 
 ## Features
 
@@ -110,7 +79,7 @@ tmux source-file ~/.tmux.conf
 - Drag-and-drop or picker-based file upload into the active pane working directory
 - Theme picker with six built-in terminal themes
 - Automatic reconnect with backoff
-- Runtime backend switching between `tmux`, `zellij`, and `conpty` when available
+- Unified `runtime-v2` gateway model for live state, inspect snapshots, and browser attachment
 
 ## CLI
 
@@ -126,22 +95,22 @@ Options:
   --session <name>                 Default session name (default: main)
   --scrollback <lines>             Default scrollback capture lines (default: 1000)
   --debug-log <path>               Write backend debug logs to a file
-  --backend <auto|tmux|zellij|conpty>
-                                   Force a specific backend
 ```
+
+Advanced legacy compatibility flags are documented in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `REMUX_DEBUG_LOG` | Debug log file path |
-| `REMUX_SOCKET_NAME` | Custom tmux socket name (`tmux -L`) |
-| `REMUX_SOCKET_PATH` | Custom tmux socket path (`tmux -S`) |
-| `REMUX_TRACE_TMUX=1` | Print tmux CLI calls |
+| `REMUXD_BIN` | Path to an explicit `remuxd` binary for the runtime-v2 gateway |
+| `REMUXD_BASE_URL` | Connect the gateway to an already-running runtime-v2 service |
 | `REMUX_VERBOSE_DEBUG=1` | Enable verbose server logging |
-| `REMUX_FORCE_SCRIPT_PTY=1` | Force a fail-fast check for degraded tmux PTY mode; Remux refuses `script(1)` because it breaks resize invariants |
 | `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
 | `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
+
+Legacy-only environment variables are listed in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Security Defaults
 
@@ -155,11 +124,12 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 
 ## Documentation
 
+- [docs/TESTING.md](./docs/TESTING.md): current runtime-v2-first test flow and release gate
+- [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md): hidden compatibility flags, fallback env vars, and non-default legacy tests
 - [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
 - [docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md](./docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md): native-client and semantic-adapter evolution plan
-- [docs/ZELLIJ_MODE_AUDIT_2026-03-25.md](./docs/ZELLIJ_MODE_AUDIT_2026-03-25.md): current zellij backend audit
 
 ## Development
 
@@ -186,24 +156,27 @@ npm run runner:status
 
 See [docs/SELF_HOSTED_RUNNER.md](./docs/SELF_HOSTED_RUNNER.md) for the deploy workflow and security boundary.
 
-Quality gate before merging into `dev`:
+Default pre-merge gate:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run test:gate
 ```
 
 Additional test commands:
 
 ```bash
 npm run test:e2e
-npm run test:smoke
+npm run test:e2e:functional
+npm run test:e2e:screenshots
+npm run test:release
 ```
+
+Legacy compatibility commands are documented in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Tech Stack
 
-- Backend: Node.js, Express 5, `ws`, `node-pty`, `yargs`, `zod`
+- Backend gateway: Node.js, Express 5, `ws`, `yargs`, `zod`
+- Native runtime: Rust workspace (`remuxd` and supporting crates)
 - Frontend: React 19, Vite, xterm.js
 - Testing: Vitest and Playwright
 - Language: TypeScript

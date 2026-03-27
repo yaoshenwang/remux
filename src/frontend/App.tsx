@@ -7,10 +7,7 @@ import { PinnedSnippetsBar, SnippetPicker, SnippetTemplatePanel } from "./compon
 import { SessionSection } from "./components/sidebar/SessionSection";
 import { AppearanceSection } from "./components/sidebar/AppearanceSection";
 import { SnippetsSection } from "./components/sidebar/SnippetsSection";
-import {
-  inferAttachedSessionFromWorkspace,
-  shouldUsePaneViewportCols
-} from "./ui-state";
+import { inferAttachedSessionFromWorkspace } from "./ui-state";
 import {
   assignSnippetSortOrders,
   extractSnippetVariables,
@@ -50,10 +47,11 @@ import {
 } from "./remux-runtime";
 import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import type {
-  PaneState,
   SessionState,
   ServerCapabilities,
+  TerminalGeometryState,
   TabState,
+  WorkspaceRuntimeState,
 } from "../shared/protocol";
 import { AppShell } from "./screens/AppShell";
 import { SessionPickerScreen } from "./screens/SessionPickerScreen";
@@ -75,17 +73,18 @@ const LazyPasswordOverlay = lazy(() => import("./components/PasswordOverlay"));
 const LazyUploadToast = lazy(() => import("./components/UploadToast"));
 
 export const App = () => {
-  /** Zellij pane viewport width — used to match xterm cols to pane content. */
-  const paneViewportColsRef = useRef(0);
+  const runtimeGeometryRef = useRef<TerminalGeometryState | null>(null);
   const terminalSocketRef = useRef<WebSocket | null>(null);
   /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
   const serverCapabilitiesRef = useRef<ServerCapabilities | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
+  const readTerminalGeometryRef = useRef<() => { cols: number; rows: number } | null>(() => null);
 
   const attachedSessionRef = useRef("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
+  const [runtimeGeometryVersion, setRuntimeGeometryVersion] = useState(0);
 
   // ── Preferences hook ──
   const prefs = useClientPreferences();
@@ -93,6 +92,7 @@ export const App = () => {
     scrollFontSize, workspaceOrder, setWorkspaceOrder } = prefs;
 
   const [viewMode, setViewMode] = useState<"inspect" | "terminal">("terminal");
+  const [runtimeState, setRuntimeState] = useState<WorkspaceRuntimeState | null>(null);
   const viewModeRef = useRef(viewMode);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   const [inspectLineCount, setInspectLineCount] = useState(1000);
@@ -102,17 +102,45 @@ export const App = () => {
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectErrorMessage, setInspectErrorMessage] = useState("");
   const { mobileLandscape, mobileLayout, viewportHeight } = useViewportLayout();
-  const sendRawToSocket = useCallback((data: string): void => {
+  const terminalInputBufferRef = useRef<ReturnType<typeof createTerminalWriteBuffer> | null>(null);
+  const pendingTerminalTransportRef = useRef("");
+  const flushPendingTerminalTransport = useCallback((): void => {
+    const socket = terminalSocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !pendingTerminalTransportRef.current) {
+      return;
+    }
+
+    const chunk = pendingTerminalTransportRef.current;
+    pendingTerminalTransportRef.current = "";
+    debugLog("send_terminal.flush_queued", { bytes: chunk.length });
+    socket.send(chunk);
+  }, []);
+  const sendRawDirectToSocket = useCallback((data: string): void => {
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      debugLog("send_terminal.blocked", {
+      pendingTerminalTransportRef.current += data;
+      debugLog("send_terminal.queued", {
         readyState: socket?.readyState,
-        bytes: data.length
+        bytes: data.length,
+        queuedBytes: pendingTerminalTransportRef.current.length
       });
       return;
     }
-    debugLog("send_terminal", { bytes: data.length });
-    socket.send(data);
+
+    const chunk = pendingTerminalTransportRef.current
+      ? `${pendingTerminalTransportRef.current}${data}`
+      : data;
+    pendingTerminalTransportRef.current = "";
+    debugLog("send_terminal", { bytes: chunk.length });
+    socket.send(chunk);
+  }, []);
+  if (!terminalInputBufferRef.current) {
+    terminalInputBufferRef.current = createTerminalWriteBuffer((chunk) => {
+      sendRawDirectToSocket(chunk);
+    });
+  }
+  const sendRawToSocket = useCallback((data: string): void => {
+    terminalInputBufferRef.current?.enqueue(data);
   }, []);
 
   // ── Connection hook ──
@@ -131,8 +159,10 @@ export const App = () => {
     onControlMessage: (message) => {
       switch (message.type) {
         case "attached": {
+          terminalInputBufferRef.current?.clear();
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
+          runtimeGeometryRef.current = null;
           workspace.onAttached(message.session);
           attachedSessionRef.current = message.session;
           launchContextRef.current = null;
@@ -153,9 +183,12 @@ export const App = () => {
         }
         case "session_picker": {
           launchContextRef.current = null;
+          terminalInputBufferRef.current?.clear();
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
           attachedSessionRef.current = "";
+          setRuntimeState(null);
+          runtimeGeometryRef.current = null;
           workspace.onSessionPicker(message.sessions);
           return;
         }
@@ -168,20 +201,24 @@ export const App = () => {
             attachedSessionRef.current = inferredAttachedSession;
           }
           workspace.onWorkspaceState(message.workspace, message.clientView ?? null);
+          setRuntimeState(message.runtimeState ?? null);
           if (inferredAttachedSession) {
             connectionActionsRef.current.setStatusMessage(`attached: ${inferredAttachedSession}`);
           }
-          if (message.clientView && shouldUsePaneViewportCols(connectionActionsRef.current.serverConfig?.backendKind)) {
-            const session = message.workspace.sessions.find((entry) => entry.name === message.clientView!.sessionName);
-            const tab = session?.tabs.find((entry: TabState) => entry.index === message.clientView!.tabIndex);
-            const pane = tab?.panes.find((entry: PaneState) => entry.id === message.clientView!.paneId);
-            const paneWidth = pane?.width ?? 0;
-            if (paneWidth > 0) {
-              paneViewportColsRef.current = paneWidth;
-              notifyTerminalResizeRef.current({ notify: true, retryUntilVisible: true });
-            }
-          } else {
-            paneViewportColsRef.current = 0;
+          return;
+        }
+        case "runtime_geometry": {
+          const previous = runtimeGeometryRef.current;
+          runtimeGeometryRef.current = message.geometry;
+          if (
+            !previous
+            || previous.status !== message.geometry.status
+            || previous.requested.cols !== message.geometry.requested.cols
+            || previous.requested.rows !== message.geometry.requested.rows
+            || previous.confirmed.cols !== message.geometry.confirmed.cols
+            || previous.confirmed.rows !== message.geometry.confirmed.rows
+          ) {
+            setRuntimeGeometryVersion((current) => current + 1);
           }
           return;
         }
@@ -218,11 +255,17 @@ export const App = () => {
       if (viewModeRef.current === "inspect") {
         setInspectErrorMessage("Inspect disconnected. Reconnecting…");
       }
+      terminalInputBufferRef.current?.clear();
       terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
+      runtimeGeometryRef.current = null;
     },
-    getAuthPayload: () => buildControlAuthHint(attachedSessionRef.current, launchContextRef.current),
+    getAuthPayload: () => buildControlAuthHint(
+      attachedSessionRef.current,
+      launchContextRef.current,
+      readTerminalGeometryRef.current()
+    ),
   });
 
   const { authReady, serverConfig, capabilities, serverCapabilities, errorMessage, statusMessage, password,
@@ -247,6 +290,7 @@ export const App = () => {
   const {
     fileInputRef,
     focusTerminal,
+    readTerminalGeometry,
     requestTerminalFit,
     resetTerminalBuffer,
     scrollbackContentRef,
@@ -255,7 +299,8 @@ export const App = () => {
   } = useTerminalRuntime({
     onSendRaw: sendRawToSocket,
     mobileLayout,
-    paneViewportColsRef,
+    runtimeGeometryRef,
+    runtimeGeometryVersion,
     serverConfig,
     setStatusMessage: connection.setStatusMessage,
     terminalVisible: viewMode === "terminal",
@@ -277,10 +322,15 @@ export const App = () => {
   useEffect(() => {
     notifyTerminalResizeRef.current = requestTerminalFit;
   }, [requestTerminalFit]);
+  useEffect(() => {
+    readTerminalGeometryRef.current = readTerminalGeometry;
+  }, [readTerminalGeometry]);
 
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
+    terminalInputBufferRef.current?.clear();
+    pendingTerminalTransportRef.current = "";
     if (terminalSocketRef.current) {
       terminalSocketRef.current.onclose = null;
       terminalSocketRef.current.close();
@@ -289,7 +339,15 @@ export const App = () => {
     const socket = new WebSocket(`${wsOrigin}/ws/terminal`);
     socket.onopen = () => {
       debugLog("terminal_socket.onopen");
-      socket.send(JSON.stringify({ type: "auth", token, password: passwordValue || undefined, clientId }));
+      const terminalGeometry = readTerminalGeometry();
+      socket.send(JSON.stringify({
+        type: "auth",
+        token,
+        password: passwordValue || undefined,
+        clientId,
+        ...(terminalGeometry ?? {})
+      }));
+      flushPendingTerminalTransport();
       connectionActionsRef.current.setStatusMessage("terminal connected");
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
@@ -306,6 +364,8 @@ export const App = () => {
     };
     socket.onclose = (event) => {
       debugLog("terminal_socket.onclose", { code: event.code, reason: event.reason });
+      terminalInputBufferRef.current?.clear();
+      pendingTerminalTransportRef.current = "";
       if (event.code === 4001) {
         connectionActionsRef.current.setErrorMessage("terminal authentication failed");
       }
@@ -314,7 +374,7 @@ export const App = () => {
       debugLog("terminal_socket.onerror");
     };
     terminalSocketRef.current = socket;
-  }, [requestTerminalFit]);
+  }, [flushPendingTerminalTransport, readTerminalGeometry, requestTerminalFit]);
 
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {
@@ -578,6 +638,7 @@ export const App = () => {
       if (inspectRequestTimerRef.current) {
         clearTimeout(inspectRequestTimerRef.current);
       }
+      terminalInputBufferRef.current?.clear();
       terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
     };
@@ -631,7 +692,7 @@ export const App = () => {
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
 
-  // Default sticky zoom OFF for zellij when user has no stored preference.
+  // Default sticky zoom OFF for the legacy zellij fallback when user has no stored preference.
   useEffect(() => {
     if (!serverConfig) return;
     const stored = localStorage.getItem("remux-sticky-zoom");
@@ -663,13 +724,15 @@ export const App = () => {
       activeTab: activeTab ? `${activeTab.index}:${activeTab.name}` : null,
       activePane: activePane?.id ?? null,
       activePaneZoomed: activePane?.zoomed ?? null,
+      backendKind: serverConfig?.backendKind ?? null,
+      runtimeGeometry: runtimeGeometryRef.current,
       topStatus,
       snapshotCapturedAt: snapshot.capturedAt,
       sessions: sessionSummary
     };
     window.__remuxDebugState = derived;
     debugLog("derived_state", derived);
-  }, [attachedSession, activeSession, activeTab, activePane, snapshot, topStatus]);
+  }, [activePane, activeSession, activeTab, attachedSession, serverConfig?.backendKind, snapshot, topStatus]);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent): void => {
@@ -758,6 +821,9 @@ export const App = () => {
     const switchingTabs = tab.index !== activeTab?.index;
     workspace.selectWindowIndex(tab.index);
     sendControl({ type: "select_tab", session: activeSession.name, tabIndex: tab.index });
+    if (serverConfig?.backendKind === "zellij") {
+      return;
+    }
     if (stickyZoom && capabilities?.supportsFullscreenPane && switchingTabs) {
       const pane = tab.panes.find((p) => p.active) ?? tab.panes[0];
       if (pane && !pane.zoomed) {
@@ -955,41 +1021,6 @@ export const App = () => {
                     .join(" · ")}
                 </p>
               )}
-              {serverConfig.backendKind && (
-                <div className="drawer-backend-switcher">
-                  <span className="drawer-backend-label">Backend:</span>
-                  {(["tmux", "zellij", "conpty"] as const).map((kind) => (
-                    <button
-                      key={kind}
-                      className={`drawer-backend-btn${serverConfig.backendKind === kind ? " active" : ""}`}
-                      disabled={serverConfig.backendKind === kind}
-                      onClick={async () => {
-                        const token = new URLSearchParams(window.location.search).get("token");
-                        try {
-                          const resp = await fetch("/api/switch-backend", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                              ...(password ? { "X-Password": password } : {})
-                            },
-                            body: JSON.stringify({ backend: kind })
-                          });
-                          if (resp.ok) {
-                            await fetch("/api/config").then((r) => r.json());
-                            window.location.reload();
-                          } else {
-                            const err = await resp.json().catch(() => ({}));
-                            connection.setErrorMessage(`Switch failed: ${(err as {error?: string}).error ?? resp.statusText}`);
-                          }
-                        } catch {
-                          connection.setErrorMessage("Failed to switch backend");
-                        }
-                      }}
-                    >{kind}</button>
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </aside>
@@ -1037,7 +1068,8 @@ export const App = () => {
         tabs={headerTabs}
         topStatus={topStatus}
         viewMode={viewMode}
-        supportsPreciseScrollback={capabilities?.supportsPreciseScrollback ?? true}
+        inspectPrecision={inspectSnapshot?.precision}
+        runtimeState={runtimeState}
         formatBytes={formatBytes}
           />
         )}
@@ -1054,6 +1086,7 @@ export const App = () => {
         onInspectPaneFilterChange={setInspectPaneFilter}
         onInspectRefresh={refreshInspect}
         onInspectSearchQueryChange={setInspectSearchQuery}
+        onFocusTerminal={focusTerminal}
         onDragLeave={() => setDragOver(false)}
         onDragOver={(event) => {
           event.preventDefault();

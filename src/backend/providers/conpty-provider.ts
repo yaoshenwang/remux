@@ -9,8 +9,8 @@
  * On Unix it uses the native PTY subsystem.
  */
 
+import fs from "node:fs";
 import * as pty from "node-pty";
-import os from "node:os";
 import type { MultiplexerBackend } from "../multiplexer/types.js";
 import type { PtyFactory, PtyProcess } from "../pty/pty-adapter.js";
 import type {
@@ -20,6 +20,8 @@ import type {
   BackendCapabilities,
 } from "../../shared/protocol.js";
 import { toFlatStringEnv, withoutTmuxEnv } from "../util/env.js";
+import { resolveDefaultShell } from "./default-shell.js";
+import { ensureNodePtySpawnHelperExecutable } from "../pty/node-pty-helper.js";
 
 // ---------------------------------------------------------------------------
 // Persistent session state
@@ -68,10 +70,10 @@ export class ConPtySessionProvider implements MultiplexerBackend {
     options?: { scrollbackLines?: number }
   ) {
     this.scrollbackLines = options?.scrollbackLines ?? 1000;
-    this.defaultShell =
-      os.platform() === "win32"
-        ? process.env.COMSPEC ?? "cmd.exe"
-        : process.env.SHELL ?? "/bin/bash";
+    ensureNodePtySpawnHelperExecutable(this.logger);
+    this.defaultShell = resolveDefaultShell({
+      pathExists: (candidate) => fs.existsSync(candidate),
+    });
   }
 
   async listSessions(): Promise<SessionSummary[]> {

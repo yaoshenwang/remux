@@ -155,4 +155,66 @@ describe("ClientViewStore", () => {
     expect(view.tabIndex).toBe(1);
     expect(view.paneId).toBe("terminal_1");
   });
+
+  test("hasFollowFocusClients reports whether any client opted in", () => {
+    const store = new ClientViewStore();
+    const snapshot = makeSnapshot();
+    store.initView("client-1", "main", snapshot);
+    store.initView("client-2", "main", snapshot);
+
+    expect(store.hasFollowFocusClients()).toBe(false);
+
+    store.setFollowFocus("client-2", true);
+
+    expect(store.hasFollowFocusClients()).toBe(true);
+  });
+
+  test("zellij initView keeps tab selection but does not expose pane identity", () => {
+    const store = new ClientViewStore({ backendKind: "zellij" });
+    const snapshot = makeSnapshot();
+
+    const view = store.initView("client-1", "main", snapshot);
+
+    expect(view.sessionName).toBe("main");
+    expect(view.tabIndex).toBe(0);
+    expect(view.paneId).toBeUndefined();
+  });
+
+  test("zellij selectTab updates the tab without reintroducing pane selection", () => {
+    const store = new ClientViewStore({ backendKind: "zellij" });
+    const snapshot = makeSnapshot();
+
+    store.initView("client-1", "main", snapshot);
+    store.selectTab("client-1", 1, snapshot);
+
+    const view = store.getView("client-1")!;
+    expect(view.tabIndex).toBe(1);
+    expect(view.paneId).toBeUndefined();
+  });
+
+  test("zellij followBackendFocus tracks the active tab without publishing paneId", () => {
+    const store = new ClientViewStore({ backendKind: "zellij" });
+    const snapshot = makeSnapshot();
+
+    store.initView("client-1", "main", snapshot);
+    store.setFollowFocus("client-1", true);
+
+    const updated = makeSnapshot({
+      sessions: [{
+        name: "main",
+        attached: true,
+        tabCount: 2,
+        tabs: [
+          { ...snapshot.sessions[0].tabs[0], active: false },
+          { ...snapshot.sessions[0].tabs[1], active: true }
+        ]
+      }]
+    });
+
+    store.reconcile(updated);
+
+    const view = store.getView("client-1")!;
+    expect(view.tabIndex).toBe(1);
+    expect(view.paneId).toBeUndefined();
+  });
 });

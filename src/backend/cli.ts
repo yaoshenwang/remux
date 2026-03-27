@@ -9,6 +9,10 @@ import { hideBin } from "yargs/helpers";
 import { AuthService } from "./auth/auth-service.js";
 import type { CliArgs, RuntimeConfig } from "./config.js";
 import { createRemuxServer } from "./server.js";
+import {
+  createRemuxV2GatewayServer,
+  type RunningServer,
+} from "./server-v2.js";
 import { createExtensions } from "./extensions.js";
 import { detectSessionBackend } from "./providers/detect.js";
 import { createTunnelProvider } from "./tunnels/index.js";
@@ -19,6 +23,7 @@ import {
   detectTmuxLaunchContext,
   type LaunchContext
 } from "./launch-context.js";
+import { cleanupSocketDir } from "./zellij/socket-dir.js";
 
 const parseCliArgs = async (): Promise<CliArgs> => {
   const argv = await yargs(hideBin(process.argv))
@@ -51,7 +56,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
     .option("session", {
       type: "string",
       default: "main",
-      describe: "Default tmux session name"
+      describe: "Default workspace session name"
     })
     .option("scrollback", {
       type: "number",
@@ -66,7 +71,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       type: "string",
       choices: ["auto", "tmux", "zellij", "conpty"] as const,
       default: "auto",
-      describe: "Session backend (auto-detect by default)"
+      describe: "Force a legacy fallback backend"
     })
     .option("tunnel-provider", {
       type: "string",
@@ -75,6 +80,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       describe: "Tunnel provider (auto-detects devtunnel, falls back to cloudflare)"
     })
     .strict()
+    .hide("backend")
     .help()
     .parseAsync();
 
@@ -135,6 +141,8 @@ const main = async (): Promise<void> => {
   const cliDir = path.dirname(fileURLToPath(import.meta.url));
   const frontendDir = path.resolve(cliDir, "../frontend");
 
+  const tunnelProvider = createTunnelProvider(args.tunnelProvider, logger);
+
   const config: RuntimeConfig = {
     port: args.port,
     host: args.host,
@@ -146,53 +154,74 @@ const main = async (): Promise<void> => {
     token: authService.token,
     frontendDir
   };
+  let launchContext: LaunchContext | null = null;
+  let extensions: ReturnType<typeof createExtensions> | null = null;
+  let runningServer: RunningServer | null = null;
 
-  const tunnelProvider = createTunnelProvider(args.tunnelProvider, logger);
-
-  const extensions = createExtensions(logger);
-  const forceBackend = args.backend !== "auto"
-    ? (args.backend as "tmux" | "zellij" | "conpty")
-    : undefined;
-  const backend = detectSessionBackend(logger, {
-    force: forceBackend,
-    socketName: process.env.REMUX_SOCKET_NAME,
-    socketPath: process.env.REMUX_SOCKET_PATH,
-    socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
-    scrollbackLines: args.scrollback,
-  });
-  logger.log(`Session backend: ${backend.kind}`);
-  const launchContext = detectTmuxLaunchContext({ backendKind: backend.kind });
-
-  const runningServer = createRemuxServer(config, {
-    backend: backend.gateway,
-    ptyFactory: backend.ptyFactory,
-    authService,
-    logger,
-    extensions,
-    onSwitchBackend: (kind) => {
-      try {
-        const newBackend = detectSessionBackend(logger, {
-          force: kind,
-          socketName: process.env.REMUX_SOCKET_NAME,
-          socketPath: process.env.REMUX_SOCKET_PATH,
-          socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
-          scrollbackLines: args.scrollback,
-        });
-        return {
-          backend: newBackend.gateway,
-          ptyFactory: newBackend.ptyFactory,
-        };
-      } catch {
-        return null;
-      }
+  if (process.env.REMUX_RUNTIME_V2 !== "0") {
+    const candidate = createRemuxV2GatewayServer(config, {
+      authService,
+      logger,
+    });
+    try {
+      await candidate.start();
+      runningServer = candidate;
+      logger.log("Runtime mode: runtime-v2");
+    } catch (error) {
+      await candidate.stop().catch(() => undefined);
+      logger.error(`runtime-v2 startup failed, falling back to legacy backend: ${String(error)}`);
     }
-  });
+  }
+
+  if (!runningServer) {
+    extensions = createExtensions(logger);
+    const forceBackend = args.backend !== "auto"
+      ? (args.backend as "tmux" | "zellij" | "conpty")
+      : undefined;
+    const backend = detectSessionBackend(logger, {
+      force: forceBackend,
+      socketName: process.env.REMUX_SOCKET_NAME,
+      socketPath: process.env.REMUX_SOCKET_PATH,
+      socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
+      scrollbackLines: args.scrollback,
+    });
+    logger.log(`Session backend: ${backend.kind}`);
+
+    const legacyConfig: RuntimeConfig = {
+      ...config,
+      pollIntervalMs: backend.kind === "zellij" ? 10_000 : 2_500,
+    };
+    launchContext = detectTmuxLaunchContext({ backendKind: backend.kind });
+    runningServer = createRemuxServer(legacyConfig, {
+      backend: backend.gateway,
+      ptyFactory: backend.ptyFactory,
+      authService,
+      logger,
+      extensions,
+      onSwitchBackend: (kind) => {
+        try {
+          const newBackend = detectSessionBackend(logger, {
+            force: kind,
+            socketName: process.env.REMUX_SOCKET_NAME,
+            socketPath: process.env.REMUX_SOCKET_PATH,
+            socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
+            scrollbackLines: args.scrollback,
+          });
+          return {
+            backend: newBackend.gateway,
+            ptyFactory: newBackend.ptyFactory,
+          };
+        } catch {
+          return null;
+        }
+      }
+    });
+    await runningServer.start();
+  }
 
   if (debugLogPath) {
     logger.log(`Debug log file: ${path.resolve(debugLogPath)}`);
   }
-
-  await runningServer.start();
 
   // Check if running in dev mode (set by npm run dev:backend)
   const isDevMode = process.env.VITE_DEV_MODE === "1";
@@ -225,8 +254,9 @@ const main = async (): Promise<void> => {
 
     shutdownPromise = (async () => {
       tunnelProvider.stop();
-      extensions.dispose();
-      await runningServer.stop();
+      extensions?.dispose();
+      await runningServer?.stop();
+      cleanupSocketDir();
     })();
 
     try {

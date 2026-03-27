@@ -17,6 +17,7 @@ import type { PtyFactory } from "../pty/pty-adapter.js";
 import { TmuxCliExecutor } from "../tmux/cli-executor.js";
 import { NodePtyFactory } from "../pty/node-pty-adapter.js";
 import { ZellijCliExecutor, ZellijPtyFactory } from "../zellij/index.js";
+import { resolveZellijSocketDir } from "../zellij/socket-dir.js";
 import {
   ConPtySessionProvider,
   ConPtyFactory,
@@ -114,17 +115,21 @@ function createZellijBackend(
   logger?: Pick<Console, "log" | "error">,
   options?: { socketDir?: string; scrollbackLines?: number }
 ): SessionBackend {
+  // Always resolve socket dir — auto-creates isolated dir when not explicit
+  const socketDir = resolveZellijSocketDir(options?.socketDir);
+  logger?.log(`[detect] zellij socket dir: ${socketDir}`);
+
   // Resolve path to remux-focus.wasm relative to this module
   const thisDir = path.dirname(fileURLToPath(import.meta.url));
   const focusPluginPath = path.resolve(thisDir, "../zellij/remux-focus.wasm");
   const gateway = new ZellijCliExecutor({
     logger,
     focusPluginPath,
-    socketDir: options?.socketDir
+    socketDir,
   });
   const ptyFactory = new ZellijPtyFactory({
     logger,
-    socketDir: options?.socketDir,
+    socketDir,
     scrollbackLines: options?.scrollbackLines
   });
   return { gateway, ptyFactory, kind: "zellij" };

@@ -4,8 +4,7 @@ import {
   inferAttachedSessionFromWorkspace,
   isAwaitingSessionAttachment,
   isAwaitingSessionSelection,
-  resolveActiveSession,
-  shouldUsePaneViewportCols
+  resolveActiveSession
 } from "../../src/frontend/ui-state.js";
 
 const buildSession = (name: string, attached = false): SessionState => ({
@@ -94,12 +93,5 @@ describe("frontend ui state helpers", () => {
         followBackendFocus: false
       })
     ).toBe("");
-  });
-
-  test("does not hard-lock viewport columns for any backend", () => {
-    expect(shouldUsePaneViewportCols("zellij")).toBe(false);
-    expect(shouldUsePaneViewportCols("tmux")).toBe(false);
-    expect(shouldUsePaneViewportCols("conpty")).toBe(false);
-    expect(shouldUsePaneViewportCols(undefined)).toBe(false);
   });
 });

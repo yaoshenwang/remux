@@ -4,6 +4,11 @@
 > Date: 2026-03-26
 > Scope: Product definition, interaction model, history/inspect semantics, backend strategy, and phased architecture plan
 
+Current direction note:
+
+- `runtime-v2` is now the primary product path
+- legacy `tmux` / `zellij` / `conpty` adapters should be treated as migration-era compatibility layers, not the main product model
+
 ---
 
 ## 1. Executive Summary
@@ -170,7 +175,7 @@ Purpose:
 
 - navigate sessions, tabs, and panes
 - create, rename, split, close, focus, zoom/fullscreen when supported
-- switch backend behavior explicitly where relevant
+- surface runtime capability honestly instead of exposing backend switching as a primary UX
 
 Characteristics:
 
@@ -320,19 +325,19 @@ This is a better product than trying to imitate tmux copy-mode inside a browser.
 
 ### 7.1 Recommended Product Posture
 
-Remux should keep a multiplexer-neutral domain model, but it should **not promise equal behavior quality across all backends**.
+Remux should keep a workspace-neutral domain model, but the shipped product contract should be the unified `runtime-v2` path.
 
 Recommended posture:
 
-- `tmux` is the flagship backend
-- `zellij` is supported honestly, with explicit capability and fidelity caveats
-- `conpty` is a practical fallback, not a parity target
+- `runtime-v2` is the only default product path
+- legacy adapters are compatibility-only and should keep shrinking
+- release, docs, and CI should optimize for runtime-v2 correctness instead of backend parity theater
 
 ### 7.2 Why This Matters
 
 The current architecture already shows that "one abstraction, same UX everywhere" is too optimistic.
 
-Backends differ in:
+Compatibility paths differ in:
 
 - scrollback precision
 - focus semantics
@@ -341,40 +346,25 @@ Backends differ in:
 - fullscreen semantics
 - live stream fidelity
 
-The product should embrace capability-aware behavior instead of hiding these differences.
+The product should embrace capability-aware behavior without letting old backends define the main narrative.
 
 ### 7.3 Backend-Specific Implications
 
-#### tmux
+#### runtime-v2
 
 Target position:
 
-- best overall experience
-- strongest inspect fidelity
-- default recommendation for users who want the polished path
+- authoritative product contract
+- strongest inspect and live-stream fidelity target
+- the only path that should shape default UX, docs, and CI
 
-#### zellij
-
-Target position:
-
-- useful, but explicitly capability-shaped
-- some inspect paths may be approximate
-- some live terminal flows may be viewport-like rather than PTY-like
-
-Strategic decision:
-
-- either invest in a true zellij-first architecture
-- or keep zellij clearly de-emphasized as experimental
-
-Trying to do both halfway will continue to create confusion.
-
-#### conpty
+#### legacy compatibility
 
 Target position:
 
-- single-pane persistent shell fallback
-- simpler control surface
-- inspect still valuable even if multiplexer features are limited
+- explicit migration boundary
+- hidden from the primary product surface
+- tested only when compatibility work is being touched
 
 ---
 
@@ -681,9 +671,9 @@ Goal:
 
 Deliverables:
 
-- strengthen tmux inspect fidelity
-- either do a real zellij-focused redesign or clearly retain experimental posture
-- add smoke tests around history semantics, not only control operations
+- harden runtime-v2 inspect and live-stream fidelity
+- keep reducing the legacy compatibility boundary
+- add smoke tests around runtime-v2 history semantics, not only control operations
 
 ### Phase 5: Awareness Layer
 
@@ -716,12 +706,12 @@ Recommended metrics:
 
 ## 13. Risks and Tradeoffs
 
-### Risk: Overpromising Cross-Backend Parity
+### Risk: Letting Legacy Compatibility Define The Product
 
 Mitigation:
 
-- publish honest backend posture
-- use capability and fidelity labels everywhere relevant
+- publish runtime-v2-first posture
+- keep legacy paths explicit, hidden, and non-default
 
 ### Risk: Building a Complex History System Too Early
 
@@ -776,7 +766,7 @@ That layer should be defined around:
 - mobile readability
 - explicit precision and source semantics
 
-If Remux does this well, it stops being "a web tmux client with some extras" and becomes a product with a clearer identity:
+If Remux does this well, it stops being "a browser terminal wrapper with some extras" and becomes a product with a clearer identity:
 
 > a remote workspace cockpit for terminal work
 

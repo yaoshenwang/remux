@@ -1,6 +1,6 @@
 import express from "express";
 import { describe, expect, test } from "vitest";
-import { frontendFallbackRoute, isWebSocketPath } from "../../src/backend/server.js";
+import { frontendFallbackRoute, isWebSocketPath } from "../../src/backend/server-v2.js";
 
 interface RouteLayer {
   route?: { path?: string };
@@ -19,7 +19,7 @@ const getFallbackLayer = (): RouteLayer => {
   return layer;
 };
 
-describe("frontend fallback route", () => {
+describe("runtime-v2 frontend fallback route", () => {
   test("matches root and deep SPA paths", () => {
     const layer = getFallbackLayer();
     expect(layer.match("/")).toBe(true);

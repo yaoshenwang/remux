@@ -3,17 +3,41 @@ import type { ClientView, WorkspaceSnapshot } from "../../shared/protocol.js";
 export class ClientViewStore {
   private views = new Map<string, ClientView>();
   private missingSessionCounts = new Map<string, number>();
+  private defaultFollowFocus: boolean;
+  private backendKind: "tmux" | "zellij" | "conpty";
+
+  constructor(options?: { defaultFollowFocus?: boolean; backendKind?: "tmux" | "zellij" | "conpty" }) {
+    this.defaultFollowFocus = options?.defaultFollowFocus ?? false;
+    this.backendKind = options?.backendKind ?? "tmux";
+  }
+
+  private shouldExposePaneId(): boolean {
+    return this.backendKind !== "zellij";
+  }
+
+  setBackendKind(kind: "tmux" | "zellij" | "conpty"): void {
+    this.backendKind = kind;
+  }
+
+  private resolveActivePaneId(snapshot: WorkspaceSnapshot, sessionName: string, tabIndex: number): string | undefined {
+    if (!this.shouldExposePaneId()) {
+      return undefined;
+    }
+    const session = snapshot.sessions.find((entry) => entry.name === sessionName);
+    const tab = session?.tabs.find((entry) => entry.index === tabIndex);
+    const activePane = tab?.panes.find((pane) => pane.active) ?? tab?.panes[0];
+    return activePane?.id ?? "terminal_0";
+  }
 
   initView(clientId: string, session: string, snapshot: WorkspaceSnapshot): ClientView {
     const sessionState = snapshot.sessions.find((s) => s.name === session);
     const activeTab = sessionState?.tabs.find((t) => t.active) ?? sessionState?.tabs[0];
-    const activePane = activeTab?.panes.find((p) => p.active) ?? activeTab?.panes[0];
 
     const view: ClientView = {
       sessionName: session,
       tabIndex: activeTab?.index ?? 0,
-      paneId: activePane?.id ?? "terminal_0",
-      followBackendFocus: false,
+      paneId: activeTab ? this.resolveActivePaneId(snapshot, session, activeTab.index) : undefined,
+      followBackendFocus: this.defaultFollowFocus,
     };
     this.views.set(clientId, view);
     this.missingSessionCounts.set(clientId, 0);
@@ -24,14 +48,13 @@ export class ClientViewStore {
     const view = this.views.get(clientId);
     if (!view) return;
     view.tabIndex = tabIndex;
-    // Select first active pane in the new tab
-    const session = snapshot.sessions.find((s) => s.name === view.sessionName);
-    const tab = session?.tabs.find((t) => t.index === tabIndex);
-    const activePane = tab?.panes.find((p) => p.active) ?? tab?.panes[0];
-    if (activePane) view.paneId = activePane.id;
+    view.paneId = this.resolveActivePaneId(snapshot, view.sessionName, tabIndex);
   }
 
   selectPane(clientId: string, paneId: string): void {
+    if (!this.shouldExposePaneId()) {
+      return;
+    }
     const view = this.views.get(clientId);
     if (!view) return;
     view.paneId = paneId;
@@ -44,9 +67,8 @@ export class ClientViewStore {
     // Reset to active tab/pane in new session
     const sessionState = snapshot.sessions.find((s) => s.name === session);
     const activeTab = sessionState?.tabs.find((t) => t.active) ?? sessionState?.tabs[0];
-    const activePane = activeTab?.panes.find((p) => p.active) ?? activeTab?.panes[0];
     view.tabIndex = activeTab?.index ?? 0;
-    view.paneId = activePane?.id ?? "terminal_0";
+    view.paneId = activeTab ? this.resolveActivePaneId(snapshot, session, activeTab.index) : undefined;
   }
 
   setFollowFocus(clientId: string, follow: boolean): void {
@@ -81,17 +103,17 @@ export class ClientViewStore {
         const activeTab = session.tabs.find((t) => t.active) ?? session.tabs[0];
         if (activeTab) {
           view.tabIndex = activeTab.index;
-          const activePane = activeTab.panes.find((p) => p.active) ?? activeTab.panes[0];
-          view.paneId = activePane?.id ?? "terminal_0";
+          view.paneId = this.resolveActivePaneId(snapshot, view.sessionName, activeTab.index);
         }
         continue;
       }
 
       // Check if current pane still exists in current tab
-      const pane = tab.panes.find((p) => p.id === view.paneId);
-      if (!pane) {
-        const activePane = tab.panes.find((p) => p.active) ?? tab.panes[0];
-        view.paneId = activePane?.id ?? "terminal_0";
+      if (this.shouldExposePaneId()) {
+        const pane = tab.panes.find((p) => p.id === view.paneId);
+        if (!pane) {
+          view.paneId = this.resolveActivePaneId(snapshot, view.sessionName, tab.index);
+        }
       }
 
       // If followBackendFocus, sync to backend's active state
@@ -99,8 +121,7 @@ export class ClientViewStore {
         const activeTab = session.tabs.find((t) => t.active);
         if (activeTab) {
           view.tabIndex = activeTab.index;
-          const activePane = activeTab.panes.find((p) => p.active) ?? activeTab.panes[0];
-          if (activePane) view.paneId = activePane.id;
+          view.paneId = this.resolveActivePaneId(snapshot, view.sessionName, activeTab.index);
         }
       }
     }
@@ -116,6 +137,15 @@ export class ClientViewStore {
 
   getView(clientId: string): ClientView | undefined {
     return this.views.get(clientId);
+  }
+
+  hasFollowFocusClients(): boolean {
+    for (const view of this.views.values()) {
+      if (view.followBackendFocus) {
+        return true;
+      }
+    }
+    return false;
   }
 
   removeClient(clientId: string): void {

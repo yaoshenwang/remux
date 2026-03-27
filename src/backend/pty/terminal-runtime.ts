@@ -1,10 +1,15 @@
 import { EventEmitter } from "node:events";
+import type { TerminalGeometryState, WorkspaceRuntimeState } from "../../shared/protocol.js";
 import type { PtyFactory, PtyProcess } from "./pty-adapter.js";
 
 interface TerminalRuntimeEvents {
   data: (payload: string) => void;
   exit: (code: number) => void;
   attach: (session: string) => void;
+  resize: (cols: number, rows: number) => void;
+  runtimeState: (state: WorkspaceRuntimeState) => void;
+  geometry: (geometry: TerminalGeometryState) => void;
+  workspaceChange: (reason: "session_switch" | "session_renamed") => void;
 }
 
 export class TerminalRuntime {
@@ -14,6 +19,8 @@ export class TerminalRuntime {
   private lastDimensions: { cols: number; rows: number } = { cols: 80, rows: 24 };
   /** Cached last data chunk for replaying to late-joining terminal clients. */
   private lastDataChunk?: string;
+  private runtimeState: WorkspaceRuntimeState | null = null;
+  private runtimeGeometry: TerminalGeometryState | null = null;
 
   public constructor(private readonly factory: PtyFactory) {}
 
@@ -23,6 +30,14 @@ export class TerminalRuntime {
 
   public isAlive(): boolean {
     return this.process !== undefined;
+  }
+
+  public currentRuntimeState(): WorkspaceRuntimeState | null {
+    return this.runtimeState;
+  }
+
+  public currentGeometry(): TerminalGeometryState | null {
+    return this.runtimeGeometry;
   }
 
   public attachToSession(session: string, force = false): void {
@@ -47,7 +62,43 @@ export class TerminalRuntime {
         this.process = undefined;
       }
     });
+    if (processRef.onRuntimeStateChange) {
+      processRef.onRuntimeStateChange((state) => {
+        this.runtimeState = state;
+        this.events.emit("runtimeState", state);
+      });
+    }
+    if (processRef.onRuntimeGeometryChange) {
+      processRef.onRuntimeGeometryChange((geometry) => {
+        this.runtimeGeometry = geometry;
+        this.events.emit("geometry", geometry);
+      });
+    }
+    if (processRef.onWorkspaceChange) {
+      processRef.onWorkspaceChange((reason) => {
+        this.events.emit("workspaceChange", reason);
+      });
+    }
+    if (processRef.getRuntimeState) {
+      const currentState = processRef.getRuntimeState();
+      if (currentState) {
+        this.runtimeState = currentState;
+        this.events.emit("runtimeState", currentState);
+      }
+    } else {
+      this.runtimeState = null;
+    }
+    if (processRef.getRuntimeGeometry) {
+      const currentGeometry = processRef.getRuntimeGeometry();
+      if (currentGeometry) {
+        this.runtimeGeometry = currentGeometry;
+        this.events.emit("geometry", currentGeometry);
+      }
+    } else {
+      this.runtimeGeometry = null;
+    }
     processRef.resize(this.lastDimensions.cols, this.lastDimensions.rows);
+    this.events.emit("resize", this.lastDimensions.cols, this.lastDimensions.rows);
     this.process = processRef;
     this.events.emit("attach", session);
   }
@@ -68,7 +119,10 @@ export class TerminalRuntime {
       return;
     }
     this.lastDimensions = { cols: Math.floor(cols), rows: Math.floor(rows) };
-    this.process?.resize(this.lastDimensions.cols, this.lastDimensions.rows);
+    if (this.process) {
+      this.process.resize(this.lastDimensions.cols, this.lastDimensions.rows);
+      this.events.emit("resize", this.lastDimensions.cols, this.lastDimensions.rows);
+    }
   }
 
   public on<K extends keyof TerminalRuntimeEvents>(
@@ -83,6 +137,8 @@ export class TerminalRuntime {
     if (!this.process) {
       this.session = undefined;
       this.lastDataChunk = undefined;
+      this.runtimeState = null;
+      this.runtimeGeometry = null;
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
@@ -91,6 +147,8 @@ export class TerminalRuntime {
         this.process = undefined;
         this.session = undefined;
         this.lastDataChunk = undefined;
+        this.runtimeState = null;
+        this.runtimeGeometry = null;
         resolve();
       }, 500);
       proc.onExit(() => {
@@ -98,6 +156,8 @@ export class TerminalRuntime {
         this.process = undefined;
         this.session = undefined;
         this.lastDataChunk = undefined;
+        this.runtimeState = null;
+        this.runtimeGeometry = null;
         resolve();
       });
       proc.kill();

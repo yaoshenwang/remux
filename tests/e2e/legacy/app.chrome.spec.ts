@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { startE2EServer, type StartedE2EServer } from "./harness/test-server.js";
+import { startE2EServer, type StartedE2EServer } from "../harness/test-server.js";
 
 test.describe("remux browser behavior", () => {
   test.describe("auto attach + drawer + terminal", () => {
@@ -87,7 +87,9 @@ test.describe("remux browser behavior", () => {
       await page.getByTestId("terminal-host").click();
       await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
 
-      await expect.poll(() => server.ptyFactory.latestProcess().writes).toContain("from-clipboard");
+      await expect
+        .poll(() => server.ptyFactory.latestProcess().writes.join(""))
+        .toContain("from-clipboard");
     });
 
     test("sidebar is always visible on desktop and preserves section spacing", async ({ page }) => {

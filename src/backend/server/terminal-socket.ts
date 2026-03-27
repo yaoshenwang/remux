@@ -1,6 +1,6 @@
 import type { WebSocketServer } from "ws";
 import type { AuthService } from "../auth/auth-service.js";
-import { parseClientMessage, isObject } from "./socket-protocol.js";
+import { extractTerminalDimensions, parseClientMessage, isObject } from "./socket-protocol.js";
 import type { ControlContext, DataContext } from "./types.js";
 
 interface RegisterTerminalSocketHandlersOptions {
@@ -62,6 +62,11 @@ export const registerTerminalSocketHandlers = ({
         ctx.controlClientId = clientId;
         ctx.controlContext = controlContext;
         controlContext.terminalClients.add(ctx);
+        const initialTerminalSize = extractTerminalDimensions(authMessage);
+        if (initialTerminalSize) {
+          controlContext.pendingResize = initialTerminalSize;
+          controlContext.runtime?.resize(initialTerminalSize.cols, initialTerminalSize.rows);
+        }
         logger.log("terminal ws auth ok");
 
         controlContext.runtime?.replayLast((data) => {

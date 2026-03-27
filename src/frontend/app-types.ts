@@ -9,7 +9,8 @@ export interface ServerConfig {
   scrollbackLines: number;
   pollIntervalMs: number;
   uploadMaxSize?: number;
-  backendKind?: "tmux" | "zellij" | "conpty";
+  backendKind?: "tmux" | "zellij" | "conpty" | "runtime-v2";
+  runtimeMode?: "runtime-v2";
 }
 
 export interface PendingSnippetExecution {

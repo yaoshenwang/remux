@@ -12,12 +12,15 @@ import {
   type ZellijNativeBridgeStateStore
 } from "./native-bridge-state.js";
 import {
+  bootstrapZellijSession,
   createZellijNativeBridge,
   type ZellijNativeBridgeFactory,
   type ZellijNativeBridgePaneRenderEvent
 } from "./native-bridge.js";
 
 const execFileAsync = promisify(execFile);
+const ZELLIJ_CONTRACT_DIR_NAME = "contract_version_1";
+const ZELLIJ_SOCKET_PATH_MAX_LENGTH = process.platform === "win32" ? 256 : 108;
 
 /** Strip ANSI escape sequences from CLI output. */
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
@@ -47,6 +50,11 @@ export class ZellijCliExecutor implements MultiplexerBackend {
     supportsFloatingPanes: true,
     supportsFullscreenPane: true,
   };
+
+  /** Update capabilities dynamically (e.g., when native bridge becomes available). */
+  public setNativeBridgeActive(active: boolean): void {
+    (this.capabilities as { supportsPreciseScrollback: boolean }).supportsPreciseScrollback = active;
+  }
 
   private readonly binary: string;
   private readonly timeoutMs: number;
@@ -84,6 +92,31 @@ export class ZellijCliExecutor implements MultiplexerBackend {
       ...(this.socketDir ? { ZELLIJ_SOCKET_DIR: this.socketDir } : {})
     };
     this.ensureRemuxShellIsExecutable();
+    this.checkFocusPluginHealth();
+  }
+
+  /** Whether the focus plugin is healthy and usable. */
+  private focusPluginHealthy = false;
+
+  private checkFocusPluginHealth(): void {
+    if (!this.focusPluginPath) {
+      this.logger?.log?.("[zellij] focus plugin path not configured — geometry-only mode");
+      this.focusPluginHealthy = false;
+      return;
+    }
+    try {
+      const stats = fs.statSync(this.focusPluginPath);
+      if (!stats.isFile() || stats.size === 0) {
+        this.logger?.error?.(`[zellij] focus plugin not a valid file: ${this.focusPluginPath}`);
+        this.focusPluginHealthy = false;
+        return;
+      }
+      this.focusPluginHealthy = true;
+      this.logger?.log?.(`[zellij] focus plugin healthy: ${this.focusPluginPath}`);
+    } catch {
+      this.logger?.error?.(`[zellij] focus plugin not found: ${this.focusPluginPath}`);
+      this.focusPluginHealthy = false;
+    }
   }
 
   /**
@@ -201,6 +234,7 @@ export class ZellijCliExecutor implements MultiplexerBackend {
     if (await this.sessionExistsInSocketDir(name) && existing && existing.lifecycle !== "exited") {
       return;
     }
+    this.assertSocketPathLength(name);
     await this.spawnSessionBootstrap(name);
   }
 
@@ -577,7 +611,7 @@ export class ZellijCliExecutor implements MultiplexerBackend {
     paneId: string,
     session?: string
   ): Promise<void> {
-    if (!this.focusPluginPath) return;
+    if (!this.focusPluginPath || !this.focusPluginHealthy) return;
 
     const numId = extractPaneNumericId(paneId);
     if (numId < 0) return;
@@ -593,6 +627,16 @@ export class ZellijCliExecutor implements MultiplexerBackend {
   }
 
   private async spawnSessionBootstrap(name: string): Promise<void> {
+    try {
+      if (await this.tryCreateSessionWithNativeBridge(name)) {
+        return;
+      }
+    } catch (error) {
+      this.logger?.error?.(
+        `[zellij] native detached bootstrap failed for '${name}', falling back to CLI bootstrap: ${String(error)}`
+      );
+    }
+
     try {
       if (await this.tryCreateSessionInBackground(name)) {
         return;
@@ -662,6 +706,37 @@ export class ZellijCliExecutor implements MultiplexerBackend {
 
       void poll();
     });
+  }
+
+  private async tryCreateSessionWithNativeBridge(name: string): Promise<boolean> {
+    const created = await bootstrapZellijSession({
+      session: name,
+      defaultShell: this.remuxShellPath,
+      zellijBinary: this.binary,
+      socketDir: this.socketDir,
+      cwd: process.cwd(),
+      timeoutMs: this.timeoutMs,
+      logger: this.logger,
+      env: {
+        ...this.baseEnv,
+        ...this.getRemuxShellEnv(),
+        REMUX: "1"
+      }
+    });
+    if (!created) {
+      return false;
+    }
+
+    const deadline = Date.now() + this.timeoutMs;
+    while (Date.now() < deadline) {
+      const sessions = await this.listSessionSummariesImmediate();
+      const current = sessions.find((session) => session.name === name);
+      if (current && current.lifecycle !== "exited") {
+        return true;
+      }
+      await sleep(100);
+    }
+    throw new Error(`timed out waiting for zellij session '${name}'`);
   }
 
   private async tryCreateSessionInBackground(name: string): Promise<boolean> {
@@ -867,11 +942,23 @@ export class ZellijCliExecutor implements MultiplexerBackend {
   }
 
   private getCreateBackgroundArgs(name: string): string[] {
-    return ["attach", "-b", name, "options", "--default-shell", this.remuxShellPath];
+    return [
+      "attach", "-b", name,
+      "options",
+      "--default-shell", this.remuxShellPath,
+      "--show-startup-tips", "false",
+      "--show-release-notes", "false"
+    ];
   }
 
   private getCreateSessionArgs(name: string): string[] {
-    return ["attach", "-c", name, "options", "--default-shell", this.remuxShellPath];
+    return [
+      "attach", "-c", name,
+      "options",
+      "--default-shell", this.remuxShellPath,
+      "--show-startup-tips", "false",
+      "--show-release-notes", "false"
+    ];
   }
 
   private getRemuxShellEnv(): Record<string, string> {
@@ -879,6 +966,22 @@ export class ZellijCliExecutor implements MultiplexerBackend {
       SHELL: this.remuxShellPath,
       REMUX_ORIGINAL_SHELL: process.env.SHELL?.trim() || "/bin/sh"
     };
+  }
+
+  private assertSocketPathLength(name: string): void {
+    if (!this.socketDir || process.platform === "win32") {
+      return;
+    }
+
+    const socketPath = path.join(this.socketDir, ZELLIJ_CONTRACT_DIR_NAME, name);
+    if (Buffer.byteLength(socketPath, "utf8") < ZELLIJ_SOCKET_PATH_MAX_LENGTH) {
+      return;
+    }
+
+    throw new Error(
+      `zellij socket path is too long for session '${name}': ${socketPath}. `
+      + `Use a shorter REMUX_ZELLIJ_SOCKET_DIR path.`
+    );
   }
 }
 

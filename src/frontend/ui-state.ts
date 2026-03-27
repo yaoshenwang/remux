@@ -41,7 +41,3 @@ export const inferAttachedSessionFromWorkspace = (
 
   return sessions.some((session) => session.name === sessionName) ? sessionName : "";
 };
-
-export const shouldUsePaneViewportCols = (
-  backendKind?: "tmux" | "zellij" | "conpty"
-): boolean => false;

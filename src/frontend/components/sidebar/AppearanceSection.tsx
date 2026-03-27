@@ -39,7 +39,7 @@ export const AppearanceSection = ({
           </button>
         </div>
         <p className="drawer-toggle-copy">
-          Enable this to follow tab and pane changes made directly in zellij.
+          Enable this to follow active tab and pane changes reported by the backend.
         </p>
       </>
     )}

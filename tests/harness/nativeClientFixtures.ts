@@ -2,19 +2,20 @@ import type { ControlServerMessage } from "../../src/shared/protocol.js";
 import type { ServerConfig } from "../../src/frontend/app-types.js";
 
 export const nativeConfigFixture: ServerConfig = {
-  version: "0.1.57",
+  version: "0.2.0",
   passwordRequired: false,
   scrollbackLines: 1000,
   pollIntervalMs: 2500,
   uploadMaxSize: 52_428_800,
-  backendKind: "tmux",
+  backendKind: "runtime-v2",
+  runtimeMode: "runtime-v2",
 };
 
 export const nativeAuthOkFixture: Extract<ControlServerMessage, { type: "auth_ok" }> = {
   type: "auth_ok",
   clientId: "native-client-001",
   requiresPassword: false,
-  backendKind: "tmux",
+  backendKind: "runtime-v2",
   capabilities: {
     supportsPaneFocusById: true,
     supportsTabRename: true,
