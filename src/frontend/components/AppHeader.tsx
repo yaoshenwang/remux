@@ -57,30 +57,30 @@ export const describeRuntimeState = (
     case "native-bridge":
       return {
         className: "stream-badge native",
-        label: "native bridge",
-        title: "Using the native zellij bridge for live frames and precise scrollback"
+        label: "precise live",
+        title: "Using the runtime-v2 live stream with precise scrollback"
       };
     case "cli-polling":
       return {
         className: "stream-badge degraded",
-        label: "CLI fallback",
+        label: "degraded live",
         title: runtimeState.degradedReason
-          ? `Native bridge unavailable (${runtimeState.degradedReason}) - using CLI fallback`
-          : "Native bridge unavailable - using CLI fallback"
+          ? `Runtime live stream degraded (${runtimeState.degradedReason}) - falling back to snapshot polling`
+          : "Runtime live stream degraded - falling back to snapshot polling"
       };
     case "unsupported":
       return {
         className: "stream-badge unsupported",
-        label: "unsupported",
+        label: "limited",
         title: runtimeState.degradedReason
-          ? `Native bridge unavailable (${runtimeState.degradedReason})`
-          : "Native bridge unavailable on this platform or zellij version"
+          ? `Runtime live stream unavailable (${runtimeState.degradedReason})`
+          : "Runtime live stream unavailable for this backend"
       };
     case "pending":
       return {
         className: "stream-badge pending",
         label: "starting",
-        title: "Starting the zellij native bridge"
+        title: "Starting the runtime-v2 live stream"
       };
     default:
       return null;
@@ -133,7 +133,7 @@ export const AppHeader = ({
   const mobileRenameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextSelectRef = useRef<number | null>(null);
   const inspectPrecisionBadge = formatInspectPrecisionBadge(inspectPrecision);
-  const runtimeBadge = serverConfig?.backendKind === "zellij"
+  const runtimeBadge = serverConfig?.backendKind === "runtime-v2" || serverConfig?.backendKind === "zellij"
     ? describeRuntimeState(runtimeState)
     : null;
   const mobileStatsTitle = bandwidthStats

@@ -5,7 +5,7 @@ import {
 } from "../../src/frontend/components/AppHeader.js";
 
 describe("app header runtime badges", () => {
-  test("describes native bridge state explicitly", () => {
+  test("describes runtime-v2 live state explicitly", () => {
     expect(
       describeRuntimeState({
         streamMode: "native-bridge",
@@ -13,12 +13,12 @@ describe("app header runtime badges", () => {
       })
     ).toEqual({
       className: "stream-badge native",
-      label: "native bridge",
-      title: "Using the native zellij bridge for live frames and precise scrollback",
+      label: "precise live",
+      title: "Using the runtime-v2 live stream with precise scrollback",
     });
   });
 
-  test("describes CLI fallback state with degraded reason", () => {
+  test("describes degraded live state with a fallback reason", () => {
     expect(
       describeRuntimeState({
         streamMode: "cli-polling",
@@ -27,8 +27,8 @@ describe("app header runtime badges", () => {
       })
     ).toEqual({
       className: "stream-badge degraded",
-      label: "CLI fallback",
-      title: "Native bridge unavailable (bridge_crashed) - using CLI fallback",
+      label: "degraded live",
+      title: "Runtime live stream degraded (bridge_crashed) - falling back to snapshot polling",
     });
   });
 

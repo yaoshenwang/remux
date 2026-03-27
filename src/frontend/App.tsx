@@ -692,7 +692,7 @@ export const App = () => {
 
   // No dynamic font-size calculation — CSS handles responsive sizing via clamp()
 
-  // Default sticky zoom OFF for zellij when user has no stored preference.
+  // Default sticky zoom OFF for the legacy zellij fallback when user has no stored preference.
   useEffect(() => {
     if (!serverConfig) return;
     const stored = localStorage.getItem("remux-sticky-zoom");

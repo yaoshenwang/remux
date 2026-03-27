@@ -17,7 +17,7 @@ Current posture:
 - Not a hardened multi-tenant remote access gateway.
 - Relies on shared-secret authentication rather than identity provider integration, device trust, or fine-grained authorization.
 
-The implementation is now backend-neutral at the architecture level, but the practical security consequence is the same across `tmux`, `zellij`, and `conpty`: authenticated users get control of a live shell context.
+The current product path is the unified `runtime-v2` gateway. Transitional legacy adapters still exist, but the practical security consequence is the same: authenticated users get control of a live shell context.
 
 ## Security Goals
 
@@ -37,17 +37,14 @@ The implementation is now backend-neutral at the architecture level, but the pra
 
 ### Components
 
-- Backend HTTP/WebSocket server: `src/backend/server.ts`
+- Backend HTTP/WebSocket gateway: `src/backend/server-v2.ts`
 - Auth service: `src/backend/auth/auth-service.ts`
 - CLI bootstrap and credential generation: `src/backend/cli.ts`
+- Native runtime workspace: `apps/remuxd/` and `crates/`
 - Tunnel provider layer: `src/backend/tunnels/`
-- Backend detection and runtime switching: `src/backend/providers/detect.ts`
-- Multiplexer backends:
-  - `src/backend/tmux/`
-  - `src/backend/zellij/`
-  - `src/backend/providers/conpty-provider.ts`
+- Legacy fallback detection and adapters: `src/backend/providers/detect.ts`, `src/backend/tmux/`, `src/backend/zellij/`, `src/backend/providers/conpty-provider.ts`
 - Frontend client storing password and opening sockets: `src/frontend/App.tsx`
-- PTY runtime bridging websocket I/O to the active backend: `src/backend/pty/terminal-runtime.ts`
+- Runtime-v2 translation layer: `src/backend/v2/`
 
 ### Data Flows
 
@@ -63,7 +60,7 @@ The implementation is now backend-neutral at the architecture level, but the pra
 5. First message on each socket must be auth:
    - control socket: `{ type: "auth", token, password }`
    - terminal socket: `{ type: "auth", token, password, clientId }`
-6. After auth success, client can fully control the live workspace and read terminal output.
+6. After auth success, client can fully control the live workspace and read terminal output through the runtime-v2 gateway.
 
 ## Authentication And Authorization
 
@@ -90,8 +87,8 @@ The implementation is now backend-neutral at the architecture level, but the pra
 - All-or-nothing.
 - Once authenticated, a client can issue all control operations and terminal input.
 - No role separation such as read-only vs control.
-- In `tmux`, Remux creates grouped client sessions where possible to isolate window focus.
-- In `zellij` and `conpty`, effective focus behavior depends more directly on backend semantics plus the frontend `clientView` model.
+- In `runtime-v2`, focus and attach behavior are mediated by the gateway and runtime protocol.
+- In legacy fallback mode, focus behavior still depends on backend-specific semantics plus the frontend `clientView` model.
 
 ## Credential Lifecycle And Storage
 

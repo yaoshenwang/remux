@@ -4,6 +4,11 @@
 > Date: 2026-03-26
 > Scope: Product definition, interaction model, history/inspect semantics, backend strategy, and phased architecture plan
 
+Current direction note:
+
+- `runtime-v2` is now the primary product path
+- legacy `tmux` / `zellij` / `conpty` adapters should be treated as migration-era compatibility layers, not the main product model
+
 ---
 
 ## 1. Executive Summary

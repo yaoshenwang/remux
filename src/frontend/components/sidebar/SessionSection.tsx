@@ -155,7 +155,7 @@ export const SessionSection = ({
                 </span>
                 {(() => {
                   if (session.lifecycle === "exited") {
-                    return <span className="item-context">Saved zellij session</span>;
+                    return <span className="item-context">Saved session</span>;
                   }
                   const activeWindow = session.tabs.find((tab) => tab.active) ?? session.tabs[0];
                   const label = activeWindow ? formatContext(deriveContext(activeWindow.panes)) : "";

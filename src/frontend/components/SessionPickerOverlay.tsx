@@ -33,7 +33,7 @@ const SessionPickerOverlay = ({ mobileLayout, onSelectSession, sessions }: Sessi
         {resurrectableSessions.length > 0 ? (
           <div className="session-picker-section session-picker-section-muted">
             <h3>Resurrectable</h3>
-            <p className="session-picker-note">Saved zellij sessions that are not currently live.</p>
+            <p className="session-picker-note">Saved sessions that are not currently live.</p>
             {resurrectableSessions.map((session) => (
               <button
                 key={session.name}

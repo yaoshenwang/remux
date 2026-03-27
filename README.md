@@ -29,27 +29,15 @@ Remux is intentionally not a generic browser SSH client and not a thin browser w
 - `Live`: direct terminal I/O for quick fixes, command entry, and interactive tools
 - `Control`: structured session, tab, and pane navigation plus workspace operations
 
-## Backend Support
+## Runtime Model
 
-Remux uses a multiplexer-neutral workspace model internally, but it does not promise equal fidelity across all backends.
+Remux is moving to a unified `runtime-v2` backend model.
 
-- `tmux`: flagship backend and the most polished path today
-- `zellij`: supported with native bridge streaming, visible CLI fallback state, and Focus Sync
-- `conpty`: Windows fallback for simpler persistent shell access
+- `runtime-v2` is now the primary product path, the default browser contract, and the main CI target
+- the UI, docs, and test flow are centered on `runtime-v2` semantics rather than backend-specific behavior
+- legacy `tmux` / `zellij` / `conpty` adapters still exist as transitional fallback code paths, but they are no longer the main product narrative
 
-If you want the most polished experience, use `tmux`. For current zellij posture and verification status, see [docs/ZELLIJ_PERFECT_RUN_TODO_2026-03-27.md](./docs/ZELLIJ_PERFECT_RUN_TODO_2026-03-27.md).
-
-## Remux vs Zellij
-
-`zellij` and Remux are complementary, not substitutes.
-
-- `zellij` is a terminal multiplexer you run on the machine itself
-- Remux is a remote awareness and control layer you open from another device
-- `zellij` gives you native local pane and tab management
-- Remux gives you mobile-friendly Inspect, browser control surfaces, remote attach flows, and structured workspace navigation
-
-If you want the best local terminal multiplexer experience, use `zellij` or `tmux` directly.
-If you want to monitor and intervene from a phone, tablet, or second laptop, Remux is the product layer on top.
+If you are working on current product behavior, assume `runtime-v2` first.
 
 ## Quick Start
 
@@ -78,12 +66,9 @@ npm start
 ## Requirements
 
 - Node.js 20+
-- One supported backend:
-  - `tmux` on macOS / Linux
-  - `zellij` on macOS / Linux
-  - Windows terminal environment for `conpty`
+- Rust toolchain when running or checking the native `runtime-v2` workspace from source
 
-For the best current experience:
+If you are explicitly using the transitional legacy fallback on macOS / Linux:
 
 ```bash
 # macOS
@@ -93,7 +78,7 @@ brew install tmux
 sudo apt install tmux
 ```
 
-Recommended for tap-to-focus in `tmux`:
+Recommended for tap-to-focus in the legacy `tmux` fallback:
 
 ```bash
 echo 'set -g mouse on' >> ~/.tmux.conf
@@ -110,7 +95,7 @@ tmux source-file ~/.tmux.conf
 - Drag-and-drop or picker-based file upload into the active pane working directory
 - Theme picker with six built-in terminal themes
 - Automatic reconnect with backoff
-- Runtime backend switching between `tmux`, `zellij`, and `conpty` when available
+- Unified `runtime-v2` gateway model for live state, inspect snapshots, and browser attachment
 
 ## CLI
 
@@ -127,7 +112,7 @@ Options:
   --scrollback <lines>             Default scrollback capture lines (default: 1000)
   --debug-log <path>               Write backend debug logs to a file
   --backend <auto|tmux|zellij|conpty>
-                                   Force a specific backend
+                                   Force a legacy fallback backend
 ```
 
 ## Environment Variables
@@ -135,11 +120,14 @@ Options:
 | Variable | Description |
 |----------|-------------|
 | `REMUX_DEBUG_LOG` | Debug log file path |
-| `REMUX_SOCKET_NAME` | Custom tmux socket name (`tmux -L`) |
-| `REMUX_SOCKET_PATH` | Custom tmux socket path (`tmux -S`) |
-| `REMUX_TRACE_TMUX=1` | Print tmux CLI calls |
+| `REMUXD_BIN` | Path to an explicit `remuxd` binary for the runtime-v2 gateway |
+| `REMUXD_BASE_URL` | Connect the gateway to an already-running runtime-v2 service |
+| `REMUX_RUNTIME_V2=0` | Disable runtime-v2 startup and force legacy fallback detection |
 | `REMUX_VERBOSE_DEBUG=1` | Enable verbose server logging |
-| `REMUX_FORCE_SCRIPT_PTY=1` | Force a fail-fast check for degraded tmux PTY mode; Remux refuses `script(1)` because it breaks resize invariants |
+| `REMUX_SOCKET_NAME` | Legacy tmux socket name (`tmux -L`) |
+| `REMUX_SOCKET_PATH` | Legacy tmux socket path (`tmux -S`) |
+| `REMUX_TRACE_TMUX=1` | Print legacy tmux CLI calls |
+| `REMUX_FORCE_SCRIPT_PTY=1` | Force a fail-fast check for degraded legacy tmux PTY mode |
 | `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
 | `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
 
@@ -155,12 +143,11 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 
 ## Documentation
 
+- [docs/TESTING.md](./docs/TESTING.md): current runtime-v2-first test flow and release gate
 - [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
 - [docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md](./docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md): native-client and semantic-adapter evolution plan
-- [docs/ZELLIJ_PERFECT_RUN_TODO_2026-03-27.md](./docs/ZELLIJ_PERFECT_RUN_TODO_2026-03-27.md): current zellij acceptance status and verification commands
-- [docs/ZELLIJ_MODE_AUDIT_2026-03-25.md](./docs/ZELLIJ_MODE_AUDIT_2026-03-25.md): current zellij backend audit
 
 ## Development
 
@@ -192,20 +179,25 @@ Quality gate before merging into `dev`:
 ```bash
 npm run typecheck
 npm test
+npm run native:v2:check
 npm run build
+npm run test:e2e:width
 ```
 
 Additional test commands:
 
 ```bash
 npm run test:e2e
-npm run test:e2e:real-zellij
-npm run test:smoke
+npm run test:e2e:functional
+npm run test:e2e:screenshots
+npm run test:legacy:tmux-smoke
+npm run build:legacy:zellij-bridge
 ```
 
 ## Tech Stack
 
-- Backend: Node.js, Express 5, `ws`, `node-pty`, `yargs`, `zod`
+- Backend gateway: Node.js, Express 5, `ws`, `yargs`, `zod`
+- Native runtime: Rust workspace (`remuxd` and supporting crates)
 - Frontend: React 19, Vite, xterm.js
 - Testing: Vitest and Playwright
 - Language: TypeScript

@@ -122,7 +122,7 @@ export const useTerminalRuntime = ({
 
     if (notify) {
       // Send the unconstrained (full container) size to the backend first.
-      // The backend's overhead calibration will compensate for zellij chrome.
+      // Runtime-specific geometry calibration will compensate downstream.
       sendTerminalResize();
     }
 

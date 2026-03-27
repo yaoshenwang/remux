@@ -26,12 +26,13 @@ Returns server configuration. Call this first to determine auth requirements.
 
 ```json
 {
-  "version": "0.1.57",
+  "version": "0.2.0",
   "passwordRequired": false,
   "scrollbackLines": 1000,
   "pollIntervalMs": 2500,
   "uploadMaxSize": 52428800,
-  "backendKind": "tmux"
+  "backendKind": "runtime-v2",
+  "runtimeMode": "runtime-v2"
 }
 ```
 
@@ -66,7 +67,7 @@ JSON-based control plane. Handles auth, session management, workspace state.
 ```
 Client → { "type": "auth", "token": "<token>", "password": "<optional>" }
 Server → { "type": "auth_ok", "clientId": "abc123", "requiresPassword": false,
-           "capabilities": { ... }, "serverCapabilities": { ... }, "backendKind": "tmux" }
+           "capabilities": { ... }, "serverCapabilities": { ... }, "backendKind": "runtime-v2" }
 ```
 
 **Auth success example:**
@@ -76,7 +77,7 @@ Server → { "type": "auth_ok", "clientId": "abc123", "requiresPassword": false,
   "type": "auth_ok",
   "clientId": "native-client-001",
   "requiresPassword": false,
-  "backendKind": "tmux",
+  "backendKind": "runtime-v2",
   "capabilities": {
     "supportsPaneFocusById": true,
     "supportsTabRename": true,
@@ -408,4 +409,4 @@ The iOS client should render UI elements based on `serverCapabilities`:
 - Show notification settings only if `notifications.supportsPushNotifications`
 - Show semantic timeline only if `semantic.adaptersAvailable.length > 0`
 
-This ensures the client works correctly with different multiplexer backends (tmux, zellij, conpty) without hardcoded assumptions.
+This keeps the client aligned with the unified `runtime-v2` backend without hardcoded transport assumptions.
