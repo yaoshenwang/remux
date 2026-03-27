@@ -93,7 +93,7 @@ export const createRemuxServer = (
   const app = express();
   app.use(express.json());
 
-  const readAuthHeaders = (req: express.Request): { token?: string; password?: string } => {
+  const readAuthHeaders= (req: express.Request): { token?: string; password?: string } => {
     const authHeader = req.headers.authorization;
     return {
       token: authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined,
@@ -202,16 +202,11 @@ export const createRemuxServer = (
   let monitor: TmuxStateMonitor | undefined;
   let started = false;
   let stopPromise: Promise<void> | null = null;
+  let feedbackDb: { close(): void } | null = null;
   const latestSnapshotRef = { current: undefined as WorkspaceSnapshot | undefined };
   const tabHistoryStore = new TabHistoryStore();
   const knownSessionTopologies = new Map<string, SessionState>();
   const isNonGroupedBackend = (): boolean => !deps.backend.createGroupedSession;
-  const resolveMonitorPollIntervalMs = (): number => {
-    if (deps.backend.kind !== "zellij") {
-      return config.pollIntervalMs;
-    }
-    return viewStore.hasFollowFocusClients() ? 250 : config.pollIntervalMs;
-  };
   const getControlContext = (clientId: string): ControlContext | undefined =>
     Array.from(controlClients).find((candidate) => candidate.clientId === clientId);
 
@@ -223,17 +218,6 @@ export const createRemuxServer = (
     knownSessionTopologies,
     latestSnapshotRef,
     logger,
-    onRuntimeStateChange: async (context, runtimeState) => {
-      context.runtimeState = runtimeState;
-      const maybeBridgeBackend = deps.backend as MultiplexerBackend & {
-        setNativeBridgeActive?: (active: boolean) => void;
-      };
-      maybeBridgeBackend.setNativeBridgeActive?.(runtimeState?.scrollbackPrecision === "precise");
-      await monitor?.forcePublish();
-    },
-    onRuntimeWorkspaceChange: async () => {
-      await monitor?.forcePublish();
-    },
     tabHistoryStore,
     viewStore,
   });
@@ -330,13 +314,8 @@ export const createRemuxServer = (
     );
     for (const client of controlClients) {
       if (client.authed) {
-        const { workspace, clientView, runtimeState } = sessionAttachService.buildClientState(baseSessions, state, client);
-        sendJson(client.socket, {
-          type: "workspace_state",
-          workspace,
-          clientView,
-          runtimeState: runtimeState ?? undefined
-        });
+        const { workspace, clientView } = sessionAttachService.buildClientState(baseSessions, state, client);
+        sendJson(client.socket, { type: "workspace_state", workspace, clientView });
       }
     }
   };
@@ -413,7 +392,7 @@ export const createRemuxServer = (
             snapshot = await sessionAttachService.waitForWorkspace((candidate) => {
               const candidateSession = candidate.sessions.find((entry) => entry.name === sessionForNew);
               const candidateTab = candidateSession?.tabs.find((tab) => tab.index === createdTabIndex);
-              return Boolean(candidateTab && candidateTab.panes.length > 0);
+              return Boolean(candidateTab?.active && candidateTab.panes.length > 0);
             });
             session = snapshot.sessions.find((entry) => entry.name === sessionForNew);
             createdTab = session?.tabs.find((tab) => tab.index === createdTabIndex) ?? createdTab;
@@ -678,9 +657,7 @@ export const createRemuxServer = (
       }
       case "set_follow_focus":
         viewStore.setFollowFocus(context.clientId, message.follow);
-        if (monitor) {
-          await monitor.forcePublish();
-        } else if (latestSnapshotRef.current) {
+        if (latestSnapshotRef.current) {
           broadcastSnapshotNow(latestSnapshotRef.current);
         }
         return;
@@ -749,7 +726,7 @@ export const createRemuxServer = (
 
     monitor = new TmuxStateMonitor(
       deps.backend,
-      resolveMonitorPollIntervalMs,
+      config.pollIntervalMs,
       broadcastState,
       (error) => logger.error(error)
     );
@@ -835,7 +812,8 @@ export const createRemuxServer = (
       try {
         const { openDb } = await import("@microsoft/snapfeed-server");
         fs.mkdirSync(path.join(os.homedir(), ".remux"), { recursive: true });
-        const feedbackDb = openDb({ path: path.join(os.homedir(), ".remux", "feedback.db") });
+        const db = openDb({ path: path.join(os.homedir(), ".remux", "feedback.db") });
+        feedbackDb = db;
 
         app.post("/api/telemetry/events", (req, res) => {
           const body = req.body as { events?: Array<Record<string, unknown>> };
@@ -844,12 +822,12 @@ export const createRemuxServer = (
             res.status(400).json({ error: "events array required" });
             return;
           }
-          const insert = feedbackDb.prepare(
+          const insert = db.prepare(
             `INSERT OR IGNORE INTO ui_telemetry
               (session_id, seq, ts, event_type, page, target, detail_json, screenshot)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
           );
-          const insertMany = feedbackDb.transaction((rows: typeof events) => {
+          const insertMany = db.transaction((rows: typeof events) => {
             for (const e of rows) {
               insert.run(
                 e.session_id, e.seq, e.ts, e.event_type,
@@ -869,7 +847,7 @@ export const createRemuxServer = (
       logger.log("server start requested", `${config.host}:${config.port}`);
       monitor = new TmuxStateMonitor(
         deps.backend,
-        resolveMonitorPollIntervalMs,
+        config.pollIntervalMs,
         broadcastState,
         (error) => logger.error(error)
       );
@@ -913,6 +891,7 @@ export const createRemuxServer = (
 
       stopPromise = (async () => {
         logger.log("server shutdown begin");
+        feedbackDb?.close();
         monitor?.stop();
         await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
         controlWss.close();
