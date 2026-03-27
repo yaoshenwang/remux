@@ -51,12 +51,27 @@ export type WorkspaceDegradedReason =
   | "version_unsupported"
   | "startup_failed"
   | "bridge_crashed"
-  | "restart_exhausted";
+  | "restart_exhausted"
+  | "tab_layout_unsupported";
 
 export interface WorkspaceRuntimeState {
   streamMode: WorkspaceStreamMode;
   degradedReason?: WorkspaceDegradedReason;
   scrollbackPrecision: "precise" | "approximate";
+}
+
+export type TerminalGeometryStatus = "syncing" | "stable";
+
+export interface TerminalGeometryState {
+  requested: {
+    cols: number;
+    rows: number;
+  };
+  confirmed: {
+    cols: number;
+    rows: number;
+  };
+  status: TerminalGeometryStatus;
 }
 
 // ── Backend capabilities ──
@@ -75,7 +90,7 @@ export interface BackendCapabilities {
 export interface ClientView {
   sessionName: string;
   tabIndex: number;
-  paneId: string;
+  paneId?: string;
   followBackendFocus: boolean;
 }
 

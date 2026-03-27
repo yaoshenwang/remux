@@ -37,6 +37,7 @@ import {
 import type { AdapterRegistry } from "./adapters/registry.js";
 import type { SemanticEventTransport } from "./server/semantic-event-transport.js";
 import {
+  buildRuntimeTargetForView,
   buildMobileSessionName,
   createSessionAttachService,
   findCreatedTab,
@@ -88,7 +89,7 @@ export const createRemuxServer = (
     }
   };
   const authService = deps.authService ?? new AuthService({ password: config.password, token: config.token });
-  const viewStore = new ClientViewStore();
+  const viewStore = new ClientViewStore({ backendKind: deps.backend.kind });
 
   const app = express();
   app.use(express.json());
@@ -231,6 +232,16 @@ export const createRemuxServer = (
       maybeBridgeBackend.setNativeBridgeActive?.(runtimeState?.scrollbackPrecision === "precise");
       await monitor?.forcePublish();
     },
+    onRuntimeGeometryChange: async (context, geometry) => {
+      context.runtimeGeometry = geometry;
+      if (!context.authed || !geometry) {
+        return;
+      }
+      sendJson(context.socket, {
+        type: "runtime_geometry",
+        geometry
+      });
+    },
     onRuntimeWorkspaceChange: async () => {
       await monitor?.forcePublish();
     },
@@ -255,12 +266,16 @@ export const createRemuxServer = (
     tabHistoryStore.recordSnapshot(baseSessions);
 
     // Snapshot prev views before reconcile to detect changes
-    const prevViews = new Map<string, { session: string; paneId: string }>();
+    const prevViews = new Map<string, { runtimeTarget: string }>();
     if (!deps.backend.createGroupedSession) {
       for (const client of controlClients) {
         if (!client.authed || !client.runtime) continue;
         const v = viewStore.getView(client.clientId);
-        if (v) prevViews.set(client.clientId, { session: v.sessionName, paneId: v.paneId });
+        if (v) {
+          prevViews.set(client.clientId, {
+            runtimeTarget: buildRuntimeTargetForView(v, deps.backend.kind)
+          });
+        }
       }
 
       const previousNames = new Set(previousSnapshot?.sessions.map((session) => session.name) ?? []);
@@ -316,10 +331,12 @@ export const createRemuxServer = (
     // Reattach runtime if view changed (non-tmux backends only)
     for (const [clientId, prev] of prevViews) {
       const newView = viewStore.getView(clientId);
-      if (!newView || (newView.paneId === prev.paneId && newView.sessionName === prev.session)) continue;
+      if (!newView) continue;
+      const runtimeTarget = buildRuntimeTargetForView(newView, deps.backend.kind);
+      if (runtimeTarget === prev.runtimeTarget) continue;
       const ctx = getControlContext(clientId);
       if (ctx?.runtime) {
-        ctx.runtime.attachToSession(`${newView.sessionName}:${newView.paneId}`);
+        ctx.runtime.attachToSession(runtimeTarget);
       }
     }
 
@@ -424,7 +441,7 @@ export const createRemuxServer = (
             const updatedView = viewStore.getView(context.clientId);
             if (updatedView) {
               const runtime = sessionAttachService.getOrCreateRuntime(context);
-              runtime.attachToSession(`${updatedView.sessionName}:${updatedView.paneId}`);
+              runtime.attachToSession(buildRuntimeTargetForView(updatedView, deps.backend.kind));
             }
           }
           broadcastSnapshotNow(snapshot);
@@ -457,7 +474,7 @@ export const createRemuxServer = (
           const updatedView = viewStore.getView(context.clientId);
           if (updatedView) {
             const runtime = sessionAttachService.getOrCreateRuntime(context);
-            runtime.attachToSession(`${updatedView.sessionName}:${updatedView.paneId}`);
+            runtime.attachToSession(buildRuntimeTargetForView(updatedView, deps.backend.kind));
           }
         }
         tabHistoryStore.recordEvent({
@@ -486,6 +503,13 @@ export const createRemuxServer = (
       }
       case "select_pane": {
         if (!view) throw new Error("no attached session");
+        if (deps.backend.kind === "zellij") {
+          sendJson(context.socket, {
+            type: "info",
+            message: "zellij live mode is tab-only; pane selection is disabled"
+          });
+          return;
+        }
         await sessionAttachService.primeViewPaneContext(view, message.paneId);
         viewStore.selectPane(context.clientId, message.paneId);
         if (isNonGroupedBackend() && deps.backend.capabilities.supportsPaneFocusById) {
@@ -497,7 +521,11 @@ export const createRemuxServer = (
         } else {
           // zellij/conpty: re-attach PTY
           const runtime = sessionAttachService.getOrCreateRuntime(context);
-          runtime.attachToSession(`${view.sessionName}:${message.paneId}`);
+          runtime.attachToSession(buildRuntimeTargetForView({
+            sessionName: view.sessionName,
+            tabIndex: view.tabIndex,
+            paneId: message.paneId
+          }, deps.backend.kind));
         }
         tabHistoryStore.recordEvent({
           sessionName: view.sessionName,
@@ -509,10 +537,24 @@ export const createRemuxServer = (
         return;
       }
       case "split_pane":
+        if (deps.backend.kind === "zellij") {
+          sendJson(context.socket, {
+            type: "info",
+            message: "zellij live mode does not expose pane splitting"
+          });
+          return;
+        }
         await sessionAttachService.primeViewPaneContext(view, message.paneId);
         await deps.backend.splitPane(message.paneId, message.direction);
         return;
       case "close_pane": {
+        if (deps.backend.kind === "zellij") {
+          sendJson(context.socket, {
+            type: "info",
+            message: "zellij live mode does not expose pane closing"
+          });
+          return;
+        }
         await sessionAttachService.primeViewPaneContext(view, message.paneId);
         const snapshotForPane = latestSnapshotRef.current ?? await buildSnapshot(deps.backend);
         const paneLocation = snapshotForPane.sessions.flatMap((session) =>
@@ -561,6 +603,13 @@ export const createRemuxServer = (
         return;
       }
       case "toggle_fullscreen":
+        if (deps.backend.kind === "zellij") {
+          sendJson(context.socket, {
+            type: "info",
+            message: "zellij live mode does not expose pane fullscreen"
+          });
+          return;
+        }
         await sessionAttachService.primeViewPaneContext(view, message.paneId);
         await deps.backend.toggleFullscreen(message.paneId);
         if (view) {
@@ -653,7 +702,10 @@ export const createRemuxServer = (
           for (const client of controlClients) {
             const clientView = viewStore.getView(client.clientId);
             if (client.authed && clientView && clientView.sessionName === message.newName && client.runtime) {
-              client.runtime.attachToSession(`${message.newName}:${clientView.paneId}`);
+              client.runtime.attachToSession(buildRuntimeTargetForView({
+                ...clientView,
+                sessionName: message.newName
+              }, deps.backend.kind));
             }
           }
           if (renamedSnapshot) {
@@ -746,6 +798,7 @@ export const createRemuxServer = (
 
     deps.backend = newDeps.backend;
     deps.ptyFactory = newDeps.ptyFactory;
+    viewStore.setBackendKind(newDeps.backend.kind);
 
     monitor = new TmuxStateMonitor(
       deps.backend,

@@ -1,9 +1,10 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import * as pty from "node-pty";
 import type { PtyProcess, PtyFactory } from "../pty/pty-adapter.js";
 import type { ZellijPaneJson } from "./parser.js";
 import type {
+  TerminalGeometryState,
   WorkspaceDegradedReason,
   WorkspaceRuntimeState
 } from "../../shared/protocol.js";
@@ -20,6 +21,7 @@ import {
 } from "./native-bridge-state.js";
 
 const execFileAsync = promisify(execFile);
+const ZELLIJ_TAB_TARGET_PREFIX = "zellij-tab://";
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
@@ -175,8 +177,11 @@ export class ZellijPaneIO implements PtyProcess {
   private streamModeHandlers: Array<(mode: StreamMode) => void> = [];
   /** Runtime state listeners (stream mode + degraded reason + precision). */
   private runtimeStateHandlers: Array<(state: WorkspaceRuntimeState) => void> = [];
+  /** Runtime geometry listeners for confirmed cols/rows. */
+  private runtimeGeometryHandlers: Array<(geometry: TerminalGeometryState) => void> = [];
   /** Workspace-level change listeners (for triggering state refresh). */
   private workspaceChangeHandlers: Array<(reason: "session_switch" | "session_renamed") => void> = [];
+  private runtimeGeometry: TerminalGeometryState | null = null;
 
   private static readonly WRITE_BATCH_MS = 12;
   private static readonly ACTIVE_REFRESH_MS = 40;
@@ -222,6 +227,14 @@ export class ZellijPaneIO implements PtyProcess {
     return { ...this.runtimeState };
   }
 
+  public getRuntimeGeometry(): TerminalGeometryState | null {
+    return this.runtimeGeometry ? {
+      requested: { ...this.runtimeGeometry.requested },
+      confirmed: { ...this.runtimeGeometry.confirmed },
+      status: this.runtimeGeometry.status
+    } : null;
+  }
+
   /** Register a listener for stream mode changes. */
   public onStreamModeChange(handler: (mode: StreamMode) => void): void {
     this.streamModeHandlers.push(handler);
@@ -229,6 +242,10 @@ export class ZellijPaneIO implements PtyProcess {
 
   public onRuntimeStateChange(handler: (state: WorkspaceRuntimeState) => void): void {
     this.runtimeStateHandlers.push(handler);
+  }
+
+  public onRuntimeGeometryChange(handler: (geometry: TerminalGeometryState) => void): void {
+    this.runtimeGeometryHandlers.push(handler);
   }
 
   /** Register a listener for workspace-level changes (session rename, switch). */
@@ -353,6 +370,26 @@ export class ZellijPaneIO implements PtyProcess {
     this.runtimeState = { ...state };
     for (const handler of this.runtimeStateHandlers) {
       try { handler({ ...state }); } catch { /* ignore */ }
+    }
+  }
+
+  private setRuntimeGeometry(geometry: TerminalGeometryState): void {
+    if (
+      this.runtimeGeometry?.status === geometry.status
+      && this.runtimeGeometry.requested.cols === geometry.requested.cols
+      && this.runtimeGeometry.requested.rows === geometry.requested.rows
+      && this.runtimeGeometry.confirmed.cols === geometry.confirmed.cols
+      && this.runtimeGeometry.confirmed.rows === geometry.confirmed.rows
+    ) {
+      return;
+    }
+    this.runtimeGeometry = {
+      requested: { ...geometry.requested },
+      confirmed: { ...geometry.confirmed },
+      status: geometry.status
+    };
+    for (const handler of this.runtimeGeometryHandlers) {
+      try { handler(this.getRuntimeGeometry()!); } catch { /* ignore */ }
     }
   }
 
@@ -688,6 +725,11 @@ export class ZellijPaneIO implements PtyProcess {
     const compensatedCols = cols + this.resizeOverhead.cols;
     const compensatedRows = rows + this.resizeOverhead.rows;
     this.pendingResize = { cols: compensatedCols, rows: compensatedRows };
+    this.setRuntimeGeometry({
+      requested: { cols, rows },
+      confirmed: this.runtimeGeometry?.confirmed ?? { cols, rows },
+      status: "syncing"
+    });
 
     if (this.trySendResizeViaBridge()) {
       this.requestRefresh({ immediate: true, boost: true });
@@ -882,6 +924,11 @@ export class ZellijPaneIO implements PtyProcess {
       const { cols: requestedCols, rows: requestedRows } = this.lastRequestedDims;
       const colDelta = requestedCols - actualCols;
       const rowDelta = requestedRows - actualRows;
+      this.setRuntimeGeometry({
+        requested: { cols: requestedCols, rows: requestedRows },
+        confirmed: { cols: actualCols, rows: actualRows },
+        status: colDelta === 0 && rowDelta === 0 ? "stable" : "syncing"
+      });
 
       if (colDelta === 0 && rowDelta === 0) {
         return;
@@ -940,6 +987,31 @@ export class ZellijPtyFactory implements PtyFactory {
   }
 
   spawnAttach(session: string): PtyProcess {
+    const tabTarget = parseZellijTabRuntimeTarget(session);
+    if (tabTarget) {
+      const paneId = resolveSingleTerminalPaneIdSync({
+        binary: this.binary,
+        session: tabTarget.sessionName,
+        tabIndex: tabTarget.tabIndex,
+        socketDir: this.socketDir
+      });
+
+      if (!paneId) {
+        return new UnsupportedZellijTabIO();
+      }
+
+      return new ZellijPaneIO({
+        binary: this.binary,
+        session: tabTarget.sessionName,
+        paneId,
+        logger: this.logger,
+        socketDir: this.socketDir,
+        nativeBridgeFactory: this.nativeBridgeFactory,
+        nativeBridgeStateStore: this.nativeBridgeStateStore,
+        scrollbackLines: this.scrollbackLines
+      });
+    }
+
     const [sessionName, paneId] = session.includes(":")
       ? session.split(":", 2)
       : [session, "terminal_0"];
@@ -954,6 +1026,37 @@ export class ZellijPtyFactory implements PtyFactory {
       nativeBridgeStateStore: this.nativeBridgeStateStore,
       scrollbackLines: this.scrollbackLines
     });
+  }
+}
+
+class UnsupportedZellijTabIO implements PtyProcess {
+  private readonly runtimeState: WorkspaceRuntimeState = {
+    streamMode: "unsupported",
+    degradedReason: "tab_layout_unsupported",
+    scrollbackPrecision: "approximate"
+  };
+  private readonly exitHandlers: Array<(code: number) => void> = [];
+
+  write(_data: string): void {}
+  resize(_cols: number, _rows: number): void {}
+  onData(_handler: (data: string) => void): void {}
+  onExit(handler: (code: number) => void): void {
+    this.exitHandlers.push(handler);
+  }
+  getRuntimeState(): WorkspaceRuntimeState {
+    return { ...this.runtimeState };
+  }
+  onRuntimeStateChange(_handler: (state: WorkspaceRuntimeState) => void): void {}
+  getRuntimeGeometry(): TerminalGeometryState | null {
+    return null;
+  }
+  onRuntimeGeometryChange(_handler: (geometry: TerminalGeometryState) => void): void {}
+  onWorkspaceChange(_handler: (reason: "session_switch" | "session_renamed") => void): void {}
+  kill(): void {
+    for (const handler of this.exitHandlers) {
+      handler(0);
+    }
+    this.exitHandlers.length = 0;
   }
 }
 
@@ -996,6 +1099,70 @@ function findPaneFromList(json: string, paneId: string): ZellijPaneJson | null {
 function extractPaneNumericId(paneId: string): number {
   const match = paneId.match(/^(?:terminal_)?(\d+)$/);
   return match ? parseInt(match[1], 10) : -1;
+}
+
+function parseZellijTabRuntimeTarget(raw: string): { sessionName: string; tabIndex: number } | null {
+  if (!raw.startsWith(ZELLIJ_TAB_TARGET_PREFIX)) {
+    return null;
+  }
+  const payload = raw.slice(ZELLIJ_TAB_TARGET_PREFIX.length);
+  const hashIndex = payload.lastIndexOf("#");
+  if (hashIndex < 0) {
+    return null;
+  }
+  const encodedSession = payload.slice(0, hashIndex);
+  const tabIndex = Number.parseInt(payload.slice(hashIndex + 1), 10);
+  if (!Number.isInteger(tabIndex) || tabIndex < 0) {
+    return null;
+  }
+  return {
+    sessionName: decodeURIComponent(encodedSession),
+    tabIndex
+  };
+}
+
+function resolveSingleTerminalPaneIdSync(options: {
+  binary: string;
+  session: string;
+  tabIndex: number;
+  socketDir?: string;
+}): string | null {
+  try {
+    const stdout = execFileSync(options.binary, [
+      "--session", options.session,
+      "action", "list-panes",
+      "--json",
+      "--all"
+    ], {
+      timeout: 3_000,
+      env: {
+        ...process.env,
+        ...(options.socketDir ? { ZELLIJ_SOCKET_DIR: options.socketDir } : {})
+      },
+      encoding: "utf8"
+    });
+
+    let panes: ZellijPaneJson[];
+    try {
+      panes = JSON.parse(stdout);
+    } catch {
+      return null;
+    }
+
+    const tabPanes = panes.filter((pane) => pane.tab_position === options.tabIndex);
+    if (tabPanes.some((pane) => pane.is_floating)) {
+      return null;
+    }
+
+    const terminalPanes = tabPanes.filter((pane) => !pane.is_plugin && pane.is_selectable);
+    if (terminalPanes.length !== 1) {
+      return null;
+    }
+
+    return `terminal_${terminalPanes[0]!.id}`;
+  } catch {
+    return null;
+  }
 }
 
 function isTerminalGoneError(error: unknown): boolean {

@@ -98,6 +98,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }))?;
     debug_log("hello emitted");
 
+    attach_resize_watcher_client(&os_input);
     subscribe_to_pane_renders(&os_input, pane_ids.clone(), args.scrollback, args.ansi);
     debug_log("subscribe sent");
 
@@ -376,9 +377,14 @@ fn dispatch_bridge_command(
             if cols == 0 || rows == 0 {
                 return Err("bridge resize requires positive cols and rows".to_owned());
             }
-            resize_os_input.unwrap_or(os_input).send_to_server(ClientToServerMsg::TerminalResize {
+            os_input.send_to_server(ClientToServerMsg::TerminalResize {
                 new_size: Size { cols, rows },
             });
+            if let Some(resize_client) = resize_os_input {
+                resize_client.send_to_server(ClientToServerMsg::TerminalResize {
+                    new_size: Size { cols, rows },
+                });
+            }
             Ok(())
         }
     }
@@ -1026,7 +1032,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(fake_os_input.take_messages().is_empty());
+        assert_eq!(
+            fake_os_input.take_messages(),
+            vec![ClientToServerMsg::TerminalResize {
+                new_size: Size { cols: 132, rows: 41 },
+            }]
+        );
         assert_eq!(
             fake_resize_client.take_messages(),
             vec![ClientToServerMsg::TerminalResize {

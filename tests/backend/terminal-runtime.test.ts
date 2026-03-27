@@ -90,4 +90,46 @@ describe("terminal runtime", () => {
 
     expect(reasons).toEqual(["session_switch", "session_renamed"]);
   });
+
+  test("forwards runtime geometry changes from PTY processes", () => {
+    const factory = new FakePtyFactory();
+    const runtime = new TerminalRuntime(factory);
+    const geometries: Array<{
+      requested: { cols: number; rows: number };
+      confirmed: { cols: number; rows: number };
+      status: string;
+    }> = [];
+
+    runtime.on("geometry", (geometry) => geometries.push(geometry));
+    runtime.attachToSession("main");
+
+    factory.latestProcess().emitRuntimeGeometry({
+      requested: { cols: 132, rows: 38 },
+      confirmed: { cols: 128, rows: 36 },
+      status: "syncing",
+    });
+    factory.latestProcess().emitRuntimeGeometry({
+      requested: { cols: 132, rows: 38 },
+      confirmed: { cols: 132, rows: 38 },
+      status: "stable",
+    });
+
+    expect(geometries).toEqual([
+      {
+        requested: { cols: 132, rows: 38 },
+        confirmed: { cols: 128, rows: 36 },
+        status: "syncing",
+      },
+      {
+        requested: { cols: 132, rows: 38 },
+        confirmed: { cols: 132, rows: 38 },
+        status: "stable",
+      }
+    ]);
+    expect(runtime.currentGeometry()).toEqual({
+      requested: { cols: 132, rows: 38 },
+      confirmed: { cols: 132, rows: 38 },
+      status: "stable",
+    });
+  });
 });

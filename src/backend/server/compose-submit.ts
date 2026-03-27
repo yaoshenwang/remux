@@ -36,7 +36,9 @@ export const resolvePaneCommandForView = (
 
   const session = snapshot.sessions.find((candidate) => candidate.name === view.sessionName);
   const tab = session?.tabs.find((candidate) => candidate.index === view.tabIndex);
-  const pane = tab?.panes.find((candidate) => candidate.id === view.paneId);
+  const pane = view.paneId
+    ? tab?.panes.find((candidate) => candidate.id === view.paneId)
+    : (tab?.panes.find((candidate) => candidate.active) ?? tab?.panes[0]);
   return pane?.currentCommand ?? null;
 };
 

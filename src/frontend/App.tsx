@@ -7,10 +7,7 @@ import { PinnedSnippetsBar, SnippetPicker, SnippetTemplatePanel } from "./compon
 import { SessionSection } from "./components/sidebar/SessionSection";
 import { AppearanceSection } from "./components/sidebar/AppearanceSection";
 import { SnippetsSection } from "./components/sidebar/SnippetsSection";
-import {
-  inferAttachedSessionFromWorkspace,
-  shouldUsePaneViewportCols
-} from "./ui-state";
+import { inferAttachedSessionFromWorkspace } from "./ui-state";
 import {
   assignSnippetSortOrders,
   extractSnippetVariables,
@@ -50,9 +47,9 @@ import {
 } from "./remux-runtime";
 import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import type {
-  PaneState,
   SessionState,
   ServerCapabilities,
+  TerminalGeometryState,
   TabState,
   WorkspaceRuntimeState,
 } from "../shared/protocol";
@@ -76,9 +73,7 @@ const LazyPasswordOverlay = lazy(() => import("./components/PasswordOverlay"));
 const LazyUploadToast = lazy(() => import("./components/UploadToast"));
 
 export const App = () => {
-  /** Zellij pane viewport width — tracked so the browser can re-send its own fit after pane changes. */
-  const paneViewportColsRef = useRef(0);
-  const paneViewportRowsRef = useRef(0);
+  const runtimeGeometryRef = useRef<TerminalGeometryState | null>(null);
   const terminalSocketRef = useRef<WebSocket | null>(null);
   /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
@@ -89,7 +84,7 @@ export const App = () => {
   const attachedSessionRef = useRef("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
-  const [paneViewportVersion, setPaneViewportVersion] = useState(0);
+  const [runtimeGeometryVersion, setRuntimeGeometryVersion] = useState(0);
 
   // ── Preferences hook ──
   const prefs = useClientPreferences();
@@ -167,6 +162,7 @@ export const App = () => {
           terminalInputBufferRef.current?.clear();
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
+          runtimeGeometryRef.current = null;
           workspace.onAttached(message.session);
           attachedSessionRef.current = message.session;
           launchContextRef.current = null;
@@ -192,6 +188,7 @@ export const App = () => {
           resetTerminalBufferRef.current();
           attachedSessionRef.current = "";
           setRuntimeState(null);
+          runtimeGeometryRef.current = null;
           workspace.onSessionPicker(message.sessions);
           return;
         }
@@ -208,35 +205,20 @@ export const App = () => {
           if (inferredAttachedSession) {
             connectionActionsRef.current.setStatusMessage(`attached: ${inferredAttachedSession}`);
           }
-          if (message.clientView && shouldUsePaneViewportCols(connectionActionsRef.current.serverConfig?.backendKind)) {
-            const session = message.workspace.sessions.find((entry) => entry.name === message.clientView!.sessionName);
-            const tab = session?.tabs.find((entry: TabState) => entry.index === message.clientView!.tabIndex);
-            const pane = tab?.panes.find((entry: PaneState) => entry.id === message.clientView!.paneId);
-            const paneWidth = pane?.width ?? 0;
-            const paneHeight = pane?.height ?? 0;
-            if (paneWidth > 0) {
-              const paneChanged = paneViewportColsRef.current !== paneWidth || paneViewportRowsRef.current !== paneHeight;
-              paneViewportColsRef.current = paneWidth;
-              paneViewportRowsRef.current = paneHeight;
-              if (paneChanged) {
-                setPaneViewportVersion((current) => current + 1);
-              }
-              notifyTerminalResizeRef.current({ notify: true, retryUntilVisible: true });
-            } else {
-              const paneWasTracked = paneViewportColsRef.current !== 0 || paneViewportRowsRef.current !== 0;
-              paneViewportColsRef.current = 0;
-              paneViewportRowsRef.current = 0;
-              if (paneWasTracked) {
-                setPaneViewportVersion((current) => current + 1);
-              }
-            }
-          } else {
-            const paneWasTracked = paneViewportColsRef.current !== 0 || paneViewportRowsRef.current !== 0;
-            paneViewportColsRef.current = 0;
-            paneViewportRowsRef.current = 0;
-            if (paneWasTracked) {
-              setPaneViewportVersion((current) => current + 1);
-            }
+          return;
+        }
+        case "runtime_geometry": {
+          const previous = runtimeGeometryRef.current;
+          runtimeGeometryRef.current = message.geometry;
+          if (
+            !previous
+            || previous.status !== message.geometry.status
+            || previous.requested.cols !== message.geometry.requested.cols
+            || previous.requested.rows !== message.geometry.requested.rows
+            || previous.confirmed.cols !== message.geometry.confirmed.cols
+            || previous.confirmed.rows !== message.geometry.confirmed.rows
+          ) {
+            setRuntimeGeometryVersion((current) => current + 1);
           }
           return;
         }
@@ -277,6 +259,7 @@ export const App = () => {
       terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
+      runtimeGeometryRef.current = null;
     },
     getAuthPayload: () => buildControlAuthHint(
       attachedSessionRef.current,
@@ -316,9 +299,8 @@ export const App = () => {
   } = useTerminalRuntime({
     onSendRaw: sendRawToSocket,
     mobileLayout,
-    paneViewportColsRef,
-    paneViewportRowsRef,
-    paneViewportVersion,
+    runtimeGeometryRef,
+    runtimeGeometryVersion,
     serverConfig,
     setStatusMessage: connection.setStatusMessage,
     terminalVisible: viewMode === "terminal",
@@ -743,8 +725,7 @@ export const App = () => {
       activePane: activePane?.id ?? null,
       activePaneZoomed: activePane?.zoomed ?? null,
       backendKind: serverConfig?.backendKind ?? null,
-      paneViewportCols: paneViewportColsRef.current,
-      paneViewportRows: paneViewportRowsRef.current,
+      runtimeGeometry: runtimeGeometryRef.current,
       topStatus,
       snapshotCapturedAt: snapshot.capturedAt,
       sessions: sessionSummary
@@ -840,6 +821,9 @@ export const App = () => {
     const switchingTabs = tab.index !== activeTab?.index;
     workspace.selectWindowIndex(tab.index);
     sendControl({ type: "select_tab", session: activeSession.name, tabIndex: tab.index });
+    if (serverConfig?.backendKind === "zellij") {
+      return;
+    }
     if (stickyZoom && capabilities?.supportsFullscreenPane && switchingTabs) {
       const pane = tab.panes.find((p) => p.active) ?? tab.panes[0];
       if (pane && !pane.zoomed) {

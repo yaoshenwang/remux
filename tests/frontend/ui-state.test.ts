@@ -4,8 +4,7 @@ import {
   inferAttachedSessionFromWorkspace,
   isAwaitingSessionAttachment,
   isAwaitingSessionSelection,
-  resolveActiveSession,
-  shouldUsePaneViewportCols
+  resolveActiveSession
 } from "../../src/frontend/ui-state.js";
 
 const buildSession = (name: string, attached = false): SessionState => ({
@@ -94,12 +93,5 @@ describe("frontend ui state helpers", () => {
         followBackendFocus: false
       })
     ).toBe("");
-  });
-
-  test("uses real pane viewport sizing for zellij only", () => {
-    expect(shouldUsePaneViewportCols("zellij")).toBe(true);
-    expect(shouldUsePaneViewportCols("tmux")).toBe(false);
-    expect(shouldUsePaneViewportCols("conpty")).toBe(false);
-    expect(shouldUsePaneViewportCols(undefined)).toBe(false);
   });
 });

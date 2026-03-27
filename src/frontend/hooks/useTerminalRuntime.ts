@@ -3,16 +3,15 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "../themes";
-import { shouldUsePaneViewportCols } from "../ui-state";
 import type { ServerConfig } from "../app-types";
 import type { ToolbarHandle } from "../components/Toolbar";
+import type { TerminalGeometryState } from "../../shared/protocol.js";
 
 interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
   onSendRaw: (data: string) => void;
-  paneViewportColsRef: MutableRefObject<number>;
-  paneViewportRowsRef: MutableRefObject<number>;
-  paneViewportVersion: number;
+  runtimeGeometryRef: MutableRefObject<TerminalGeometryState | null>;
+  runtimeGeometryVersion: number;
   serverConfig: ServerConfig | null;
   setStatusMessage: Dispatch<SetStateAction<string>>;
   terminalVisible: boolean;
@@ -46,9 +45,8 @@ const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLa
 export const useTerminalRuntime = ({
   mobileLayout,
   onSendRaw,
-  paneViewportColsRef,
-  paneViewportRowsRef,
-  paneViewportVersion,
+  runtimeGeometryRef,
+  runtimeGeometryVersion,
   serverConfig,
   setStatusMessage,
   terminalVisible,
@@ -128,23 +126,8 @@ export const useTerminalRuntime = ({
       sendTerminalResize();
     }
 
-    // For zellij: if the backend has reported the actual pane content
-    // dimensions and xterm ended up wider/taller, constrain xterm to
-    // match the real pane.  This avoids the "half-width" rendering
-    // where xterm thinks it has more columns than the PTY.
-    // This is applied AFTER sending the resize so the backend receives
-    // the full container dimensions for correct overhead compensation.
-    if (shouldUsePaneViewportCols(serverConfig?.backendKind)) {
-      const paneCols = paneViewportColsRef.current;
-      const paneRows = paneViewportRowsRef.current;
-      if (paneCols > 0 && terminal.cols !== paneCols) {
-        const rows = paneRows > 0 ? paneRows : terminal.rows;
-        terminal.resize(paneCols, rows);
-      }
-    }
-
     return true;
-  }, [mobileLayout, paneViewportColsRef, paneViewportRowsRef, sendTerminalResize, serverConfig?.backendKind]);
+  }, [mobileLayout, sendTerminalResize]);
 
   const requestTerminalFit = useCallback((options: TerminalFitOptions = {}): void => {
     const { notify = true, retryUntilVisible = false } = options;
@@ -334,14 +317,6 @@ export const useTerminalRuntime = ({
   }, [theme]);
 
   useEffect(() => {
-    if (shouldUsePaneViewportCols(serverConfig?.backendKind)) {
-      return;
-    }
-    paneViewportColsRef.current = 0;
-    paneViewportRowsRef.current = 0;
-  }, [paneViewportColsRef, paneViewportRowsRef, serverConfig?.backendKind]);
-
-  useEffect(() => {
     if (!terminalVisible) {
       return;
     }
@@ -349,17 +324,28 @@ export const useTerminalRuntime = ({
   }, [mobileLayout, requestTerminalFit, terminalVisible]);
 
   useEffect(() => {
-    if (!terminalVisible || !shouldUsePaneViewportCols(serverConfig?.backendKind)) {
+    if (!terminalVisible || serverConfig?.backendKind !== "zellij") {
       return;
     }
-    if (paneViewportColsRef.current <= 0) {
+    const geometry = runtimeGeometryRef.current;
+    if (!geometry || geometry.status !== "stable") {
       return;
     }
-    requestTerminalFit({ notify: true, retryUntilVisible: true });
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    const cols = geometry.confirmed.cols;
+    const rows = geometry.confirmed.rows;
+    if (cols < 2 || rows < 2) {
+      return;
+    }
+    if (terminal.cols !== cols || terminal.rows !== rows) {
+      terminal.resize(cols, rows);
+    }
   }, [
-    paneViewportColsRef,
-    paneViewportVersion,
-    requestTerminalFit,
+    runtimeGeometryRef,
+    runtimeGeometryVersion,
     serverConfig?.backendKind,
     terminalVisible
   ]);
