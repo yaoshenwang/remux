@@ -98,14 +98,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }))?;
     debug_log("hello emitted");
 
-    os_input.send_to_server(ClientToServerMsg::SubscribeToPaneRenders {
-        pane_ids: pane_ids.clone(),
-        scrollback: args.scrollback,
-        ansi: args.ansi,
-    });
+    subscribe_to_pane_renders(&os_input, pane_ids.clone(), args.scrollback, args.ansi);
     debug_log("subscribe sent");
 
-    spawn_stdin_command_loop(os_input.box_clone(), default_command_pane_id);
+    let resize_client = create_resize_watcher_client(args.session.clone(), args.socket_dir.clone())?;
+    spawn_stdin_command_loop(
+        os_input.box_clone(),
+        Some(resize_client),
+        default_command_pane_id,
+    );
 
     let cursor_querier = CursorQuerier::new(args.session.clone(), args.socket_dir.clone())?;
 
@@ -298,7 +299,11 @@ fn apply_cli_env_overrides(cli_args: &mut CliArgs) {
     }
 }
 
-fn spawn_stdin_command_loop(os_input: Box<dyn ClientOsApi>, default_pane_id: Option<PaneId>) {
+fn spawn_stdin_command_loop(
+    os_input: Box<dyn ClientOsApi>,
+    resize_os_input: Option<Box<dyn ClientOsApi>>,
+    default_pane_id: Option<PaneId>,
+) {
     thread::spawn(move || {
         let mut stdin = os_input.get_stdin_reader();
         let mut line = String::new();
@@ -314,7 +319,12 @@ fn spawn_stdin_command_loop(os_input: Box<dyn ClientOsApi>, default_pane_id: Opt
                     }
 
                     let result = parse_bridge_command_line(trimmed).and_then(|command| {
-                        dispatch_bridge_command(&*os_input, command, default_pane_id.as_ref())
+                        dispatch_bridge_command(
+                            &*os_input,
+                            resize_os_input.as_deref(),
+                            command,
+                            default_pane_id.as_ref(),
+                        )
                     });
                     if let Err(error) = result {
                         emit_error_event(&error);
@@ -331,6 +341,7 @@ fn spawn_stdin_command_loop(os_input: Box<dyn ClientOsApi>, default_pane_id: Opt
 
 fn dispatch_bridge_command(
     os_input: &dyn ClientOsApi,
+    resize_os_input: Option<&dyn ClientOsApi>,
     command: BridgeCommand,
     default_pane_id: Option<&PaneId>,
 ) -> Result<(), String> {
@@ -365,12 +376,46 @@ fn dispatch_bridge_command(
             if cols == 0 || rows == 0 {
                 return Err("bridge resize requires positive cols and rows".to_owned());
             }
-            os_input.send_to_server(ClientToServerMsg::TerminalResize {
+            resize_os_input.unwrap_or(os_input).send_to_server(ClientToServerMsg::TerminalResize {
                 new_size: Size { cols, rows },
             });
             Ok(())
         }
     }
+}
+
+fn attach_resize_watcher_client(os_input: &dyn ClientOsApi) {
+    os_input.send_to_server(ClientToServerMsg::AttachWatcherClient {
+        terminal_size: os_input.get_terminal_size(),
+        is_web_client: false,
+    });
+}
+
+fn create_resize_watcher_client(
+    session: String,
+    socket_dir: Option<String>,
+) -> Result<Box<dyn ClientOsApi>, Box<dyn std::error::Error>> {
+    let resize_client = get_cli_client_os_input()?;
+    let mut sock_dir = resolve_socket_dir(socket_dir.as_deref());
+    fs::create_dir_all(&sock_dir)?;
+    set_permissions(&sock_dir, 0o700)?;
+    sock_dir.push(&session);
+    resize_client.connect_to_server(&sock_dir);
+    attach_resize_watcher_client(&resize_client);
+    Ok(Box::new(resize_client))
+}
+
+fn subscribe_to_pane_renders(
+    os_input: &dyn ClientOsApi,
+    pane_ids: Vec<PaneId>,
+    scrollback: Option<usize>,
+    ansi: bool,
+) {
+    os_input.send_to_server(ClientToServerMsg::SubscribeToPaneRenders {
+        pane_ids,
+        scrollback,
+        ansi,
+    });
 }
 
 fn resolve_command_pane_id(
@@ -746,7 +791,8 @@ fn bridge_debug_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispatch_bridge_command, parse_bootstrap_args, parse_bridge_command_line,
+        attach_resize_watcher_client, dispatch_bridge_command, parse_bootstrap_args,
+        parse_bridge_command_line, subscribe_to_pane_renders,
         resolve_socket_dir, BridgeCommand,
     };
     use anyhow::Result;
@@ -884,6 +930,7 @@ mod tests {
 
         dispatch_bridge_command(
             &fake_os_input,
+            None,
             BridgeCommand::WriteChars {
                 pane_id: None,
                 chars: "ls".to_owned(),
@@ -894,6 +941,7 @@ mod tests {
 
         dispatch_bridge_command(
             &fake_os_input,
+            None,
             BridgeCommand::WriteBytes {
                 pane_id: Some("terminal_2".to_owned()),
                 bytes: vec![13],
@@ -904,6 +952,7 @@ mod tests {
 
         dispatch_bridge_command(
             &fake_os_input,
+            None,
             BridgeCommand::Resize { cols: 90, rows: 30 },
             None,
         )
@@ -938,10 +987,60 @@ mod tests {
     }
 
     #[test]
+    fn attaches_resize_watcher_before_subscribing_to_panes() {
+        let fake_os_input = FakeClientOsApi::default();
+        let pane_id = PaneId::from_str("terminal_1").unwrap();
+
+        attach_resize_watcher_client(&fake_os_input);
+        subscribe_to_pane_renders(&fake_os_input, vec![pane_id.clone()], Some(200), true);
+
+        let messages = fake_os_input.take_messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0],
+            ClientToServerMsg::AttachWatcherClient {
+                terminal_size: Size { cols: 80, rows: 24 },
+                is_web_client: false,
+            }
+        );
+        assert_eq!(
+            messages[1],
+            ClientToServerMsg::SubscribeToPaneRenders {
+                pane_ids: vec![pane_id],
+                scrollback: Some(200),
+                ansi: true,
+            }
+        );
+    }
+
+    #[test]
+    fn dispatches_resize_commands_to_dedicated_resize_client() {
+        let fake_os_input = FakeClientOsApi::default();
+        let fake_resize_client = FakeClientOsApi::default();
+
+        dispatch_bridge_command(
+            &fake_os_input,
+            Some(&fake_resize_client),
+            BridgeCommand::Resize { cols: 132, rows: 41 },
+            None,
+        )
+        .unwrap();
+
+        assert!(fake_os_input.take_messages().is_empty());
+        assert_eq!(
+            fake_resize_client.take_messages(),
+            vec![ClientToServerMsg::TerminalResize {
+                new_size: Size { cols: 132, rows: 41 },
+            }]
+        );
+    }
+
+    #[test]
     fn write_commands_require_explicit_or_default_pane_id() {
         let fake_os_input = FakeClientOsApi::default();
         let error = dispatch_bridge_command(
             &fake_os_input,
+            None,
             BridgeCommand::WriteChars {
                 pane_id: None,
                 chars: "pwd".to_owned(),

@@ -44,4 +44,4 @@ export const inferAttachedSessionFromWorkspace = (
 
 export const shouldUsePaneViewportCols = (
   backendKind?: "tmux" | "zellij" | "conpty"
-): boolean => false;
+): boolean => backendKind === "zellij";

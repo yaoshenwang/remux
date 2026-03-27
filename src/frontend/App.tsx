@@ -78,6 +78,7 @@ const LazyUploadToast = lazy(() => import("./components/UploadToast"));
 export const App = () => {
   /** Zellij pane viewport width — used to match xterm cols to pane content. */
   const paneViewportColsRef = useRef(0);
+  const paneViewportRowsRef = useRef(0);
   const terminalSocketRef = useRef<WebSocket | null>(null);
   /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
@@ -88,6 +89,7 @@ export const App = () => {
   const attachedSessionRef = useRef("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
+  const [paneViewportVersion, setPaneViewportVersion] = useState(0);
 
   // ── Preferences hook ──
   const prefs = useClientPreferences();
@@ -106,17 +108,36 @@ export const App = () => {
   const [inspectErrorMessage, setInspectErrorMessage] = useState("");
   const { mobileLandscape, mobileLayout, viewportHeight } = useViewportLayout();
   const terminalInputBufferRef = useRef<ReturnType<typeof createTerminalWriteBuffer> | null>(null);
+  const pendingTerminalTransportRef = useRef("");
+  const flushPendingTerminalTransport = useCallback((): void => {
+    const socket = terminalSocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !pendingTerminalTransportRef.current) {
+      return;
+    }
+
+    const chunk = pendingTerminalTransportRef.current;
+    pendingTerminalTransportRef.current = "";
+    debugLog("send_terminal.flush_queued", { bytes: chunk.length });
+    socket.send(chunk);
+  }, []);
   const sendRawDirectToSocket = useCallback((data: string): void => {
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      debugLog("send_terminal.blocked", {
+      pendingTerminalTransportRef.current += data;
+      debugLog("send_terminal.queued", {
         readyState: socket?.readyState,
-        bytes: data.length
+        bytes: data.length,
+        queuedBytes: pendingTerminalTransportRef.current.length
       });
       return;
     }
-    debugLog("send_terminal", { bytes: data.length });
-    socket.send(data);
+
+    const chunk = pendingTerminalTransportRef.current
+      ? `${pendingTerminalTransportRef.current}${data}`
+      : data;
+    pendingTerminalTransportRef.current = "";
+    debugLog("send_terminal", { bytes: chunk.length });
+    socket.send(chunk);
   }, []);
   if (!terminalInputBufferRef.current) {
     terminalInputBufferRef.current = createTerminalWriteBuffer((chunk) => {
@@ -192,12 +213,30 @@ export const App = () => {
             const tab = session?.tabs.find((entry: TabState) => entry.index === message.clientView!.tabIndex);
             const pane = tab?.panes.find((entry: PaneState) => entry.id === message.clientView!.paneId);
             const paneWidth = pane?.width ?? 0;
+            const paneHeight = pane?.height ?? 0;
             if (paneWidth > 0) {
+              const paneChanged = paneViewportColsRef.current !== paneWidth || paneViewportRowsRef.current !== paneHeight;
               paneViewportColsRef.current = paneWidth;
+              paneViewportRowsRef.current = paneHeight;
+              if (paneChanged) {
+                setPaneViewportVersion((current) => current + 1);
+              }
               notifyTerminalResizeRef.current({ notify: true, retryUntilVisible: true });
+            } else {
+              const paneWasTracked = paneViewportColsRef.current !== 0 || paneViewportRowsRef.current !== 0;
+              paneViewportColsRef.current = 0;
+              paneViewportRowsRef.current = 0;
+              if (paneWasTracked) {
+                setPaneViewportVersion((current) => current + 1);
+              }
             }
           } else {
+            const paneWasTracked = paneViewportColsRef.current !== 0 || paneViewportRowsRef.current !== 0;
             paneViewportColsRef.current = 0;
+            paneViewportRowsRef.current = 0;
+            if (paneWasTracked) {
+              setPaneViewportVersion((current) => current + 1);
+            }
           }
           return;
         }
@@ -278,6 +317,8 @@ export const App = () => {
     onSendRaw: sendRawToSocket,
     mobileLayout,
     paneViewportColsRef,
+    paneViewportRowsRef,
+    paneViewportVersion,
     serverConfig,
     setStatusMessage: connection.setStatusMessage,
     terminalVisible: viewMode === "terminal",
@@ -307,6 +348,7 @@ export const App = () => {
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
     terminalInputBufferRef.current?.clear();
+    pendingTerminalTransportRef.current = "";
     if (terminalSocketRef.current) {
       terminalSocketRef.current.onclose = null;
       terminalSocketRef.current.close();
@@ -323,6 +365,7 @@ export const App = () => {
         clientId,
         ...(terminalGeometry ?? {})
       }));
+      flushPendingTerminalTransport();
       connectionActionsRef.current.setStatusMessage("terminal connected");
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
@@ -340,6 +383,7 @@ export const App = () => {
     socket.onclose = (event) => {
       debugLog("terminal_socket.onclose", { code: event.code, reason: event.reason });
       terminalInputBufferRef.current?.clear();
+      pendingTerminalTransportRef.current = "";
       if (event.code === 4001) {
         connectionActionsRef.current.setErrorMessage("terminal authentication failed");
       }
@@ -348,7 +392,7 @@ export const App = () => {
       debugLog("terminal_socket.onerror");
     };
     terminalSocketRef.current = socket;
-  }, [readTerminalGeometry, requestTerminalFit]);
+  }, [flushPendingTerminalTransport, readTerminalGeometry, requestTerminalFit]);
 
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {
@@ -698,13 +742,16 @@ export const App = () => {
       activeTab: activeTab ? `${activeTab.index}:${activeTab.name}` : null,
       activePane: activePane?.id ?? null,
       activePaneZoomed: activePane?.zoomed ?? null,
+      backendKind: serverConfig?.backendKind ?? null,
+      paneViewportCols: paneViewportColsRef.current,
+      paneViewportRows: paneViewportRowsRef.current,
       topStatus,
       snapshotCapturedAt: snapshot.capturedAt,
       sessions: sessionSummary
     };
     window.__remuxDebugState = derived;
     debugLog("derived_state", derived);
-  }, [attachedSession, activeSession, activeTab, activePane, snapshot, topStatus]);
+  }, [activePane, activeSession, activeTab, attachedSession, serverConfig?.backendKind, snapshot, topStatus]);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent): void => {
@@ -1090,6 +1137,7 @@ export const App = () => {
         onInspectPaneFilterChange={setInspectPaneFilter}
         onInspectRefresh={refreshInspect}
         onInspectSearchQueryChange={setInspectSearchQuery}
+        onFocusTerminal={focusTerminal}
         onDragLeave={() => setDragOver(false)}
         onDragOver={(event) => {
           event.preventDefault();

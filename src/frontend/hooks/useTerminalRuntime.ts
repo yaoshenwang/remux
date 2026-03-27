@@ -11,6 +11,8 @@ interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
   onSendRaw: (data: string) => void;
   paneViewportColsRef: MutableRefObject<number>;
+  paneViewportRowsRef: MutableRefObject<number>;
+  paneViewportVersion: number;
   serverConfig: ServerConfig | null;
   setStatusMessage: Dispatch<SetStateAction<string>>;
   terminalVisible: boolean;
@@ -45,6 +47,8 @@ export const useTerminalRuntime = ({
   mobileLayout,
   onSendRaw,
   paneViewportColsRef,
+  paneViewportRowsRef,
+  paneViewportVersion,
   serverConfig,
   setStatusMessage,
   terminalVisible,
@@ -119,12 +123,27 @@ export const useTerminalRuntime = ({
     fitAddon.fit();
 
     const paneCols = paneViewportColsRef.current;
+    const paneRows = paneViewportRowsRef.current;
     if (
       shouldUsePaneViewportCols(serverConfig?.backendKind) &&
-      paneCols > 0 &&
-      terminal.cols !== paneCols
+      paneCols > 0
     ) {
-      terminal.resize(paneCols, terminal.rows);
+      if (paneRows > 0 && terminal.cols > 0 && terminal.rows > 0) {
+        const scaledFontSize = preferredFontSize * Math.min(
+          terminal.cols / paneCols,
+          terminal.rows / paneRows
+        );
+        const clampedFontSize = Math.max(8, Math.min(32, scaledFontSize));
+        if (Math.abs(terminal.options.fontSize - clampedFontSize) > 0.1) {
+          terminal.options.fontSize = clampedFontSize;
+          fitAddon.fit();
+        }
+      }
+
+      const nextRows = paneRows > 0 ? paneRows : terminal.rows;
+      if (terminal.cols !== paneCols || terminal.rows !== nextRows) {
+        terminal.resize(paneCols, nextRows);
+      }
     }
 
     if (notify) {
@@ -132,7 +151,7 @@ export const useTerminalRuntime = ({
     }
 
     return true;
-  }, [mobileLayout, paneViewportColsRef, sendTerminalResize, serverConfig?.backendKind]);
+  }, [mobileLayout, paneViewportColsRef, paneViewportRowsRef, sendTerminalResize, serverConfig?.backendKind]);
 
   const requestTerminalFit = useCallback((options: TerminalFitOptions = {}): void => {
     const { notify = true, retryUntilVisible = false } = options;
@@ -326,7 +345,8 @@ export const useTerminalRuntime = ({
       return;
     }
     paneViewportColsRef.current = 0;
-  }, [paneViewportColsRef, serverConfig?.backendKind]);
+    paneViewportRowsRef.current = 0;
+  }, [paneViewportColsRef, paneViewportRowsRef, serverConfig?.backendKind]);
 
   useEffect(() => {
     if (!terminalVisible) {
@@ -334,6 +354,22 @@ export const useTerminalRuntime = ({
     }
     requestTerminalFit({ notify: true, retryUntilVisible: true });
   }, [mobileLayout, requestTerminalFit, terminalVisible]);
+
+  useEffect(() => {
+    if (!terminalVisible || !shouldUsePaneViewportCols(serverConfig?.backendKind)) {
+      return;
+    }
+    if (paneViewportColsRef.current <= 0) {
+      return;
+    }
+    requestTerminalFit({ notify: true, retryUntilVisible: true });
+  }, [
+    paneViewportColsRef,
+    paneViewportVersion,
+    requestTerminalFit,
+    serverConfig?.backendKind,
+    terminalVisible
+  ]);
 
   return {
     copySelection,

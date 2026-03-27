@@ -96,8 +96,8 @@ describe("frontend ui state helpers", () => {
     ).toBe("");
   });
 
-  test("does not hard-lock viewport columns for any backend", () => {
-    expect(shouldUsePaneViewportCols("zellij")).toBe(false);
+  test("uses real pane viewport sizing for zellij only", () => {
+    expect(shouldUsePaneViewportCols("zellij")).toBe(true);
     expect(shouldUsePaneViewportCols("tmux")).toBe(false);
     expect(shouldUsePaneViewportCols("conpty")).toBe(false);
     expect(shouldUsePaneViewportCols(undefined)).toBe(false);
