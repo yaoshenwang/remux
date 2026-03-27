@@ -1021,7 +1021,7 @@ export const App = () => {
                     .join(" · ")}
                 </p>
               )}
-              {serverConfig.backendKind && (
+              {serverConfig.backendKind && serverConfig.backendKind !== "runtime-v2" && (
                 <div className="drawer-backend-switcher">
                   <span className="drawer-backend-label">Backend:</span>
                   {(["tmux", "zellij", "conpty"] as const).map((kind) => (

@@ -1,0 +1,13 @@
+[package]
+name = "remuxd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+clap.workspace = true
+remux-observe = { path = "../../crates/remux-observe" }
+remux-server = { path = "../../crates/remux-server" }
+tokio.workspace = true
+tracing.workspace = true
