@@ -11,6 +11,21 @@ test.describe("real zellij browser e2e", () => {
   test.skip(!canRunRealZellijE2E(), "REAL_ZELLIJ_E2E requires zellij and a staged bridge binary");
   let server: StartedRealZellijE2EServer;
 
+  const captureActivePaneText = async (): Promise<string> => {
+    const tabs = await server.zellij.listTabs(server.sessionName);
+    const activeTab = tabs.find((tab) => tab.active) ?? tabs[0];
+    if (!activeTab) {
+      return "";
+    }
+    const panes = await server.zellij.listPanes(server.sessionName, activeTab.index);
+    const activePane = panes.find((pane) => pane.active) ?? panes[0];
+    if (!activePane) {
+      return "";
+    }
+    const capture = await server.zellij.capturePane(activePane.id, { lines: 200 });
+    return capture.text;
+  };
+
   test.beforeAll(async () => {
     server = await startRealZellijE2EServer();
     await server.zellij.newTab(server.sessionName);
@@ -45,5 +60,19 @@ test.describe("real zellij browser e2e", () => {
 
     await expect(page.getByTestId("header-tab-button-1")).toHaveClass(/active/, { timeout: 5_000 });
     await expect(page.getByTestId("header-tab-button-0")).not.toHaveClass(/active/);
+  });
+
+  test("terminal typing keeps text and Enter in order", async ({ page }) => {
+    const marker = `REAL_INPUT_OK_${Date.now()}`;
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+    await page.getByRole("textbox", { name: "Terminal input" }).click();
+    await page.keyboard.type(`echo ${marker}`);
+    await page.keyboard.press("Enter");
+
+    await expect.poll(captureActivePaneText, { timeout: 5_000 }).toContain(`echo ${marker}`);
+    await expect.poll(captureActivePaneText, { timeout: 5_000 }).not.toContain("command not found: e");
   });
 });

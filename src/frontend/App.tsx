@@ -104,7 +104,8 @@ export const App = () => {
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectErrorMessage, setInspectErrorMessage] = useState("");
   const { mobileLandscape, mobileLayout, viewportHeight } = useViewportLayout();
-  const sendRawToSocket = useCallback((data: string): void => {
+  const terminalInputBufferRef = useRef<ReturnType<typeof createTerminalWriteBuffer> | null>(null);
+  const sendRawDirectToSocket = useCallback((data: string): void => {
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       debugLog("send_terminal.blocked", {
@@ -115,6 +116,14 @@ export const App = () => {
     }
     debugLog("send_terminal", { bytes: data.length });
     socket.send(data);
+  }, []);
+  if (!terminalInputBufferRef.current) {
+    terminalInputBufferRef.current = createTerminalWriteBuffer((chunk) => {
+      sendRawDirectToSocket(chunk);
+    });
+  }
+  const sendRawToSocket = useCallback((data: string): void => {
+    terminalInputBufferRef.current?.enqueue(data);
   }, []);
 
   // ── Connection hook ──
@@ -133,6 +142,7 @@ export const App = () => {
     onControlMessage: (message) => {
       switch (message.type) {
         case "attached": {
+          terminalInputBufferRef.current?.clear();
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
           workspace.onAttached(message.session);
@@ -155,6 +165,7 @@ export const App = () => {
         }
         case "session_picker": {
           launchContextRef.current = null;
+          terminalInputBufferRef.current?.clear();
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
           attachedSessionRef.current = "";
@@ -222,6 +233,7 @@ export const App = () => {
       if (viewModeRef.current === "inspect") {
         setInspectErrorMessage("Inspect disconnected. Reconnecting…");
       }
+      terminalInputBufferRef.current?.clear();
       terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
@@ -285,6 +297,7 @@ export const App = () => {
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
+    terminalInputBufferRef.current?.clear();
     if (terminalSocketRef.current) {
       terminalSocketRef.current.onclose = null;
       terminalSocketRef.current.close();
@@ -310,6 +323,7 @@ export const App = () => {
     };
     socket.onclose = (event) => {
       debugLog("terminal_socket.onclose", { code: event.code, reason: event.reason });
+      terminalInputBufferRef.current?.clear();
       if (event.code === 4001) {
         connectionActionsRef.current.setErrorMessage("terminal authentication failed");
       }
@@ -582,6 +596,7 @@ export const App = () => {
       if (inspectRequestTimerRef.current) {
         clearTimeout(inspectRequestTimerRef.current);
       }
+      terminalInputBufferRef.current?.clear();
       terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
     };
