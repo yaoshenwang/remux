@@ -423,24 +423,42 @@ loaded_service_working_dir() {
   awk -F' = ' '/working directory = / { print $2; exit }' <<<"$service_output"
 }
 
+loaded_service_description() {
+  local service="$1"
+  launchctl print "$(runtime_service_domain "$service")" 2>/dev/null || true
+}
+
+loaded_runtime_service_matches_expected() {
+  ensure_instance_name "$1"
+  local name="$1"
+  local service_description=""
+  local expected_working_dir
+  expected_working_dir="$(runtime_dir "$name")"
+  service_description="$(loaded_service_description "$(runtime_service "$name")")"
+
+  [[ -n "$service_description" ]] || return 1
+  grep -Fq "working directory = $expected_working_dir" <<<"$service_description" || return 1
+  grep -Fq "REMUX_RUNTIME_BRANCH => $(runtime_branch "$name")" <<<"$service_description" || return 1
+  grep -Fq "REMUXD_BASE_URL => $(runtime_shared_base_url)" <<<"$service_description" || return 1
+  grep -Fq "REMUX_RUNTIME_V2_REQUIRED => 1" <<<"$service_description" || return 1
+
+  return 0
+}
+
 restart_runtime_service() {
   ensure_instance_name "$1"
   local name="$1"
   local service
   local plist
-  local expected_working_dir
-  local loaded_working_dir
   service="$(runtime_service "$name")"
   plist="$(runtime_plist_path "$name")"
-  expected_working_dir="$(runtime_dir "$name")"
 
   if [[ ! -f "$plist" ]]; then
     echo "[runtime] launchd plist not installed for $name: $plist" >&2
     return 1
   fi
 
-  loaded_working_dir="$(loaded_service_working_dir "$service")"
-  if [[ "$loaded_working_dir" == "$expected_working_dir" ]]; then
+  if loaded_runtime_service_matches_expected "$name"; then
     launchctl kickstart -k "$(runtime_service_domain "$service")"
     return 0
   fi
