@@ -51,6 +51,8 @@ write_runtime_plist() {
       <string>$shared_runtime_base_url</string>
       <key>REMUX_RUNTIME_V2_REQUIRED</key>
       <string>1</string>
+      <key>REMUX_LOCAL_WS_ORIGIN</key>
+      <string>ws://127.0.0.1:$(runtime_port "$name")</string>
       <key>PATH</key>
       <string>$runtime_path</string>
       <key>TERM</key>

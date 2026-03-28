@@ -52,6 +52,7 @@ export const registerHttpRoutes = ({
   uploadMaxBytes,
 }: RegisterHttpRoutesOptions): void => {
   app.get("/api/config", (_req, res) => {
+    const localWebSocketOrigin = process.env.REMUX_LOCAL_WS_ORIGIN?.trim() || undefined;
     res.json({
       version: runtimeMetadata.version,
       gitBranch: runtimeMetadata.gitBranch,
@@ -61,6 +62,7 @@ export const registerHttpRoutes = ({
       scrollbackLines: config.scrollbackLines,
       pollIntervalMs: config.pollIntervalMs,
       uploadMaxSize: uploadMaxBytes,
+      localWebSocketOrigin,
       backendKind: deps.backend.kind
     });
   });

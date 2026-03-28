@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ControlServerMessage, BackendCapabilities, ServerCapabilities } from "../../shared/protocol";
 import type { BandwidthStats, ServerConfig } from "../app-types";
+import { resolvePreferredWebSocketOrigin } from "../websocket-origin";
 import { attachWebSocketKeepAlive } from "../websocket-keepalive";
 import {
   debugLog,
@@ -51,6 +52,7 @@ export interface UseRemuxConnectionResult {
   capabilities: BackendCapabilities | null;
   serverCapabilities: ServerCapabilities | null;
   bandwidthStats: BandwidthStats | null;
+  resolvedSocketOrigin: string;
 
   sendControl: (payload: Record<string, unknown>) => void;
   setPassword: (value: string) => void;
@@ -67,6 +69,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
   cbRef.current = callbacks;
 
   const controlSocketRef = useRef<WebSocket | null>(null);
+  const socketOriginRef = useRef(wsOrigin);
   const stopControlKeepAliveRef = useRef<(() => void) | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -84,6 +87,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
   const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
   const [serverCapabilities, setServerCapabilities] = useState<ServerCapabilities | null>(null);
   const [bandwidthStats, setBandwidthStats] = useState<BandwidthStats | null>(null);
+  const [resolvedSocketOrigin, setResolvedSocketOrigin] = useState(wsOrigin);
 
   useEffect(() => { passwordRef.current = password; }, [password]);
   useEffect(() => { serverConfigRef.current = serverConfig; }, [serverConfig]);
@@ -133,7 +137,9 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
       controlSocketRef.current.close();
     }
 
-    const socket = new WebSocket(`${wsOrigin}/ws/control`);
+    const activeSocketOrigin = socketOriginRef.current;
+    let authed = false;
+    const socket = new WebSocket(`${activeSocketOrigin}/ws/control`);
     socket.onopen = () => {
       debugLog("control_socket.onopen");
       stopControlKeepAliveRef.current?.();
@@ -184,6 +190,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
 
       switch (message.type) {
         case "auth_ok": {
+          authed = true;
           reconnectAttemptRef.current = 0;
           suppressReconnectRef.current = false;
           setErrorMessage("");
@@ -226,6 +233,16 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
       setAuthReady(false);
       setErrorMessage("");
       cbRef.current.onControlClose();
+      if (!authed && activeSocketOrigin !== wsOrigin) {
+        socketOriginRef.current = wsOrigin;
+        setResolvedSocketOrigin(wsOrigin);
+        debugLog("control_socket.loopback_fallback", {
+          from: activeSocketOrigin,
+          to: wsOrigin,
+        });
+        openControlSocket(passwordValue);
+        return;
+      }
       scheduleReconnect(passwordValue);
     };
     controlSocketRef.current = socket;
@@ -259,6 +276,18 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
           return;
         }
 
+        const nextSocketOrigin = await resolvePreferredWebSocketOrigin({
+          publicOrigin: wsOrigin,
+          preferredLoopbackOrigin: config.localWebSocketOrigin,
+        });
+        socketOriginRef.current = nextSocketOrigin;
+        setResolvedSocketOrigin(nextSocketOrigin);
+        debugLog("socket_origin.selected", {
+          publicOrigin: wsOrigin,
+          advertisedLoopbackOrigin: config.localWebSocketOrigin ?? null,
+          activeOrigin: nextSocketOrigin,
+        });
+
         openControlSocket(passwordRef.current);
       })
       .catch((error: Error) => {
@@ -291,6 +320,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     capabilities,
     serverCapabilities,
     bandwidthStats,
+    resolvedSocketOrigin,
     sendControl,
     setPassword,
     submitPassword,

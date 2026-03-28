@@ -151,12 +151,14 @@ describe("runtime v2 gateway server", () => {
       scrollbackLines: number;
       runtimeMode: string;
       backendKind?: string;
+      localWebSocketOrigin?: string;
     };
 
     expect(config.passwordRequired).toBe(false);
     expect(config.scrollbackLines).toBe(1000);
     expect(config.runtimeMode).toBe("runtime-v2");
     expect(config.backendKind).toBe("runtime-v2");
+    expect(config.localWebSocketOrigin).toBeUndefined();
   });
 
   test("answers control ping messages and ignores terminal keepalive frames", async () => {

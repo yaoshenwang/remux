@@ -216,6 +216,11 @@ runtime_shared_base_url() {
   echo "http://127.0.0.1:$(runtime_shared_port)"
 }
 
+runtime_local_ws_origin() {
+  ensure_instance_name "$1"
+  echo "ws://127.0.0.1:$(runtime_port "$1")"
+}
+
 runtime_shared_stdout_log() {
   echo "/tmp/remux-runtime-v2-shared-stdout.log"
 }
@@ -371,6 +376,12 @@ verify_runtime_plist() {
     return 1
   fi
 
+  if ! grep -Fq "<key>REMUX_LOCAL_WS_ORIGIN</key>" "$plist" || ! grep -Fq "<string>$(runtime_local_ws_origin "$name")</string>" "$plist"; then
+    echo "[runtime] $plist does not advertise the local websocket fast path for $name" >&2
+    echo "[runtime] rerun: npm run runtime:install-launchd" >&2
+    return 1
+  fi
+
   return 0
 }
 
@@ -441,6 +452,7 @@ loaded_runtime_service_matches_expected() {
   grep -Fq "REMUX_RUNTIME_BRANCH => $(runtime_branch "$name")" <<<"$service_description" || return 1
   grep -Fq "REMUXD_BASE_URL => $(runtime_shared_base_url)" <<<"$service_description" || return 1
   grep -Fq "REMUX_RUNTIME_V2_REQUIRED => 1" <<<"$service_description" || return 1
+  grep -Fq "REMUX_LOCAL_WS_ORIGIN => $(runtime_local_ws_origin "$name")" <<<"$service_description" || return 1
 
   return 0
 }

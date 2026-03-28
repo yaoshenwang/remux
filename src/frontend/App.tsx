@@ -42,8 +42,7 @@ import {
   debugLog,
   debugMode,
   initialLaunchContext,
-  token,
-  wsOrigin
+  token
 } from "./remux-runtime";
 import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import { attachWebSocketKeepAlive } from "./websocket-keepalive";
@@ -272,6 +271,7 @@ export const App = () => {
 
   const { authReady, serverConfig, capabilities, serverCapabilities, errorMessage, statusMessage, password,
     needsPasswordInput, passwordErrorMessage, bandwidthStats, sendControl } = connection;
+  const { resolvedSocketOrigin } = connection;
 
   useEffect(() => {
     serverCapabilitiesRef.current = serverCapabilities;
@@ -340,7 +340,7 @@ export const App = () => {
       terminalSocketRef.current.close();
     }
 
-    const socket = new WebSocket(`${wsOrigin}/ws/terminal`);
+    const socket = new WebSocket(`${resolvedSocketOrigin}/ws/terminal`);
     socket.onopen = () => {
       debugLog("terminal_socket.onopen");
       const terminalGeometry = readTerminalGeometry();
@@ -385,7 +385,7 @@ export const App = () => {
       debugLog("terminal_socket.onerror");
     };
     terminalSocketRef.current = socket;
-  }, [flushPendingTerminalTransport, readTerminalGeometry, requestTerminalFit]);
+  }, [flushPendingTerminalTransport, readTerminalGeometry, requestTerminalFit, resolvedSocketOrigin]);
 
   useEffect(() => () => {
     stopTerminalKeepAliveRef.current?.();

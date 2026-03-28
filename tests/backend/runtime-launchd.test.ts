@@ -66,6 +66,8 @@ describe("runtime launchd install", () => {
     expect(runtimePlist).toContain("<string>http://127.0.0.1:3737</string>");
     expect(runtimePlist).toContain("<key>REMUX_RUNTIME_V2_REQUIRED</key>");
     expect(runtimePlist).toContain("<string>1</string>");
+    expect(runtimePlist).toContain("<key>REMUX_LOCAL_WS_ORIGIN</key>");
+    expect(runtimePlist).toContain("<string>ws://127.0.0.1:3457</string>");
 
     const syncPlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.runtime-sync.plist");
     const syncPlist = await fs.promises.readFile(syncPlistPath, "utf8");
@@ -163,6 +165,7 @@ environment = {
   REMUX_RUNTIME_BRANCH => dev
   REMUXD_BASE_URL => http://127.0.0.1:3737
   REMUX_RUNTIME_V2_REQUIRED => 1
+  REMUX_LOCAL_WS_ORIGIN => ws://127.0.0.1:3457
 }
 EOF
   exit 0

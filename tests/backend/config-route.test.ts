@@ -15,10 +15,12 @@ describe("GET /api/config", () => {
 
   beforeEach(async () => {
     tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-config-route-test-"));
+    delete process.env.REMUX_LOCAL_WS_ORIGIN;
     delete process.env.REMUX_RUNTIME_BRANCH;
   });
 
   afterEach(async () => {
+    delete process.env.REMUX_LOCAL_WS_ORIGIN;
     delete process.env.REMUX_RUNTIME_BRANCH;
     if (server) {
       await server.stop();
@@ -51,12 +53,14 @@ describe("GET /api/config", () => {
       passwordRequired: boolean;
       scrollbackLines: number;
       pollIntervalMs: number;
+      localWebSocketOrigin?: string;
     };
 
     expect(json.version).toBe(packageJson.version);
     expect(json.passwordRequired).toBe(false);
     expect(json.scrollbackLines).toBe(100);
     expect(json.pollIntervalMs).toBe(60_000);
+    expect(json.localWebSocketOrigin).toBeUndefined();
     expect(json.gitCommitSha).toMatch(/^[0-9a-f]{40}$/);
     expect(typeof json.gitDirty).toBe("boolean");
 
@@ -77,6 +81,17 @@ describe("GET /api/config", () => {
 
     const json = await res.json() as { gitBranch?: string };
     expect(json.gitBranch).toBe("dev");
+  });
+
+  test("includes an advertised loopback websocket origin when configured", async () => {
+    process.env.REMUX_LOCAL_WS_ORIGIN = "ws://127.0.0.1:3457";
+    await startServer();
+
+    const res = await fetch(`${getBaseUrl()}/api/config`);
+    expect(res.status).toBe(200);
+
+    const json = await res.json() as { localWebSocketOrigin?: string };
+    expect(json.localWebSocketOrigin).toBe("ws://127.0.0.1:3457");
   });
 
   test("does not fall back to the frontend for unavailable API routes", async () => {

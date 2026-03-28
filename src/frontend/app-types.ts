@@ -9,6 +9,7 @@ export interface ServerConfig {
   scrollbackLines: number;
   pollIntervalMs: number;
   uploadMaxSize?: number;
+  localWebSocketOrigin?: string;
   backendKind?: "tmux" | "zellij" | "conpty" | "runtime-v2";
   runtimeMode?: "runtime-v2";
 }

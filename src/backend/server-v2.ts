@@ -646,6 +646,7 @@ export const createRemuxV2GatewayServer = (
   const tokenFile = path.join(os.homedir(), ".remux", "github-token");
 
   app.get("/api/config", (_req, res) => {
+    const localWebSocketOrigin = process.env.REMUX_LOCAL_WS_ORIGIN?.trim() || undefined;
     res.json({
       version: runtimeMetadata.version,
       gitBranch: runtimeMetadata.gitBranch,
@@ -655,6 +656,7 @@ export const createRemuxV2GatewayServer = (
       scrollbackLines: config.scrollbackLines,
       pollIntervalMs: config.pollIntervalMs,
       uploadMaxSize: UPLOAD_MAX_BYTES,
+      localWebSocketOrigin,
       backendKind: RUNTIME_V2_BACKEND_KIND,
       runtimeMode: RUNTIME_V2_BACKEND_KIND,
     });
