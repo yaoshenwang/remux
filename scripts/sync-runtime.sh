@@ -101,6 +101,10 @@ sync_instance() {
     needs_restart=true
   fi
 
+  if ! loaded_runtime_service_matches_expected "$name"; then
+    needs_restart=true
+  fi
+
   if [[ "$needs_checkout" == false && "$needs_restart" == false ]]; then
     echo "[sync] $name already aligned at $target_version ($target_sha)"
     if [[ "$VERIFY_PUBLIC" == true ]]; then

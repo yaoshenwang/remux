@@ -265,4 +265,58 @@ exit 7
     expect(log).toContain(`bootout gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
     expect(log).toContain(`bootstrap gui/${process.getuid?.() ?? process.getuid()} ${sharedPlistPath}`);
   });
+
+  test("detects runtime launchd env drift when shared runtime variables are missing", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-env-drift-test-"));
+    tempDirs.push(tempHome);
+
+    const fakeBinDir = path.join(tempHome, "bin");
+    const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
+    const runtimeWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const launchctlLogPath = path.join(tempHome, "launchctl.log");
+
+    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    await fs.promises.mkdir(runtimeWorkdir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "launchctl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${launchctlLogPath}"
+if [[ "$1" == "print" ]]; then
+  cat <<'EOF'
+working directory = ${runtimeWorkdir}
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+}
+EOF
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    );
+
+    expect(() =>
+      execFileSync(
+        "bash",
+        [
+          "-c",
+          "source scripts/runtime-lib.sh && loaded_runtime_service_matches_expected dev"
+        ],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+            REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot
+          },
+          stdio: "pipe"
+        }
+      )
+    ).toThrow();
+
+    const log = await fs.promises.readFile(launchctlLogPath, "utf8");
+    expect(log).toContain(`print gui/${process.getuid?.() ?? process.getuid()}/com.remux.dev`);
+  });
 });
