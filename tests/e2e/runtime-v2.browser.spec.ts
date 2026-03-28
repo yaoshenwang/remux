@@ -1,5 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harness/runtime-v2-server.js";
+
+const readTerminalText = async (page: Page): Promise<string> =>
+  (await page.locator(".terminal-host .xterm-rows").textContent()) ?? "";
 
 test.describe("runtime-v2 browser behavior", () => {
   let server: StartedRuntimeV2E2EServer;
@@ -38,7 +41,21 @@ test.describe("runtime-v2 browser behavior", () => {
     expect(consoleErrors).toEqual([]);
   });
 
-  test("compose input and inspect both go through the runtime-v2 gateway path", async ({ page }) => {
+  test("does not hit the removed terminal snapshot API during attach", async ({ page }) => {
+    const stateRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/api/state/")) {
+        stateRequests.push(request.url());
+      }
+    });
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+    expect(stateRequests).toEqual([]);
+  });
+
+  test("compose input and inspect both stay reliable through the runtime-v2 gateway", async ({ page }) => {
     server.upstream.setPaneContent("pane-1", "build running\nline 2");
     const newPaneId = server.upstream.splitActivePane();
     server.upstream.setPaneContent(newPaneId, "tests passed");
@@ -50,7 +67,7 @@ test.describe("runtime-v2 browser behavior", () => {
     await page.getByTestId("compose-input").press("Enter");
 
     await expect
-      .poll(() => server.upstream.latestTerminal()?.writes.join("") ?? "")
+      .poll(() => server.upstream.allTerminalWrites().join(""))
       .toContain("echo hi");
 
     await page.getByRole("button", { name: "Inspect" }).click();
@@ -81,6 +98,71 @@ test.describe("runtime-v2 browser behavior", () => {
     await expect(page.getByTestId("inspect-pane-pane-1")).toContainText("live tail line");
   });
 
+  test("keeps the live terminal stage measurable while inspect is open", async ({ page }) => {
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+    const readStageMetrics = async () => page.evaluate(() => {
+      const host = document.querySelector("[data-testid='terminal-host']") as HTMLElement | null;
+      const rect = host?.getBoundingClientRect();
+      const style = host ? window.getComputedStyle(host) : null;
+
+      return {
+        display: style?.display ?? null,
+        height: rect?.height ?? 0,
+        visibility: style?.visibility ?? null,
+        width: rect?.width ?? 0,
+      };
+    });
+
+    const liveMetrics = await readStageMetrics();
+    expect(liveMetrics.width).toBeGreaterThan(0);
+    expect(liveMetrics.height).toBeGreaterThan(0);
+
+    await page.getByRole("button", { name: "Inspect" }).click();
+    await expect(page.getByRole("heading", { name: "Inspect" })).toBeVisible();
+
+    const inspectMetrics = await readStageMetrics();
+    expect(inspectMetrics.display).not.toBe("none");
+    expect(inspectMetrics.visibility).not.toBe("hidden");
+    expect(inspectMetrics.width).toBeGreaterThan(0);
+    expect(inspectMetrics.height).toBeGreaterThan(0);
+  });
+
+  test("keeps the last live output visible while reconnecting until replay arrives", async ({ page }) => {
+    const paneId = server.upstream.activePaneId();
+    server.upstream.setPaneScrollback(paneId, [
+      "previous build line",
+      "still restoring scrollback",
+    ]);
+    server.upstream.setPaneContent(paneId, "live tail line");
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expect.poll(() => readTerminalText(page)).toContain("live tail line");
+
+    server.upstream.delayNextTerminalSnapshot(1_200);
+    server.upstream.disconnectClients();
+
+    await page.waitForTimeout(500);
+    await expect.poll(() => readTerminalText(page)).toContain("live tail line");
+
+    await expect.poll(() => readTerminalText(page)).toContain("previous build line");
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+  });
+
+  test("shows a restore overlay while the live replay is resyncing", async ({ page }) => {
+    const paneId = server.upstream.activePaneId();
+    server.upstream.setPaneScrollback(paneId, ["restored line"]);
+    server.upstream.setPaneContent(paneId, "overlay line");
+    server.upstream.delayNextTerminalSnapshot(1_200);
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+
+    await expect(page.getByTestId("terminal-status-overlay")).toContainText("live view");
+    await expect.poll(() => readTerminalText(page)).toContain("overlay line");
+    await expect.poll(async () => await page.getByTestId("terminal-status-overlay").count()).toBe(0);
+  });
+
   test("mobile keeps compose available in live but removes it from inspect mode", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
@@ -91,7 +173,7 @@ test.describe("runtime-v2 browser behavior", () => {
     await page.getByTestId("compose-input").press("Enter");
 
     await expect
-      .poll(() => server.upstream.latestTerminal()?.writes.join("") ?? "")
+      .poll(() => server.upstream.allTerminalWrites().join(""))
       .toContain("echo mobile");
 
     await expect(page.getByTestId("compose-input")).toBeVisible();

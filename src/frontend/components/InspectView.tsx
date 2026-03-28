@@ -93,7 +93,15 @@ export const InspectView = ({
             type="button"
             className={`inspect-controls-toggle${showControls ? " active" : ""}`}
             data-testid="inspect-controls-toggle"
-            onClick={() => setMobileControlsOpen((current) => !current)}
+            onClick={() => {
+              setMobileControlsOpen((current) => {
+                const next = !current;
+                if (next && !snapshot && !loading) {
+                  onRefresh();
+                }
+                return next;
+              });
+            }}
           >
             {showControls ? "Hide controls" : "Inspect controls"}
           </button>
@@ -119,27 +127,25 @@ export const InspectView = ({
             </button>
           </div>
 
-          {snapshot && (
-            <div className="inspect-pane-filters">
+          <div className="inspect-pane-filters">
+            <button
+              className={`inspect-filter-chip${paneFilter === "all" ? " active" : ""}`}
+              onClick={() => onPaneFilterChange("all")}
+              data-testid="inspect-pane-filter-all"
+            >
+              All panes
+            </button>
+            {snapshot?.sections.map((section) => (
               <button
-                className={`inspect-filter-chip${paneFilter === "all" ? " active" : ""}`}
-                onClick={() => onPaneFilterChange("all")}
-                data-testid="inspect-pane-filter-all"
+                key={section.paneId}
+                className={`inspect-filter-chip${paneFilter === section.paneId ? " active" : ""}`}
+                onClick={() => onPaneFilterChange(section.paneId)}
+                data-testid={`inspect-pane-filter-${section.paneId}`}
               >
-                All panes
+                {section.title.split(" · ")[0]}
               </button>
-              {snapshot.sections.map((section) => (
-                <button
-                  key={section.paneId}
-                  className={`inspect-filter-chip${paneFilter === section.paneId ? " active" : ""}`}
-                  onClick={() => onPaneFilterChange(section.paneId)}
-                  data-testid={`inspect-pane-filter-${section.paneId}`}
-                >
-                  {section.title.split(" · ")[0]}
-                </button>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
         </>
       )}
 

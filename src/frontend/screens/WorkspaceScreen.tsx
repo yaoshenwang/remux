@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 interface WorkspaceScreenProps {
+  bottomRail: ReactNode;
   composeBar: ReactNode;
   fileInput: ReactNode;
   header: ReactNode;
@@ -12,6 +13,7 @@ interface WorkspaceScreenProps {
 }
 
 export const WorkspaceScreen = ({
+  bottomRail,
   composeBar,
   fileInput,
   header,
@@ -23,12 +25,20 @@ export const WorkspaceScreen = ({
 }: WorkspaceScreenProps) => (
   <div className="main-content">
     {header}
-    {terminalStage}
-    {fileInput}
-    {toolbar}
-    {pinnedSnippetsBar}
-    {snippetTemplatePanel}
-    {composeBar}
-    {snippetPicker}
+    <div className="workspace-body">
+      <div className="workspace-stage">
+        {terminalStage}
+      </div>
+      {bottomRail ?? (
+        <div className="workspace-bottom-rail">
+          {fileInput}
+          {toolbar}
+          {pinnedSnippetsBar}
+          {snippetTemplatePanel}
+          {composeBar}
+          {snippetPicker}
+        </div>
+      )}
+    </div>
   </div>
 );

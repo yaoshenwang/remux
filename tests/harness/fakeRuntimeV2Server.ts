@@ -63,6 +63,7 @@ export class FakeRuntimeV2Server {
   private readonly paneScrollback = new Map<string, string[]>();
   private terminalClientSequence = 0;
   private paneSequence = 1;
+  private nextTerminalSnapshotDelayMs = 0;
   private workspace: RuntimeV2WorkspaceSummary;
 
   constructor(options: FakeRuntimeV2ServerOptions = {}) {
@@ -201,6 +202,20 @@ export class FakeRuntimeV2Server {
 
   latestTerminal(paneId = this.activePaneId()): TerminalObservation | null {
     return this.terminalObservations.get(paneId) ?? null;
+  }
+
+  allTerminalWrites(): string[] {
+    return Array.from(this.terminalObservations.values()).flatMap((observation) => observation.writes);
+  }
+
+  delayNextTerminalSnapshot(delayMs: number): void {
+    this.nextTerminalSnapshotDelayMs = Math.max(0, delayMs);
+  }
+
+  disconnectClients(): void {
+    for (const socket of this.sockets) {
+      socket.close(1012, "test reconnect");
+    }
   }
 
   splitActivePane(direction: RuntimeV2SplitDirection = "right"): string {
@@ -345,23 +360,15 @@ export class FakeRuntimeV2Server {
           const observation = this.observeTerminal(attachedPaneId);
           observation.attachCount += 1;
           observation.sizes.push(message.size);
+          const snapshotDelayMs = this.takeTerminalSnapshotDelay();
 
           socket.send(JSON.stringify({
             type: "hello",
             protocol_version: "2",
             pane_id: attachedPaneId,
           }));
-          socket.send(JSON.stringify({
-            type: "snapshot",
-            size: message.size,
-            sequence: observation.attachCount,
-            content_base64: encodeBase64(this.getPaneContent(attachedPaneId)),
-            replay_base64: encodeBase64(this.buildPaneReplay(attachedPaneId)),
-          }));
-          socket.send(JSON.stringify({
-            type: "lease_state",
-            client_id: terminalClientId,
-          }));
+          this.sendTerminalSnapshot(socket, attachedPaneId, message.size, observation.attachCount, snapshotDelayMs);
+          this.sendTerminalLeaseState(socket, terminalClientId, snapshotDelayMs);
           return;
         }
         case "input": {
@@ -384,13 +391,13 @@ export class FakeRuntimeV2Server {
           return;
         }
         case "request_snapshot":
-          socket.send(JSON.stringify({
-            type: "snapshot",
-            size: this.latestTerminal(attachedPaneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
-            sequence: (this.latestTerminal(attachedPaneId)?.attachCount ?? 0) + 10,
-            content_base64: encodeBase64(this.getPaneContent(attachedPaneId)),
-            replay_base64: encodeBase64(this.buildPaneReplay(attachedPaneId)),
-          }));
+          this.sendTerminalSnapshot(
+            socket,
+            attachedPaneId,
+            this.latestTerminal(attachedPaneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
+            (this.latestTerminal(attachedPaneId)?.attachCount ?? 0) + 10,
+            this.takeTerminalSnapshotDelay(),
+          );
       }
     });
   }
@@ -425,5 +432,54 @@ export class FakeRuntimeV2Server {
       return live;
     }
     return `${scrollback.join("\r\n")}\r\n${live}`;
+  }
+
+  private takeTerminalSnapshotDelay(): number {
+    const delayMs = this.nextTerminalSnapshotDelayMs;
+    this.nextTerminalSnapshotDelayMs = 0;
+    return delayMs;
+  }
+
+  private sendTerminalLeaseState(socket: WebSocket, clientId: string, delayMs: number): void {
+    const send = () => {
+      if (socket.readyState !== socket.OPEN) {
+        return;
+      }
+      socket.send(JSON.stringify({
+        type: "lease_state",
+        client_id: clientId,
+      }));
+    };
+    if (delayMs > 0) {
+      setTimeout(send, delayMs);
+      return;
+    }
+    send();
+  }
+
+  private sendTerminalSnapshot(
+    socket: WebSocket,
+    paneId: string,
+    size: RuntimeV2TerminalSize,
+    sequence: number,
+    delayMs: number,
+  ): void {
+    const send = () => {
+      if (socket.readyState !== socket.OPEN) {
+        return;
+      }
+      socket.send(JSON.stringify({
+        type: "snapshot",
+        size,
+        sequence,
+        content_base64: encodeBase64(this.getPaneContent(paneId)),
+        replay_base64: encodeBase64(this.buildPaneReplay(paneId)),
+      }));
+    };
+    if (delayMs > 0) {
+      setTimeout(send, delayMs);
+      return;
+    }
+    send();
   }
 }

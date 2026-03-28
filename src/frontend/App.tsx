@@ -48,7 +48,6 @@ import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import { attachWebSocketKeepAlive } from "./websocket-keepalive";
 import type {
   SessionState,
-  ServerCapabilities,
   TabState,
   WorkspaceRuntimeState,
 } from "../shared/protocol";
@@ -76,7 +75,6 @@ export const App = () => {
   const stopTerminalKeepAliveRef = useRef<(() => void) | null>(null);
   /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
-  const serverCapabilitiesRef = useRef<ServerCapabilities | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
   const readTerminalGeometryRef = useRef<() => { cols: number; rows: number } | null>(() => null);
 
@@ -90,9 +88,14 @@ export const App = () => {
     scrollFontSize, workspaceOrder, setWorkspaceOrder } = prefs;
 
   const [viewMode, setViewMode] = useState<"inspect" | "terminal">("terminal");
+  const [terminalViewState, setTerminalViewState] = useState<"idle" | "connecting" | "restoring" | "live" | "stale">("idle");
   const [runtimeState, setRuntimeState] = useState<WorkspaceRuntimeState | null>(null);
   const viewModeRef = useRef(viewMode);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  const terminalViewStateRef = useRef(terminalViewState);
+  useEffect(() => { terminalViewStateRef.current = terminalViewState; }, [terminalViewState]);
+  const terminalHasReplayRef = useRef(false);
+  const awaitingTerminalReplayRef = useRef(false);
   const [inspectLineCount, setInspectLineCount] = useState(1000);
   const [inspectPaneFilter, setInspectPaneFilter] = useState("all");
   const [inspectSearchQuery, setInspectSearchQuery] = useState("");
@@ -150,30 +153,27 @@ export const App = () => {
   }>({ setStatusMessage: () => {}, setErrorMessage: () => {}, serverConfig: null });
 
   const connection = useRemuxConnection({
-    onAuthOk: (passwordValue, clientId, nextServerCapabilities) => {
+    onAuthOk: (passwordValue, clientId) => {
       pendingTerminalAuthRef.current = { password: passwordValue, clientId };
-      serverCapabilitiesRef.current = nextServerCapabilities;
     },
     onControlMessage: (message) => {
       switch (message.type) {
         case "attached": {
           terminalInputBufferRef.current?.clear();
           terminalWriteBufferRef.current?.clear();
-          resetTerminalBufferRef.current();
           workspace.onAttached(message.session);
           attachedSessionRef.current = message.session;
           launchContextRef.current = null;
           setDrawerOpen(false);
-          connectionActionsRef.current.setStatusMessage(`attached: ${message.session}`);
+          connectionActionsRef.current.setStatusMessage(
+            terminalHasReplayRef.current ? "restoring live view…" : "connecting live view…"
+          );
           if (pendingTerminalAuthRef.current) {
             const auth = pendingTerminalAuthRef.current;
             pendingTerminalAuthRef.current = null;
-            void restoreTerminalState(message.session, auth.password)
-              .finally(() => {
-                if (attachedSessionRef.current === message.session) {
-                  openTerminalSocket(auth.password, auth.clientId);
-                }
-              });
+            if (attachedSessionRef.current === message.session) {
+              openTerminalSocket(auth.password, auth.clientId);
+            }
           }
           notifyTerminalResizeRef.current({ notify: true, retryUntilVisible: true });
           return;
@@ -184,6 +184,9 @@ export const App = () => {
           terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
           attachedSessionRef.current = "";
+          awaitingTerminalReplayRef.current = false;
+          terminalHasReplayRef.current = false;
+          setTerminalViewState("idle");
           setRuntimeState(null);
           workspace.onSessionPicker(message.sessions);
           return;
@@ -198,7 +201,7 @@ export const App = () => {
           }
           workspace.onWorkspaceState(message.workspace, message.clientView ?? null);
           setRuntimeState(message.runtimeState ?? null);
-          if (inferredAttachedSession) {
+          if (inferredAttachedSession && terminalViewStateRef.current === "live") {
             connectionActionsRef.current.setStatusMessage(`attached: ${inferredAttachedSession}`);
           }
           return;
@@ -240,6 +243,7 @@ export const App = () => {
       terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
+      setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
     },
     getAuthPayload: () => buildControlAuthHint(
       attachedSessionRef.current,
@@ -248,13 +252,9 @@ export const App = () => {
     ),
   });
 
-  const { authReady, serverConfig, capabilities, serverCapabilities, errorMessage, statusMessage, password,
+  const { authReady, serverConfig, capabilities, errorMessage, statusMessage, password,
     needsPasswordInput, passwordErrorMessage, bandwidthStats, sendControl } = connection;
   const { resolvedSocketOrigin } = connection;
-
-  useEffect(() => {
-    serverCapabilitiesRef.current = serverCapabilities;
-  }, [serverCapabilities]);
 
   // Keep connectionActionsRef in sync so callbacks always access latest
   connectionActionsRef.current = {
@@ -309,6 +309,11 @@ export const App = () => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
     terminalInputBufferRef.current?.clear();
     pendingTerminalTransportRef.current = "";
+    awaitingTerminalReplayRef.current = true;
+    setTerminalViewState(terminalHasReplayRef.current ? "restoring" : "connecting");
+    connectionActionsRef.current.setStatusMessage(
+      terminalHasReplayRef.current ? "restoring live view…" : "connecting live view…"
+    );
     if (terminalSocketRef.current) {
       stopTerminalKeepAliveRef.current?.();
       stopTerminalKeepAliveRef.current = null;
@@ -333,7 +338,6 @@ export const App = () => {
         createPayload: () => JSON.stringify({ type: "ping" }),
       });
       flushPendingTerminalTransport();
-      connectionActionsRef.current.setStatusMessage("terminal connected");
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
     socket.onmessage = (event) => {
@@ -342,6 +346,14 @@ export const App = () => {
         bytes: typeof event.data === "string" ? event.data.length : 0
       });
       const data = typeof event.data === "string" ? event.data : "";
+      if (awaitingTerminalReplayRef.current && data.length > 0) {
+        awaitingTerminalReplayRef.current = false;
+        terminalHasReplayRef.current = true;
+        setTerminalViewState("live");
+        connectionActionsRef.current.setStatusMessage(
+          attachedSessionRef.current ? `attached: ${attachedSessionRef.current}` : "terminal connected"
+        );
+      }
       terminalWriteBufferRef.current?.enqueue(data);
       if (data.includes("\x07") && attachedSessionRef.current) {
         setBellSessions((current) => new Set(current).add(attachedSessionRef.current));
@@ -353,6 +365,11 @@ export const App = () => {
       stopTerminalKeepAliveRef.current = null;
       terminalInputBufferRef.current?.clear();
       pendingTerminalTransportRef.current = "";
+      awaitingTerminalReplayRef.current = false;
+      setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
+      if (event.code !== 4001) {
+        connectionActionsRef.current.setStatusMessage("reconnecting live view…");
+      }
       if (event.code === 4001) {
         connectionActionsRef.current.setErrorMessage("terminal authentication failed");
       }
@@ -545,36 +562,6 @@ export const App = () => {
     }
     container.scrollTop = container.scrollHeight;
   }, [scrollbackContentRef]);
-
-  const restoreTerminalState = useCallback(async (sessionName: string, passwordValue: string): Promise<void> => {
-    if (!sessionName) {
-      return;
-    }
-
-    if (serverCapabilitiesRef.current?.workspace.supportsTerminalSnapshots === false) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/state/${encodeURIComponent(sessionName)}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(passwordValue ? { "X-Password": passwordValue } : {})
-        }
-      });
-      if (!response.ok) {
-        return;
-      }
-
-      const snapshot = await response.json() as { content?: string };
-      if (attachedSessionRef.current !== sessionName || !snapshot.content) {
-        return;
-      }
-      terminalWriteBufferRef.current?.enqueue(snapshot.content);
-    } catch {
-      // Ignore restore failures and fall back to live stream only.
-    }
-  }, []);
 
   // Theme and sidebar persistence now handled by useClientPreferences
 
@@ -842,8 +829,9 @@ export const App = () => {
     if (!text) {
       return;
     }
-    sendControl({ type: "send_compose", text });
+    sendRawToSocket(`${text}\r`);
     setComposeText("");
+    focusTerminal();
   };
 
   const beginDrag = (
@@ -915,6 +903,22 @@ export const App = () => {
   }, [serverConfig?.scrollbackLines]);
 
   const mobileInspectMode = mobileLayout && viewMode === "inspect";
+  const terminalStatusMessage = useMemo(() => {
+    if (viewMode !== "terminal") {
+      return undefined;
+    }
+
+    switch (terminalViewState) {
+      case "connecting":
+        return "Connecting live view…";
+      case "restoring":
+        return "Restoring live view…";
+      case "stale":
+        return "Reconnecting live view…";
+      default:
+        return undefined;
+    }
+  }, [terminalViewState, viewMode]);
 
   return (
     <AppShell
@@ -1085,81 +1089,88 @@ export const App = () => {
         }}
         scrollFontSize={scrollFontSize}
         scrollbackContentRef={scrollbackContentRef}
+        terminalStatusMessage={terminalStatusMessage}
         terminalContainerRef={terminalContainerRef}
         viewMode={viewMode}
           />
         )}
-        fileInput={(
-          <input
-        ref={fileInputRef}
-        type="file"
-        style={{ display: "none" }}
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) {
-            uploadFile(file);
-          }
-          event.target.value = "";
-        }}
-          />
-        )}
-        toolbar={(
-          <Toolbar
-        ref={toolbarRef}
-        sendRaw={sendRawToSocket}
-        onFocusTerminal={focusTerminal}
-        fileInputRef={fileInputRef}
-        setStatusMessage={connection.setStatusMessage}
-        snippets={snippets}
-        onExecuteSnippet={executeSnippet}
-        hidden={viewMode !== "terminal"}
-          />
-        )}
-        pinnedSnippetsBar={mobileInspectMode ? null : (
-          <PinnedSnippetsBar
-        snippets={pinnedSnippets}
-        onEditSnippet={setEditingSnippet}
-        onExecuteSnippet={executeSnippet}
-        onOpenDrawer={() => setDrawerOpen(true)}
-          />
-        )}
-        snippetTemplatePanel={mobileInspectMode ? null : (
-          <SnippetTemplatePanel
-        pendingExecution={pendingSnippetExecution}
-        onCancel={() => setPendingSnippetExecution(null)}
-        onChangeValue={(variable, value) => setPendingSnippetExecution((current) => (
-          current
-            ? {
-                ...current,
-                values: {
-                  ...current.values,
-                  [variable]: value
+        bottomRail={(
+          <div className="workspace-bottom-rail">
+            <input
+              ref={fileInputRef}
+              type="file"
+              style={{ display: "none" }}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) {
+                  uploadFile(file);
                 }
-              }
-            : current
-        ))}
-        onRun={runPendingSnippet}
-          />
+                event.target.value = "";
+              }}
+            />
+            <Toolbar
+              ref={toolbarRef}
+              sendRaw={sendRawToSocket}
+              onFocusTerminal={focusTerminal}
+              fileInputRef={fileInputRef}
+              setStatusMessage={connection.setStatusMessage}
+              snippets={snippets}
+              onExecuteSnippet={executeSnippet}
+              hidden={viewMode !== "terminal"}
+            />
+            {mobileInspectMode ? null : (
+              <PinnedSnippetsBar
+                snippets={pinnedSnippets}
+                onEditSnippet={setEditingSnippet}
+                onExecuteSnippet={executeSnippet}
+                onOpenDrawer={() => setDrawerOpen(true)}
+              />
+            )}
+            {mobileInspectMode ? null : (
+              <SnippetTemplatePanel
+                pendingExecution={pendingSnippetExecution}
+                onCancel={() => setPendingSnippetExecution(null)}
+                onChangeValue={(variable, value) => setPendingSnippetExecution((current) => (
+                  current
+                    ? {
+                        ...current,
+                        values: {
+                          ...current.values,
+                          [variable]: value
+                        }
+                      }
+                    : current
+                ))}
+                onRun={runPendingSnippet}
+              />
+            )}
+            {mobileInspectMode ? null : (
+              <ComposeBar
+                composeText={composeText}
+                onChange={setComposeText}
+                onFilePaste={handleComposeFilePaste}
+                onKeyDown={handleComposeKeyDown}
+                onSend={sendCompose}
+              />
+            )}
+            {mobileInspectMode ? null : (
+              <SnippetPicker
+                activeIndex={quickSnippetIndex}
+                onExecuteSnippet={executeSnippet}
+                onHoverIndex={setQuickSnippetIndex}
+                onPickComplete={() => setComposeText("")}
+                query={snippetPickerQuery}
+                snippets={visibleQuickSnippetResults}
+              />
+            )}
+          </div>
         )}
-        composeBar={mobileInspectMode ? null : (
-          <ComposeBar
-        composeText={composeText}
-        onChange={setComposeText}
-        onFilePaste={handleComposeFilePaste}
-        onKeyDown={handleComposeKeyDown}
-        onSend={sendCompose}
-          />
-        )}
-        snippetPicker={mobileInspectMode ? null : (
-          <SnippetPicker
-        activeIndex={quickSnippetIndex}
-        onExecuteSnippet={executeSnippet}
-        onHoverIndex={setQuickSnippetIndex}
-        onPickComplete={() => setComposeText("")}
-        query={snippetPickerQuery}
-        snippets={visibleQuickSnippetResults}
-          />
-        )}
+        fileInput={null}
+        toolbar={null}
+        pinnedSnippetsBar={null}
+        snippetTemplatePanel={null}
+        composeBar={null}
+        snippetPicker={null}
       />
 
       <Suspense fallback={null}>
