@@ -18,6 +18,10 @@ import type { RuntimeConfig } from "./config.js";
 import { AuthService } from "./auth/auth-service.js";
 import { buildServerCapabilities } from "./server/client-capabilities.js";
 import {
+  resolvePaneCommandForView,
+  sendComposeToRuntime,
+} from "./server/compose-submit.js";
+import {
   extractTerminalDimensions,
   isObject,
   parseClientMessage,
@@ -996,7 +1000,17 @@ export const createRemuxV2GatewayServer = (
       }
       case "send_compose": {
         const terminalClient = Array.from(context.terminalClients)[0];
-        terminalClient?.bridge?.write(message.text);
+        if (!terminalClient?.bridge) {
+          return;
+        }
+        sendComposeToRuntime({
+          runtime: terminalClient.bridge,
+          text: message.text,
+          paneCommand: resolvePaneCommandForView(
+            buildLegacyWorkspaceSnapshot(runtimeControl.currentSummary()),
+            buildLegacyClientView(runtimeControl.currentSummary(), context.followBackendFocus),
+          ),
+        });
         return;
       }
       case "rename_session": {

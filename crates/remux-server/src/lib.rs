@@ -621,24 +621,30 @@ impl WorkspaceRuntime {
 
         let requested_client_id = matches!(mode, terminal::ClientMode::Interactive)
             .then(|| self.next_terminal_client_id());
-        let granted_client_id = match requested_client_id.as_ref() {
+        let mut lease_changed = false;
+        match requested_client_id.as_ref() {
             Some(client_id) => {
                 let mut workspace = self
                     .workspace
                     .lock()
                     .expect("runtime workspace lock poisoned");
                 match workspace.acquire_writer_lease(pane_id, client_id, LeaseMode::Interactive) {
-                    Ok(()) => Some(client_id.clone()),
-                    Err(WorkspaceError::LeaseConflict { .. }) => None,
+                    Ok(()) => {
+                        lease_changed = true;
+                    }
+                    Err(WorkspaceError::LeaseConflict { .. }) => {}
                     Err(error) => return Err(error.into()),
                 }
             }
-            None => None,
-        };
+            None => {}
+        }
         let lease_holder = self.current_lease_holder(pane_id);
+        if lease_changed {
+            self.notify_workspace_changed();
+        }
 
         Ok(TerminalAttachment {
-            client_id: granted_client_id,
+            client_id: requested_client_id,
             hello: terminal::ServerMessage::Hello {
                 protocol_version: RUNTIME_V2_PROTOCOL_VERSION.to_owned(),
                 pane_id: Some(pane_id.clone()),
@@ -653,11 +659,15 @@ impl WorkspaceRuntime {
 
     fn detach(&self, pane_id: &PaneId, client_id: Option<&str>) {
         if let Some(client_id) = client_id {
-            let _ = self
+            let released = self
                 .workspace
                 .lock()
                 .expect("runtime workspace lock poisoned")
-                .release_writer_lease(pane_id, client_id);
+                .release_writer_lease(pane_id, client_id)
+                .is_ok();
+            if released {
+                self.notify_workspace_changed();
+            }
         }
     }
 
@@ -667,6 +677,20 @@ impl WorkspaceRuntime {
         data_base64: &str,
         client_id: Option<&str>,
     ) -> Result<(), RuntimeError> {
+        if let Some(client_id) = client_id {
+            let lease_changed = {
+                let mut workspace = self
+                    .workspace
+                    .lock()
+                    .expect("runtime workspace lock poisoned");
+                workspace
+                    .take_writer_lease(pane_id, client_id, LeaseMode::Interactive)?
+            };
+            if lease_changed {
+                self.notify_workspace_changed();
+            }
+        }
+
         self.ensure_write_lease(pane_id, client_id)?;
         let bytes = BASE64.decode(data_base64).map_err(RuntimeError::Decode)?;
         self.pane_runtime(pane_id)?
@@ -1545,6 +1569,44 @@ mod tests {
 
         runtime.detach(&pane_id, attachment.client_id.as_deref());
         assert_eq!(runtime.workspace_summary().lease_holder_client_id, None);
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    async fn later_interactive_clients_claim_write_access_when_they_send_input() {
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let pane_id = runtime.pane_id();
+
+        let first = runtime
+            .attach(&pane_id, ClientMode::Interactive, TerminalSize::new(80, 24))
+            .expect("first interactive attach should succeed");
+        let second = runtime
+            .attach(&pane_id, ClientMode::Interactive, TerminalSize::new(80, 24))
+            .expect("second interactive attach should also succeed");
+
+        assert_eq!(
+            second.lease_state,
+            terminal::ServerMessage::LeaseState {
+                client_id: first.client_id.clone(),
+            }
+        );
+        assert_eq!(runtime.workspace_summary().lease_holder_client_id, first.client_id.clone());
+
+        runtime
+            .write_input(
+                &pane_id,
+                &BASE64.encode("echo lease handoff\r"),
+                second.client_id.as_deref(),
+            )
+            .expect("second client input should claim the lease and succeed");
+
+        assert_eq!(runtime.workspace_summary().lease_holder_client_id, second.client_id.clone());
+
+        runtime.detach(&pane_id, first.client_id.as_deref());
+        assert_eq!(runtime.workspace_summary().lease_holder_client_id, second.client_id.clone());
+
+        runtime.detach(&pane_id, second.client_id.as_deref());
         runtime.shutdown();
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "Remote workspace cockpit for terminal-first work, powered by the unified runtime-v2 backend",
   "license": "MIT",
   "repository": {

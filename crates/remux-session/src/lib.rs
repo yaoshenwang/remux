@@ -396,6 +396,23 @@ impl WorkspaceState {
         }
     }
 
+    pub fn take_writer_lease(
+        &mut self,
+        pane_id: &PaneId,
+        client_id: impl Into<String>,
+        mode: LeaseMode,
+    ) -> Result<bool, WorkspaceError> {
+        let client_id = client_id.into();
+        let (_, _, pane) = self.pane_state_mut(pane_id)?;
+        let changed = pane.writer_lease.as_ref()
+            != Some(&WriterLease {
+                client_id: client_id.clone(),
+                mode: mode.clone(),
+            });
+        pane.writer_lease = Some(WriterLease { client_id, mode });
+        Ok(changed)
+    }
+
     pub fn release_writer_lease(
         &mut self,
         pane_id: &PaneId,
@@ -853,6 +870,28 @@ mod tests {
             .release_writer_lease(&pane_id, "client-a")
             .expect("lease release should succeed");
         assert_eq!(workspace.writer_lease(&pane_id), None);
+    }
+
+    #[test]
+    fn workspace_can_transfer_writer_lease_to_a_new_client() {
+        let mut workspace = SinglePaneWorkspace::new("Main", "Shell");
+        let pane_id = workspace.pane_id().clone();
+
+        workspace
+            .acquire_writer_lease(&pane_id, "client-a", LeaseMode::Interactive)
+            .expect("first lease should succeed");
+
+        let changed = workspace
+            .take_writer_lease(&pane_id, "client-b", LeaseMode::Interactive)
+            .expect("lease takeover should succeed");
+        assert!(changed);
+        assert_eq!(
+            workspace.writer_lease(&pane_id),
+            Some(&WriterLease {
+                client_id: "client-b".to_owned(),
+                mode: LeaseMode::Interactive,
+            })
+        );
     }
 
     #[test]
