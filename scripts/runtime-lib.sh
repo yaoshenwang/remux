@@ -387,7 +387,10 @@ verify_shared_runtime_plist() {
 
 loaded_service_working_dir() {
   local service="$1"
-  launchctl print "$(runtime_service_domain "$service")" 2>/dev/null | awk -F' = ' '/working directory = / { print $2; exit }'
+  local service_output=""
+
+  service_output="$(launchctl print "$(runtime_service_domain "$service")" 2>/dev/null || true)"
+  awk -F' = ' '/working directory = / { print $2; exit }' <<<"$service_output"
 }
 
 restart_runtime_service() {

@@ -197,4 +197,72 @@ printf '%s' '{"service":"remuxd","protocolVersion":"2026-03-27-draft","controlWe
     expect(log).not.toContain("bootout");
     expect(log).not.toContain("bootstrap");
   });
+
+  test("bootstraps the shared runtime daemon when launchctl has not loaded it yet", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-shared-bootstrap-test-"));
+    tempDirs.push(tempHome);
+
+    const fakeBinDir = path.join(tempHome, "bin");
+    const launchAgentsDir = path.join(tempHome, "Library", "LaunchAgents");
+    const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
+    const sharedWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const launchctlLogPath = path.join(tempHome, "launchctl.log");
+    const sharedPlistPath = path.join(launchAgentsDir, "com.remux.runtime-v2-shared.plist");
+    const sharedPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.remux.runtime-v2-shared</string>
+  </dict>
+</plist>
+`;
+
+    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    await fs.promises.mkdir(launchAgentsDir, { recursive: true });
+    await fs.promises.mkdir(sharedWorkdir, { recursive: true });
+    await fs.promises.writeFile(sharedPlistPath, sharedPlist);
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "launchctl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${launchctlLogPath}"
+if [[ "$1" == "print" ]]; then
+  exit 113
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "curl"),
+      `#!/bin/bash
+set -euo pipefail
+exit 7
+`,
+      { mode: 0o755 }
+    );
+
+    expect(() =>
+      execFileSync(
+        "bash",
+        ["-c", "source scripts/runtime-lib.sh && load_shared_runtime_launchd"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+            REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot
+          },
+          stdio: "pipe"
+        }
+      )
+    ).not.toThrow();
+
+    const log = await fs.promises.readFile(launchctlLogPath, "utf8");
+    expect(log).toContain(`print gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
+    expect(log).toContain(`bootout gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
+    expect(log).toContain(`bootstrap gui/${process.getuid?.() ?? process.getuid()} ${sharedPlistPath}`);
+  });
 });
