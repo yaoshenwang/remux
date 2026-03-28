@@ -40,6 +40,12 @@ Remux 是一个基于 Web 的远程 tmux / zellij 客户端，通过 cloudflared
 - Minor/Major 版本变更需用户明确批准
 - 每次 feature 合并到 `dev` 后 bump patch
 
+### Runtime V2 约束（强制）
+
+- `runtime-v2` 是当前公开产品路径，**禁止**为了 session 持久化问题把 public `main` / `dev` 服务回退到 legacy `tmux` / `zellij` / `conpty` backend
+- 持久化问题必须在 `runtime-v2` 架构内解决，可以借鉴 tmux / zellij 的 server-client、daemon、socket、state store 原理，但不能把公开运行路径切回 legacy backend
+- 对 `https://remux.yaoshen.wang` 和 `https://remux-dev.yaoshen.wang` 的修复，目标是两者共享同一套机器级 runtime-v2 会话真相，而不是各自维护独立易失 workspace
+
 ## 常用命令
 
 ```bash

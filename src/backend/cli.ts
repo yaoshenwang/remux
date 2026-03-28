@@ -23,6 +23,7 @@ import {
   detectTmuxLaunchContext,
   type LaunchContext
 } from "./launch-context.js";
+import { shouldAllowLegacyFallback } from "./runtime-mode.js";
 import { cleanupSocketDir } from "./zellij/socket-dir.js";
 
 const parseCliArgs = async (): Promise<CliArgs> => {
@@ -157,6 +158,7 @@ const main = async (): Promise<void> => {
   let launchContext: LaunchContext | null = null;
   let extensions: ReturnType<typeof createExtensions> | null = null;
   let runningServer: RunningServer | null = null;
+  const allowLegacyFallback = shouldAllowLegacyFallback(process.env);
 
   if (process.env.REMUX_RUNTIME_V2 !== "0") {
     const candidate = createRemuxV2GatewayServer(config, {
@@ -169,6 +171,9 @@ const main = async (): Promise<void> => {
       logger.log("Runtime mode: runtime-v2");
     } catch (error) {
       await candidate.stop().catch(() => undefined);
+      if (!allowLegacyFallback) {
+        throw error;
+      }
       logger.error(`runtime-v2 startup failed, falling back to legacy backend: ${String(error)}`);
     }
   }

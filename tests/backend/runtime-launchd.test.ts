@@ -59,10 +59,23 @@ describe("runtime launchd install", () => {
     const runtimePlist = await fs.promises.readFile(runtimePlistPath, "utf8");
     expect(runtimePlist).toContain(runtimeNodeBin);
     expect(runtimePlist).toContain(expectedPath);
+    expect(runtimePlist).toContain("<key>REMUXD_BASE_URL</key>");
+    expect(runtimePlist).toContain("<string>http://127.0.0.1:3737</string>");
+    expect(runtimePlist).toContain("<key>REMUX_RUNTIME_V2_REQUIRED</key>");
+    expect(runtimePlist).toContain("<string>1</string>");
 
     const syncPlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.runtime-sync.plist");
     const syncPlist = await fs.promises.readFile(syncPlistPath, "utf8");
     expect(syncPlist).toContain(expectedPath);
+
+    const sharedRuntimePlistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.runtime-v2-shared.plist");
+    const sharedRuntimePlist = await fs.promises.readFile(sharedRuntimePlistPath, "utf8");
+    expect(sharedRuntimePlist).toContain(expectedPath);
+    expect(sharedRuntimePlist).toContain("<string>cargo</string>");
+    expect(sharedRuntimePlist).toContain("<string>run</string>");
+    expect(sharedRuntimePlist).toContain("<string>-p</string>");
+    expect(sharedRuntimePlist).toContain("<string>remuxd</string>");
+    expect(sharedRuntimePlist).toContain("<string>3737</string>");
   });
 
   test("writes the runtime sync plist against the stable dev runtime worktree", async () => {
@@ -84,6 +97,33 @@ describe("runtime launchd install", () => {
     expect(plist).toContain(path.join(tempHome, ".remux", "runtime-worktrees", "runtime-dev", "scripts", "sync-runtime.sh"));
     expect(plist).toContain(path.join(tempHome, ".remux", "runtime-worktrees", "runtime-dev"));
     expect(plist).not.toContain(path.join(process.cwd(), "scripts", "sync-runtime.sh"));
+    expect(plist).not.toContain(process.cwd());
+  });
+
+  test("writes a shared runtime-v2 launchd plist against the stable dev runtime worktree", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-shared-plist-test-"));
+    tempDirs.push(tempHome);
+
+    execFileSync("bash", ["scripts/install-launchd.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: tempHome
+      },
+      stdio: "pipe"
+    });
+
+    const plistPath = path.join(tempHome, "Library", "LaunchAgents", "com.remux.runtime-v2-shared.plist");
+    const plist = await fs.promises.readFile(plistPath, "utf8");
+
+    expect(plist).toContain(path.join(tempHome, ".remux", "runtime-worktrees", "runtime-dev"));
+    expect(plist).toContain("<string>cargo</string>");
+    expect(plist).toContain("<string>run</string>");
+    expect(plist).toContain("<string>--manifest-path</string>");
+    expect(plist).toContain("<string>Cargo.toml</string>");
+    expect(plist).toContain("<string>remuxd</string>");
+    expect(plist).toContain("<string>127.0.0.1</string>");
+    expect(plist).toContain("<string>3737</string>");
     expect(plist).not.toContain(process.cwd());
   });
 

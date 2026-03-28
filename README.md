@@ -146,6 +146,8 @@ npm run runtime:sync
 npm run runtime:status
 ```
 
+Those public `main` / `dev` gateways are intended to share one machine-level `runtime-v2` daemon, so deploys do not create a fresh private workspace per version.
+
 See [docs/RUNTIME_SYNC.md](./docs/RUNTIME_SYNC.md) for the detached runtime worktree layout and launchd setup.
 
 Self-hosted deploy runner:

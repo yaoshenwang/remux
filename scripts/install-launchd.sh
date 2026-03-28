@@ -13,9 +13,11 @@ write_runtime_plist() {
   local plist
   local runtime_node_bin
   local runtime_path
+  local shared_runtime_base_url
   plist="$(runtime_plist_path "$name")"
   runtime_node_bin="$(resolve_runtime_node_bin)"
   runtime_path="$(runtime_shell_path)"
+  shared_runtime_base_url="$(runtime_shared_base_url)"
 
   cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -45,6 +47,10 @@ write_runtime_plist() {
       <string>$(runtime_token "$name")</string>
       <key>REMUX_RUNTIME_BRANCH</key>
       <string>$(runtime_branch "$name")</string>
+      <key>REMUXD_BASE_URL</key>
+      <string>$shared_runtime_base_url</string>
+      <key>REMUX_RUNTIME_V2_REQUIRED</key>
+      <string>1</string>
       <key>PATH</key>
       <string>$runtime_path</string>
       <key>TERM</key>
@@ -64,6 +70,65 @@ write_runtime_plist() {
     <string>$(runtime_stdout_log "$name")</string>
     <key>StandardErrorPath</key>
     <string>$(runtime_stderr_log "$name")</string>
+  </dict>
+</plist>
+EOF
+}
+
+write_shared_runtime_plist() {
+  local plist
+  local runtime_path
+  local workdir
+  plist="$(runtime_shared_plist_path)"
+  runtime_path="$(runtime_shell_path)"
+  workdir="$(runtime_shared_workdir)"
+
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$(runtime_shared_service)</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>cargo</string>
+      <string>run</string>
+      <string>--manifest-path</string>
+      <string>Cargo.toml</string>
+      <string>-p</string>
+      <string>remuxd</string>
+      <string>--</string>
+      <string>--host</string>
+      <string>127.0.0.1</string>
+      <string>--port</string>
+      <string>$(runtime_shared_port)</string>
+      <string>--log-format</string>
+      <string>json</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$workdir</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>$runtime_path</string>
+      <key>HOME</key>
+      <string>$HOME</string>
+      <key>LANG</key>
+      <string>en_US.UTF-8</string>
+      <key>TERM</key>
+      <string>xterm-256color</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>3</integer>
+    <key>StandardOutPath</key>
+    <string>$(runtime_shared_stdout_log)</string>
+    <key>StandardErrorPath</key>
+    <string>$(runtime_shared_stderr_log)</string>
   </dict>
 </plist>
 EOF
@@ -119,11 +184,13 @@ EOF
 
 write_runtime_plist main
 write_runtime_plist dev
+write_shared_runtime_plist
 write_sync_plist
 
 echo "installed:"
 echo "  $(runtime_plist_path main)"
 echo "  $(runtime_plist_path dev)"
+echo "  $(runtime_shared_plist_path)"
 echo "  $(runtime_sync_plist_path)"
 echo
 echo "next:"

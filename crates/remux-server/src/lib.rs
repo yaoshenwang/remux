@@ -120,6 +120,7 @@ struct TerminalAttachment {
 struct WorkspaceRuntime {
     workspace: Mutex<SinglePaneWorkspace>,
     panes: Mutex<BTreeMap<PaneId, Arc<PaneRuntime>>>,
+    workspace_updates: broadcast::Sender<()>,
     terminal_client_sequence: AtomicU64,
     default_command: PtyCommand,
 }
@@ -254,13 +255,23 @@ impl WorkspaceRuntime {
 
         let mut panes = BTreeMap::new();
         panes.insert(root_pane_id, root_pane);
+        let (workspace_updates, _) = broadcast::channel(64);
 
         Ok(Arc::new(Self {
             workspace: Mutex::new(workspace),
             panes: Mutex::new(panes),
+            workspace_updates,
             terminal_client_sequence: AtomicU64::new(0),
             default_command,
         }))
+    }
+
+    fn subscribe_workspace(&self) -> broadcast::Receiver<()> {
+        self.workspace_updates.subscribe()
+    }
+
+    fn notify_workspace_changed(&self) {
+        let _ = self.workspace_updates.send(());
     }
 
     fn workspace_summary(&self) -> control::WorkspaceSummary {
@@ -365,6 +376,7 @@ impl WorkspaceRuntime {
                     .lock()
                     .expect("runtime workspace lock poisoned")
                     .mark_live();
+                self.notify_workspace_changed();
                 Ok(session_id)
             }
             Err(error) => {
@@ -383,6 +395,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime workspace lock poisoned")
             .select_session(session_id)?;
+        self.notify_workspace_changed();
         Ok(())
     }
 
@@ -395,6 +408,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime workspace lock poisoned")
             .rename_session(session_id, session_name)?;
+        self.notify_workspace_changed();
         Ok(())
     }
 
@@ -431,6 +445,7 @@ impl WorkspaceRuntime {
             }
         }
 
+        self.notify_workspace_changed();
         Ok(active_session_id)
     }
 
@@ -456,6 +471,7 @@ impl WorkspaceRuntime {
                     .lock()
                     .expect("runtime panes lock poisoned")
                     .insert(pane_id, pane);
+                self.notify_workspace_changed();
                 Ok(tab_id)
             }
             Err(error) => {
@@ -474,6 +490,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime workspace lock poisoned")
             .select_tab(tab_id)?;
+        self.notify_workspace_changed();
         Ok(())
     }
 
@@ -482,6 +499,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime workspace lock poisoned")
             .rename_tab(tab_id, tab_title)?;
+        self.notify_workspace_changed();
         Ok(())
     }
 
@@ -517,6 +535,7 @@ impl WorkspaceRuntime {
             }
         }
 
+        self.notify_workspace_changed();
         Ok(active_tab_id)
     }
 
@@ -549,6 +568,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime panes lock poisoned")
             .insert(new_pane_id.clone(), pane);
+        self.notify_workspace_changed();
         Ok(new_pane_id)
     }
 
@@ -557,6 +577,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime workspace lock poisoned")
             .focus_pane(pane_id)?;
+        self.notify_workspace_changed();
         Ok(())
     }
 
@@ -565,6 +586,7 @@ impl WorkspaceRuntime {
             .lock()
             .expect("runtime workspace lock poisoned")
             .toggle_zoom(pane_id)?;
+        self.notify_workspace_changed();
         Ok(())
     }
 
@@ -584,6 +606,7 @@ impl WorkspaceRuntime {
             pane.shutdown();
         }
 
+        self.notify_workspace_changed();
         Ok(active_pane_id)
     }
 
@@ -917,6 +940,10 @@ async fn terminal_socket(
 }
 
 async fn handle_control_socket(mut socket: WebSocket, state: AppState) {
+    let mut workspace_updates = state
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.subscribe_workspace());
     let hello = control::ServerMessage::Hello {
         protocol_version: state.metadata.protocol_version.clone(),
         write_lease_model: "single-active-writer".to_owned(),
@@ -932,179 +959,198 @@ async fn handle_control_socket(mut socket: WebSocket, state: AppState) {
         }
     }
 
-    while let Some(message) = socket.next().await {
-        match message {
-            Ok(Message::Text(text)) if text.trim() == "ping" => {
-                if socket.send(Message::Text("pong".into())).await.is_err() {
-                    break;
-                }
-            }
-            Ok(Message::Text(text)) => {
-                let Ok(command) = serde_json::from_str::<control::ClientMessage>(&text) else {
-                    continue;
-                };
-
-                match command {
-                    control::ClientMessage::Authenticate { .. } => {}
-                    control::ClientMessage::SubscribeWorkspace => {
+    loop {
+        tokio::select! {
+            update = recv_workspace_update(workspace_updates.as_mut()), if workspace_updates.is_some() => {
+                match update {
+                    Some(()) => {
                         if let Some(runtime) = state.runtime.as_ref() {
                             if send_workspace_snapshot(&mut socket, runtime).await.is_err() {
                                 break;
                             }
                         }
                     }
-                    control::ClientMessage::RequestDiagnostics => {
-                        let snapshot = control::ServerMessage::DiagnosticsSnapshot {
-                            runtime_status: state
-                                .runtime
-                                .as_ref()
-                                .map(|runtime| runtime.diagnostics_status())
-                                .unwrap_or_else(|| "bootstrap-only".to_owned()),
-                        };
-                        if send_json_message(&mut socket, &snapshot).await.is_err() {
+                    None => break,
+                }
+            }
+            message = socket.next() => {
+                let Some(message) = message else {
+                    break;
+                };
+                match message {
+                    Ok(Message::Text(text)) if text.trim() == "ping" => {
+                        if socket.send(Message::Text("pong".into())).await.is_err() {
                             break;
                         }
                     }
-                    control::ClientMessage::RequestInspect { scope } => {
-                        if let Some(runtime) = state.runtime.as_ref() {
-                            let snapshot = control::ServerMessage::InspectSnapshot {
-                                snapshot: runtime.inspect_snapshot(scope),
-                            };
-                            if send_json_message(&mut socket, &snapshot).await.is_err() {
-                                break;
+                    Ok(Message::Text(text)) => {
+                        let Ok(command) = serde_json::from_str::<control::ClientMessage>(&text) else {
+                            continue;
+                        };
+
+                        match command {
+                            control::ClientMessage::Authenticate { .. } => {}
+                            control::ClientMessage::SubscribeWorkspace => {
+                                if let Some(runtime) = state.runtime.as_ref() {
+                                    if send_workspace_snapshot(&mut socket, runtime).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            control::ClientMessage::RequestDiagnostics => {
+                                let snapshot = control::ServerMessage::DiagnosticsSnapshot {
+                                    runtime_status: state
+                                        .runtime
+                                        .as_ref()
+                                        .map(|runtime| runtime.diagnostics_status())
+                                        .unwrap_or_else(|| "bootstrap-only".to_owned()),
+                                };
+                                if send_json_message(&mut socket, &snapshot).await.is_err() {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::RequestInspect { scope } => {
+                                if let Some(runtime) = state.runtime.as_ref() {
+                                    let snapshot = control::ServerMessage::InspectSnapshot {
+                                        snapshot: runtime.inspect_snapshot(scope),
+                                    };
+                                    if send_json_message(&mut socket, &snapshot).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            control::ClientMessage::SplitPane { pane_id, direction } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.split_pane(&pane_id, direction).map(|_| ())
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::FocusPane { pane_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.focus_pane(&pane_id)
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::ClosePane { pane_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.close_pane(&pane_id).map(|_| ())
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::TogglePaneZoom { pane_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.toggle_zoom(&pane_id)
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::CreateSession { session_name } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.create_session(session_name).map(|_| ())
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::SelectSession { session_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.select_session(&session_id)
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::RenameSession {
+                                session_id,
+                                session_name,
+                            } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.rename_session(&session_id, session_name)
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::CloseSession { session_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.close_session(&session_id).map(|_| ())
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::CreateTab {
+                                session_id,
+                                tab_title,
+                            } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.create_tab(&session_id, tab_title).map(|_| ())
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::SelectTab { tab_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.select_tab(&tab_id)
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::RenameTab { tab_id, tab_title } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.rename_tab(&tab_id, tab_title)
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            control::ClientMessage::CloseTab { tab_id } => {
+                                if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
+                                    runtime.close_tab(&tab_id).map(|_| ())
+                                })
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
                             }
                         }
                     }
-                    control::ClientMessage::SplitPane { pane_id, direction } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.split_pane(&pane_id, direction).map(|_| ())
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::FocusPane { pane_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.focus_pane(&pane_id)
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::ClosePane { pane_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.close_pane(&pane_id).map(|_| ())
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::TogglePaneZoom { pane_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.toggle_zoom(&pane_id)
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::CreateSession { session_name } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.create_session(session_name).map(|_| ())
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::SelectSession { session_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.select_session(&session_id)
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::RenameSession {
-                        session_id,
-                        session_name,
-                    } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.rename_session(&session_id, session_name)
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::CloseSession { session_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.close_session(&session_id).map(|_| ())
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::CreateTab {
-                        session_id,
-                        tab_title,
-                    } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.create_tab(&session_id, tab_title).map(|_| ())
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::SelectTab { tab_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.select_tab(&tab_id)
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::RenameTab { tab_id, tab_title } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.rename_tab(&tab_id, tab_title)
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    control::ClientMessage::CloseTab { tab_id } => {
-                        if handle_control_command(&mut socket, state.runtime.as_ref(), |runtime| {
-                            runtime.close_tab(&tab_id).map(|_| ())
-                        })
-                        .await
-                        .is_err()
-                        {
-                            break;
-                        }
-                    }
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    _ => {}
                 }
             }
-            Ok(Message::Close(_)) | Err(_) => break,
-            _ => {}
         }
     }
 }
@@ -1122,7 +1168,7 @@ where
     };
 
     match operation(runtime) {
-        Ok(()) => send_workspace_snapshot(socket, runtime).await,
+        Ok(()) => Ok(()),
         Err(error) => {
             let rejected = control::ServerMessage::CommandRejected {
                 reason: error.to_string(),
@@ -1140,6 +1186,21 @@ async fn send_workspace_snapshot(
         summary: runtime.workspace_summary(),
     };
     send_json_message(socket, &snapshot).await
+}
+
+async fn recv_workspace_update(
+    receiver: Option<&mut broadcast::Receiver<()>>,
+) -> Option<()> {
+    let receiver = match receiver {
+        Some(receiver) => receiver,
+        None => return None,
+    };
+
+    match receiver.recv().await {
+        Ok(()) => Some(()),
+        Err(broadcast::error::RecvError::Lagged(_)) => Some(()),
+        Err(broadcast::error::RecvError::Closed) => None,
+    }
 }
 
 async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
@@ -1318,10 +1379,13 @@ async fn send_json_message<T: Serialize>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use axum::http::StatusCode;
     use http_body_util::BodyExt;
     use remux_protocol::terminal::ClientMode;
     use remux_pty::PtyCommand;
+    use tokio::time::timeout;
     use tower::util::ServiceExt;
 
     use super::*;
@@ -1503,6 +1567,30 @@ mod tests {
         assert_eq!(summary.active_tab_id, Some(second_tab));
         assert_eq!(summary.sessions.len(), 2);
 
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    async fn workspace_mutations_broadcast_updates_to_all_subscribers() {
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let mut subscriber_a = runtime.subscribe_workspace();
+        let mut subscriber_b = runtime.subscribe_workspace();
+
+        runtime
+            .create_session("Shared")
+            .expect("session create should succeed");
+
+        timeout(Duration::from_secs(1), subscriber_a.recv())
+            .await
+            .expect("subscriber A should receive an update")
+            .expect("subscriber A update should be readable");
+        timeout(Duration::from_secs(1), subscriber_b.recv())
+            .await
+            .expect("subscriber B should receive an update")
+            .expect("subscriber B update should be readable");
+
+        assert_eq!(runtime.workspace_summary().session_count, 2);
         runtime.shutdown();
     }
 

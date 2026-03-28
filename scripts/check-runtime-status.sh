@@ -20,6 +20,21 @@ esac
 
 git -C "$PROJECT_DIR" fetch origin --prune >/dev/null 2>&1 || true
 
+print_shared_runtime_status() {
+  local json protocol
+
+  echo "shared-runtime-v2"
+  if ! json="$(fetch_json "$(runtime_shared_meta_url)" 2>/dev/null)"; then
+    printf '  %-8s unreachable (%s)\n' "local" "$(runtime_shared_meta_url)"
+    echo ""
+    return 0
+  fi
+
+  protocol="$(json_field_or_empty "$json" protocolVersion 2>/dev/null || true)"
+  printf '  %-8s baseUrl=%s protocol=%s\n' "local" "$(runtime_shared_base_url)" "${protocol:-?}"
+  echo ""
+}
+
 print_api_status() {
   local label="$1"
   local url="$2"
@@ -39,6 +54,9 @@ print_api_status() {
 }
 
 for instance in "${INSTANCES[@]}"; do
+  if [[ "$instance" == "${INSTANCES[0]}" ]]; then
+    print_shared_runtime_status
+  fi
   branch="$(runtime_branch "$instance")"
   remote_sha="$(origin_sha_for "$instance" 2>/dev/null || true)"
   remote_version="$(origin_version_for "$instance" 2>/dev/null || true)"

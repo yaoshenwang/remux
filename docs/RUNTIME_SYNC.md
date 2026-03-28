@@ -12,6 +12,7 @@ The new runtime flow fixes that by:
 - deploying from dedicated detached runtime worktrees instead of the live editing tree
 - polling `origin/main` and `origin/dev`, fast-forwarding runtime worktrees, and rebuilding only from those refs
 - verifying the local and public `/api/config` responses after each sync
+- keeping a shared machine-level `remuxd` daemon alive across `main` / `dev` gateway restarts so both public URLs attach to the same runtime-v2 workspace truth
 
 ## Runtime Layout
 
@@ -19,6 +20,7 @@ The new runtime flow fixes that by:
 - `main` runtime worktree: `$HOME/.remux/runtime-worktrees/runtime-main`
 - `dev` runtime worktree: `$HOME/.remux/runtime-worktrees/runtime-dev`
 - local services:
+  - `com.remux.runtime-v2-shared`
   - `com.remux.main`
   - `com.remux.dev`
 - sync service:
@@ -61,6 +63,7 @@ scripts/sync-runtime.sh all --dry-run
 ## Operational Rules
 
 - do not make manual edits inside `$HOME/.remux/runtime-worktrees/runtime-main` or `$HOME/.remux/runtime-worktrees/runtime-dev`
+- public `main` and `dev` must stay on the shared local `remuxd` daemon instead of spawning per-version private runtimes
 - if `runtime:status` shows `dirty=true`, treat that instance as out of policy
 - if `runtime:status` shows a branch or SHA mismatch, run `runtime:sync`
 - if launchd plists still point at the root repo checkout or `.worktrees/main`, rerun `runtime:install-launchd`

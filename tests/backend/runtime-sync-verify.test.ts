@@ -135,4 +135,66 @@ printf '%s' '{"version":"0.1.48","passwordRequired":false}'
       })
     ).not.toThrow();
   });
+
+  test("does not reload a healthy shared runtime daemon", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-shared-load-test-"));
+    tempDirs.push(tempHome);
+
+    const fakeBinDir = path.join(tempHome, "bin");
+    const launchAgentsDir = path.join(tempHome, "Library", "LaunchAgents");
+    const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
+    const sharedWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const launchctlLogPath = path.join(tempHome, "launchctl.log");
+
+    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    await fs.promises.mkdir(launchAgentsDir, { recursive: true });
+    await fs.promises.mkdir(sharedWorkdir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(launchAgentsDir, "com.remux.runtime-v2-shared.plist"),
+      "<plist />\n"
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "launchctl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${launchctlLogPath}"
+if [[ "$1" == "print" ]]; then
+  cat <<'EOF'
+working directory = ${sharedWorkdir}
+EOF
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "curl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s' '{"service":"remuxd","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal"}'
+`,
+      { mode: 0o755 }
+    );
+
+    execFileSync(
+      "bash",
+      ["-c", "source scripts/runtime-lib.sh && load_shared_runtime_launchd"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+          REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot
+        },
+        stdio: "pipe"
+      }
+    );
+
+    const log = await fs.promises.readFile(launchctlLogPath, "utf8");
+    expect(log).toContain(`print gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
+    expect(log).not.toContain("bootout");
+    expect(log).not.toContain("bootstrap");
+  });
 });
