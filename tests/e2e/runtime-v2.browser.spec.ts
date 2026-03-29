@@ -4,6 +4,19 @@ import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harne
 const readTerminalText = async (page: Page): Promise<string> =>
   (await page.locator(".terminal-host .xterm-rows").textContent()) ?? "";
 
+const focusLiveTerminal = async (page: Page): Promise<void> => {
+  await page.getByTestId("terminal-host").click({ position: { x: 48, y: 48 } });
+  await expect
+    .poll(() => page.evaluate(
+      () => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false
+    ))
+    .toBe(true);
+};
+
+const scrollTerminalViewportToLine = async (page: Page, lineIndex: number): Promise<void> => {
+  await page.evaluate((targetLine) => window.__remuxTestTerminal?.scrollToLine(targetLine) ?? false, lineIndex);
+};
+
 test.describe("runtime-v2 browser behavior", () => {
   let server: StartedRuntimeV2E2EServer;
 
@@ -95,6 +108,54 @@ test.describe("runtime-v2 browser behavior", () => {
       .poll(() => server.upstream.latestTerminal()?.inputFrameTypes.at(-1) ?? "")
       .toBe("binary");
     await expect.poll(() => readTerminalText(page)).toContain("echo browser-binary");
+  });
+
+  test("sends direct keyboard input from the live xterm surface", async ({ page }) => {
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+    await focusLiveTerminal(page);
+    await page.keyboard.type("echo direct-terminal-input");
+    await page.keyboard.press("Enter");
+
+    await expect
+      .poll(() => server.upstream.latestTerminal()?.inputFrameTypes.at(-1) ?? "")
+      .toBe("binary");
+    await expect
+      .poll(() => server.upstream.allTerminalWrites().join(""))
+      .toContain("echo direct-terminal-input\r");
+    await expect.poll(() => readTerminalText(page)).toContain("echo direct-terminal-input");
+  });
+
+  test("keeps large live output scrollable and intact across the terminal buffer", async ({ page }) => {
+    const paneId = server.upstream.activePaneId();
+    const lines = Array.from(
+      { length: 240 },
+      (_, index) => `LIVE-LINE-${String(index + 1).padStart(4, "0")} integrity marker`
+    );
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+    server.upstream.pushTerminalOutput(paneId, `${lines.join("\r\n")}\r\n`);
+
+    await expect
+      .poll(() => page.evaluate(() => window.__remuxTestTerminal?.readBuffer() ?? ""))
+      .toContain(lines[0]);
+    await expect
+      .poll(() => page.evaluate(() => window.__remuxTestTerminal?.readBuffer() ?? ""))
+      .toContain(lines.at(-1) ?? "");
+    await expect.poll(() => readTerminalText(page)).toContain(lines.at(-1) ?? "");
+
+    await scrollTerminalViewportToLine(page, 0);
+    await expect.poll(() => readTerminalText(page)).toContain(lines[0]);
+
+    await scrollTerminalViewportToLine(page, 118);
+    await expect.poll(() => readTerminalText(page)).toContain(lines[120]);
+
+    await scrollTerminalViewportToLine(page, 235);
+    await expect.poll(() => readTerminalText(page)).toContain(lines.at(-1) ?? "");
+    await expect.poll(() => readTerminalText(page)).toContain(lines.at(-3) ?? "");
   });
 
   test("inspect history survives a browser reconnect with server-backed scrollback", async ({ page }) => {

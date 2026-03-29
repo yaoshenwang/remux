@@ -6,6 +6,16 @@ import { themes } from "../themes";
 import type { ToolbarHandle } from "../components/Toolbar";
 import { loadPreferredTerminalRenderer } from "../terminal-renderer";
 
+declare global {
+  interface Window {
+    __remuxTestTerminal?: {
+      focus: () => boolean;
+      readBuffer: () => string;
+      scrollToLine: (line: number) => boolean;
+    };
+  }
+}
+
 interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
   onSendRaw: (data: string) => void;
@@ -336,6 +346,31 @@ export const useTerminalRuntime = ({
     }
     requestTerminalFit({ notify: true, retryUntilVisible: true });
   }, [mobileLayout, requestTerminalFit, terminalVisible]);
+
+  useEffect(() => {
+    if (!navigator.webdriver) {
+      return;
+    }
+
+    window.__remuxTestTerminal = {
+      focus: () => {
+        focusTerminal();
+        return Boolean(terminalRef.current);
+      },
+      readBuffer: () => readTerminalBuffer(),
+      scrollToLine: (line: number) => {
+        if (!terminalRef.current) {
+          return false;
+        }
+        terminalRef.current.scrollToLine(Math.max(0, line));
+        return true;
+      }
+    };
+
+    return () => {
+      delete window.__remuxTestTerminal;
+    };
+  }, [focusTerminal, readTerminalBuffer]);
 
   return {
     copySelection,

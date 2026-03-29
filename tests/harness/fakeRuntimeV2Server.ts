@@ -60,9 +60,12 @@ export class FakeRuntimeV2Server {
   private readonly wss = new WebSocketServer({ noServer: true });
   private readonly controlSockets = new Set<WebSocket>();
   private readonly sockets = new Set<WebSocket>();
+  private readonly terminalSocketsByPane = new Map<string, Set<WebSocket>>();
+  private readonly terminalPaneBySocket = new Map<WebSocket, string>();
   private readonly terminalObservations = new Map<string, TerminalObservation>();
   private readonly paneContent = new Map<string, string>();
   private readonly paneScrollback = new Map<string, string[]>();
+  private readonly paneStreamSequence = new Map<string, number>();
   private terminalClientSequence = 0;
   private terminalStreamTransport: "text" | "binary" = "text";
   private paneSequence = 1;
@@ -219,6 +222,23 @@ export class FakeRuntimeV2Server {
     this.nextTerminalSnapshotDelayMs = Math.max(0, delayMs);
   }
 
+  pushTerminalOutput(paneId: string, chunk: string): void {
+    const next = `${this.getPaneContent(paneId)}${chunk}`;
+    this.setPaneContent(paneId, next);
+
+    const sockets = this.terminalSocketsByPane.get(paneId);
+    if (!sockets || sockets.size === 0) {
+      return;
+    }
+
+    const sequence = this.nextStreamSequence(paneId);
+    for (const socket of sockets) {
+      if (socket.readyState === socket.OPEN) {
+        this.sendTerminalStream(socket, chunk, sequence);
+      }
+    }
+  }
+
   disconnectClients(): void {
     for (const socket of this.sockets) {
       socket.close(1012, "test reconnect");
@@ -358,6 +378,10 @@ export class FakeRuntimeV2Server {
     let attachedPaneId = "pane-1";
     let terminalClientId = "terminal-client-1";
 
+    socket.on("close", () => {
+      this.detachTerminalSocket(socket);
+    });
+
     socket.on("message", (raw, isBinary) => {
       if (isBinary) {
         const chunk = this.readRawData(raw).toString("utf8");
@@ -373,7 +397,9 @@ export class FakeRuntimeV2Server {
       const message = JSON.parse(raw.toString("utf8")) as FakeRuntimeV2TerminalClientMessage;
       switch (message.type) {
         case "attach": {
+          this.detachTerminalSocket(socket);
           attachedPaneId = message.pane_id;
+          this.attachTerminalSocket(socket, attachedPaneId);
           terminalClientId = `terminal-client-${++this.terminalClientSequence}`;
           const observation = this.observeTerminal(attachedPaneId);
           observation.attachCount += 1;
@@ -527,5 +553,37 @@ export class FakeRuntimeV2Server {
       sequence,
       chunk_base64: encodeBase64(chunk),
     }));
+  }
+
+  private attachTerminalSocket(socket: WebSocket, paneId: string): void {
+    this.terminalPaneBySocket.set(socket, paneId);
+    let sockets = this.terminalSocketsByPane.get(paneId);
+    if (!sockets) {
+      sockets = new Set<WebSocket>();
+      this.terminalSocketsByPane.set(paneId, sockets);
+    }
+    sockets.add(socket);
+  }
+
+  private detachTerminalSocket(socket: WebSocket): void {
+    const paneId = this.terminalPaneBySocket.get(socket);
+    if (!paneId) {
+      return;
+    }
+    this.terminalPaneBySocket.delete(socket);
+    const sockets = this.terminalSocketsByPane.get(paneId);
+    if (!sockets) {
+      return;
+    }
+    sockets.delete(socket);
+    if (sockets.size === 0) {
+      this.terminalSocketsByPane.delete(paneId);
+    }
+  }
+
+  private nextStreamSequence(paneId: string): number {
+    const next = (this.paneStreamSequence.get(paneId) ?? 0) + 1;
+    this.paneStreamSequence.set(paneId, next);
+    return next;
   }
 }
