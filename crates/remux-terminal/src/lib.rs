@@ -73,6 +73,15 @@ impl TerminalState {
         self.precision = precision;
     }
 
+    pub fn recover_from_poison(&mut self) {
+        eprintln!(
+            "[remux-terminal] terminal mutex was poisoned; resetting terminal state at {}x{}",
+            self.size.cols, self.size.rows
+        );
+        self.parser = vt100::Parser::new(self.size.rows, self.size.cols, self.scrollback_len);
+        self.precision = InspectPrecision::Partial;
+    }
+
     #[must_use]
     pub fn snapshot(&mut self) -> TerminalSnapshot {
         let size = self.size();

@@ -6,8 +6,8 @@ use std::fs;
 use std::future::pending;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -118,6 +118,7 @@ enum RuntimeError {
 struct PaneRuntime {
     process: Arc<PortablePtyProcess>,
     terminal: Mutex<TerminalState>,
+    terminal_recovered_after_poison: AtomicBool,
     exit_code: Mutex<Option<i32>>,
     sequence: AtomicU64,
     updates: broadcast::Sender<RuntimeUpdate>,
@@ -141,6 +142,23 @@ struct WorkspaceRuntime {
 }
 
 impl PaneRuntime {
+    fn lock_terminal(&self) -> MutexGuard<'_, TerminalState> {
+        match self.terminal.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                if !self
+                    .terminal_recovered_after_poison
+                    .swap(true, Ordering::Relaxed)
+                {
+                    eprintln!("[remux-server] runtime terminal lock poisoned; resetting pane state");
+                    guard.recover_from_poison();
+                }
+                guard
+            }
+        }
+    }
+
     fn spawn(command: PtyCommand, size: TerminalSize) -> Result<Arc<Self>, PtyError> {
         let process = PortablePtyProcess::spawn(command, size)?;
         let (updates, _) = broadcast::channel(256);
@@ -148,6 +166,7 @@ impl PaneRuntime {
         let pane = Arc::new(Self {
             process,
             terminal: Mutex::new(TerminalState::new(size, 10_000)),
+            terminal_recovered_after_poison: AtomicBool::new(false),
             exit_code: Mutex::new(None),
             sequence: AtomicU64::new(0),
             updates,
@@ -169,10 +188,7 @@ impl PaneRuntime {
     fn handle_process_event(&self, event: PtyEvent) {
         match event {
             PtyEvent::Output(chunk) => {
-                self.terminal
-                    .lock()
-                    .expect("runtime terminal lock poisoned")
-                    .ingest(&chunk);
+                self.lock_terminal().ingest(&chunk);
                 let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
                 let _ = self.updates.send(RuntimeUpdate::Output { sequence, chunk });
             }
@@ -192,10 +208,7 @@ impl PaneRuntime {
 
     fn resize(&self, size: TerminalSize) -> Result<(), PtyError> {
         self.process.resize(size)?;
-        self.terminal
-            .lock()
-            .expect("runtime terminal lock poisoned")
-            .resize(size);
+        self.lock_terminal().resize(size);
         Ok(())
     }
 
@@ -208,10 +221,7 @@ impl PaneRuntime {
     }
 
     fn inspect_snapshot(&self, scope: control::InspectScope) -> control::InspectSnapshot {
-        let mut terminal = self
-            .terminal
-            .lock()
-            .expect("runtime terminal lock poisoned");
+        let mut terminal = self.lock_terminal();
         let inspect = build_pane_inspect_view(&mut terminal);
 
         control::InspectSnapshot {
@@ -227,11 +237,7 @@ impl PaneRuntime {
     }
 
     fn snapshot_message(&self) -> terminal::ServerMessage {
-        let snapshot = self
-            .terminal
-            .lock()
-            .expect("runtime terminal lock poisoned")
-            .snapshot();
+        let snapshot = self.lock_terminal().snapshot();
         terminal::ServerMessage::Snapshot {
             size: snapshot.size,
             sequence: self.sequence.load(Ordering::Relaxed),
@@ -1524,6 +1530,7 @@ async fn send_json_message<T: Serialize>(
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::time::Duration;
 
     use axum::http::StatusCode;
@@ -1666,6 +1673,33 @@ mod tests {
                 ],
             }
         );
+
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    async fn poisoned_terminal_lock_recovers_without_freezing_the_runtime() {
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let pane_id = runtime.pane_id();
+        let pane = runtime
+            .pane_runtime(&pane_id)
+            .expect("active pane runtime should exist");
+
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = pane.terminal.lock().expect("terminal lock");
+            panic!("poison terminal mutex");
+        }));
+
+        pane.handle_process_event(PtyEvent::Output(b"after-poison\r\nready".to_vec()));
+
+        let inspect = pane.inspect_snapshot(control::InspectScope::Pane {
+            pane_id: pane_id.clone(),
+        });
+
+        assert_eq!(inspect.precision, remux_core::InspectPrecision::Partial);
+        assert!(inspect.preview_text.contains("after-poison"));
+        assert!(inspect.preview_text.contains("ready"));
 
         runtime.shutdown();
     }
