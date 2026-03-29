@@ -8,6 +8,9 @@ import {
 type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
 type ModifierMode = "off" | "sticky" | "locked";
 
+const readToolbarExpandedPreference = (): boolean =>
+  globalThis.localStorage?.getItem?.("remux-toolbar-expanded") === "true";
+
 export interface ToolbarHandle {
   applyModifiersAndClear: (input: string) => string;
 }
@@ -16,6 +19,7 @@ export interface ToolbarProps {
   sendRaw: (data: string) => void;
   onFocusTerminal: () => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
+  mobileLayout: boolean;
   setStatusMessage: (msg: string) => void;
   snippets: Snippet[];
   onExecuteSnippet: (snippet: Snippet) => void;
@@ -23,7 +27,7 @@ export interface ToolbarProps {
 }
 
 export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
-  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, setStatusMessage, snippets, onExecuteSnippet, hidden }, ref) {
+  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, mobileLayout, setStatusMessage, snippets, onExecuteSnippet, hidden }, ref) {
     const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
       ctrl: "off",
       alt: "off",
@@ -32,9 +36,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
     });
     const modifierTapRef = useRef<{ key: ModifierKey; at: number } | null>(null);
 
-    const [toolbarExpanded, setToolbarExpanded] = useState(
-      localStorage.getItem("remux-toolbar-expanded") === "true"
-    );
+    const [toolbarExpanded, setToolbarExpanded] = useState(readToolbarExpandedPreference);
     const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
     const [snippetsExpanded, setSnippetsExpanded] = useState(false);
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -111,11 +113,15 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
     }));
 
     useEffect(() => {
-      localStorage.setItem("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
+      globalThis.localStorage?.setItem?.("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
     }, [toolbarExpanded]);
 
     return (
-      <section className="toolbar" onMouseUp={onFocusTerminal} style={hidden ? { display: "none" } : undefined}>
+      <section
+        className={`toolbar${mobileLayout ? "" : " desktop-hidden"}`}
+        onMouseUp={onFocusTerminal}
+        style={hidden ? { display: "none" } : undefined}
+      >
         {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
         <div className="toolbar-main">
           <button onClick={() => sendTerminal("\u001b")}>Esc</button>

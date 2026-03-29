@@ -15,10 +15,7 @@ import {
 import { createTunnelProvider } from "./tunnels/index.js";
 import { createLogger } from "./util/file-logger.js";
 import { randomToken } from "./util/random.js";
-import {
-  buildLaunchUrl,
-  type LaunchContext
-} from "./launch-context.js";
+import { buildLaunchUrl } from "./launch-context.js";
 
 const parseCliArgs = async (): Promise<CliArgs> => {
   const argv = await yargs(hideBin(process.argv))
@@ -91,10 +88,9 @@ const printConnectionInfo = (
   token: string,
   password?: string,
   isDevMode: boolean = false,
-  launchContext?: LaunchContext | null
 ): void => {
   const frontendUrl = isDevMode ? `http://localhost:5173` : localUrl;
-  const localWithToken = buildLaunchUrl(frontendUrl, token, launchContext);
+  const localWithToken = buildLaunchUrl(frontendUrl, token);
 
   console.log("\n═══════════════════════════════════════");
   console.log(`Frontend: ${frontendUrl}${isDevMode ? " (Vite dev)" : ""}`);
@@ -106,7 +102,7 @@ const printConnectionInfo = (
   }
 
   if (tunnelUrl) {
-    const tunnelWithToken = buildLaunchUrl(tunnelUrl, token, launchContext);
+    const tunnelWithToken = buildLaunchUrl(tunnelUrl, token);
     console.log(`\nTunnel URL: ${tunnelWithToken}`);
     qrcode.generate(tunnelWithToken, { small: true });
     return;
@@ -141,7 +137,6 @@ const main = async (): Promise<void> => {
     token: authService.token,
     frontendDir
   };
-  let launchContext: LaunchContext | null = null;
   const runningServer: RunningServer = createRemuxV2GatewayServer(config, {
     authService,
     logger,
@@ -172,7 +167,6 @@ const main = async (): Promise<void> => {
     authService.token,
     effectivePassword,
     isDevMode,
-    launchContext
   );
 
   let shutdownPromise: Promise<void> | null = null;

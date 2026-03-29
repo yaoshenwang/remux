@@ -5,6 +5,7 @@ export interface DeviceCapabilityDependencies {
   identityStore?: unknown;
   trustStore?: unknown;
   pairingService?: unknown;
+  pairingBootstrapEnabled?: boolean;
   pushRegistrationService?: unknown;
   trustedReconnectEnabled?: boolean;
 }
@@ -55,7 +56,10 @@ export const buildServerCapabilities = (
           && options.device.identityStore
           && options.device.trustStore,
       ),
-      supportsPairingBootstrap: Boolean(options.device?.pairingService),
+      supportsPairingBootstrap: Boolean(
+        options.device?.pairingBootstrapEnabled
+          && options.device?.pairingService,
+      ),
       supportsDeviceIdentity: Boolean(options.device?.identityStore),
     },
     semantic: {

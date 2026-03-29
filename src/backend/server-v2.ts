@@ -21,6 +21,7 @@ import {
   resolvePaneCommandForView,
   sendComposeToRuntime,
 } from "./server/compose-submit.js";
+import { registerTelemetryRoutes } from "./telemetry.js";
 import {
   extractTerminalDimensions,
   isObject,
@@ -99,16 +100,6 @@ interface DataContext {
   paneBridge?: SharedRuntimeV2PaneBridge;
   terminalSize?: RuntimeV2TerminalSize;
   viewerId: string;
-}
-
-interface FeedbackDb {
-  close(): void;
-  prepare(sql: string): {
-    all(...params: unknown[]): unknown[];
-    get(...params: unknown[]): unknown;
-    run(...params: unknown[]): unknown;
-  };
-  transaction<T>(fn: (rows: T) => void): (rows: T) => void;
 }
 
 const RUNTIME_V2_BACKEND_KIND = "runtime-v2";
@@ -534,6 +525,7 @@ class RuntimeV2ControlChannel {
 export class SharedRuntimeV2PaneBridge {
   private socket: WebSocket | null = null;
   private attachVersion = 0;
+  private activityVersion = 0;
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
   private latestSnapshotPayload: Buffer | null = null;
   private latestSnapshotSequence: number | null = null;
@@ -555,6 +547,7 @@ export class SharedRuntimeV2PaneBridge {
   ) {}
 
   async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
+    this.activityVersion += 1;
     await this.enqueue(async () => {
       this.clearIdleCloseTimer();
       this.subscribers.set(viewerId, browserSocket);
@@ -743,25 +736,24 @@ export class SharedRuntimeV2PaneBridge {
   private scheduleIdleClose(): void {
     this.clearIdleCloseTimer();
     const graceMs = resolveIdlePaneBridgeGraceMs();
+    const scheduledActivityVersion = this.activityVersion;
+    const closeIfStillIdle = async (): Promise<void> => {
+      if (this.subscribers.size > 0 || this.activityVersion !== scheduledActivityVersion) {
+        return;
+      }
+      await this.closeSocket();
+      if (this.subscribers.size > 0 || this.activityVersion !== scheduledActivityVersion) {
+        return;
+      }
+      this.onIdle(this.paneId);
+    };
     if (graceMs === 0) {
-      void this.enqueue(async () => {
-        if (this.subscribers.size > 0) {
-          return;
-        }
-        await this.closeSocket();
-        this.onIdle(this.paneId);
-      });
+      void this.enqueue(closeIfStillIdle);
       return;
     }
     this.idleCloseTimer = setTimeout(() => {
       this.idleCloseTimer = null;
-      void this.enqueue(async () => {
-        if (this.subscribers.size > 0) {
-          return;
-        }
-        await this.closeSocket();
-        this.onIdle(this.paneId);
-      });
+      void this.enqueue(closeIfStillIdle);
     }, graceMs);
   }
 
@@ -1010,7 +1002,7 @@ export const createRemuxV2GatewayServer = (
 
   const server = http.createServer(app);
   const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
-  const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
+  const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const controlClients = new Set<ControlContext>();
   const terminalClients = new Set<DataContext>();
   const paneBridges = new Map<string, SharedRuntimeV2PaneBridge>();
@@ -1019,7 +1011,11 @@ export const createRemuxV2GatewayServer = (
   let runtimeControl: RuntimeV2ControlChannel | null = null;
   let started = false;
   let stopPromise: Promise<void> | null = null;
-  let feedbackDb: FeedbackDb | null = null;
+  let telemetryHandle: { close(): void } | null = null;
+
+  server.on("connection", (socket) => {
+    socket.setNoDelay(true);
+  });
 
   const requireApiAuth: RequestHandler = (req, res, next) => {
     const authResult = authService.verify(readAuthHeaders(req));
@@ -1173,136 +1169,6 @@ export const createRemuxV2GatewayServer = (
       res.json({ ok: true, path: finalPath, filename: finalName });
     },
   );
-
-  app.post("/api/telemetry/events", (req, res) => {
-    if (!feedbackDb) {
-      res.status(503).json({ error: "telemetry unavailable" });
-      return;
-    }
-
-    const body = req.body as { events?: Array<Record<string, unknown>> };
-    const events = body?.events;
-    if (!Array.isArray(events) || events.length === 0) {
-      res.status(400).json({ error: "events array required" });
-      return;
-    }
-
-    const insert = feedbackDb.prepare(
-      `INSERT OR IGNORE INTO ui_telemetry
-        (session_id, seq, ts, event_type, page, target, detail_json, screenshot)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const insertMany = feedbackDb.transaction((rows: Array<Record<string, unknown>>) => {
-      for (const event of rows) {
-        insert.run(
-          event.session_id,
-          event.seq,
-          event.ts,
-          event.event_type,
-          event.page ?? null,
-          event.target ?? null,
-          event.detail ? JSON.stringify(event.detail) : null,
-          event.screenshot ?? null,
-        );
-      }
-    });
-    insertMany(events);
-    res.json({ accepted: events.length });
-  });
-
-  app.get("/api/telemetry/events", requireApiAuth, (req, res) => {
-    if (!feedbackDb) {
-      res.status(503).json({ error: "telemetry unavailable" });
-      return;
-    }
-
-    const sessionId = typeof req.query.session_id === "string" ? req.query.session_id : undefined;
-    const eventType = typeof req.query.event_type === "string" ? req.query.event_type : undefined;
-    const requestedLimit = Number(req.query.limit ?? 200);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 1000) : 200;
-
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-    if (sessionId) {
-      clauses.push("session_id = ?");
-      params.push(sessionId);
-    }
-    if (eventType) {
-      clauses.push("event_type = ?");
-      params.push(eventType);
-    }
-
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    params.push(limit);
-
-    const rows = feedbackDb.prepare(
-      `SELECT id, session_id, seq, ts, event_type, page, target, detail_json
-       FROM ui_telemetry ${where} ORDER BY id DESC LIMIT ?`,
-    ).all(...params);
-
-    res.json(rows);
-  });
-
-  app.get("/api/telemetry/sessions", requireApiAuth, (req, res) => {
-    if (!feedbackDb) {
-      res.status(503).json({ error: "telemetry unavailable" });
-      return;
-    }
-
-    const requestedLimit = Number(req.query.limit ?? 20);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 100) : 20;
-    const rows = feedbackDb.prepare(
-      `SELECT session_id,
-              MIN(ts) as first_event,
-              MAX(ts) as last_event,
-              COUNT(*) as event_count,
-              SUM(CASE WHEN event_type = 'error' THEN 1 ELSE 0 END) as error_count
-       FROM ui_telemetry
-       GROUP BY session_id
-       ORDER BY MAX(created_at) DESC
-       LIMIT ?`,
-    ).all(limit);
-
-    res.json(rows);
-  });
-
-  app.get("/api/telemetry/events/:id/screenshot", requireApiAuth, (req, res) => {
-    if (!feedbackDb) {
-      res.status(503).json({ error: "telemetry unavailable" });
-      return;
-    }
-
-    const eventId = Number(req.params.id);
-    if (!Number.isInteger(eventId) || eventId <= 0) {
-      res.status(400).json({ error: "invalid event id" });
-      return;
-    }
-
-    const row = feedbackDb.prepare(
-      "SELECT screenshot FROM ui_telemetry WHERE id = ?",
-    ).get(eventId) as { screenshot: string | null } | undefined;
-
-    if (!row?.screenshot) {
-      res.status(404).json({ error: "No screenshot for this event" });
-      return;
-    }
-
-    res.type("image/jpeg").send(Buffer.from(row.screenshot, "base64"));
-  });
-
-  app.use(express.static(config.frontendDir));
-  app.get(frontendFallbackRoute, (req, res) => {
-    if (isWebSocketPath(req.path) || req.path.startsWith("/api/")) {
-      res.status(404).end();
-      return;
-    }
-
-    res.sendFile(path.join(config.frontendDir, "index.html"), (error) => {
-      if (error) {
-        res.status(500).send("Frontend not built. Run npm run build:frontend");
-      }
-    });
-  });
 
   const broadcastWorkspaceState = (): void => {
     if (!runtimeControl) {
@@ -1611,6 +1477,7 @@ export const createRemuxV2GatewayServer = (
         sendComposeToRuntime({
           runtime: terminalClient.paneBridge,
           text: message.text,
+          logger,
           submitMode: "delayed",
           paneCommand: resolvePaneCommandForView(
             buildLegacyWorkspaceSnapshot(runtimeControl.currentSummary()),
@@ -1807,12 +1674,13 @@ export const createRemuxV2GatewayServer = (
         return;
       }
 
-      if (!context.paneBridge) {
+      const bridge = context.paneBridge;
+      if (!bridge) {
         return;
       }
 
       if (isBinary) {
-        context.paneBridge.write(toBuffer(rawData));
+        bridge.write(toBuffer(rawData));
         return;
       }
 
@@ -1833,7 +1701,7 @@ export const createRemuxV2GatewayServer = (
             && typeof payload.rows === "number"
           ) {
             context.terminalSize = { cols: payload.cols, rows: payload.rows };
-            await context.paneBridge.updateViewerSize(context.viewerId, context.terminalSize);
+            await bridge.updateViewerSize(context.viewerId, context.terminalSize);
             return;
           }
         } catch {
@@ -1841,7 +1709,7 @@ export const createRemuxV2GatewayServer = (
         }
       }
 
-      context.paneBridge.write(text);
+      bridge.write(text);
     });
 
     socket.on("close", () => {
@@ -1876,14 +1744,20 @@ export const createRemuxV2GatewayServer = (
         return;
       }
 
-      try {
-        const { openDb } = await import("@microsoft/snapfeed-server");
-        fs.mkdirSync(path.join(os.homedir(), ".remux"), { recursive: true });
-        const db = openDb({ path: path.join(os.homedir(), ".remux", "feedback.db") });
-        feedbackDb = db;
-      } catch (error) {
-        logger.error("snapfeed init failed:", String(error));
-      }
+      telemetryHandle = await registerTelemetryRoutes(app, requireApiAuth, logger);
+      app.use(express.static(config.frontendDir));
+      app.get(frontendFallbackRoute, (req, res) => {
+        if (isWebSocketPath(req.path) || req.path.startsWith("/api/")) {
+          res.status(404).end();
+          return;
+        }
+
+        res.sendFile(path.join(config.frontendDir, "index.html"), (error) => {
+          if (error) {
+            res.status(500).send("Frontend not built. Run npm run build:frontend");
+          }
+        });
+      });
 
       runtimeTarget = deps.upstreamBaseUrl
         ? { baseUrl: deps.upstreamBaseUrl, stop: async () => undefined }
@@ -1929,7 +1803,7 @@ export const createRemuxV2GatewayServer = (
         return;
       }
       stopPromise = (async () => {
-        feedbackDb?.close();
+        telemetryHandle?.close();
         await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
         controlWss.close();
         terminalWss.close();

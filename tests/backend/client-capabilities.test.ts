@@ -46,6 +46,7 @@ describe("buildServerCapabilities", () => {
       device: {
         identityStore: {},
         pairingService: {},
+        pairingBootstrapEnabled: true,
         trustedReconnectEnabled: false,
       },
       adapterRegistry: registry,
@@ -62,6 +63,19 @@ describe("buildServerCapabilities", () => {
       { adapterId: "generic-shell", available: true, healthy: true },
     ]);
     expect(capabilities.semantic.supportsEventStream).toBe(true);
+  });
+
+  test("keeps pairing bootstrap disabled until it is explicitly enabled", () => {
+    const capabilities = buildServerCapabilities({
+      backendCapabilities,
+      supportsUpload: true,
+      device: {
+        identityStore: {},
+        pairingService: {},
+      },
+    });
+
+    expect(capabilities.transport.supportsPairingBootstrap).toBe(false);
   });
 
   test("marks terminal snapshots available when explicitly enabled", () => {

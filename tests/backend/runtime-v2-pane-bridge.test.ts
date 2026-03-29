@@ -88,6 +88,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
   });
 
   afterEach(async () => {
+    delete process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS;
     await bridge?.close().catch(() => undefined);
     runtimeWss.clients.forEach((client) => client.terminate());
     await new Promise<void>((resolve) => runtimeWss.close(() => resolve()));
@@ -218,5 +219,34 @@ describe("SharedRuntimeV2PaneBridge", () => {
     expect(restored).toContain("109");
     expect(restored).toContain("110");
     expect(restored).toContain("120");
+  });
+
+  test("does not retire the bridge when a new subscriber arrives after idle close is queued", async () => {
+    process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS = "0";
+    const idlePaneIds: string[] = [];
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      (paneId) => {
+        idlePaneIds.push(paneId);
+      },
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+    await expect.poll(() => attachCount).toBe(1);
+
+    const unsubscribePromise = bridge.unsubscribe("viewer-1");
+    const secondBrowser = createBrowserSocket();
+    const resubscribePromise = bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
+
+    await unsubscribePromise;
+    await resubscribePromise;
+
+    expect(idlePaneIds).toEqual([]);
+    expect(attachCount).toBe(1);
+    expect(Buffer.concat(secondBrowser.sent).toString("utf8")).toContain("BASELINE-HISTORY");
   });
 });
