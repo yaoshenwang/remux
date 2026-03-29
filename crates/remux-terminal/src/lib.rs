@@ -159,6 +159,10 @@ fn build_replay_formatted(
         }
     }
 
+    for _ in 0..screen.size().0 {
+        replay.extend_from_slice(b"\r\n");
+    }
+
     replay.extend_from_slice(&screen.state_formatted());
     replay
 }
@@ -173,27 +177,13 @@ fn collect_replay_rows(screen: &vt100::Screen, width: u16) -> Vec<ReplayRow> {
     let mut history = screen.clone();
     history.set_scrollback(usize::MAX);
     let total_scrollback = history.scrollback();
-    let mut rows = Vec::with_capacity(total_scrollback + usize::from(screen.size().0));
+    let mut rows = Vec::with_capacity(total_scrollback);
 
     for offset in (1..=total_scrollback).rev() {
         history.set_scrollback(offset);
         rows.push(ReplayRow {
             text: history.rows(0, width).next().unwrap_or_default(),
             wrapped: history.row_wrapped(0),
-        });
-    }
-
-    let visible_rows = screen.rows(0, width).collect::<Vec<_>>();
-    let (cursor_row, _) = screen.cursor_position();
-    let visible_limit = visible_rows
-        .iter()
-        .rposition(|row| !row.is_empty())
-        .map_or(usize::from(cursor_row), |index| index.max(usize::from(cursor_row)));
-
-    for (index, text) in visible_rows.into_iter().enumerate().take(visible_limit + 1) {
-        rows.push(ReplayRow {
-            text,
-            wrapped: screen.row_wrapped(index as u16),
         });
     }
 
@@ -366,6 +356,22 @@ mod tests {
             replayed_screen.cell(1, 0).map(vt100::Cell::fgcolor),
             Some(vt100::Color::Idx(2)),
         );
+    }
+
+    #[test]
+    fn replay_formatted_keeps_the_visible_prompt_layout_without_duplication() {
+        let size = TerminalSize::new(80, 12);
+        let mut terminal = TerminalState::new(size, 200);
+        terminal.ingest(
+            b"header\r\nbody\r\n\x1b[10;1H> Improve documentation in @filename\r\nstatus line\r\n",
+        );
+
+        let snapshot = terminal.snapshot();
+        let mut replayed = TerminalState::new(size, 200);
+        replayed.ingest(&snapshot.replay_formatted);
+        let replay_snapshot = replayed.snapshot();
+
+        assert_eq!(replay_snapshot.visible_rows, snapshot.visible_rows);
     }
 
     #[test]
