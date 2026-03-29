@@ -97,6 +97,7 @@ const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 const DEFAULT_TERMINAL_SIZE: RuntimeV2TerminalSize = { cols: 80, rows: 24 };
 const MAX_BUFFERED_TERMINAL_BYTES = 256 * 1024;
 const TERMINAL_RESIZE_SETTLE_MS = 120;
+const DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS = 30_000;
 const TERMINAL_RESET_BYTES = Buffer.from("\u001bc", "utf8");
 
 const backendCapabilities: BackendCapabilities = {
@@ -172,6 +173,18 @@ const resolveTerminalSizePolicy = (): TerminalSizePolicy => {
     return raw;
   }
   return "largest";
+};
+
+const resolveIdlePaneBridgeGraceMs = (): number => {
+  const raw = process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS?.trim();
+  if (!raw) {
+    return DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS;
+  }
+  return Math.max(0, Math.floor(parsed));
 };
 
 const sanitizeFilename = (raw: string): string => {
@@ -498,7 +511,7 @@ class RuntimeV2ControlChannel {
   }
 }
 
-class SharedRuntimeV2PaneBridge {
+export class SharedRuntimeV2PaneBridge {
   private socket: WebSocket | null = null;
   private attachVersion = 0;
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
@@ -510,6 +523,7 @@ class SharedRuntimeV2PaneBridge {
   private bufferedChunkBytes = 0;
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly paneId: string,
@@ -521,6 +535,7 @@ class SharedRuntimeV2PaneBridge {
 
   async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
     await this.enqueue(async () => {
+      this.clearIdleCloseTimer();
       this.subscribers.set(viewerId, browserSocket);
       this.recordViewerSize(viewerId, size);
       const desiredSize = this.resolveDesiredSize();
@@ -543,8 +558,7 @@ class SharedRuntimeV2PaneBridge {
       }
 
       if (this.subscribers.size === 0) {
-        await this.closeSocket();
-        this.onIdle(this.paneId);
+        this.scheduleIdleClose();
         return;
       }
 
@@ -574,10 +588,12 @@ class SharedRuntimeV2PaneBridge {
 
   async close(): Promise<void> {
     await this.enqueue(async () => {
+      this.clearIdleCloseTimer();
       this.subscribers.clear();
       this.viewerSizes.clear();
       this.latestViewerId = null;
       await this.closeSocket();
+      this.onIdle(this.paneId);
     });
   }
 
@@ -687,12 +703,44 @@ class SharedRuntimeV2PaneBridge {
     }
   }
 
+  private clearIdleCloseTimer(): void {
+    if (this.idleCloseTimer !== null) {
+      clearTimeout(this.idleCloseTimer);
+      this.idleCloseTimer = null;
+    }
+  }
+
   private scheduleSnapshotRequest(): void {
     this.clearPendingSnapshotRequest();
     this.resizeSnapshotTimer = setTimeout(() => {
       this.resizeSnapshotTimer = null;
       this.requestSnapshot();
     }, TERMINAL_RESIZE_SETTLE_MS);
+  }
+
+  private scheduleIdleClose(): void {
+    this.clearIdleCloseTimer();
+    const graceMs = resolveIdlePaneBridgeGraceMs();
+    if (graceMs === 0) {
+      void this.enqueue(async () => {
+        if (this.subscribers.size > 0) {
+          return;
+        }
+        await this.closeSocket();
+        this.onIdle(this.paneId);
+      });
+      return;
+    }
+    this.idleCloseTimer = setTimeout(() => {
+      this.idleCloseTimer = null;
+      void this.enqueue(async () => {
+        if (this.subscribers.size > 0) {
+          return;
+        }
+        await this.closeSocket();
+        this.onIdle(this.paneId);
+      });
+    }, graceMs);
   }
 
   private async syncSize(): Promise<void> {
@@ -703,6 +751,7 @@ class SharedRuntimeV2PaneBridge {
   private async closeSocket(): Promise<void> {
     this.attachVersion += 1;
     this.clearPendingSnapshotRequest();
+    this.clearIdleCloseTimer();
     this.latestSnapshotPayload = null;
     this.bufferedChunks.length = 0;
     this.bufferedChunkBytes = 0;

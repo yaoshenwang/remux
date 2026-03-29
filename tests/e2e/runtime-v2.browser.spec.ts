@@ -296,6 +296,40 @@ test.describe("runtime-v2 browser behavior", () => {
     await expect(page.getByTestId("compose-input")).toHaveCount(0);
   });
 
+  test("mobile live terminal exposes direct vertical scrolling on the xterm viewport", async ({ page }) => {
+    const paneId = server.upstream.activePaneId();
+    const lines = Array.from(
+      { length: 240 },
+      (_, index) => `MOBILE-SCROLL-${String(index + 1).padStart(4, "0")}`
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+
+    server.upstream.pushTerminalOutput(paneId, `${lines.join("\r\n")}\r\n`);
+
+    await expect.poll(() => readTerminalText(page)).toContain(lines.at(-1) ?? "");
+    await expect
+      .poll(() => page.evaluate(() => {
+        const viewport = document.querySelector(".terminal-host .xterm-viewport") as HTMLElement | null;
+        if (!viewport) {
+          return null;
+        }
+        const style = window.getComputedStyle(viewport);
+        return {
+          overflowY: style.overflowY,
+          overscrollBehaviorY: style.overscrollBehaviorY,
+          touchAction: style.touchAction,
+        };
+      }))
+      .toEqual({
+        overflowY: "scroll",
+        overscrollBehaviorY: "contain",
+        touchAction: "pan-y",
+      });
+  });
+
   test("mobile inspect hides nonessential controls until expanded", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);

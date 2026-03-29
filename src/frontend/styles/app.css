@@ -1283,10 +1283,18 @@ button, input {
 .terminal-host .xterm {
   height: 100%;
   padding: 0.25rem;
+  touch-action: pan-y;
 }
 
 .terminal-host .xterm-screen {
   height: 100% !important;
+  touch-action: pan-y;
+}
+
+.terminal-host .xterm-viewport {
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .scrollback-main {
