@@ -53,6 +53,7 @@ import type {
 import { AppShell } from "./screens/AppShell";
 import { SessionPickerScreen } from "./screens/SessionPickerScreen";
 import { WorkspaceScreen } from "./screens/WorkspaceScreen";
+import { createTerminalInputBatcher } from "./terminal-input-batcher";
 
 declare global {
   interface Window {
@@ -68,9 +69,6 @@ declare global {
 const LazyBandwidthStatsModal = lazy(() => import("./components/BandwidthStatsModal"));
 const LazyPasswordOverlay = lazy(() => import("./components/PasswordOverlay"));
 const LazyUploadToast = lazy(() => import("./components/UploadToast"));
-const terminalTextEncoder = new TextEncoder();
-
-const encodeTerminalChunk = (chunk: string): Uint8Array => terminalTextEncoder.encode(chunk);
 
 const getTerminalChunkLength = (chunk: string | Uint8Array): number =>
   typeof chunk === "string" ? chunk.length : chunk.byteLength;
@@ -111,18 +109,17 @@ export const App = () => {
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectErrorMessage, setInspectErrorMessage] = useState("");
   const { mobileLandscape, mobileLayout, viewportHeight } = useViewportLayout();
-  const pendingTerminalTransportRef = useRef("");
-  const flushPendingTerminalTransport = useCallback((): void => {
+  const terminalInputBatcherRef = useRef(createTerminalInputBatcher((payload) => {
     const socket = terminalSocketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN || !pendingTerminalTransportRef.current) {
-      return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
     }
-
-    const chunk = pendingTerminalTransportRef.current;
-    pendingTerminalTransportRef.current = "";
-    const payload = encodeTerminalChunk(chunk);
-    debugLog("send_terminal.flush_queued", { bytes: payload.byteLength });
+    debugLog("send_terminal", { bytes: payload.byteLength });
     socket.send(payload);
+    return true;
+  }));
+  const flushPendingTerminalTransport = useCallback((): void => {
+    terminalInputBatcherRef.current.flushBufferedInput();
   }, []);
   const sendRawDirectToSocket = useCallback((data: string): void => {
     if (!data) {
@@ -131,22 +128,16 @@ export const App = () => {
 
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      pendingTerminalTransportRef.current += data;
+      terminalInputBatcherRef.current.bufferWhileDisconnected(data);
       debugLog("send_terminal.queued", {
         readyState: socket?.readyState,
         bytes: data.length,
-        queuedBytes: pendingTerminalTransportRef.current.length
+        queuedBytes: terminalInputBatcherRef.current.getBufferedLength()
       });
       return;
     }
 
-    const chunk = pendingTerminalTransportRef.current
-      ? `${pendingTerminalTransportRef.current}${data}`
-      : data;
-    pendingTerminalTransportRef.current = "";
-    const payload = encodeTerminalChunk(chunk);
-    debugLog("send_terminal", { bytes: payload.byteLength });
-    socket.send(payload);
+    terminalInputBatcherRef.current.enqueue(data);
   }, []);
   const sendRawToSocket = useCallback((data: string): void => {
     sendRawDirectToSocket(data);
@@ -255,7 +246,7 @@ export const App = () => {
   });
 
   const { authReady, serverConfig, capabilities, errorMessage, statusMessage, password,
-    needsPasswordInput, passwordErrorMessage, bandwidthStats, sendControl } = connection;
+    needsPasswordInput, passwordErrorMessage, bandwidthStats, retryRequired, sendControl } = connection;
   const { resolvedSocketOrigin } = connection;
 
   // Keep connectionActionsRef in sync so callbacks always access latest
@@ -303,7 +294,7 @@ export const App = () => {
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
-    pendingTerminalTransportRef.current = "";
+    terminalInputBatcherRef.current.clear();
     awaitingTerminalReplayRef.current = true;
     setTerminalViewState(terminalHasReplayRef.current ? "restoring" : "connecting");
     connectionActionsRef.current.setStatusMessage(
@@ -377,7 +368,7 @@ export const App = () => {
       debugLog("terminal_socket.onclose", { code: event.code, reason: event.reason });
       stopTerminalKeepAliveRef.current?.();
       stopTerminalKeepAliveRef.current = null;
-      pendingTerminalTransportRef.current = "";
+      terminalInputBatcherRef.current.clear();
       awaitingTerminalReplayRef.current = false;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
       if (event.code !== 4001) {
@@ -597,6 +588,21 @@ export const App = () => {
       attachedSessionRef.current = attachedSession;
     }
   }, [attachedSession]);
+
+  useEffect(() => {
+    const activeBellSession = attachedSession || activeSession?.name;
+    if (!activeBellSession) {
+      return;
+    }
+    setBellSessions((current) => {
+      if (!current.has(activeBellSession)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(activeBellSession);
+      return next;
+    });
+  }, [activeSession?.name, attachedSession]);
 
   useEffect(() => {
     if (inspectPaneFilter === "all") {
@@ -1124,6 +1130,7 @@ export const App = () => {
               sendRaw={sendRawToSocket}
               onFocusTerminal={focusTerminal}
               fileInputRef={fileInputRef}
+              mobileLayout={mobileLayout}
               setStatusMessage={connection.setStatusMessage}
               snippets={snippets}
               onExecuteSnippet={executeSnippet}
@@ -1203,14 +1210,17 @@ export const App = () => {
       </Suspense>
 
       <Suspense fallback={null}>
-        {needsPasswordInput && (
+        {(needsPasswordInput || retryRequired) && (
           <LazyPasswordOverlay
             onChange={(value) => {
               connection.setPassword(value);
             }}
-            onSubmit={connection.submitPassword}
+            onSubmit={needsPasswordInput ? connection.submitPassword : connection.retryConnection}
             password={password}
-            passwordErrorMessage={passwordErrorMessage}
+            passwordErrorMessage={needsPasswordInput ? passwordErrorMessage : errorMessage}
+            showPasswordField={needsPasswordInput}
+            submitLabel={needsPasswordInput ? "Connect" : "Retry"}
+            title={needsPasswordInput ? "Password Required" : "Connection Lost"}
           />
         )}
       </Suspense>

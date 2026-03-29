@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { z } from "zod";
 import type { PaneState } from "../../shared/protocol";
 import type { ServerConfig } from "../app-types";
 
@@ -6,6 +7,24 @@ interface UploadToastState {
   path: string;
   filename: string;
 }
+
+const uploadResponseSchema = z.object({
+  ok: z.literal(true),
+  path: z.string().min(1),
+  filename: z.string().min(1),
+});
+
+export const parseUploadResponse = (responseText: string): UploadToastState | null => {
+  const parsed = JSON.parse(responseText) as unknown;
+  const result = uploadResponseSchema.safeParse(parsed);
+  if (!result.success) {
+    return null;
+  }
+  return {
+    path: result.data.path,
+    filename: result.data.filename,
+  };
+};
 
 interface UseFileUploadOptions {
   activePane: PaneState | undefined;
@@ -55,10 +74,10 @@ export const useFileUpload = ({
   xhr.onload = () => {
     if (xhr.status === 200) {
       try {
-        const result = JSON.parse(xhr.responseText) as { ok: boolean; path: string; filename: string };
-        if (result.ok) {
+        const result = parseUploadResponse(xhr.responseText);
+        if (result) {
           setStatusMessage(`uploaded: ${result.filename}`);
-          setUploadToast({ path: result.path, filename: result.filename });
+          setUploadToast(result);
           return;
         }
       } catch {

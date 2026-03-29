@@ -130,7 +130,6 @@ export const AppHeader = ({
   formatBytes
 }: AppHeaderProps) => {
   const showTabs = !awaitingSessionSelection && tabs.length > 0;
-  const mobileRenameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressNextSelectRef = useRef<number | null>(null);
   const inspectPrecisionBadge = formatInspectPrecisionBadge(inspectPrecision);
   const runtimeBadge = serverConfig?.backendKind === "runtime-v2"
@@ -139,13 +138,6 @@ export const AppHeader = ({
   const mobileStatsTitle = bandwidthStats
     ? `${topStatus.label}. ${formatBytes(bandwidthStats.compressedBytesPerSec)}/s, ${bandwidthStats.savedPercent}% saved.`
     : topStatus.label;
-
-  const clearMobileRenameTimer = (): void => {
-    if (mobileRenameTimerRef.current) {
-      clearTimeout(mobileRenameTimerRef.current);
-      mobileRenameTimerRef.current = null;
-    }
-  };
 
   return (
     <header className="tab-bar">
@@ -252,20 +244,6 @@ export const AppHeader = ({
                       onSetRenamingTab(tab.index);
                       onSetRenameTabValue(tab.name);
                     } : undefined}
-                    onPointerDown={() => {
-                      if (!mobileLayout || !supportsTabRename) {
-                        return;
-                      }
-                      clearMobileRenameTimer();
-                      mobileRenameTimerRef.current = setTimeout(() => {
-                        suppressNextSelectRef.current = tab.index;
-                        onSetRenamingTab(tab.index);
-                        onSetRenameTabValue(tab.name);
-                      }, 450);
-                    }}
-                    onPointerLeave={clearMobileRenameTimer}
-                    onPointerUp={clearMobileRenameTimer}
-                    onPointerCancel={clearMobileRenameTimer}
                     onDragStart={(event) => {
                       if (mobileLayout) {
                         return;
@@ -274,7 +252,6 @@ export const AppHeader = ({
                       onSetDraggedTabKey(tab.key);
                     }}
                     onDragEnd={() => {
-                      clearMobileRenameTimer();
                       onSetDraggedTabKey(null);
                       onSetTabDropTarget(null);
                     }}

@@ -21,6 +21,7 @@ import {
   resolvePaneCommandForView,
   sendComposeToRuntime,
 } from "./server/compose-submit.js";
+import { registerTelemetryRoutes } from "./telemetry.js";
 import {
   extractTerminalDimensions,
   isObject,
@@ -524,6 +525,7 @@ class RuntimeV2ControlChannel {
 export class SharedRuntimeV2PaneBridge {
   private socket: WebSocket | null = null;
   private attachVersion = 0;
+  private activityVersion = 0;
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
   private latestSnapshotPayload: Buffer | null = null;
   private latestSnapshotSequence: number | null = null;
@@ -545,6 +547,7 @@ export class SharedRuntimeV2PaneBridge {
   ) {}
 
   async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
+    this.activityVersion += 1;
     await this.enqueue(async () => {
       this.clearIdleCloseTimer();
       this.subscribers.set(viewerId, browserSocket);
@@ -733,25 +736,24 @@ export class SharedRuntimeV2PaneBridge {
   private scheduleIdleClose(): void {
     this.clearIdleCloseTimer();
     const graceMs = resolveIdlePaneBridgeGraceMs();
+    const scheduledActivityVersion = this.activityVersion;
+    const closeIfStillIdle = async (): Promise<void> => {
+      if (this.subscribers.size > 0 || this.activityVersion !== scheduledActivityVersion) {
+        return;
+      }
+      await this.closeSocket();
+      if (this.subscribers.size > 0 || this.activityVersion !== scheduledActivityVersion) {
+        return;
+      }
+      this.onIdle(this.paneId);
+    };
     if (graceMs === 0) {
-      void this.enqueue(async () => {
-        if (this.subscribers.size > 0) {
-          return;
-        }
-        await this.closeSocket();
-        this.onIdle(this.paneId);
-      });
+      void this.enqueue(closeIfStillIdle);
       return;
     }
     this.idleCloseTimer = setTimeout(() => {
       this.idleCloseTimer = null;
-      void this.enqueue(async () => {
-        if (this.subscribers.size > 0) {
-          return;
-        }
-        await this.closeSocket();
-        this.onIdle(this.paneId);
-      });
+      void this.enqueue(closeIfStillIdle);
     }, graceMs);
   }
 
@@ -1000,7 +1002,7 @@ export const createRemuxV2GatewayServer = (
 
   const server = http.createServer(app);
   const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
-  const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
+  const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const controlClients = new Set<ControlContext>();
   const terminalClients = new Set<DataContext>();
   const paneBridges = new Map<string, SharedRuntimeV2PaneBridge>();
@@ -1009,7 +1011,11 @@ export const createRemuxV2GatewayServer = (
   let runtimeControl: RuntimeV2ControlChannel | null = null;
   let started = false;
   let stopPromise: Promise<void> | null = null;
-  let feedbackDb: { close(): void } | null = null;
+  let telemetryHandle: { close(): void } | null = null;
+
+  server.on("connection", (socket) => {
+    socket.setNoDelay(true);
+  });
 
   const requireApiAuth: RequestHandler = (req, res, next) => {
     const authResult = authService.verify(readAuthHeaders(req));
@@ -1485,6 +1491,7 @@ export const createRemuxV2GatewayServer = (
         sendComposeToRuntime({
           runtime: terminalClient.paneBridge,
           text: message.text,
+          logger,
           submitMode: "delayed",
           paneCommand: resolvePaneCommandForView(
             buildLegacyWorkspaceSnapshot(runtimeControl.currentSummary()),
@@ -1681,12 +1688,13 @@ export const createRemuxV2GatewayServer = (
         return;
       }
 
-      if (!context.paneBridge) {
+      const bridge = context.paneBridge;
+      if (!bridge) {
         return;
       }
 
       if (isBinary) {
-        context.paneBridge.write(toBuffer(rawData));
+        bridge.write(toBuffer(rawData));
         return;
       }
 
@@ -1707,7 +1715,7 @@ export const createRemuxV2GatewayServer = (
             && typeof payload.rows === "number"
           ) {
             context.terminalSize = { cols: payload.cols, rows: payload.rows };
-            await context.paneBridge.updateViewerSize(context.viewerId, context.terminalSize);
+            await bridge.updateViewerSize(context.viewerId, context.terminalSize);
             return;
           }
         } catch {
@@ -1715,7 +1723,7 @@ export const createRemuxV2GatewayServer = (
         }
       }
 
-      context.paneBridge.write(text);
+      bridge.write(text);
     });
 
     socket.on("close", () => {
@@ -1750,45 +1758,7 @@ export const createRemuxV2GatewayServer = (
         return;
       }
 
-      try {
-        const { openDb } = await import("@microsoft/snapfeed-server");
-        fs.mkdirSync(path.join(os.homedir(), ".remux"), { recursive: true });
-        const db = openDb({ path: path.join(os.homedir(), ".remux", "feedback.db") });
-        feedbackDb = db;
-
-        app.post("/api/telemetry/events", (req, res) => {
-          const body = req.body as { events?: Array<Record<string, unknown>> };
-          const events = body?.events;
-          if (!Array.isArray(events) || events.length === 0) {
-            res.status(400).json({ error: "events array required" });
-            return;
-          }
-
-          const insert = db.prepare(
-            `INSERT OR IGNORE INTO ui_telemetry
-              (session_id, seq, ts, event_type, page, target, detail_json, screenshot)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          );
-          const insertMany = db.transaction((rows: Array<Record<string, unknown>>) => {
-            for (const event of rows) {
-              insert.run(
-                event.session_id,
-                event.seq,
-                event.ts,
-                event.event_type,
-                event.page ?? null,
-                event.target ?? null,
-                event.detail ? JSON.stringify(event.detail) : null,
-                event.screenshot ?? null,
-              );
-            }
-          });
-          insertMany(events);
-          res.json({ accepted: events.length });
-        });
-      } catch (error) {
-        logger.error("snapfeed init failed:", String(error));
-      }
+      telemetryHandle = await registerTelemetryRoutes(app, logger);
 
       runtimeTarget = deps.upstreamBaseUrl
         ? { baseUrl: deps.upstreamBaseUrl, stop: async () => undefined }
@@ -1834,7 +1804,7 @@ export const createRemuxV2GatewayServer = (
         return;
       }
       stopPromise = (async () => {
-        feedbackDb?.close();
+        telemetryHandle?.close();
         await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
         controlWss.close();
         terminalWss.close();

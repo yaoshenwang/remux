@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { sendComposeToRuntime } from "../../src/backend/server/compose-submit.js";
 
 const flushComposeQueue = async (): Promise<void> => {
@@ -68,5 +68,29 @@ describe("sendComposeToRuntime", () => {
     await flushComposeQueue();
 
     expect(writes).toEqual(["first command", "\r", "second command", "\r"]);
+  });
+
+  test("logs compose queue errors before clearing the failed task", async () => {
+    const logger = {
+      error: (..._args: unknown[]) => undefined,
+    };
+    const errorSpy = vi.spyOn(logger, "error");
+
+    sendComposeToRuntime({
+      runtime: {
+        write() {
+          throw new Error("runtime unavailable");
+        },
+      },
+      text: "echo hi",
+      paneCommand: "zsh",
+      logger,
+    });
+
+    await flushComposeQueue();
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toBe("compose queue error:");
+    expect(errorSpy.mock.calls[0]?.[1]).toBeInstanceOf(Error);
   });
 });

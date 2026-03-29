@@ -10,6 +10,7 @@ export interface ComposeRuntimeWriter {
 }
 
 interface SendComposeToRuntimeOptions {
+  logger?: Pick<Console, "error">;
   runtime: ComposeRuntimeWriter;
   text: string;
   paneCommand?: string | null;
@@ -65,6 +66,7 @@ export const resolvePaneCommandForView = (
 };
 
 export const sendComposeToRuntime = ({
+  logger = console,
   runtime,
   text,
   paneCommand,
@@ -94,7 +96,9 @@ export const sendComposeToRuntime = ({
   };
 
   const previous = composeQueueByRuntime.get(runtime) ?? Promise.resolve();
-  const next = previous.then(run, run).catch(() => undefined);
+  const next = previous.then(run, run).catch((error) => {
+    logger.error("compose queue error:", error);
+  });
   composeQueueByRuntime.set(runtime, next);
   void next.finally(() => {
     if (composeQueueByRuntime.get(runtime) === next) {

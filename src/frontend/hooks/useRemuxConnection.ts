@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ControlServerMessage, BackendCapabilities, ServerCapabilities } from "../../shared/protocol";
 import type { BandwidthStats, ServerConfig } from "../app-types";
+import { MAX_RECONNECT_ATTEMPTS, resolveReconnectDelay, shouldPauseReconnect } from "../reconnect-policy";
 import { resolvePreferredWebSocketOrigin } from "../websocket-origin";
 import { attachWebSocketKeepAlive } from "../websocket-keepalive";
 import {
@@ -53,7 +54,9 @@ export interface UseRemuxConnectionResult {
   serverCapabilities: ServerCapabilities | null;
   bandwidthStats: BandwidthStats | null;
   resolvedSocketOrigin: string;
+  retryRequired: boolean;
 
+  retryConnection: () => void;
   sendControl: (payload: Record<string, unknown>) => void;
   setPassword: (value: string) => void;
   submitPassword: () => void;
@@ -88,6 +91,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
   const [serverCapabilities, setServerCapabilities] = useState<ServerCapabilities | null>(null);
   const [bandwidthStats, setBandwidthStats] = useState<BandwidthStats | null>(null);
   const [resolvedSocketOrigin, setResolvedSocketOrigin] = useState(wsOrigin);
+  const [retryRequired, setRetryRequired] = useState(false);
 
   useEffect(() => { passwordRef.current = password; }, [password]);
   useEffect(() => { serverConfigRef.current = serverConfig; }, [serverConfig]);
@@ -115,8 +119,17 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
   const scheduleReconnect = useCallback((passwordValue: string): void => {
     if (suppressReconnectRef.current) return;
     cancelReconnect();
-    const attempt = reconnectAttemptRef.current++;
-    const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+    const attempt = reconnectAttemptRef.current;
+    if (shouldPauseReconnect(attempt)) {
+      suppressReconnectRef.current = true;
+      setRetryRequired(true);
+      setErrorMessage(`connection lost after ${MAX_RECONNECT_ATTEMPTS} retries`);
+      setStatusMessage("retry required");
+      return;
+    }
+
+    reconnectAttemptRef.current += 1;
+    const delay = resolveReconnectDelay(attempt, RECONNECT_BASE_MS, RECONNECT_MAX_MS);
     debugLog("reconnect.schedule", { attempt, delay });
     setStatusMessage(`reconnecting in ${(delay / 1000).toFixed(0)}s...`);
     reconnectTimerRef.current = setTimeout(() => {
@@ -130,6 +143,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
   const openControlSocket = useCallback((passwordValue: string): void => {
     debugLog("control_socket.open.begin", { hasPassword: Boolean(passwordValue) });
     cancelReconnect();
+    setRetryRequired(false);
     if (controlSocketRef.current) {
       stopControlKeepAliveRef.current?.();
       stopControlKeepAliveRef.current = null;
@@ -193,6 +207,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
           authed = true;
           reconnectAttemptRef.current = 0;
           suppressReconnectRef.current = false;
+          setRetryRequired(false);
           setErrorMessage("");
           setPasswordErrorMessage("");
           setAuthReady(true);
@@ -309,6 +324,14 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     openControlSocket(passwordRef.current);
   }, [openControlSocket]);
 
+  const retryConnection = useCallback((): void => {
+    reconnectAttemptRef.current = 0;
+    suppressReconnectRef.current = false;
+    setRetryRequired(false);
+    setErrorMessage("");
+    openControlSocket(passwordRef.current);
+  }, [openControlSocket]);
+
   return {
     authReady,
     errorMessage,
@@ -321,6 +344,8 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     serverCapabilities,
     bandwidthStats,
     resolvedSocketOrigin,
+    retryRequired,
+    retryConnection,
     sendControl,
     setPassword,
     submitPassword,

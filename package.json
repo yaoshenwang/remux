@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.32",
+  "version": "0.2.33",
   "description": "Remote workspace cockpit for terminal-first work, powered by the unified runtime-v2 backend",
   "license": "MIT",
   "repository": {
@@ -61,6 +61,7 @@
     "test:release": "npm run test:gate && npm run test:e2e:screenshots && npm pack --dry-run",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
+    "postinstall": "npm rebuild better-sqlite3",
     "prepack": "npm run build"
   },
   "engines": {
