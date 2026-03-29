@@ -109,6 +109,8 @@ export interface ClientDiagnosticSample {
   theme?: "dark" | "light";
   viewMode?: "inspect" | "terminal";
   terminalViewState?: "idle" | "connecting" | "restoring" | "live" | "stale";
+  viewRevision?: number;
+  terminalEpoch?: number;
   frontendCols?: number;
   frontendRows?: number;
   backendCols?: number;

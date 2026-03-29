@@ -871,6 +871,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
     const snapshotFrame = JSON.parse(patchBrowser.sent[0]!.toString("utf8")) as {
       type: string;
       paneId: string;
+      epoch: number;
       viewRevision: number;
       revision: number;
       baseRevision: number | null;
@@ -881,6 +882,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
     expect(snapshotFrame).toMatchObject({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 1,
       viewRevision: 1,
       revision: 1,
       baseRevision: null,
@@ -898,6 +900,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
     await expect.poll(() => patchBrowser.sent.length).toBe(2);
     const streamFrame = JSON.parse(patchBrowser.sent[1]!.toString("utf8")) as {
       type: string;
+      epoch: number;
       viewRevision: number;
       revision: number;
       baseRevision: number | null;
@@ -907,6 +910,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
     };
     expect(streamFrame).toMatchObject({
       type: "terminal_patch",
+      epoch: 1,
       viewRevision: 1,
       revision: 2,
       baseRevision: 1,
@@ -914,6 +918,52 @@ describe("SharedRuntimeV2PaneBridge", () => {
       source: "stream",
     });
     expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("PATCH-LIVE\r\n");
+  });
+
+  test("bumps terminal_patch epoch after the upstream pane socket reconnects", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const patchBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-1",
+      patchBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+
+    await expect.poll(() => attachCount).toBe(1);
+    const firstSnapshot = JSON.parse(patchBrowser.sent[0]!.toString("utf8")) as {
+      epoch: number;
+      reset: boolean;
+      source: string;
+    };
+    expect(firstSnapshot).toMatchObject({
+      epoch: 1,
+      reset: true,
+      source: "snapshot",
+    });
+
+    runtimeSocket?.close();
+    await expect.poll(() => attachCount).toBe(2);
+    await expect.poll(() => patchBrowser.sent.length).toBeGreaterThanOrEqual(2);
+
+    const reattachedSnapshot = JSON.parse(
+      patchBrowser.sent[patchBrowser.sent.length - 1]!.toString("utf8"),
+    ) as { epoch: number; reset: boolean; source: string };
+    expect(reattachedSnapshot).toMatchObject({
+      epoch: 2,
+      reset: true,
+      source: "snapshot",
+    });
   });
 
   test("downgrades a slow patch viewer backlog to a fresh snapshot without blocking fast viewers", async () => {

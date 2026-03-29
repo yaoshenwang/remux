@@ -124,6 +124,7 @@ export type ControlClientMessage =
       session?: string;
       tabIndex?: number;
       paneId?: string;
+      viewRevision?: number;
       diagnostic: ClientDiagnosticDetails;
     }
   | { type: "send_compose"; text: string }
@@ -152,6 +153,7 @@ export type ControlServerMessage =
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
   | {
       type: "tab_history";
+      viewRevision: number;
       sessionName: string;
       tabIndex: number;
       tabName: string;

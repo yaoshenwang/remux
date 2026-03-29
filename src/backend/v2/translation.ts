@@ -132,6 +132,7 @@ export const buildLegacyTabHistory = (
   tabIndex: number,
   lines: number,
   snapshots: RuntimeV2InspectSnapshot[],
+  viewRevision = 1,
 ): Extract<ControlServerMessage, { type: "tab_history" }> => {
   const tab = findRuntimeTabByLegacyIndex(summary, sessionName, tabIndex);
   if (!tab) {
@@ -145,6 +146,7 @@ export const buildLegacyTabHistory = (
 
   return {
     type: "tab_history",
+    viewRevision,
     sessionName,
     tabIndex,
     tabName: tab.tabTitle,

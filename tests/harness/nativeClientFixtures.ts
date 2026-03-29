@@ -111,6 +111,7 @@ export const nativeUploadResponseFixture = {
 
 export const nativeTabHistoryFixture: Extract<ControlServerMessage, { type: "tab_history" }> = {
   type: "tab_history",
+  viewRevision: 1,
   sessionName: "main",
   tabIndex: 0,
   tabName: "shell",

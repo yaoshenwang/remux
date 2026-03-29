@@ -18,6 +18,8 @@ export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | n
     }
     if (
       typeof parsed.paneId !== "string"
+      || typeof parsed.epoch !== "number"
+      || !Number.isFinite(parsed.epoch)
       || typeof parsed.viewRevision !== "number"
       || !Number.isFinite(parsed.viewRevision)
       || typeof parsed.revision !== "number"
@@ -34,6 +36,7 @@ export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | n
     return {
       type: "terminal_patch",
       paneId: parsed.paneId,
+      epoch: parsed.epoch,
       viewRevision: parsed.viewRevision,
       revision: parsed.revision,
       baseRevision: parsed.baseRevision,
@@ -60,8 +63,9 @@ export const decodeTerminalPatchData = (message: TerminalPatchMessage): Uint8Arr
 export const resolveTerminalPatchDisposition = (
   message: TerminalPatchMessage,
   activeViewRevision: number | null | undefined,
+  activeEpoch: number | null | undefined,
   lastAppliedRevision: number | null | undefined,
-): { apply: boolean; reason: "ok" | "stale_view" | "revision_gap" } => {
+): { apply: boolean; reason: "ok" | "stale_view" | "epoch_gap" | "revision_gap" } => {
   if (
     typeof activeViewRevision === "number"
     && Number.isFinite(activeViewRevision)
@@ -71,6 +75,13 @@ export const resolveTerminalPatchDisposition = (
   }
   if (message.reset) {
     return { apply: true, reason: "ok" };
+  }
+  if (
+    typeof activeEpoch === "number"
+    && Number.isFinite(activeEpoch)
+    && message.epoch !== activeEpoch
+  ) {
+    return { apply: false, reason: "epoch_gap" };
   }
   if (typeof lastAppliedRevision === "number" && Number.isFinite(lastAppliedRevision)) {
     return message.baseRevision === lastAppliedRevision
@@ -85,9 +96,10 @@ export const resolveTerminalPatchDisposition = (
 export const shouldApplyTerminalPatch = (
   message: TerminalPatchMessage,
   activeViewRevision: number | null | undefined,
+  activeEpoch: number | null | undefined,
   lastAppliedRevision?: number | null,
 ): boolean =>
-  resolveTerminalPatchDisposition(message, activeViewRevision, lastAppliedRevision).apply;
+  resolveTerminalPatchDisposition(message, activeViewRevision, activeEpoch, lastAppliedRevision).apply;
 
 export const resolveTerminalBaseRevision = (
   activeViewRevision: number | null | undefined,

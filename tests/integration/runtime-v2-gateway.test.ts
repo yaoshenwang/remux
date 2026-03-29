@@ -487,6 +487,7 @@ describe("runtime v2 gateway server", () => {
       const snapshotFrame = JSON.parse(authResult.initialSnapshot) as {
         type: string;
         paneId: string;
+        epoch: number;
         viewRevision: number;
         revision: number;
         baseRevision: number | null;
@@ -497,6 +498,7 @@ describe("runtime v2 gateway server", () => {
       expect(snapshotFrame).toMatchObject({
         type: "terminal_patch",
         paneId: "pane-1",
+        epoch: 1,
         viewRevision: 1,
         revision: 1,
         baseRevision: null,
@@ -508,6 +510,7 @@ describe("runtime v2 gateway server", () => {
       upstream.pushTerminalOutput("pane-1", "PATCH_FLOW\r\n");
       const streamFrame = JSON.parse(await waitForRawMessage(terminal)) as {
         type: string;
+        epoch: number;
         viewRevision: number;
         revision: number;
         baseRevision: number | null;
@@ -517,6 +520,7 @@ describe("runtime v2 gateway server", () => {
       };
       expect(streamFrame).toMatchObject({
         type: "terminal_patch",
+        epoch: 1,
         viewRevision: 1,
         revision: 2,
         baseRevision: 1,
@@ -535,6 +539,7 @@ describe("runtime v2 gateway server", () => {
       const switchedFrame = JSON.parse(await switchedSnapshotPromise) as {
         type: string;
         paneId: string;
+        epoch: number;
         viewRevision: number;
         revision: number;
         reset: boolean;
@@ -543,6 +548,7 @@ describe("runtime v2 gateway server", () => {
       expect(switchedFrame).toMatchObject({
         type: "terminal_patch",
         paneId: "pane-2",
+        epoch: 1,
         viewRevision: 2,
         reset: true,
         source: "snapshot",
@@ -568,11 +574,13 @@ describe("runtime v2 gateway server", () => {
       terminal = authResult.terminal;
 
       const snapshotFrame = JSON.parse(authResult.initialSnapshot) as {
+        epoch: number;
         revision: number;
         reset: boolean;
         source: string;
       };
       expect(snapshotFrame).toMatchObject({
+        epoch: 1,
         revision: 1,
         reset: true,
         source: "snapshot",
@@ -580,12 +588,14 @@ describe("runtime v2 gateway server", () => {
 
       upstream.pushTerminalOutput("pane-1", "REVISION_TWO\r\n");
       const liveFrame = JSON.parse(await waitForRawMessage(terminal)) as {
+        epoch: number;
         revision: number;
         baseRevision: number | null;
         reset: boolean;
         source: string;
       };
       expect(liveFrame).toMatchObject({
+        epoch: 1,
         revision: 2,
         baseRevision: 1,
         reset: false,
@@ -612,6 +622,7 @@ describe("runtime v2 gateway server", () => {
       resumedTerminal = resumed.terminal;
 
       const resumedFrame = JSON.parse(resumed.initialSnapshot) as {
+        epoch: number;
         revision: number;
         baseRevision: number | null;
         reset: boolean;
@@ -619,6 +630,7 @@ describe("runtime v2 gateway server", () => {
         dataBase64: string;
       };
       expect(resumedFrame).toMatchObject({
+        epoch: 1,
         revision: 3,
         baseRevision: 2,
         reset: false,
@@ -672,6 +684,112 @@ describe("runtime v2 gateway server", () => {
       expect(bandwidthStats.stats.droppedBacklogFrames).toBeGreaterThanOrEqual(0);
     } finally {
       terminal?.close();
+      control.close();
+    }
+  });
+
+  test("tags tab history with the current view revision and ignores stale client diagnostics", async () => {
+    const { control } = await authControlClient(baseWsUrl);
+
+    try {
+      control.send(JSON.stringify({
+        type: "capture_tab_history",
+        session: "main",
+        tabIndex: 0,
+        lines: 64,
+      }));
+      const initialHistory = await waitForMessage<{
+        type: "tab_history";
+        viewRevision: number;
+        events: Array<{ kind: string }>;
+      }>(control, (message) => message.type === "tab_history");
+      expect(initialHistory.viewRevision).toBe(1);
+      expect(initialHistory.events.filter((event) => event.kind === "diagnostic")).toHaveLength(0);
+
+      control.send(JSON.stringify({
+        type: "split_pane",
+        paneId: "pane-1",
+        direction: "right",
+      }));
+      const nextWorkspaceState = await waitForMessage<{
+        type: "workspace_state";
+        viewRevision: number;
+      }>(control, (message) => message.type === "workspace_state" && message.viewRevision > 1);
+      expect(nextWorkspaceState.viewRevision).toBe(2);
+
+      control.send(JSON.stringify({
+        type: "report_client_diagnostic",
+        viewRevision: 1,
+        paneId: "pane-2",
+        diagnostic: {
+          issue: "width_mismatch",
+          severity: "error",
+          status: "open",
+          summary: "stale diagnostic should be ignored",
+          sample: {
+            frontendCols: 40,
+            backendCols: 120,
+          },
+          recentActions: [],
+        },
+      }));
+
+      control.send(JSON.stringify({
+        type: "capture_tab_history",
+        session: "main",
+        tabIndex: 0,
+        lines: 64,
+      }));
+      const historyWithoutStaleDiagnostic = await waitForMessage<{
+        type: "tab_history";
+        viewRevision: number;
+        events: Array<{ kind: string; diagnostic?: { summary?: string } }>;
+      }>(control, (message) => message.type === "tab_history" && message.viewRevision === 2);
+      expect(historyWithoutStaleDiagnostic.events.filter((event) => event.kind === "diagnostic")).toHaveLength(0);
+
+      control.send(JSON.stringify({
+        type: "report_client_diagnostic",
+        viewRevision: 2,
+        paneId: "pane-2",
+        diagnostic: {
+          issue: "width_mismatch",
+          severity: "error",
+          status: "open",
+          summary: "current diagnostic should be retained",
+          sample: {
+            frontendCols: 40,
+            backendCols: 120,
+          },
+          recentActions: [],
+        },
+      }));
+
+      control.send(JSON.stringify({
+        type: "capture_tab_history",
+        session: "main",
+        tabIndex: 0,
+        lines: 64,
+      }));
+      const historyWithCurrentDiagnostic = await waitForMessage<{
+        type: "tab_history";
+        viewRevision: number;
+        events: Array<{ kind: string; diagnostic?: { summary?: string } }>;
+      }>(control, (message) => (
+        message.type === "tab_history"
+        && message.viewRevision === 2
+        && message.events.some((event) => event.kind === "diagnostic")
+      ));
+      expect(historyWithCurrentDiagnostic.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "diagnostic",
+            diagnostic: expect.objectContaining({
+              summary: "current diagnostic should be retained",
+            }),
+          }),
+        ]),
+      );
+    } finally {
       control.close();
     }
   });

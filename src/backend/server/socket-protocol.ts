@@ -13,6 +13,8 @@ const clientDiagnosticSampleSchema = z.object({
   theme: z.enum(["dark", "light"]).optional(),
   viewMode: z.enum(["inspect", "terminal"]).optional(),
   terminalViewState: z.enum(["idle", "connecting", "restoring", "live", "stale"]).optional(),
+  viewRevision: z.number().int().min(1).optional(),
+  terminalEpoch: z.number().int().min(1).optional(),
   frontendCols: z.number().optional(),
   frontendRows: z.number().optional(),
   backendCols: z.number().optional(),
@@ -76,6 +78,7 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
     session: z.string().optional(),
     tabIndex: z.number().int().min(0).optional(),
     paneId: z.string().optional(),
+    viewRevision: z.number().int().min(1).optional(),
     diagnostic: clientDiagnosticDetailsSchema,
   }),
   z.object({ type: z.literal("send_compose"), text: z.string() }),
@@ -126,6 +129,7 @@ export const summarizeClientMessage = (message: ControlClientMessage): string =>
   if (message.type === "report_client_diagnostic") {
     return JSON.stringify({
       type: message.type,
+      viewRevision: message.viewRevision,
       issue: message.diagnostic.issue,
       status: message.diagnostic.status,
       actionCount: message.diagnostic.recentActions.length,

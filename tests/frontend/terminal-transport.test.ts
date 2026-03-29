@@ -12,6 +12,7 @@ describe("terminal transport helpers", () => {
     const payload = JSON.stringify({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 3,
       viewRevision: 2,
       revision: 7,
       baseRevision: 6,
@@ -24,6 +25,7 @@ describe("terminal transport helpers", () => {
     expect(message).toMatchObject({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 3,
       viewRevision: 2,
       revision: 7,
       baseRevision: 6,
@@ -40,6 +42,7 @@ describe("terminal transport helpers", () => {
     expect(parseTerminalPatchMessage(JSON.stringify({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 1,
       viewRevision: 1,
       revision: 2,
       reset: false,
@@ -51,6 +54,7 @@ describe("terminal transport helpers", () => {
     const message = parseTerminalPatchMessage(JSON.stringify({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 4,
       viewRevision: 3,
       revision: 9,
       baseRevision: 8,
@@ -60,14 +64,15 @@ describe("terminal transport helpers", () => {
     }));
 
     expect(message).not.toBeNull();
-    expect(shouldApplyTerminalPatch(message!, 3, 8)).toBe(true);
-    expect(shouldApplyTerminalPatch(message!, 2, 8)).toBe(false);
+    expect(shouldApplyTerminalPatch(message!, 3, 4, 8)).toBe(true);
+    expect(shouldApplyTerminalPatch(message!, 2, 4, 8)).toBe(false);
   });
 
   test("rejects stream patches when the base revision does not match the local terminal state", () => {
     const message = parseTerminalPatchMessage(JSON.stringify({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 4,
       viewRevision: 3,
       revision: 9,
       baseRevision: 7,
@@ -77,9 +82,29 @@ describe("terminal transport helpers", () => {
     }));
 
     expect(message).not.toBeNull();
-    expect(resolveTerminalPatchDisposition(message!, 3, 8)).toEqual({
+    expect(resolveTerminalPatchDisposition(message!, 3, 4, 8)).toEqual({
       apply: false,
       reason: "revision_gap",
+    });
+  });
+
+  test("rejects stream patches when the transport epoch no longer matches the local terminal state", () => {
+    const message = parseTerminalPatchMessage(JSON.stringify({
+      type: "terminal_patch",
+      paneId: "pane-1",
+      epoch: 7,
+      viewRevision: 3,
+      revision: 9,
+      baseRevision: 8,
+      reset: false,
+      source: "stream",
+      dataBase64: "QQ==",
+    }));
+
+    expect(message).not.toBeNull();
+    expect(resolveTerminalPatchDisposition(message!, 3, 6, 8)).toEqual({
+      apply: false,
+      reason: "epoch_gap",
     });
   });
 
@@ -87,6 +112,7 @@ describe("terminal transport helpers", () => {
     const message = parseTerminalPatchMessage(JSON.stringify({
       type: "terminal_patch",
       paneId: "pane-1",
+      epoch: 5,
       viewRevision: 4,
       revision: 12,
       baseRevision: null,
@@ -96,7 +122,7 @@ describe("terminal transport helpers", () => {
     }));
 
     expect(message).not.toBeNull();
-    expect(resolveTerminalPatchDisposition(message!, 4, null)).toEqual({
+    expect(resolveTerminalPatchDisposition(message!, 4, null, null)).toEqual({
       apply: true,
       reason: "ok",
     });

@@ -20,6 +20,7 @@ export type TerminalTransportMode = "raw" | "patch";
 export interface TerminalPatchMessage {
   type: "terminal_patch";
   paneId: string;
+  epoch: number;
   viewRevision: number;
   revision: number;
   baseRevision: number | null;

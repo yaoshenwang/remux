@@ -215,4 +215,92 @@ describe("terminal write buffer", () => {
     frameCallbacks.shift()?.();
     expect(writes).toEqual(["abcde", "fghij"]);
   });
+
+  test("writes an atomic chunk in one pass even when it exceeds the frame budget", () => {
+    const writes: string[] = [];
+    const completions: Array<() => void> = [];
+    const frameCallbacks: Array<() => void> = [];
+    const requestFrame = vi.fn((cb: () => void) => {
+      frameCallbacks.push(cb);
+      return frameCallbacks.length;
+    });
+    const buffer = createTerminalWriteBuffer(
+      (chunk, done) => {
+        writes.push(chunk as string);
+        completions.push(done);
+      },
+      requestFrame,
+      vi.fn(),
+      { maxBytesPerFrame: 4 },
+    );
+
+    buffer.enqueue("SNAPSHOT-CONTENT", { atomic: true });
+
+    frameCallbacks.shift()?.();
+    expect(writes).toEqual(["SNAPSHOT-CONTENT"]);
+    expect(frameCallbacks).toHaveLength(0);
+
+    completions.shift()?.();
+  });
+
+  test("keeps later live chunks behind an in-flight atomic snapshot", () => {
+    const writes: string[] = [];
+    const completions: Array<() => void> = [];
+    const frameCallbacks: Array<() => void> = [];
+    const requestFrame = vi.fn((cb: () => void) => {
+      frameCallbacks.push(cb);
+      return frameCallbacks.length;
+    });
+    const buffer = createTerminalWriteBuffer(
+      (chunk, done) => {
+        writes.push(chunk as string);
+        completions.push(done);
+      },
+      requestFrame,
+      vi.fn(),
+      { maxBytesPerFrame: 4 },
+    );
+
+    buffer.enqueue("FULL-SNAPSHOT", { atomic: true });
+    buffer.enqueue("tail");
+
+    frameCallbacks.shift()?.();
+    expect(writes).toEqual(["FULL-SNAPSHOT"]);
+    expect(frameCallbacks).toHaveLength(0);
+
+    completions.shift()?.();
+    expect(frameCallbacks).toHaveLength(1);
+
+    frameCallbacks.shift()?.();
+    expect(writes).toEqual(["FULL-SNAPSHOT", "tail"]);
+  });
+
+  test("runs beforeWrite immediately before the atomic snapshot write starts", () => {
+    const events: string[] = [];
+    const frameCallbacks: Array<() => void> = [];
+    const requestFrame = vi.fn((cb: () => void) => {
+      frameCallbacks.push(cb);
+      return frameCallbacks.length;
+    });
+    const buffer = createTerminalWriteBuffer(
+      (chunk, done) => {
+        events.push(`write:${chunk as string}`);
+        done();
+      },
+      requestFrame,
+      vi.fn(),
+      { maxBytesPerFrame: 4 },
+    );
+
+    buffer.enqueue("SNAPSHOT", {
+      atomic: true,
+      beforeWrite: () => {
+        events.push("before");
+      },
+    });
+
+    expect(events).toEqual([]);
+    frameCallbacks.shift()?.();
+    expect(events).toEqual(["before", "write:SNAPSHOT"]);
+  });
 });

@@ -236,6 +236,7 @@ Server → { "type": "auth_error", "reason": "invalid password" }
 ```json
 {
   "type": "tab_history",
+  "viewRevision": 1,
   "sessionName": "main",
   "tabIndex": 0,
   "tabName": "shell",

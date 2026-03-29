@@ -8,7 +8,8 @@ import { loadPreferredTerminalRenderer } from "../terminal-renderer";
 import {
   createTerminalWriteBuffer,
   type TerminalWriteBuffer,
-  type TerminalWriteChunk
+  type TerminalWriteChunk,
+  type TerminalWriteOptions,
 } from "../terminal-write-buffer";
 import { LocalEchoPrediction } from "../local-echo-prediction";
 
@@ -63,7 +64,11 @@ interface UseTerminalRuntimeResult {
   serializeAddonRef: MutableRefObject<SerializeAddon | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
-  writeToTerminal: (chunk: TerminalWriteChunk, onComplete?: () => void) => void;
+  writeToTerminal: (
+    chunk: TerminalWriteChunk,
+    onComplete?: () => void,
+    options?: Omit<TerminalWriteOptions, "onComplete">,
+  ) => void;
 }
 
 const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLayout ? 12 : 14;
@@ -278,7 +283,11 @@ export const useTerminalRuntime = ({
     }
   }, [onBeforeReset, theme]);
 
-  const writeToTerminal = useCallback((chunk: TerminalWriteChunk, onComplete?: () => void): void => {
+  const writeToTerminal = useCallback((
+    chunk: TerminalWriteChunk,
+    onComplete?: () => void,
+    options: Omit<TerminalWriteOptions, "onComplete"> = {},
+  ): void => {
     const echo = localEchoRef.current;
     const complete = (): void => {
       onComplete?.();
@@ -287,7 +296,10 @@ export const useTerminalRuntime = ({
       echo.detectAlternateScreen(chunk);
       const reconciled = echo.reconcileServerOutput(chunk);
       if (reconciled) {
-        terminalWriteBufferRef.current?.enqueue(reconciled, complete);
+        terminalWriteBufferRef.current?.enqueue(reconciled, {
+          ...options,
+          onComplete: complete,
+        });
         return;
       }
       complete();
@@ -299,7 +311,10 @@ export const useTerminalRuntime = ({
       // boundaries correctly across write() calls).
       if (echo.pending.length === 0) {
         echo.detectAlternateScreenBinary(chunk);
-        terminalWriteBufferRef.current?.enqueue(chunk, complete);
+        terminalWriteBufferRef.current?.enqueue(chunk, {
+          ...options,
+          onComplete: complete,
+        });
         return;
       }
       // Slow path: predictions pending — must decode to string for
@@ -308,13 +323,19 @@ export const useTerminalRuntime = ({
       echo.detectAlternateScreen(text);
       const reconciled = echo.reconcileServerOutput(text);
       if (reconciled) {
-        terminalWriteBufferRef.current?.enqueue(reconciled, complete);
+        terminalWriteBufferRef.current?.enqueue(reconciled, {
+          ...options,
+          onComplete: complete,
+        });
         return;
       }
       complete();
       return;
     }
-    terminalWriteBufferRef.current?.enqueue(chunk, complete);
+    terminalWriteBufferRef.current?.enqueue(chunk, {
+      ...options,
+      onComplete: complete,
+    });
   }, []);
 
   const copySelection = useCallback(async (): Promise<void> => {

@@ -241,6 +241,7 @@ describe("runtime v2 translation", () => {
 
     expect(payload).toMatchObject({
       type: "tab_history",
+      viewRevision: 1,
       sessionName: "main",
       tabIndex: 0,
       tabName: "Shell",

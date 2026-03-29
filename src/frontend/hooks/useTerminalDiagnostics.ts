@@ -51,10 +51,12 @@ interface UseTerminalDiagnosticsOptions {
     paneId?: string;
     diagnostic: ClientDiagnosticDetails;
   }) => void;
+  terminalEpoch: number | null;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
   terminalViewState: "idle" | "connecting" | "restoring" | "live" | "stale";
   theme: "dark" | "light";
+  viewRevision: number | null;
   viewMode: "inspect" | "terminal";
 }
 
@@ -136,10 +138,12 @@ export const useTerminalDiagnostics = ({
   readTerminalBuffer,
   readTerminalGeometry,
   reportDiagnostic,
+  terminalEpoch,
   terminalContainerRef,
   terminalRef,
   terminalViewState,
   theme,
+  viewRevision,
   viewMode,
 }: UseTerminalDiagnosticsOptions): UseTerminalDiagnosticsResult => {
   const persistedState = useMemo(readPersistedState, []);
@@ -200,6 +204,8 @@ export const useTerminalDiagnostics = ({
       theme,
       viewMode,
       terminalViewState,
+      viewRevision: viewRevision ?? undefined,
+      terminalEpoch: terminalEpoch ?? undefined,
       appRect: appShell ? appShell.getBoundingClientRect().toJSON() : buildZeroRect(),
       hostRect: container ? container.getBoundingClientRect().toJSON() : buildZeroRect(),
       screenRect: screen ? screen.getBoundingClientRect().toJSON() : null,
@@ -222,7 +228,9 @@ export const useTerminalDiagnostics = ({
     terminalContainerRef,
     terminalRef,
     terminalViewState,
+    terminalEpoch,
     theme,
+    viewRevision,
     viewMode,
   ]);
 

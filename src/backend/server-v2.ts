@@ -642,6 +642,7 @@ export class SharedRuntimeV2PaneBridge {
   private latestSnapshotSequence: number | null = null;
   private latestSnapshotRevision: number | null = null;
   private latestTransportRevision = 0;
+  private latestTransportEpoch = 0;
   private awaitingFreshSnapshotReplay = false;
   private snapshotRequestPending = false;
   private snapshotFanoutMode: "all" | "degraded_only" | "cache_only" = "all";
@@ -878,6 +879,7 @@ export class SharedRuntimeV2PaneBridge {
   private buildTerminalPatchFrame(
     payload: Buffer,
     options: {
+      epoch: number;
       revision: number;
       baseRevision: number | null;
       reset: boolean;
@@ -889,6 +891,7 @@ export class SharedRuntimeV2PaneBridge {
     const frame: TerminalPatchMessage = {
       type: "terminal_patch",
       paneId: this.paneId,
+      epoch: options.epoch,
       viewRevision: options.viewRevision,
       revision: options.revision,
       baseRevision: options.baseRevision,
@@ -906,6 +909,7 @@ export class SharedRuntimeV2PaneBridge {
     }
     const payload = subscriber.transportMode === "patch"
       ? this.buildTerminalPatchFrame(this.latestSnapshotContent, {
+          epoch: this.latestTransportEpoch,
           revision: this.latestSnapshotRevision,
           baseRevision: null,
           reset: true,
@@ -926,6 +930,7 @@ export class SharedRuntimeV2PaneBridge {
   private sendChunkToSubscriber(subscriber: PaneBridgeSubscriber, chunk: BufferedTerminalChunk): void {
     const payload = subscriber.transportMode === "patch"
       ? this.buildTerminalPatchFrame(chunk.payload, {
+          epoch: this.latestTransportEpoch,
           revision: chunk.revision,
           baseRevision: chunk.revision > 1 ? chunk.revision - 1 : null,
           reset: false,
@@ -968,6 +973,7 @@ export class SharedRuntimeV2PaneBridge {
     const revision = this.bufferedChunks.at(-1)?.revision ?? this.latestSnapshotRevision;
     const payload = subscriber.transportMode === "patch"
       ? this.buildTerminalPatchFrame(currentContent, {
+          epoch: this.latestTransportEpoch,
           revision,
           baseRevision: null,
           reset: true,
@@ -1167,6 +1173,7 @@ export class SharedRuntimeV2PaneBridge {
       return;
     }
 
+    this.latestTransportEpoch += 1;
     this.socket = socket;
     socket.on("message", (raw, isBinary) => {
       this.handleMessage(version, raw, isBinary);
@@ -2116,6 +2123,7 @@ export const createRemuxV2GatewayServer = (
       return;
     }
     const summary = runtimeControl.currentSummary();
+    const requestedViewRevision = resolveViewStateForContext(summary, context).viewRevision;
     const workspace = buildRuntimeSnapshot(summary);
     tabHistoryStore.recordSnapshot(workspace);
     const tab = findRuntimeTabByLegacyIndex(summary, sessionName, tabIndex);
@@ -2166,6 +2174,7 @@ export const createRemuxV2GatewayServer = (
 
     sendJson(context.socket, {
       type: "tab_history",
+      viewRevision: requestedViewRevision,
       ...history,
     });
   };
@@ -2288,6 +2297,19 @@ export const createRemuxV2GatewayServer = (
       }
       case "report_client_diagnostic": {
         const summary = runtimeControl.currentSummary();
+        const currentViewRevision = resolveViewStateForContext(summary, context).viewRevision;
+        if (
+          typeof message.viewRevision === "number"
+          && message.viewRevision !== currentViewRevision
+        ) {
+          logger.log("[runtime-v2] dropping stale client diagnostic for an old view revision", {
+            clientId: context.clientId,
+            requestedViewRevision: message.viewRevision,
+            currentViewRevision,
+            issue: message.diagnostic.issue,
+          });
+          return;
+        }
         const resolvedView = resolveClientViewForContext(summary, context);
         const sessionName = message.session ?? resolvedView.sessionName;
         const tabIndex = message.tabIndex ?? resolvedView.tabIndex;

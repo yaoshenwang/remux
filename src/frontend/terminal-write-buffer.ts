@@ -1,8 +1,13 @@
 export type TerminalWriteChunk = string | Uint8Array;
+export interface TerminalWriteOptions {
+  atomic?: boolean;
+  beforeWrite?: () => void;
+  onComplete?: () => void;
+}
 
 export interface TerminalWriteBuffer {
   clear(): void;
-  enqueue(chunk: TerminalWriteChunk, onComplete?: () => void): void;
+  enqueue(chunk: TerminalWriteChunk, options?: TerminalWriteOptions | (() => void)): void;
   flush(): void;
 }
 
@@ -15,7 +20,10 @@ export interface TerminalWriteBufferOptions {
 type TerminalWriteCallback = () => void;
 type TerminalWriteSink = (chunk: TerminalWriteChunk, onWritten: TerminalWriteCallback) => void;
 type PendingWrite = {
+  atomic: boolean;
   chunk: TerminalWriteChunk;
+  beforeWrite?: () => void;
+  beforeWritePending: boolean;
   onComplete?: () => void;
   offset: number;
 };
@@ -43,17 +51,31 @@ const mergePendingWrites = (
   current: PendingWrite | undefined,
   next: PendingWrite,
 ): PendingWrite | null => {
-  if (!current || current.onComplete || next.onComplete || current.offset !== 0 || next.offset !== 0) {
+  if (
+    !current
+    || current.atomic
+    || next.atomic
+    || current.beforeWrite
+    || next.beforeWrite
+    || current.onComplete
+    || next.onComplete
+    || current.offset !== 0
+    || next.offset !== 0
+  ) {
     return null;
   }
   if (typeof current.chunk === "string" && typeof next.chunk === "string") {
     return {
+      atomic: false,
+      beforeWritePending: false,
       chunk: current.chunk + next.chunk,
       offset: 0,
     };
   }
   if (current.chunk instanceof Uint8Array && next.chunk instanceof Uint8Array) {
     return {
+      atomic: false,
+      beforeWritePending: false,
       chunk: concatBinaryChunks([current.chunk, next.chunk]),
       offset: 0,
     };
@@ -66,6 +88,15 @@ const getRemainingBytes = (write: PendingWrite): number => {
     return getChunkByteLength(write.chunk.slice(write.offset));
   }
   return write.chunk.byteLength - write.offset;
+};
+
+const normalizeWriteOptions = (
+  options?: TerminalWriteOptions | (() => void),
+): TerminalWriteOptions => {
+  if (typeof options === "function") {
+    return { onComplete: options };
+  }
+  return options ?? {};
 };
 
 const takeSlice = (
@@ -128,8 +159,15 @@ export const createTerminalWriteBuffer = (
     }
 
     const nextWrite = pending[0]!;
-    const slice = takeSlice(nextWrite, frameBudgetRemaining);
+    const slice = takeSlice(
+      nextWrite,
+      nextWrite.atomic ? getRemainingBytes(nextWrite) : frameBudgetRemaining,
+    );
     frameBudgetRemaining = Math.max(0, frameBudgetRemaining - slice.bytes);
+    if (nextWrite.beforeWritePending) {
+      nextWrite.beforeWritePending = false;
+      nextWrite.beforeWrite?.();
+    }
     writeInFlight = true;
     write(slice.chunk, () => {
       writeInFlight = false;
@@ -184,14 +222,18 @@ export const createTerminalWriteBuffer = (
         frameId = null;
       }
     },
-    enqueue(chunk: TerminalWriteChunk, onComplete?: () => void): void {
+    enqueue(chunk: TerminalWriteChunk, options?: TerminalWriteOptions | (() => void)): void {
       if (isEmptyChunk(chunk)) {
-        onComplete?.();
+        normalizeWriteOptions(options).onComplete?.();
         return;
       }
+      const normalizedOptions = normalizeWriteOptions(options);
       const nextWrite: PendingWrite = {
+        atomic: normalizedOptions.atomic === true,
         chunk,
-        onComplete,
+        beforeWrite: normalizedOptions.beforeWrite,
+        beforeWritePending: Boolean(normalizedOptions.beforeWrite),
+        onComplete: normalizedOptions.onComplete,
         offset: 0,
       };
       const previous = pending[pending.length - 1];

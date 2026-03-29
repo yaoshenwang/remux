@@ -98,6 +98,7 @@ export const App = () => {
   const terminalReconnectAttemptRef = useRef(0);
   const terminalReviveContextKeyRef = useRef<string | null>(null);
   const terminalViewRevisionRef = useRef<number | null>(null);
+  const terminalPatchEpochRef = useRef<number | null>(null);
   const terminalPatchRevisionRef = useRef<number | null>(null);
   const lastOpenedTerminalViewRevisionRef = useRef<number | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
@@ -225,6 +226,7 @@ export const App = () => {
           awaitingTerminalReplayRef.current = false;
           terminalHasReplayRef.current = false;
           terminalViewRevisionRef.current = null;
+          terminalPatchEpochRef.current = null;
           terminalPatchRevisionRef.current = null;
           lastOpenedTerminalViewRevisionRef.current = null;
           setTerminalViewState("idle");
@@ -276,6 +278,7 @@ export const App = () => {
           const pending = inspectRequestRef.current;
           if (!pending) return;
           if (pending.sessionName !== message.sessionName || pending.tabIndex !== message.tabIndex) return;
+          if (message.viewRevision !== terminalViewRevisionRef.current) return;
           if (inspectRequestTimerRef.current) {
             clearTimeout(inspectRequestTimerRef.current);
             inspectRequestTimerRef.current = null;
@@ -301,6 +304,7 @@ export const App = () => {
       }
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
+      terminalPatchEpochRef.current = null;
       terminalPatchRevisionRef.current = null;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
     },
@@ -425,7 +429,11 @@ export const App = () => {
       flushPendingTerminalTransport();
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
-    const applyTerminalChunk = (chunk: string | Uint8Array, onComplete?: () => void): void => {
+    const applyTerminalChunk = (
+      chunk: string | Uint8Array,
+      onComplete?: () => void,
+      options?: { atomic?: boolean; beforeWrite?: () => void },
+    ): void => {
       if (awaitingTerminalReplayRef.current && getTerminalChunkLength(chunk) > 0) {
         awaitingTerminalReplayRef.current = false;
         terminalHasReplayRef.current = true;
@@ -435,7 +443,7 @@ export const App = () => {
           attachedSessionRef.current ? `attached: ${attachedSessionRef.current}` : "terminal connected"
         );
       }
-      writeToTerminal(chunk, onComplete);
+      writeToTerminal(chunk, onComplete, options);
       if (terminalChunkHasBell(chunk) && attachedSessionRef.current) {
         setBellSessions((current) => new Set(current).add(attachedSessionRef.current));
       }
@@ -455,22 +463,28 @@ export const App = () => {
           const disposition = resolveTerminalPatchDisposition(
             patchMessage,
             terminalViewRevisionRef.current,
+            terminalPatchEpochRef.current,
             terminalPatchRevisionRef.current,
           );
           if (!disposition.apply) {
             const debugEvent = disposition.reason === "stale_view"
               ? "terminal_patch.drop.stale"
+              : disposition.reason === "epoch_gap"
+                ? "terminal_patch.drop.epoch"
               : "terminal_patch.drop.gap";
             debugLog(debugEvent, {
               paneId: patchMessage.paneId,
+              epoch: patchMessage.epoch,
               revision: patchMessage.revision,
               patchViewRevision: patchMessage.viewRevision,
               activeViewRevision: terminalViewRevisionRef.current,
+              localEpoch: terminalPatchEpochRef.current,
               patchBaseRevision: patchMessage.baseRevision,
               localRevision: terminalPatchRevisionRef.current,
             });
-            if (disposition.reason === "revision_gap") {
+            if (disposition.reason === "revision_gap" || disposition.reason === "epoch_gap") {
               const auth = terminalAuthRef.current;
+              terminalPatchEpochRef.current = null;
               terminalPatchRevisionRef.current = null;
               localEchoRef.current?.reset();
               resetTerminalBufferRef.current();
@@ -482,30 +496,37 @@ export const App = () => {
             }
             return;
           }
-          if (patchMessage.reset) {
-            localEchoRef.current?.reset();
-            resetTerminalBufferRef.current();
-            terminalPatchRevisionRef.current = null;
-          }
           applyTerminalChunk(decodeTerminalPatchData(patchMessage), () => {
             if (terminalViewRevisionRef.current !== patchMessage.viewRevision) {
               return;
             }
+            terminalPatchEpochRef.current = patchMessage.epoch;
             terminalPatchRevisionRef.current = patchMessage.revision;
+          }, {
+            beforeWrite: patchMessage.reset
+              ? () => {
+                  localEchoRef.current?.reset();
+                  resetTerminalBufferRef.current();
+                }
+              : undefined,
+            atomic: patchMessage.reset || patchMessage.source === "snapshot",
           });
           return;
         }
+        terminalPatchEpochRef.current = null;
         terminalPatchRevisionRef.current = null;
         applyTerminalChunk(event.data);
         return;
       }
       if (event.data instanceof ArrayBuffer) {
+        terminalPatchEpochRef.current = null;
         terminalPatchRevisionRef.current = null;
         applyTerminalChunk(new Uint8Array(event.data));
         return;
       }
       if (event.data instanceof Blob) {
         void event.data.arrayBuffer().then((buffer) => {
+          terminalPatchEpochRef.current = null;
           terminalPatchRevisionRef.current = null;
           applyTerminalChunk(new Uint8Array(buffer));
         });
@@ -573,6 +594,7 @@ export const App = () => {
     resetTerminalBufferRef.current();
     terminalHasReplayRef.current = false;
     awaitingTerminalReplayRef.current = false;
+    terminalPatchEpochRef.current = null;
     terminalPatchRevisionRef.current = null;
     terminalReconnectAttemptRef.current = 0;
     recordDiagnosticActionRef.current(
@@ -664,6 +686,7 @@ export const App = () => {
     }
     socket.send(JSON.stringify({
       type: "report_client_diagnostic",
+      viewRevision: terminalViewRevisionRef.current ?? undefined,
       ...payload,
     }));
   }, [connection.controlSocketRef]);
@@ -682,8 +705,10 @@ export const App = () => {
     readTerminalBuffer,
     readTerminalGeometry,
     reportDiagnostic,
+    terminalEpoch: terminalPatchEpochRef.current,
     terminalContainerRef,
     terminalRef,
+    viewRevision: terminalViewRevisionRef.current,
     terminalViewState,
     theme,
     viewMode,

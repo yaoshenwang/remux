@@ -26,6 +26,8 @@ export interface TerminalDiagnosticSample {
   theme: "dark" | "light";
   viewMode: "inspect" | "terminal";
   terminalViewState: "idle" | "connecting" | "restoring" | "live" | "stale";
+  viewRevision?: number;
+  terminalEpoch?: number;
   appRect: TerminalDiagnosticRect;
   hostRect: TerminalDiagnosticRect;
   screenRect: TerminalDiagnosticRect | null;
@@ -179,6 +181,8 @@ export const flattenTerminalDiagnosticSample = (
   theme: sample.theme,
   viewMode: sample.viewMode,
   terminalViewState: sample.terminalViewState,
+  viewRevision: sample.viewRevision,
+  terminalEpoch: sample.terminalEpoch,
   frontendCols: sample.frontendGeometry?.cols,
   frontendRows: sample.frontendGeometry?.rows,
   backendCols: sample.backendGeometry?.cols,
