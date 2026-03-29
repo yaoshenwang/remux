@@ -564,6 +564,7 @@ export class SharedRuntimeV2PaneBridge {
   private awaitingFreshSnapshotReplay = false;
   private snapshotRequestPending = false;
   private latestViewerId: string | null = null;
+  private resizeOwnerViewerId: string | null = null;
   private readonly subscribers = new Map<string, WebSocket>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
   private readonly bufferedChunks: Array<{ payload: Buffer; sequence: number | null }> = [];
@@ -601,10 +602,11 @@ export class SharedRuntimeV2PaneBridge {
       const hadOpenSocket = this.socket?.readyState === WebSocket.OPEN;
       this.subscribers.set(viewerId, browserSocket);
       this.recordViewerSize(viewerId, size);
-      const desiredSize = this.resolveDesiredSize();
       if (wasEmpty) {
         this.awaitingFreshSnapshotReplay = true;
+        this.resizeOwnerViewerId = viewerId;
       }
+      const desiredSize = this.resolveDesiredSize();
       await this.ensureAttached(desiredSize);
       if (wasEmpty && hadOpenSocket) {
         this.requestSnapshot();
@@ -628,6 +630,9 @@ export class SharedRuntimeV2PaneBridge {
       if (this.latestViewerId === viewerId) {
         this.latestViewerId = this.viewerSizes.keys().next().value ?? null;
       }
+      if (this.resizeOwnerViewerId === viewerId) {
+        this.resizeOwnerViewerId = null;
+      }
 
       if (this.subscribers.size === 0) {
         this.awaitingFreshSnapshotReplay = true;
@@ -646,11 +651,17 @@ export class SharedRuntimeV2PaneBridge {
         return;
       }
       this.recordViewerSize(viewerId, size);
+      if (this.resizeOwnerViewerId !== viewerId) {
+        return;
+      }
       await this.syncSize();
     });
   }
 
-  write(input: string | Uint8Array): void {
+  write(input: string | Uint8Array, viewerId?: string): void {
+    if (viewerId) {
+      this.claimResizeOwnership(viewerId);
+    }
     if (!this.socket || this.socket.readyState !== this.socket.OPEN) {
       return;
     }
@@ -687,9 +698,36 @@ export class SharedRuntimeV2PaneBridge {
     this.latestViewerId = viewerId;
   }
 
+  private claimResizeOwnership(viewerId: string): void {
+    if (!this.subscribers.has(viewerId) || this.resizeOwnerViewerId === viewerId) {
+      return;
+    }
+    this.resizeOwnerViewerId = viewerId;
+    const desiredSize = this.resolveDesiredSize();
+    if (!areTerminalSizesEqual(this.currentSize, desiredSize)) {
+      this.resize(desiredSize);
+      this.scheduleSnapshotRequest();
+    }
+  }
+
   private resolveDesiredSize(): RuntimeV2TerminalSize {
     if (this.viewerSizes.size === 0) {
       return DEFAULT_TERMINAL_SIZE;
+    }
+
+    if (this.resizeOwnerViewerId) {
+      const ownerSize = this.viewerSizes.get(this.resizeOwnerViewerId);
+      if (ownerSize) {
+        return ownerSize;
+      }
+    }
+
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      return this.currentSize;
+    }
+
+    if (!areTerminalSizesEqual(this.currentSize, DEFAULT_TERMINAL_SIZE)) {
+      return this.currentSize;
     }
 
     if (this.sizePolicy === "latest" && this.latestViewerId) {
@@ -869,6 +907,7 @@ export class SharedRuntimeV2PaneBridge {
     this.latestSnapshotSequence = null;
     this.bufferedChunks.length = 0;
     this.bufferedChunkBytes = 0;
+    this.resizeOwnerViewerId = null;
     this.currentSize = DEFAULT_TERMINAL_SIZE;
     if (!this.socket) {
       return;
@@ -1949,7 +1988,7 @@ export const createRemuxV2GatewayServer = (
       }
 
       if (isBinary) {
-        bridge.write(toBuffer(rawData));
+        bridge.write(toBuffer(rawData), context.viewerId);
         return;
       }
 
@@ -1978,7 +2017,7 @@ export const createRemuxV2GatewayServer = (
         }
       }
 
-      bridge.write(text);
+      bridge.write(text, context.viewerId);
     });
 
     socket.on("close", () => {
