@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use remux_core::{InspectPrecision, TerminalSize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,8 @@ pub struct TerminalState {
     parser: vt100::Parser,
     byte_count: usize,
     precision: InspectPrecision,
+    size: TerminalSize,
+    scrollback_len: usize,
 }
 
 impl TerminalState {
@@ -27,22 +31,32 @@ impl TerminalState {
             parser: vt100::Parser::new(size.rows, size.cols, scrollback_len),
             byte_count: 0,
             precision: InspectPrecision::Precise,
+            size,
+            scrollback_len,
         }
     }
 
     pub fn ingest(&mut self, bytes: &[u8]) {
         self.byte_count += bytes.len();
-        self.parser.process(bytes);
+        if catch_unwind(AssertUnwindSafe(|| self.parser.process(bytes))).is_err() {
+            self.recover_from_parser_panic("ingest");
+        }
     }
 
     pub fn resize(&mut self, size: TerminalSize) {
-        self.parser.screen_mut().set_size(size.rows, size.cols);
+        self.size = size;
+        if catch_unwind(AssertUnwindSafe(|| {
+            self.parser.screen_mut().set_size(size.rows, size.cols);
+        }))
+        .is_err()
+        {
+            self.recover_from_parser_panic("resize");
+        }
     }
 
     #[must_use]
     pub fn size(&self) -> TerminalSize {
-        let (rows, cols) = self.parser.screen().size();
-        TerminalSize { cols, rows }
+        self.size
     }
 
     #[must_use]
@@ -60,22 +74,51 @@ impl TerminalState {
     }
 
     #[must_use]
-    pub fn snapshot(&self) -> TerminalSnapshot {
+    pub fn snapshot(&mut self) -> TerminalSnapshot {
         let size = self.size();
-        let screen = self.parser.screen();
-        let scrollback_rows = collect_scrollback_rows(screen, size.cols);
-        let formatted_state = screen.state_formatted();
+        let byte_count = self.byte_count;
+        let precision = self.precision;
 
-        TerminalSnapshot {
-            size,
-            replay_formatted: build_replay_formatted(&scrollback_rows, &formatted_state),
-            formatted_state,
-            scrollback_rows,
-            visible_text: screen.contents(),
-            visible_rows: screen.rows(0, size.cols).collect(),
-            byte_count: self.byte_count,
-            precision: self.precision,
+        match catch_unwind(AssertUnwindSafe(|| {
+            let screen = self.parser.screen();
+            let scrollback_rows = collect_scrollback_rows(screen, size.cols);
+            let formatted_state = screen.state_formatted();
+
+            TerminalSnapshot {
+                size,
+                replay_formatted: build_replay_formatted(&scrollback_rows, &formatted_state),
+                formatted_state,
+                scrollback_rows,
+                visible_text: screen.contents(),
+                visible_rows: screen.rows(0, size.cols).collect(),
+                byte_count,
+                precision,
+            }
+        })) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                self.recover_from_parser_panic("snapshot");
+                TerminalSnapshot {
+                    size,
+                    formatted_state: Vec::new(),
+                    replay_formatted: Vec::new(),
+                    scrollback_rows: Vec::new(),
+                    visible_text: String::new(),
+                    visible_rows: vec![String::new(); usize::from(size.rows)],
+                    byte_count,
+                    precision: self.precision,
+                }
+            }
         }
+    }
+
+    fn recover_from_parser_panic(&mut self, operation: &str) {
+        eprintln!(
+            "[remux-terminal] vt100 parser panicked during {operation}; resetting terminal state at {}x{}",
+            self.size.cols, self.size.rows
+        );
+        self.parser = vt100::Parser::new(self.size.rows, self.size.cols, self.scrollback_len);
+        self.precision = InspectPrecision::Partial;
     }
 }
 
@@ -163,5 +206,20 @@ mod tests {
         assert!(replay.contains("line 2"));
         assert!(replay.contains("line 3"));
         assert!(replay.contains("line 4"));
+    }
+
+    #[test]
+    fn terminal_state_recovers_from_vt100_panics_without_poisoning_runtime_state() {
+        let mut terminal = TerminalState::new(TerminalSize::new(2, 1), 100);
+
+        terminal.ingest("界界\r\n".as_bytes());
+        terminal.resize(TerminalSize::new(12, 3));
+        terminal.ingest(b"ok\r\nready");
+
+        let snapshot = terminal.snapshot();
+        assert_eq!(snapshot.precision, InspectPrecision::Partial);
+        assert!(snapshot.visible_text.contains("ok"));
+        assert!(snapshot.visible_text.contains("ready"));
+        assert_eq!(snapshot.byte_count, "界界\r\nok\r\nready".len());
     }
 }

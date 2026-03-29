@@ -193,11 +193,11 @@ impl PaneRuntime {
     }
 
     fn inspect_snapshot(&self, scope: control::InspectScope) -> control::InspectSnapshot {
-        let terminal = self
+        let mut terminal = self
             .terminal
             .lock()
             .expect("runtime terminal lock poisoned");
-        let inspect = build_pane_inspect_view(&terminal);
+        let inspect = build_pane_inspect_view(&mut terminal);
 
         control::InspectSnapshot {
             scope,
