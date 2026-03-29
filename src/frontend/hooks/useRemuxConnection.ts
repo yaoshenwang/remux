@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ControlServerMessage, BackendCapabilities, ServerCapabilities } from "../../shared/protocol";
 import type { BandwidthStats, ServerConfig } from "../app-types";
+import { createFrontendBuildGuard, type FrontendBuildGuard } from "../build-guard";
 import { MAX_RECONNECT_ATTEMPTS, resolveReconnectDelay, shouldPauseReconnect } from "../reconnect-policy";
 import { resolvePreferredWebSocketOrigin } from "../websocket-origin";
 import { attachWebSocketKeepAlive } from "../websocket-keepalive";
@@ -67,6 +68,14 @@ export interface UseRemuxConnectionResult {
   controlSocketRef: React.RefObject<WebSocket | null>;
 }
 
+const fetchServerConfig = async (): Promise<ServerConfig> => {
+  const response = await fetch("/api/config");
+  if (!response.ok) {
+    throw new Error(`config request failed: ${response.status}`);
+  }
+  return await response.json() as ServerConfig;
+};
+
 export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConnectionResult => {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
@@ -77,6 +86,7 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const suppressReconnectRef = useRef(false);
+  const buildGuardRef = useRef<FrontendBuildGuard | null>(null);
 
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const serverConfigRef = useRef<ServerConfig | null>(null);
@@ -267,6 +277,20 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     openControlSocketRef.current = openControlSocket;
   }, [openControlSocket]);
 
+  useEffect(() => {
+    buildGuardRef.current = createFrontendBuildGuard({
+      browser: window,
+      fetchConfig: fetchServerConfig,
+      onReload: () => window.location.reload(),
+      onStatusMessage: setStatusMessage,
+      storage: window.sessionStorage,
+    });
+    return () => {
+      buildGuardRef.current?.stop();
+      buildGuardRef.current = null;
+    };
+  }, [setStatusMessage]);
+
   // Initial config fetch + connect
   useEffect(() => {
     if (!token) {
@@ -275,13 +299,10 @@ export const useRemuxConnection = (callbacks: ConnectionCallbacks): UseRemuxConn
     }
 
     debugLog("config.fetch.begin");
-    fetch("/api/config")
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`config request failed: ${response.status}`);
-        }
-        const config = (await response.json()) as ServerConfig;
+    fetchServerConfig()
+      .then(async (config) => {
         debugLog("config.fetch.ok", config);
+        buildGuardRef.current?.start(config);
         setServerConfig(config);
 
         if (config.passwordRequired && !passwordRef.current) {
