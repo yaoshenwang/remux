@@ -12,6 +12,8 @@ const encodeBase64 = (text: string): string => Buffer.from(text, "utf8").toStrin
 
 type FakeRuntimeV2ControlClientMessage =
   | { type: "subscribe_workspace" }
+  | { type: "create_session"; session_name: string }
+  | { type: "select_session"; session_id: string }
   | { type: "split_pane"; pane_id: string; direction: "vertical" | "horizontal" }
   | {
       type: "request_inspect";
@@ -66,6 +68,8 @@ export class FakeRuntimeV2Server {
   private readonly paneContent = new Map<string, string>();
   private readonly paneScrollback = new Map<string, string[]>();
   private readonly paneStreamSequence = new Map<string, number>();
+  private sessionSequence = 1;
+  private tabSequence = 1;
   private terminalClientSequence = 0;
   private terminalStreamTransport: "text" | "binary" = "text";
   private paneSequence = 1;
@@ -297,6 +301,123 @@ export class FakeRuntimeV2Server {
     return newPaneId;
   }
 
+  createSession(sessionName: string): string {
+    const sessionId = `session-${++this.sessionSequence}`;
+    const tabId = `tab-${++this.tabSequence}`;
+    const paneId = `pane-${++this.paneSequence}`;
+    const nextSessions = this.workspace.sessions.map((session) => ({
+      ...session,
+      isActive: false,
+      tabs: session.tabs.map((tab) => ({
+        ...tab,
+        isActive: false,
+        panes: tab.panes.map((pane) => ({
+          ...pane,
+          isActive: false,
+        })),
+      })),
+    }));
+
+    nextSessions.push({
+      sessionId,
+      sessionName,
+      sessionState: "live",
+      isActive: true,
+      activeTabId: tabId,
+      tabCount: 1,
+      tabs: [
+        {
+          tabId,
+          tabTitle: "Shell",
+          isActive: true,
+          activePaneId: paneId,
+          zoomedPaneId: null,
+          paneCount: 1,
+          layout: { type: "leaf", paneId },
+          panes: [
+            {
+              paneId,
+              isActive: true,
+              isZoomed: false,
+              leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId,
+      tabId,
+      paneId,
+      sessionName,
+      tabTitle: "Shell",
+      sessionCount: nextSessions.length,
+      tabCount: 1,
+      paneCount: 1,
+      activeSessionId: sessionId,
+      activeTabId: tabId,
+      activePaneId: paneId,
+      zoomedPaneId: null,
+      layout: { type: "leaf", paneId },
+      leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+      sessions: nextSessions,
+    };
+
+    this.paneContent.set(paneId, `READY_${paneId}\r\n`);
+    this.paneScrollback.set(paneId, []);
+    this.broadcastWorkspace();
+    return sessionId;
+  }
+
+  selectSession(sessionId: string): void {
+    const targetSession = this.workspace.sessions.find((session) => session.sessionId === sessionId);
+    if (!targetSession) {
+      return;
+    }
+
+    const activeTab = targetSession.tabs.find((tab) => tab.isActive)
+      ?? targetSession.tabs.find((tab) => tab.tabId === targetSession.activeTabId)
+      ?? targetSession.tabs[0];
+    const activePane = activeTab?.panes.find((pane) => pane.isActive)
+      ?? activeTab?.panes.find((pane) => pane.paneId === activeTab.activePaneId)
+      ?? activeTab?.panes[0];
+    if (!activeTab || !activePane) {
+      return;
+    }
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId,
+      tabId: activeTab.tabId,
+      paneId: activePane.paneId,
+      sessionName: targetSession.sessionName,
+      tabTitle: activeTab.tabTitle,
+      activeSessionId: sessionId,
+      activeTabId: activeTab.tabId,
+      activePaneId: activePane.paneId,
+      zoomedPaneId: activeTab.zoomedPaneId ?? null,
+      layout: activeTab.layout,
+      tabCount: targetSession.tabCount,
+      paneCount: activeTab.paneCount,
+      sessions: this.workspace.sessions.map((session) => ({
+        ...session,
+        isActive: session.sessionId === sessionId,
+        tabs: session.tabs.map((tab) => ({
+          ...tab,
+          isActive: session.sessionId === sessionId && tab.tabId === activeTab.tabId,
+          panes: tab.panes.map((pane) => ({
+            ...pane,
+            isActive: session.sessionId === sessionId && tab.tabId === activeTab.tabId && pane.paneId === activePane.paneId,
+          })),
+        })),
+      })),
+    };
+
+    this.broadcastWorkspace();
+  }
+
   private handleHttpRequest(request: http.IncomingMessage, response: http.ServerResponse): void {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/healthz") {
@@ -346,6 +467,12 @@ export class FakeRuntimeV2Server {
       switch (message.type) {
         case "subscribe_workspace":
           socket.send(JSON.stringify({ type: "workspace_snapshot", summary: this.workspace }));
+          return;
+        case "create_session":
+          this.createSession(message.session_name);
+          return;
+        case "select_session":
+          this.selectSession(message.session_id);
           return;
         case "split_pane": {
           if (message.pane_id !== this.activePaneId() && message.pane_id !== "pane-1") {

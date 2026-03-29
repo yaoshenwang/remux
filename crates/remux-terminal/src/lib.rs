@@ -286,6 +286,180 @@ mod tests {
     }
 
     #[test]
+    fn replay_formatted_keeps_the_latest_visible_tail_when_a_prompt_returns() {
+        let size = TerminalSize::new(80, 30);
+        let mut terminal = TerminalState::new(size, 200);
+        let content = (1..=120)
+            .map(|line| format!("MARK-{line:03}\r\n"))
+            .collect::<String>();
+        terminal.ingest(content.as_bytes());
+        terminal.ingest(b"prompt % ");
+
+        let snapshot = terminal.snapshot();
+        let mut replayed = TerminalState::new(size, 200);
+        replayed.ingest(&snapshot.replay_formatted);
+        let replay_snapshot = replayed.snapshot();
+        let replay_rows = collect_all_rows(&replay_snapshot);
+
+        for expected in ["MARK-110", "MARK-111", "MARK-119", "MARK-120", "prompt %"] {
+            assert!(
+                replay_rows.iter().any(|row| row.contains(expected)),
+                "expected replay rows to contain {expected}, got {replay_rows:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_keeps_lf_only_output_that_returns_to_a_prompt() {
+        let size = TerminalSize::new(120, 40);
+        let mut terminal = TerminalState::new(size, 400);
+        let content = (1..=120)
+            .map(|line| format!("LF-{line:03}\n"))
+            .collect::<String>();
+        terminal.ingest(content.as_bytes());
+        terminal.ingest(b"prompt % ");
+
+        let snapshot = terminal.snapshot();
+        let rows = collect_all_rows(&snapshot);
+
+        for expected in ["LF-110", "LF-111", "LF-119", "LF-120", "prompt %"] {
+          assert!(
+              rows.iter().any(|row| row.contains(expected)),
+              "expected snapshot rows to contain {expected}, got {rows:?}",
+          );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic"]
+    fn debug_realistic_dual_command_prompt_tail_across_geometries() {
+        let prompt = "wangyaoshen@wangyaoshendeMac-mini ~ % ";
+        let mark_command = format!(
+            "{prompt}for i in $(seq 1 120); do printf \"MARK-%03d\\n\" \"$i\"; sleep 0.02; done\r\n"
+        );
+        let probe_command = format!(
+            "{prompt}for i in $(seq 1 120); do printf \"PROBE-%03d\\n\" \"$i\"; sleep 0.02; done\r\n"
+        );
+        let mark_output = (1..=120)
+            .map(|line| format!("MARK-{line:03}\r\n"))
+            .collect::<String>();
+        let probe_output = (1..=120)
+            .map(|line| format!("PROBE-{line:03}\r\n"))
+            .collect::<String>();
+
+        for row_count in 20..=40 {
+            let size = TerminalSize::new(177, row_count);
+            let mut terminal = TerminalState::new(size, 1_000);
+            terminal.ingest(mark_command.as_bytes());
+            terminal.ingest(mark_output.as_bytes());
+            terminal.ingest(prompt.as_bytes());
+            terminal.ingest(probe_command.as_bytes());
+            terminal.ingest(probe_output.as_bytes());
+            terminal.ingest(prompt.as_bytes());
+
+            let snapshot = terminal.snapshot();
+            let collected_rows = collect_all_rows(&snapshot);
+            let mark_rows = collected_rows
+                .iter()
+                .filter(|row| row.contains("MARK-"))
+                .cloned()
+                .collect::<Vec<_>>();
+            let probe_rows = collected_rows
+                .iter()
+                .filter(|row| row.contains("PROBE-"))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut replayed = TerminalState::new(size, 1_000);
+            replayed.ingest(&snapshot.replay_formatted);
+            let replay_snapshot = replayed.snapshot();
+            let replay_rows = collect_all_rows(&replay_snapshot);
+            let replay_mark_rows = replay_rows
+                .iter()
+                .filter(|row| row.contains("MARK-"))
+                .cloned()
+                .collect::<Vec<_>>();
+            let replay_probe_rows = replay_rows
+                .iter()
+                .filter(|row| row.contains("PROBE-"))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            eprintln!(
+                "rows={} snapshot mark_tail={:?} probe_tail={:?} replay mark_tail={:?} probe_tail={:?}",
+                row_count,
+                mark_rows.iter().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>(),
+                probe_rows.iter().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>(),
+                replay_mark_rows.iter().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>(),
+                replay_probe_rows.iter().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic"]
+    fn debug_resize_after_large_history_and_prompt() {
+        let size = TerminalSize::new(177, 31);
+        let prompt = "wangyaoshen@wangyaoshendeMac-mini ~ % ";
+        let command = format!(
+            "{prompt}for i in $(seq 1 120); do printf \"RESIZE-%03d\\n\" \"$i\"; sleep 0.02; done\r\n"
+        );
+        let output = (1..=120)
+            .map(|line| format!("RESIZE-{line:03}\r\n"))
+            .collect::<String>();
+
+        let build_rows = |terminal: &mut TerminalState| {
+            let snapshot = terminal.snapshot();
+            collect_all_rows(&snapshot)
+                .into_iter()
+                .filter(|row| row.contains("RESIZE-"))
+                .collect::<Vec<_>>()
+        };
+
+        let mut terminal = TerminalState::new(size, 1_000);
+        terminal.ingest(command.as_bytes());
+        terminal.ingest(output.as_bytes());
+        terminal.ingest(prompt.as_bytes());
+
+        let before = build_rows(&mut terminal);
+        terminal.resize(size);
+        let same_size = build_rows(&mut terminal);
+        terminal.resize(TerminalSize::new(160, 31));
+        terminal.resize(size);
+        let resized_back = build_rows(&mut terminal);
+
+        eprintln!(
+            "before_count={} before_tail={:?} same_size_count={} same_size_tail={:?} resized_back_count={} resized_back_tail={:?}",
+            before.len(),
+            before
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            same_size.len(),
+            same_size
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            resized_back.len(),
+            resized_back
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
     fn terminal_state_recovers_from_vt100_panics_without_poisoning_runtime_state() {
         let mut terminal = TerminalState::new(TerminalSize::new(2, 1), 100);
 

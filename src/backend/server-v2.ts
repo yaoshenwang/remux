@@ -79,6 +79,11 @@ interface ControlContext {
   authed: boolean;
   clientId: string;
   followBackendFocus: boolean;
+  targetView: {
+    sessionName: string | null;
+    tabIndex: number | null;
+    paneId: string | null;
+  };
   messageQueue: Promise<void>;
   terminalClients: Set<DataContext>;
 }
@@ -853,16 +858,110 @@ const findTabByIndex = (
   tabIndex: number,
 ): RuntimeV2TabSummary | undefined => findSessionByName(summary, sessionName)?.tabs[tabIndex];
 
+const findActiveSession = (
+  summary: RuntimeV2WorkspaceSummary,
+): RuntimeV2SessionSummary | undefined =>
+  summary.sessions.find((session) => session.isActive)
+  ?? summary.sessions.find((session) => session.sessionId === summary.activeSessionId)
+  ?? summary.sessions[0];
+
 const resolveActivePaneId = (summary: RuntimeV2WorkspaceSummary): string =>
   summary.activePaneId ?? summary.paneId;
 
+const findPaneLocation = (
+  summary: RuntimeV2WorkspaceSummary,
+  paneId: string,
+): {
+  session: RuntimeV2SessionSummary;
+  tab: RuntimeV2TabSummary;
+  tabIndex: number;
+} | null => {
+  for (const session of summary.sessions) {
+    for (const [tabIndex, tab] of session.tabs.entries()) {
+      if (tab.panes.some((pane) => pane.paneId === paneId)) {
+        return { session, tab, tabIndex };
+      }
+    }
+  }
+  return null;
+};
+
+const resolveSessionForContext = (
+  summary: RuntimeV2WorkspaceSummary,
+  context: ControlContext,
+): RuntimeV2SessionSummary | undefined => {
+  if (!context.followBackendFocus && context.targetView.sessionName) {
+    return findSessionByName(summary, context.targetView.sessionName) ?? findActiveSession(summary);
+  }
+  return findActiveSession(summary);
+};
+
+const resolveClientViewForContext = (
+  summary: RuntimeV2WorkspaceSummary,
+  context: ControlContext,
+): ClientView => {
+  if (context.followBackendFocus) {
+    return buildLegacyClientView(summary, true);
+  }
+
+  const session = resolveSessionForContext(summary, context) ?? findActiveSession(summary);
+  if (!session) {
+    return buildLegacyClientView(summary, false);
+  }
+
+  const paneLocation = context.targetView.paneId
+    ? findPaneLocation(summary, context.targetView.paneId)
+    : null;
+  const tabFromPane = paneLocation && paneLocation.session.sessionId === session.sessionId
+    ? paneLocation.tab
+    : undefined;
+  const tabIndexFromPane = paneLocation && paneLocation.session.sessionId === session.sessionId
+    ? paneLocation.tabIndex
+    : undefined;
+  const tab = tabFromPane
+    ?? (typeof context.targetView.tabIndex === "number" ? session.tabs[context.targetView.tabIndex] : undefined)
+    ?? session.tabs.find((candidate) => candidate.isActive)
+    ?? session.tabs.find((candidate) => candidate.tabId === session.activeTabId)
+    ?? session.tabs[0];
+
+  const tabIndex = tabIndexFromPane
+    ?? (typeof context.targetView.tabIndex === "number" && session.tabs[context.targetView.tabIndex] ? context.targetView.tabIndex : undefined)
+    ?? session.tabs.findIndex((candidate) => candidate.tabId === tab?.tabId);
+  const paneFromTarget = context.targetView.paneId
+    ? tab?.panes.find((candidate) => candidate.paneId === context.targetView.paneId)
+    : undefined;
+  const pane = paneFromTarget
+    ?? tab?.panes.find((candidate) => candidate.isActive)
+    ?? tab?.panes.find((candidate) => candidate.paneId === tab.activePaneId)
+    ?? tab?.panes[0];
+
+  return {
+    sessionName: session.sessionName,
+    tabIndex: tabIndex >= 0 ? tabIndex : 0,
+    paneId: pane?.paneId ?? tab?.activePaneId ?? summary.activePaneId ?? summary.paneId,
+    followBackendFocus: false,
+  };
+};
+
+const syncContextTargetToSummary = (
+  summary: RuntimeV2WorkspaceSummary,
+  context: ControlContext,
+): void => {
+  const clientView = buildLegacyClientView(summary, true);
+  context.targetView = {
+    sessionName: clientView.sessionName,
+    tabIndex: clientView.tabIndex,
+    paneId: clientView.paneId ?? null,
+  };
+};
+
 const buildWorkspaceStateMessage = (
   summary: RuntimeV2WorkspaceSummary,
-  followBackendFocus: boolean,
+  clientView: ClientView,
 ): Extract<ControlServerMessage, { type: "workspace_state" }> => ({
   type: "workspace_state",
   workspace: buildLegacyWorkspaceSnapshot(summary),
-  clientView: buildLegacyClientView(summary, followBackendFocus),
+  clientView,
   runtimeState: {
     streamMode: "native-bridge",
     scrollbackPrecision: "precise",
@@ -1079,7 +1178,7 @@ export const createRemuxV2GatewayServer = (
       if (!client.authed) {
         continue;
       }
-      sendJson(client.socket, buildWorkspaceStateMessage(summary, client.followBackendFocus));
+      sendJson(client.socket, buildWorkspaceStateMessage(summary, resolveClientViewForContext(summary, client)));
     }
   };
 
@@ -1087,12 +1186,13 @@ export const createRemuxV2GatewayServer = (
     if (!runtimeControl) {
       return;
     }
-    const paneId = resolveActivePaneId(runtimeControl.currentSummary());
+    const summary = runtimeControl.currentSummary();
     await Promise.all(
       Array.from(terminalClients).map(async (ctx) => {
-        if (!ctx.authed) {
+        if (!ctx.authed || !ctx.controlContext) {
           return;
         }
+        const paneId = resolveClientViewForContext(summary, ctx.controlContext).paneId ?? resolveActivePaneId(summary);
         await attachTerminalClientToPane(ctx, paneId);
       }),
     );
@@ -1148,14 +1248,52 @@ export const createRemuxV2GatewayServer = (
     if (!runtimeControl) {
       return;
     }
+    const summary = runtimeControl.currentSummary();
+    const clientView = resolveClientViewForContext(summary, context);
     sendJson(context.socket, {
       type: "attached",
-      session: resolveLegacyAttachedSession(runtimeControl.currentSummary()),
+      session: clientView.sessionName,
     });
+  };
+
+  const sendWorkspaceState = (context: ControlContext): void => {
+    if (!runtimeControl) {
+      return;
+    }
+    const summary = runtimeControl.currentSummary();
+    sendJson(context.socket, buildWorkspaceStateMessage(summary, resolveClientViewForContext(summary, context)));
+  };
+
+  const syncContextTerminalClients = async (context: ControlContext): Promise<void> => {
+    if (!runtimeControl) {
+      return;
+    }
+    const summary = runtimeControl.currentSummary();
+    const paneId = resolveClientViewForContext(summary, context).paneId ?? resolveActivePaneId(summary);
+    await Promise.all(
+      Array.from(context.terminalClients).map(async (terminalClient) => {
+        if (!terminalClient.authed) {
+          return;
+        }
+        await attachTerminalClientToPane(terminalClient, paneId);
+      }),
+    );
+  };
+
+  const publishContextView = async (
+    context: ControlContext,
+    options: { includeAttached?: boolean } = {},
+  ): Promise<void> => {
+    if (options.includeAttached) {
+      sendAttached(context);
+    }
+    sendWorkspaceState(context);
+    await syncContextTerminalClients(context);
   };
 
   const applyInitialSelection = async (
     message: Extract<ControlClientMessage, { type: "auth" }>,
+    context: ControlContext,
   ): Promise<void> => {
     if (!runtimeControl) {
       return;
@@ -1180,6 +1318,8 @@ export const createRemuxV2GatewayServer = (
     if (message.paneId) {
       await runtimeControl.command({ type: "focus_pane", paneId: message.paneId });
     }
+
+    syncContextTargetToSummary(runtimeControl.currentSummary(), context);
   };
 
   const sendTabHistory = async (
@@ -1247,10 +1387,14 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`session not found: ${message.session}`);
         }
         await runtimeControl.command({ type: "select_session", sessionId: session.sessionId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context, { includeAttached: true });
         return;
       }
       case "new_session":
         await runtimeControl.command({ type: "create_session", sessionName: message.name });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context, { includeAttached: true });
         return;
       case "close_session": {
         const session = findSessionByName(runtimeControl.currentSummary(), message.session);
@@ -1258,6 +1402,8 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`session not found: ${message.session}`);
         }
         await runtimeControl.command({ type: "close_session", sessionId: session.sessionId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context, { includeAttached: true });
         return;
       }
       case "new_tab": {
@@ -1266,6 +1412,8 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`session not found: ${message.session}`);
         }
         await runtimeControl.command({ type: "create_tab", sessionId: session.sessionId, tabTitle: "Shell" });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       }
       case "select_tab": {
@@ -1274,6 +1422,8 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`tab not found: ${message.session}:${message.tabIndex}`);
         }
         await runtimeControl.command({ type: "select_tab", tabId: tab.tabId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       }
       case "close_tab": {
@@ -1282,10 +1432,14 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`tab not found: ${message.session}:${message.tabIndex}`);
         }
         await runtimeControl.command({ type: "close_tab", tabId: tab.tabId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       }
       case "select_pane":
         await runtimeControl.command({ type: "focus_pane", paneId: message.paneId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "split_pane":
         await runtimeControl.command({
@@ -1293,18 +1447,24 @@ export const createRemuxV2GatewayServer = (
           paneId: message.paneId,
           direction: message.direction,
         });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "close_pane":
         await runtimeControl.command({ type: "close_pane", paneId: message.paneId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "toggle_fullscreen":
         await runtimeControl.command({ type: "toggle_pane_zoom", paneId: message.paneId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "capture_scrollback":
         await sendScrollback(context, message.paneId, message.lines ?? config.scrollbackLines);
         return;
       case "capture_tab_history": {
-        const sessionName = message.session ?? resolveLegacyAttachedSession(runtimeControl.currentSummary());
+        const sessionName = message.session ?? resolveClientViewForContext(runtimeControl.currentSummary(), context).sessionName;
         await sendTabHistory(context, sessionName, message.tabIndex, message.lines ?? config.scrollbackLines);
         return;
       }
@@ -1319,7 +1479,7 @@ export const createRemuxV2GatewayServer = (
           submitMode: "delayed",
           paneCommand: resolvePaneCommandForView(
             buildLegacyWorkspaceSnapshot(runtimeControl.currentSummary()),
-            buildLegacyClientView(runtimeControl.currentSummary(), context.followBackendFocus),
+            resolveClientViewForContext(runtimeControl.currentSummary(), context),
           ),
         });
         return;
@@ -1350,7 +1510,10 @@ export const createRemuxV2GatewayServer = (
       }
       case "set_follow_focus":
         context.followBackendFocus = message.follow;
-        sendJson(context.socket, buildWorkspaceStateMessage(runtimeControl.currentSummary(), context.followBackendFocus));
+        if (!context.followBackendFocus) {
+          syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        }
+        await publishContextView(context, { includeAttached: true });
         return;
       default: {
         const exhaustive: never = message;
@@ -1375,6 +1538,11 @@ export const createRemuxV2GatewayServer = (
       authed: false,
       clientId: randomToken(12),
       followBackendFocus: false,
+      targetView: {
+        sessionName: null,
+        tabIndex: null,
+        paneId: null,
+      },
       messageQueue: Promise.resolve(),
       terminalClients: new Set(),
     };
@@ -1421,7 +1589,7 @@ export const createRemuxV2GatewayServer = (
           }
 
           context.authed = true;
-          await applyInitialSelection(message);
+          await applyInitialSelection(message, context);
           sendJson(socket, {
             type: "auth_ok",
             clientId: context.clientId,
@@ -1431,9 +1599,7 @@ export const createRemuxV2GatewayServer = (
             backendKind: RUNTIME_V2_BACKEND_KIND,
           });
           sendAttached(context);
-          if (runtimeControl) {
-            sendJson(socket, buildWorkspaceStateMessage(runtimeControl.currentSummary(), context.followBackendFocus));
-          }
+          sendWorkspaceState(context);
           return;
         }
 
@@ -1498,7 +1664,11 @@ export const createRemuxV2GatewayServer = (
         context.controlContext = controlContext;
         context.terminalSize = toRuntimeTerminalSize(extractTerminalDimensions(authMessage));
         controlContext.terminalClients.add(context);
-        await attachTerminalClientToPane(context, resolveActivePaneId(runtimeControl.currentSummary()));
+        await attachTerminalClientToPane(
+          context,
+          resolveClientViewForContext(runtimeControl.currentSummary(), controlContext).paneId
+            ?? resolveActivePaneId(runtimeControl.currentSummary()),
+        );
         return;
       }
 
