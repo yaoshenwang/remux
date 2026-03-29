@@ -29,6 +29,28 @@ const createBrowserSocket = (): { sent: Buffer[]; socket: WebSocket } => {
   return { sent, socket };
 };
 
+type RuntimeInboundMessage =
+  | { kind: "text"; message: Record<string, unknown> }
+  | { kind: "binary"; payload: Buffer };
+
+const observeRuntimeSocket = (socket: WebSocket): RuntimeInboundMessage[] => {
+  const messages: RuntimeInboundMessage[] = [];
+  socket.on("message", (raw, isBinary) => {
+    if (isBinary) {
+      messages.push({
+        kind: "binary",
+        payload: Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer),
+      });
+      return;
+    }
+    messages.push({
+      kind: "text",
+      message: JSON.parse(raw.toString("utf8")) as Record<string, unknown>,
+    });
+  });
+  return messages;
+};
+
 describe("parseSequencedBinaryFrame", () => {
   test("parses a valid sequenced binary frame", () => {
     const frame = buildBinaryStreamFrame(42, "hello");
@@ -362,6 +384,97 @@ describe("SharedRuntimeV2PaneBridge", () => {
 
     const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
     expect(restored.match(/\u001bc/g)?.length ?? 0).toBe(1);
+  });
+
+  test("keeps upstream PTY size pinned to the resize owner when passive viewers resize", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "latest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+    await expect.poll(() => attachCount).toBe(1);
+
+    const runtimeMessages = observeRuntimeSocket(runtimeSocket!);
+
+    const secondBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 60, rows: 20 });
+    await bridge.updateViewerSize("viewer-2", { cols: 58, rows: 18 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(
+      runtimeMessages.filter((message) => message.kind === "text" && message.message.type === "resize"),
+    ).toEqual([]);
+
+    await bridge.updateViewerSize("viewer-1", { cols: 132, rows: 42 });
+
+    await expect.poll(() => (
+      runtimeMessages.filter((message) => message.kind === "text" && message.message.type === "resize")
+    )).toHaveLength(1);
+
+    const [resizeMessage] = runtimeMessages.filter(
+      (message): message is Extract<RuntimeInboundMessage, { kind: "text" }> =>
+        message.kind === "text" && message.message.type === "resize",
+    );
+    expect(resizeMessage.message).toMatchObject({
+      type: "resize",
+      size: { cols: 132, rows: 42 },
+    });
+  });
+
+  test("promotes the input source to resize owner before forwarding input", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "latest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+    await expect.poll(() => attachCount).toBe(1);
+
+    const secondBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 72, rows: 22 });
+
+    const runtimeMessages = observeRuntimeSocket(runtimeSocket!);
+
+    bridge.write("echo promoted\r", "viewer-2");
+
+    await expect.poll(() => runtimeMessages.length).toBeGreaterThanOrEqual(2);
+
+    expect(runtimeMessages[0]).toEqual({
+      kind: "text",
+      message: {
+        type: "resize",
+        size: { cols: 72, rows: 22 },
+      },
+    });
+    expect(runtimeMessages[1]).toEqual({
+      kind: "binary",
+      payload: Buffer.from("echo promoted\r", "utf8"),
+    });
+
+    runtimeMessages.length = 0;
+    await bridge.updateViewerSize("viewer-2", { cols: 74, rows: 24 });
+
+    await expect.poll(() => (
+      runtimeMessages.filter((message) => message.kind === "text" && message.message.type === "resize")
+    )).toHaveLength(1);
+
+    const [resizeMessage] = runtimeMessages.filter(
+      (message): message is Extract<RuntimeInboundMessage, { kind: "text" }> =>
+        message.kind === "text" && message.message.type === "resize",
+    );
+    expect(resizeMessage.message).toMatchObject({
+      type: "resize",
+      size: { cols: 74, rows: 24 },
+    });
   });
 
   test("intercepts DSR in stream messages and writes CPR back to runtime", async () => {

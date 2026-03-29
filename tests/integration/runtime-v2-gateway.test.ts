@@ -244,7 +244,7 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
-  test("resizes one shared upstream pane bridge to match the latest viewer viewport", async () => {
+  test("keeps one shared upstream pane bridge pinned to the existing resize owner when another viewer only observes", async () => {
     const first = await authControlClient(baseWsUrl);
     const second = await authControlClient(baseWsUrl);
     let terminalA: WebSocket | null = null;
@@ -257,7 +257,6 @@ describe("runtime v2 gateway server", () => {
       await expect.poll(() => upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
       await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes ?? []).toEqual([
         { cols: 120, rows: 40 },
-        { cols: 48, rows: 18 },
       ]);
 
       const firstViewerEcho = waitForRawMessage(terminalA);
@@ -267,6 +266,50 @@ describe("runtime v2 gateway server", () => {
       expect(await firstViewerEcho).toContain("echo shared-view\r");
       expect(await secondViewerEcho).toContain("echo shared-view\r");
       expect(upstream.latestTerminal("pane-1")?.writes.at(-1)).toBe("echo shared-view\r");
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes ?? []).toEqual([
+        { cols: 120, rows: 40 },
+        { cols: 48, rows: 18 },
+      ]);
+    } finally {
+      terminalA?.close();
+      terminalB?.close();
+      first.control.close();
+      second.control.close();
+    }
+  });
+
+  test("lets the viewer that starts writing take resize ownership for subsequent viewport changes", async () => {
+    const first = await authControlClient(baseWsUrl);
+    const second = await authControlClient(baseWsUrl);
+    let terminalA: WebSocket | null = null;
+    let terminalB: WebSocket | null = null;
+
+    try {
+      ({ terminal: terminalA } = await authTerminalClient(baseWsUrl, first.clientId, { cols: 120, rows: 40 }));
+      ({ terminal: terminalB } = await authTerminalClient(baseWsUrl, second.clientId, { cols: 48, rows: 18 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes ?? []).toEqual([
+        { cols: 120, rows: 40 },
+      ]);
+
+      const firstViewerEcho = waitForRawMessage(terminalA);
+      const secondViewerEcho = waitForRawMessage(terminalB);
+      terminalB.send("echo claim-owner\r");
+
+      expect(await firstViewerEcho).toContain("echo claim-owner\r");
+      expect(await secondViewerEcho).toContain("echo claim-owner\r");
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes ?? []).toEqual([
+        { cols: 120, rows: 40 },
+        { cols: 48, rows: 18 },
+      ]);
+
+      terminalB.send(JSON.stringify({ type: "resize", cols: 52, rows: 20 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes ?? []).toEqual([
+        { cols: 120, rows: 40 },
+        { cols: 48, rows: 18 },
+        { cols: 52, rows: 20 },
+      ]);
     } finally {
       terminalA?.close();
       terminalB?.close();
