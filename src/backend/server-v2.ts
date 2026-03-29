@@ -516,10 +516,11 @@ export class SharedRuntimeV2PaneBridge {
   private attachVersion = 0;
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
   private latestSnapshotPayload: Buffer | null = null;
+  private latestSnapshotSequence: number | null = null;
   private latestViewerId: string | null = null;
   private readonly subscribers = new Map<string, WebSocket>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
-  private readonly bufferedChunks: Buffer[] = [];
+  private readonly bufferedChunks: Array<{ payload: Buffer; sequence: number | null }> = [];
   private bufferedChunkBytes = 0;
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
@@ -543,7 +544,7 @@ export class SharedRuntimeV2PaneBridge {
       if (this.latestSnapshotPayload) {
         sendRaw(browserSocket, this.latestSnapshotPayload);
         for (const chunk of this.bufferedChunks) {
-          sendRaw(browserSocket, chunk);
+          sendRaw(browserSocket, chunk.payload);
         }
       }
     });
@@ -754,6 +755,7 @@ export class SharedRuntimeV2PaneBridge {
     this.clearPendingSnapshotRequest();
     this.clearIdleCloseTimer();
     this.latestSnapshotPayload = null;
+    this.latestSnapshotSequence = null;
     this.bufferedChunks.length = 0;
     this.bufferedChunkBytes = 0;
     this.currentSize = DEFAULT_TERMINAL_SIZE;
@@ -769,15 +771,15 @@ export class SharedRuntimeV2PaneBridge {
     });
   }
 
-  private rememberBufferedChunk(chunk: Buffer): void {
+  private rememberBufferedChunk(chunk: Buffer, sequence: number | null): void {
     if (!this.latestSnapshotPayload) {
       return;
     }
-    this.bufferedChunks.push(chunk);
+    this.bufferedChunks.push({ payload: chunk, sequence });
     this.bufferedChunkBytes += chunk.byteLength;
     while (this.bufferedChunkBytes > MAX_BUFFERED_TERMINAL_BYTES && this.bufferedChunks.length > 0) {
       const removed = this.bufferedChunks.shift();
-      this.bufferedChunkBytes -= removed?.byteLength ?? 0;
+      this.bufferedChunkBytes -= removed?.payload.byteLength ?? 0;
     }
   }
 
@@ -789,7 +791,7 @@ export class SharedRuntimeV2PaneBridge {
     if (isBinary) {
       const chunk = toBuffer(raw);
       this.broadcast(chunk);
-      this.rememberBufferedChunk(chunk);
+      this.rememberBufferedChunk(chunk, null);
       return;
     }
 
@@ -803,20 +805,33 @@ export class SharedRuntimeV2PaneBridge {
 
     if (message.type === "snapshot") {
       this.clearPendingSnapshotRequest();
+      const retainedChunks = this.latestSnapshotSequence === null
+        ? []
+        : this.bufferedChunks.filter((chunk) => (
+            chunk.sequence !== null && chunk.sequence > message.sequence
+          ));
       this.latestSnapshotPayload = Buffer.concat([
         TERMINAL_RESET_BYTES,
         Buffer.from(message.replayBase64 ?? message.contentBase64, "base64"),
       ]);
+      this.latestSnapshotSequence = message.sequence;
       this.bufferedChunks.length = 0;
-      this.bufferedChunkBytes = 0;
+      this.bufferedChunks.push(...retainedChunks);
+      this.bufferedChunkBytes = retainedChunks.reduce(
+        (total, chunk) => total + chunk.payload.byteLength,
+        0,
+      );
       this.broadcast(this.latestSnapshotPayload);
+      for (const chunk of this.bufferedChunks) {
+        this.broadcast(chunk.payload);
+      }
       return;
     }
 
     if (message.type === "stream") {
       const chunk = Buffer.from(message.chunkBase64, "base64");
       this.broadcast(chunk);
-      this.rememberBufferedChunk(chunk);
+      this.rememberBufferedChunk(chunk, message.sequence);
     }
   }
 

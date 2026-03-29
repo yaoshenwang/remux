@@ -1345,8 +1345,12 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
         tokio::select! {
             update = recv_runtime_update(runtime_updates.as_mut()), if runtime_updates.is_some() => {
                 match update {
-                    Some(RuntimeStreamMessage::Binary(chunk)) => {
-                        if socket.send(Message::Binary(chunk.into())).await.is_err() {
+                    Some(RuntimeStreamMessage::Stream { sequence, chunk }) => {
+                        let stream = terminal::ServerMessage::Stream {
+                            sequence,
+                            chunk_base64: BASE64.encode(chunk),
+                        };
+                        if send_json_message(&mut socket, &stream).await.is_err() {
                             break;
                         }
                     }
@@ -1483,7 +1487,7 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
 }
 
 enum RuntimeStreamMessage {
-    Binary(Vec<u8>),
+    Stream { sequence: u64, chunk: Vec<u8> },
     Event(terminal::ServerMessage),
     Resync,
 }
@@ -1498,8 +1502,7 @@ async fn recv_runtime_update(
 
     match receiver.recv().await {
         Ok(RuntimeUpdate::Output { sequence, chunk }) => {
-            let _ = sequence;
-            Some(RuntimeStreamMessage::Binary(chunk))
+            Some(RuntimeStreamMessage::Stream { sequence, chunk })
         }
         Ok(RuntimeUpdate::Exit { exit_code }) => {
             Some(RuntimeStreamMessage::Event(terminal::ServerMessage::Exit {

@@ -30,6 +30,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
   let attachCount: number;
   let snapshotRequestCount: number;
   let replayText: string;
+  let requestSnapshotSequence: number | null;
   let bridge: SharedRuntimeV2PaneBridge | null;
 
   beforeEach(async () => {
@@ -37,6 +38,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
     attachCount = 0;
     snapshotRequestCount = 0;
     replayText = "BASELINE-HISTORY\r\n";
+    requestSnapshotSequence = null;
     bridge = null;
     httpServer = http.createServer();
     runtimeWss = new WebSocketServer({ server: httpServer });
@@ -68,7 +70,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
           socket.send(JSON.stringify({
             type: "snapshot",
             size: message.size ?? { cols: 120, rows: 40 },
-            sequence: attachCount + snapshotRequestCount,
+            sequence: requestSnapshotSequence ?? attachCount + snapshotRequestCount,
             content_base64: encodeBase64("VISIBLE-TAIL\r\n"),
             replay_base64: encodeBase64(replayText),
           }));
@@ -175,5 +177,46 @@ describe("SharedRuntimeV2PaneBridge", () => {
     await expect
       .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
       .toContain(earlyChunk.trim());
+  });
+
+  test("preserves streamed tail chunks when a leave-time snapshot lags behind the latest live output", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    replayText = Array.from({ length: 109 }, (_, index) => `${index + 1}\r\n`).join("");
+    requestSnapshotSequence = 109;
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+
+    await expect.poll(() => attachCount).toBe(1);
+
+    for (let line = 110; line <= 120; line += 1) {
+      runtimeSocket?.send(JSON.stringify({
+        type: "stream",
+        sequence: line,
+        chunk_base64: encodeBase64(`${line}\r\n`),
+      }));
+    }
+
+    await expect
+      .poll(() => Buffer.concat(firstBrowser.sent).toString("utf8"))
+      .toContain("120");
+
+    await bridge.unsubscribe("viewer-1");
+    await expect.poll(() => snapshotRequestCount).toBe(1);
+
+    const secondBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
+
+    const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
+    expect(restored).toContain("109");
+    expect(restored).toContain("110");
+    expect(restored).toContain("120");
   });
 });
