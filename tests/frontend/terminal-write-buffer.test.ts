@@ -44,6 +44,44 @@ describe("terminal write buffer", () => {
     expect(writes).toEqual([]);
   });
 
+  test("clear drops queued slices that are waiting for later frames", () => {
+    const writes: string[] = [];
+    const completions: Array<() => void> = [];
+    const frameCallbacks: Array<() => void> = [];
+    const onComplete = vi.fn();
+    const requestFrame = vi.fn((cb: () => void) => {
+      frameCallbacks.push(cb);
+      return frameCallbacks.length;
+    });
+    const cancelFrame = vi.fn();
+    const buffer = createTerminalWriteBuffer(
+      (chunk, done) => {
+        writes.push(chunk as string);
+        completions.push(done);
+      },
+      requestFrame,
+      cancelFrame,
+      { maxBytesPerFrame: 5 },
+    );
+
+    buffer.enqueue("abcdefghij", onComplete);
+    buffer.enqueue("tail");
+
+    frameCallbacks.shift()?.();
+    expect(writes).toEqual(["abcde"]);
+    expect(frameCallbacks).toHaveLength(0);
+
+    completions.shift()?.();
+    expect(frameCallbacks).toHaveLength(1);
+
+    buffer.clear();
+    expect(cancelFrame).toHaveBeenCalledWith(1);
+
+    frameCallbacks.shift()?.();
+    expect(writes).toEqual(["abcde"]);
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
   test("preserves mixed text and binary chunk order within a frame flush", () => {
     const writes: Array<string | Uint8Array> = [];
     const completions: Array<() => void> = [];
