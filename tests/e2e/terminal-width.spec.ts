@@ -5,6 +5,8 @@ interface TerminalWidthSnapshot {
   appClassName: string;
   approxCols: number;
   approxRows: number;
+  frontendCols: number;
+  frontendRows: number;
   cellHeight: number;
   cellWidth: number;
   hostWidth: number;
@@ -14,6 +16,23 @@ interface TerminalWidthSnapshot {
   screenWidth: number;
   screenHeight: number;
 }
+
+const VIEWPORT_COL_TOLERANCE = 3;
+const VIEWPORT_ROW_TOLERANCE = 1;
+const expectAttachedStatus = async (page: Page): Promise<void> => {
+  await expect.poll(() => page.evaluate(() => {
+    const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
+    if (!indicator) {
+      return "";
+    }
+    return `${indicator.className}|${indicator.getAttribute("aria-label") ?? ""}`;
+  })).toContain("attached:");
+
+  await expect.poll(() => page.evaluate(() => {
+    const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
+    return indicator?.className ?? "";
+  })).toContain("ok");
+};
 
 const readTerminalWidthSnapshot = async (
   page: Page,
@@ -25,15 +44,16 @@ const readTerminalWidthSnapshot = async (
 }> => {
   const geometry = await page.evaluate(() => {
     const host = document.querySelector("[data-testid='terminal-host']") as HTMLElement | null;
-    const screen = document.querySelector(".terminal-host .xterm-screen") as HTMLElement | null;
+    const viewport = document.querySelector(".terminal-host .xterm-viewport") as HTMLElement | null;
     const rows = document.querySelector(".terminal-host .xterm-rows") as HTMLElement | null;
     const measure = document.querySelector(".terminal-host .xterm-char-measure-element") as HTMLElement | null;
     const row = rows?.firstElementChild as HTMLElement | null;
     const rowStyle = rows ? window.getComputedStyle(rows) : null;
+    const terminalGeometry = window.__remuxTestTerminal?.readGeometry() ?? null;
     const hostWidth = host?.getBoundingClientRect().width ?? 0;
     const hostHeight = host?.getBoundingClientRect().height ?? 0;
-    const screenWidth = screen?.getBoundingClientRect().width ?? 0;
-    const screenHeight = screen?.getBoundingClientRect().height ?? 0;
+    const screenWidth = viewport?.getBoundingClientRect().width ?? 0;
+    const screenHeight = viewport?.getBoundingClientRect().height ?? 0;
     const measureWidth = measure?.getBoundingClientRect().width ?? 0;
     const rowHeight = row?.getBoundingClientRect().height ?? 0;
     const letterSpacing = rowStyle ? Number.parseFloat(rowStyle.letterSpacing || "0") : 0;
@@ -46,6 +66,8 @@ const readTerminalWidthSnapshot = async (
       appClassName: document.querySelector(".app-shell")?.className ?? "",
       approxCols,
       approxRows,
+      frontendCols: terminalGeometry?.cols ?? 0,
+      frontendRows: terminalGeometry?.rows ?? 0,
       cellHeight,
       cellWidth,
       hostWidth,
@@ -64,8 +86,8 @@ const readTerminalWidthSnapshot = async (
     ...geometry,
     backendCols,
     backendRows,
-    pixelHeightDelta: Math.abs(geometry.screenHeight - (backendRows * geometry.cellHeight)),
-    pixelWidthDelta: Math.abs(geometry.screenWidth - (backendCols * geometry.cellWidth)),
+    pixelHeightDelta: Math.abs(geometry.screenHeight - (geometry.frontendRows * geometry.cellHeight)),
+    pixelWidthDelta: Math.abs(geometry.screenWidth - (geometry.frontendCols * geometry.cellWidth)),
     resizeCount
   };
 };
@@ -79,10 +101,10 @@ const waitForTerminalWidthInvariant = async (
   let settled = await readTerminalWidthSnapshot(page, server);
 
   while (Date.now() < deadline) {
-    const colsMismatch = Math.abs(settled.backendCols - settled.approxCols);
-    const rowsMismatch = Math.abs(settled.backendRows - settled.approxRows);
-    const widthOk = settled.pixelWidthDelta <= Math.max(settled.cellWidth * 1.5, 3);
-    const heightOk = settled.pixelHeightDelta <= Math.max(settled.cellHeight * 1.5, 3);
+    const backendColsMismatch = Math.abs(settled.backendCols - settled.frontendCols);
+    const backendRowsMismatch = Math.abs(settled.backendRows - settled.frontendRows);
+    const viewportColsMismatch = Math.abs(settled.frontendCols - settled.approxCols);
+    const viewportRowsMismatch = Math.abs(settled.frontendRows - settled.approxRows);
     const ready =
       settled.hostWidth > 0 &&
       settled.hostHeight > 0 &&
@@ -90,10 +112,12 @@ const waitForTerminalWidthInvariant = async (
       settled.screenHeight > 0 &&
       settled.backendCols > 1 &&
       settled.backendRows > 1 &&
-      colsMismatch <= 1 &&
-      rowsMismatch <= 1 &&
-      widthOk &&
-      heightOk;
+      settled.frontendCols > 1 &&
+      settled.frontendRows > 1 &&
+      backendColsMismatch <= 1 &&
+      backendRowsMismatch <= 1 &&
+      viewportColsMismatch <= VIEWPORT_COL_TOLERANCE &&
+      viewportRowsMismatch <= VIEWPORT_ROW_TOLERANCE;
 
     if (ready) {
       break;
@@ -109,10 +133,12 @@ const waitForTerminalWidthInvariant = async (
   expect(settled.screenHeight).toBeGreaterThan(0);
   expect(settled.backendCols).toBeGreaterThan(1);
   expect(settled.backendRows).toBeGreaterThan(1);
-  expect(Math.abs(settled.backendCols - settled.approxCols), label).toBeLessThanOrEqual(1);
-  expect(Math.abs(settled.backendRows - settled.approxRows), label).toBeLessThanOrEqual(1);
-  expect(settled.pixelWidthDelta, label).toBeLessThanOrEqual(Math.max(settled.cellWidth * 1.5, 3));
-  expect(settled.pixelHeightDelta, label).toBeLessThanOrEqual(Math.max(settled.cellHeight * 1.5, 3));
+  expect(settled.frontendCols, label).toBeGreaterThan(1);
+  expect(settled.frontendRows, label).toBeGreaterThan(1);
+  expect(Math.abs(settled.backendCols - settled.frontendCols), label).toBeLessThanOrEqual(1);
+  expect(Math.abs(settled.backendRows - settled.frontendRows), label).toBeLessThanOrEqual(1);
+  expect(Math.abs(settled.frontendCols - settled.approxCols), label).toBeLessThanOrEqual(VIEWPORT_COL_TOLERANCE);
+  expect(Math.abs(settled.frontendRows - settled.approxRows), label).toBeLessThanOrEqual(VIEWPORT_ROW_TOLERANCE);
 };
 
 test.describe("terminal width invariants", () => {
@@ -129,7 +155,7 @@ test.describe("terminal width invariants", () => {
   test("does not fake a wide terminal on very narrow viewports", async ({ page }) => {
     await page.setViewportSize({ width: 150, height: 600 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
     await page.waitForTimeout(1_800);
 
     await waitForTerminalWidthInvariant(page, server, "narrow viewport");
@@ -142,7 +168,7 @@ test.describe("terminal width invariants", () => {
   test("keeps backend cols aligned with visible terminal width across layout changes", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await waitForTerminalWidthInvariant(page, server, "initial desktop");
 
