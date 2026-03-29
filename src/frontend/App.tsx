@@ -270,7 +270,7 @@ export const App = () => {
     resetTerminalBuffer,
     scrollbackContentRef,
     terminalContainerRef,
-    terminalRef
+    writeToTerminal
   } = useTerminalRuntime({
     onSendRaw: sendRawToSocket,
     mobileLayout,
@@ -337,7 +337,7 @@ export const App = () => {
           attachedSessionRef.current ? `attached: ${attachedSessionRef.current}` : "terminal connected"
         );
       }
-      terminalRef.current?.write(chunk);
+      writeToTerminal(chunk);
       if (terminalChunkHasBell(chunk) && attachedSessionRef.current) {
         setBellSessions((current) => new Set(current).add(attachedSessionRef.current));
       }
@@ -383,7 +383,7 @@ export const App = () => {
       debugLog("terminal_socket.onerror");
     };
     terminalSocketRef.current = socket;
-  }, [flushPendingTerminalTransport, readTerminalGeometry, requestTerminalFit, resolvedSocketOrigin]);
+  }, [flushPendingTerminalTransport, readTerminalGeometry, requestTerminalFit, resolvedSocketOrigin, writeToTerminal]);
 
   useEffect(() => () => {
     stopTerminalKeepAliveRef.current?.();

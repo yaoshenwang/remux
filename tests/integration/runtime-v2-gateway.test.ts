@@ -185,6 +185,40 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
+  test("preserves runtime pane command metadata in workspace snapshots", async () => {
+    const control = await openSocket(`${baseWsUrl}/ws/control`);
+
+    try {
+      const workspaceStatePromise = waitForMessage<{
+        type: "workspace_state";
+        workspace: {
+          sessions: Array<{
+            tabs: Array<{
+              panes: Array<{
+                id: string;
+                currentCommand: string;
+                currentPath: string;
+              }>;
+            }>;
+          }>;
+        };
+      }>(control, (message) => message.type === "workspace_state");
+
+      control.send(JSON.stringify({ type: "auth", token: "test-token" }));
+      await waitForMessage(control, (message: { type: string }) => message.type === "auth_ok");
+      await waitForMessage(control, (message: { type: string }) => message.type === "attached");
+      const workspaceState = await workspaceStatePromise;
+
+      expect(workspaceState.workspace.sessions[0]?.tabs[0]?.panes[0]).toMatchObject({
+        id: "pane-1",
+        currentCommand: "bash",
+        currentPath: "/workspace/main",
+      });
+    } finally {
+      control.close();
+    }
+  });
+
   test("resizes one shared upstream pane bridge to match the latest viewer viewport", async () => {
     const first = await authControlClient(baseWsUrl);
     const second = await authControlClient(baseWsUrl);

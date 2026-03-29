@@ -35,4 +35,28 @@ describe("terminal write buffer", () => {
     expect(cancelFrame).toHaveBeenCalledWith(7);
     expect(writes).toEqual([]);
   });
+
+  test("preserves mixed text and binary chunk order within a frame flush", () => {
+    const writes: Array<string | Uint8Array> = [];
+    let callback: (() => void) | null = null;
+    const requestFrame = vi.fn((cb: () => void) => {
+      callback = cb;
+      return 3;
+    });
+    const buffer = createTerminalWriteBuffer((chunk) => writes.push(chunk), requestFrame, vi.fn());
+
+    buffer.enqueue("hello ");
+    buffer.enqueue("world");
+    buffer.enqueue(new Uint8Array([1, 2]));
+    buffer.enqueue(new Uint8Array([3, 4]));
+    buffer.enqueue("!");
+
+    callback?.();
+
+    expect(writes).toHaveLength(3);
+    expect(writes[0]).toBe("hello world");
+    expect(writes[1]).toBeInstanceOf(Uint8Array);
+    expect(Array.from(writes[1] as Uint8Array)).toEqual([1, 2, 3, 4]);
+    expect(writes[2]).toBe("!");
+  });
 });

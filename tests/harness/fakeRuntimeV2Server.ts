@@ -235,6 +235,22 @@ export class FakeRuntimeV2Server {
     }
   }
 
+  private createPaneSummary(paneId: string, options?: {
+    active?: boolean;
+    leaseHolderClientId?: string | null;
+  }) {
+    return {
+      paneId,
+      isActive: options?.active ?? true,
+      isZoomed: false,
+      command: "bash",
+      currentPath: paneId === "pane-1" ? "/workspace/main" : `/workspace/${paneId}`,
+      width: 120,
+      height: 40,
+      leaseHolderClientId: options?.leaseHolderClientId ?? `terminal-client-${this.terminalClientSequence + 1}`,
+    };
+  }
+
   splitActivePane(direction: RuntimeV2SplitDirection = "right"): string {
     const activeSession = this.workspace.sessions[0]!;
     const activeTab = activeSession.tabs[0]!;
@@ -260,10 +276,7 @@ export class FakeRuntimeV2Server {
       leaseHolderClientId: pane.paneId === sourcePaneId ? sourcePane?.leaseHolderClientId ?? null : pane.leaseHolderClientId,
     }));
     activeTab.panes.push({
-      paneId: newPaneId,
-      isActive: true,
-      isZoomed: false,
-      leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+      ...this.createPaneSummary(newPaneId),
     });
 
     this.workspace = {
@@ -321,12 +334,7 @@ export class FakeRuntimeV2Server {
           paneCount: 1,
           layout: { type: "leaf", paneId },
           panes: [
-            {
-              paneId,
-              isActive: true,
-              isZoomed: false,
-              leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
-            },
+            this.createPaneSummary(paneId),
           ],
         },
       ],
@@ -388,12 +396,7 @@ export class FakeRuntimeV2Server {
       paneCount: 1,
       layout: { type: "leaf", paneId },
       panes: [
-        {
-          paneId,
-          isActive: true,
-          isZoomed: false,
-          leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
-        },
+        this.createPaneSummary(paneId),
       ],
     });
 
@@ -860,12 +863,10 @@ export class FakeRuntimeV2Server {
               paneCount: 1,
               layout: { type: "leaf", paneId: "pane-1" },
               panes: [
-                {
-                  paneId: "pane-1",
-                  isActive: true,
-                  isZoomed: false,
+                this.createPaneSummary("pane-1", {
+                  active: true,
                   leaseHolderClientId: "terminal-client-1",
-                },
+                }),
               ],
             },
           ],
