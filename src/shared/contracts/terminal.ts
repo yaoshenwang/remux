@@ -14,3 +14,18 @@ export interface TerminalResizePayload {
 export interface TerminalClosedPayload {
   reason: string;
 }
+
+export type TerminalTransportMode = "raw" | "patch";
+
+export interface TerminalPatchMessage {
+  type: "terminal_patch";
+  paneId: string;
+  viewRevision: number;
+  revision: number;
+  baseRevision: number | null;
+  reset: boolean;
+  source: "snapshot" | "stream";
+  dataBase64: string;
+  cols?: number;
+  rows?: number;
+}

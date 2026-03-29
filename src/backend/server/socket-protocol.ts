@@ -50,6 +50,7 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
     token: z.string().optional(),
     password: z.string().optional(),
     clientId: z.string().optional(),
+    transportMode: z.enum(["raw", "patch"]).optional(),
     viewRevision: z.number().int().min(1).optional(),
     session: z.string().optional(),
     tabIndex: z.number().int().min(0).optional(),
@@ -108,6 +109,7 @@ export const summarizeClientMessage = (message: ControlClientMessage): string =>
       tokenPresent: Boolean(message.token),
       passwordPresent: Boolean(message.password),
       clientIdPresent: Boolean(message.clientId),
+      transportMode: message.transportMode,
       viewRevision: message.viewRevision,
       cols: message.cols,
       rows: message.rows

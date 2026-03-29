@@ -604,4 +604,73 @@ describe("SharedRuntimeV2PaneBridge", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(bellPaneIds).toEqual([]);
   });
+
+  test("encodes snapshot and stream replay as terminal_patch frames for patch-capable viewers", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const patchBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-1",
+      patchBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+
+    await expect.poll(() => attachCount).toBe(1);
+    const snapshotFrame = JSON.parse(patchBrowser.sent[0]!.toString("utf8")) as {
+      type: string;
+      paneId: string;
+      viewRevision: number;
+      revision: number;
+      baseRevision: number | null;
+      reset: boolean;
+      source: string;
+      dataBase64: string;
+    };
+    expect(snapshotFrame).toMatchObject({
+      type: "terminal_patch",
+      paneId: "pane-1",
+      viewRevision: 1,
+      revision: 1,
+      baseRevision: null,
+      reset: true,
+      source: "snapshot",
+    });
+    expect(Buffer.from(snapshotFrame.dataBase64, "base64").toString("utf8")).toContain("BASELINE-HISTORY");
+
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("PATCH-LIVE\r\n"),
+    }));
+
+    await expect.poll(() => patchBrowser.sent.length).toBe(2);
+    const streamFrame = JSON.parse(patchBrowser.sent[1]!.toString("utf8")) as {
+      type: string;
+      viewRevision: number;
+      revision: number;
+      baseRevision: number | null;
+      reset: boolean;
+      source: string;
+      dataBase64: string;
+    };
+    expect(streamFrame).toMatchObject({
+      type: "terminal_patch",
+      viewRevision: 1,
+      revision: 2,
+      baseRevision: 1,
+      reset: false,
+      source: "stream",
+    });
+    expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("PATCH-LIVE\r\n");
+  });
 });
