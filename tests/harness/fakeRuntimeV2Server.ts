@@ -932,7 +932,10 @@ export class FakeRuntimeV2Server {
 
   private sendTerminalStream(socket: WebSocket, chunk: string, sequence: number): void {
     if (this.terminalStreamTransport === "binary") {
-      socket.send(Buffer.from(chunk, "utf8"));
+      // Sequenced binary frame: [8-byte BE u64 sequence][raw PTY data]
+      const header = Buffer.alloc(8);
+      header.writeBigUInt64BE(BigInt(sequence));
+      socket.send(Buffer.concat([header, Buffer.from(chunk, "utf8")]));
       return;
     }
 

@@ -147,6 +147,25 @@ const toBuffer = (raw: RawData): Buffer => {
   return Buffer.from(raw);
 };
 
+/**
+ * Binary stream frame layout (from runtime):
+ *   [8 bytes: u64 big-endian sequence number][N bytes: raw PTY data]
+ *
+ * The minimum valid frame is 9 bytes (8-byte header + at least 1 byte of data).
+ */
+const BINARY_STREAM_HEADER_BYTES = 8;
+
+export const parseSequencedBinaryFrame = (
+  buf: Buffer,
+): { sequence: number; chunk: Buffer } | null => {
+  if (buf.byteLength < BINARY_STREAM_HEADER_BYTES + 1) {
+    return null;
+  }
+  const sequence = Number(buf.readBigUInt64BE(0));
+  const chunk = buf.subarray(BINARY_STREAM_HEADER_BYTES);
+  return { sequence, chunk };
+};
+
 const toWsOrigin = (baseUrl: string): string => {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -815,10 +834,20 @@ export class SharedRuntimeV2PaneBridge {
     }
 
     if (isBinary) {
-      const chunk = toBuffer(raw);
-      this.rememberBufferedChunk(chunk, null);
-      if (!this.awaitingFreshSnapshotReplay) {
-        this.broadcast(chunk);
+      const buf = toBuffer(raw);
+      const parsed = parseSequencedBinaryFrame(buf);
+      if (parsed) {
+        // Sequenced binary stream frame: [8-byte BE sequence][PTY data]
+        this.rememberBufferedChunk(parsed.chunk, parsed.sequence);
+        if (!this.awaitingFreshSnapshotReplay) {
+          this.broadcast(parsed.chunk);
+        }
+      } else {
+        // Legacy unframed binary — no sequence tracking
+        this.rememberBufferedChunk(buf, null);
+        if (!this.awaitingFreshSnapshotReplay) {
+          this.broadcast(buf);
+        }
       }
       return;
     }
