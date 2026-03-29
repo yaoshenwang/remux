@@ -584,6 +584,113 @@ test.describe("runtime-v2 browser behavior", () => {
       .toBeGreaterThan(1);
   });
 
+  test("terminal reconnect includes the last applied patch revision in auth", async ({ page }) => {
+    await page.addInitScript(() => {
+      const NativeWebSocket = window.WebSocket;
+      const terminalAuthPayloads: Array<Record<string, unknown>> = [];
+      let latestTerminalSocket: WebSocket | null = null;
+
+      class InstrumentedWebSocket extends NativeWebSocket {
+        private readonly remuxTerminalSocket: boolean;
+
+        constructor(url: string | URL, protocols?: string | string[]) {
+          if (protocols === undefined) {
+            super(url);
+          } else {
+            super(url, protocols);
+          }
+
+          const href = typeof url === "string" ? url : url.toString();
+          this.remuxTerminalSocket = href.includes("/ws/terminal");
+          if (this.remuxTerminalSocket) {
+            latestTerminalSocket = this;
+          }
+        }
+
+        override send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+          if (this.remuxTerminalSocket && typeof data === "string") {
+            try {
+              const parsed = JSON.parse(data) as Record<string, unknown>;
+              if (parsed.type === "auth") {
+                terminalAuthPayloads.push(parsed);
+              }
+            } catch {
+              // Ignore non-JSON terminal frames.
+            }
+          }
+          super.send(data);
+        }
+      }
+
+      Object.setPrototypeOf(InstrumentedWebSocket, NativeWebSocket);
+      Object.defineProperty(window, "WebSocket", {
+        configurable: true,
+        writable: true,
+        value: InstrumentedWebSocket,
+      });
+
+      (window as Window & {
+        __remuxTerminalAuthStats?: {
+          auths: () => Array<Record<string, unknown>>;
+          closeLatest: () => void;
+        };
+      }).__remuxTerminalAuthStats = {
+        auths: () => terminalAuthPayloads,
+        closeLatest: () => latestTerminalSocket?.close(),
+      };
+    });
+
+    const paneId = server.upstream.activePaneId();
+    server.upstream.setPaneContent(paneId, "PATCH-BASELINE\r\n");
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expectAttachedStatus(page);
+    await expect.poll(() => readTerminalText(page)).toContain("PATCH-BASELINE");
+
+    server.upstream.pushTerminalOutput(paneId, "PATCH-REVISION-TWO\r\n");
+    await expect.poll(() => readTerminalText(page)).toContain("PATCH-REVISION-TWO");
+
+    await expect
+      .poll(() => page.evaluate(() => (
+        (window as Window & {
+          __remuxTerminalAuthStats?: { auths: () => Array<Record<string, unknown>> };
+        }).__remuxTerminalAuthStats?.auths().length ?? 0
+      )))
+      .toBe(1);
+
+    const initialAuth = await page.evaluate(() => (
+      (window as Window & {
+        __remuxTerminalAuthStats?: { auths: () => Array<Record<string, unknown>> };
+      }).__remuxTerminalAuthStats?.auths()[0] ?? null
+    ));
+    expect(initialAuth?.transportMode).toBe("patch");
+    expect(initialAuth?.baseRevision ?? null).toBeNull();
+
+    await page.evaluate(() => {
+      (window as Window & {
+        __remuxTerminalAuthStats?: { closeLatest: () => void };
+      }).__remuxTerminalAuthStats?.closeLatest();
+    });
+
+    await expect
+      .poll(() => page.evaluate(() => (
+        (window as Window & {
+          __remuxTerminalAuthStats?: { auths: () => Array<Record<string, unknown>> };
+        }).__remuxTerminalAuthStats?.auths().length ?? 0
+      )), { timeout: 10_000 })
+      .toBeGreaterThan(1);
+
+    const reconnectAuth = await page.evaluate(() => {
+      const auths = (window as Window & {
+        __remuxTerminalAuthStats?: { auths: () => Array<Record<string, unknown>> };
+      }).__remuxTerminalAuthStats?.auths() ?? [];
+      return auths.at(-1) ?? null;
+    });
+    expect(reconnectAuth?.transportMode).toBe("patch");
+    expect(typeof reconnectAuth?.baseRevision).toBe("number");
+    expect((reconnectAuth?.baseRevision as number) >= 2).toBe(true);
+  });
+
   test("switching tabs clears repaint-heavy stale terminal UI instead of leaking the previous tab", async ({ page }) => {
     const firstPaneId = server.upstream.activePaneId();
     server.upstream.setPaneContent(firstPaneId, buildRepaintHeavyTranscript("TAB-0"));

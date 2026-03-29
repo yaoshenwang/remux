@@ -301,6 +301,7 @@ export const App = () => {
       }
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
+      terminalPatchRevisionRef.current = null;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
     },
     getAuthPayload: () => buildControlAuthHint(
@@ -494,15 +495,18 @@ export const App = () => {
           });
           return;
         }
+        terminalPatchRevisionRef.current = null;
         applyTerminalChunk(event.data);
         return;
       }
       if (event.data instanceof ArrayBuffer) {
+        terminalPatchRevisionRef.current = null;
         applyTerminalChunk(new Uint8Array(event.data));
         return;
       }
       if (event.data instanceof Blob) {
         void event.data.arrayBuffer().then((buffer) => {
+          terminalPatchRevisionRef.current = null;
           applyTerminalChunk(new Uint8Array(buffer));
         });
       }
