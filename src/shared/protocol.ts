@@ -82,6 +82,7 @@ export type ControlClientMessage =
       clientId?: string;
       transportMode?: "raw" | "patch";
       viewRevision?: number;
+      baseRevision?: number;
       session?: string;
       tabIndex?: number;
       paneId?: string;

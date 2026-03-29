@@ -53,7 +53,7 @@ import { resolveReconnectDelay, shouldPauseReconnect } from "./reconnect-policy"
 import {
   decodeTerminalPatchData,
   parseTerminalPatchMessage,
-  shouldApplyTerminalPatch,
+  resolveTerminalPatchDisposition,
 } from "./terminal-transport";
 import type {
   ClientDiagnosticDetails,
@@ -98,6 +98,7 @@ export const App = () => {
   const terminalReconnectAttemptRef = useRef(0);
   const terminalReviveContextKeyRef = useRef<string | null>(null);
   const terminalViewRevisionRef = useRef<number | null>(null);
+  const terminalPatchRevisionRef = useRef<number | null>(null);
   const lastOpenedTerminalViewRevisionRef = useRef<number | null>(null);
   const launchContextRef = useRef(initialLaunchContext);
   const readTerminalGeometryRef = useRef<() => { cols: number; rows: number } | null>(() => null);
@@ -224,6 +225,7 @@ export const App = () => {
           awaitingTerminalReplayRef.current = false;
           terminalHasReplayRef.current = false;
           terminalViewRevisionRef.current = null;
+          terminalPatchRevisionRef.current = null;
           lastOpenedTerminalViewRevisionRef.current = null;
           setTerminalViewState("idle");
           setRuntimeState(null);
@@ -366,7 +368,12 @@ export const App = () => {
 
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string, viewRevision = terminalViewRevisionRef.current): void => {
-    debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue), viewRevision });
+    const baseRevision = typeof viewRevision === "number" ? terminalPatchRevisionRef.current : null;
+    debugLog("terminal_socket.open.begin", {
+      hasPassword: Boolean(passwordValue),
+      viewRevision,
+      baseRevision,
+    });
     recordDiagnosticActionRef.current("terminal.connect.begin", "Open live terminal socket");
     if (terminalReconnectTimerRef.current) {
       clearTimeout(terminalReconnectTimerRef.current);
@@ -405,6 +412,7 @@ export const App = () => {
         clientId,
         transportMode: "patch",
         ...(typeof viewRevision === "number" ? { viewRevision } : {}),
+        ...(typeof baseRevision === "number" ? { baseRevision } : {}),
         ...(terminalGeometry ?? {})
       }));
       stopTerminalKeepAliveRef.current?.();
@@ -416,7 +424,7 @@ export const App = () => {
       flushPendingTerminalTransport();
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
-    const applyTerminalChunk = (chunk: string | Uint8Array): void => {
+    const applyTerminalChunk = (chunk: string | Uint8Array, onComplete?: () => void): void => {
       if (awaitingTerminalReplayRef.current && getTerminalChunkLength(chunk) > 0) {
         awaitingTerminalReplayRef.current = false;
         terminalHasReplayRef.current = true;
@@ -426,7 +434,7 @@ export const App = () => {
           attachedSessionRef.current ? `attached: ${attachedSessionRef.current}` : "terminal connected"
         );
       }
-      writeToTerminal(chunk);
+      writeToTerminal(chunk, onComplete);
       if (terminalChunkHasBell(chunk) && attachedSessionRef.current) {
         setBellSessions((current) => new Set(current).add(attachedSessionRef.current));
       }
@@ -443,20 +451,47 @@ export const App = () => {
       if (typeof event.data === "string") {
         const patchMessage = parseTerminalPatchMessage(event.data);
         if (patchMessage) {
-          if (!shouldApplyTerminalPatch(patchMessage, terminalViewRevisionRef.current)) {
-            debugLog("terminal_patch.drop.stale", {
+          const disposition = resolveTerminalPatchDisposition(
+            patchMessage,
+            terminalViewRevisionRef.current,
+            terminalPatchRevisionRef.current,
+          );
+          if (!disposition.apply) {
+            const debugEvent = disposition.reason === "stale_view"
+              ? "terminal_patch.drop.stale"
+              : "terminal_patch.drop.gap";
+            debugLog(debugEvent, {
               paneId: patchMessage.paneId,
               revision: patchMessage.revision,
               patchViewRevision: patchMessage.viewRevision,
               activeViewRevision: terminalViewRevisionRef.current,
+              patchBaseRevision: patchMessage.baseRevision,
+              localRevision: terminalPatchRevisionRef.current,
             });
+            if (disposition.reason === "revision_gap") {
+              const auth = terminalAuthRef.current;
+              terminalPatchRevisionRef.current = null;
+              localEchoRef.current?.reset();
+              resetTerminalBufferRef.current();
+              terminalHasReplayRef.current = false;
+              awaitingTerminalReplayRef.current = false;
+              if (auth) {
+                openTerminalSocket(auth.password, auth.clientId, terminalViewRevisionRef.current);
+              }
+            }
             return;
           }
           if (patchMessage.reset) {
             localEchoRef.current?.reset();
             resetTerminalBufferRef.current();
+            terminalPatchRevisionRef.current = null;
           }
-          applyTerminalChunk(decodeTerminalPatchData(patchMessage));
+          applyTerminalChunk(decodeTerminalPatchData(patchMessage), () => {
+            if (terminalViewRevisionRef.current !== patchMessage.viewRevision) {
+              return;
+            }
+            terminalPatchRevisionRef.current = patchMessage.revision;
+          });
           return;
         }
         applyTerminalChunk(event.data);
@@ -534,6 +569,7 @@ export const App = () => {
     resetTerminalBufferRef.current();
     terminalHasReplayRef.current = false;
     awaitingTerminalReplayRef.current = false;
+    terminalPatchRevisionRef.current = null;
     terminalReconnectAttemptRef.current = 0;
     recordDiagnosticActionRef.current(
       "terminal.view_revision",
@@ -831,6 +867,7 @@ export const App = () => {
     resetTerminalBufferRef.current();
     awaitingTerminalReplayRef.current = false;
     terminalHasReplayRef.current = false;
+    terminalPatchRevisionRef.current = null;
     terminalReconnectAttemptRef.current = 0;
     recordDiagnosticActionRef.current(
       "terminal.revive.context",

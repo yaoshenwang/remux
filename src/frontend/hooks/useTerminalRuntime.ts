@@ -63,7 +63,7 @@ interface UseTerminalRuntimeResult {
   serializeAddonRef: MutableRefObject<SerializeAddon | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
-  writeToTerminal: (chunk: TerminalWriteChunk) => void;
+  writeToTerminal: (chunk: TerminalWriteChunk, onComplete?: () => void) => void;
 }
 
 const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLayout ? 12 : 14;
@@ -278,14 +278,19 @@ export const useTerminalRuntime = ({
     }
   }, [onBeforeReset, theme]);
 
-  const writeToTerminal = useCallback((chunk: TerminalWriteChunk): void => {
+  const writeToTerminal = useCallback((chunk: TerminalWriteChunk, onComplete?: () => void): void => {
     const echo = localEchoRef.current;
+    const complete = (): void => {
+      onComplete?.();
+    };
     if (echo && typeof chunk === "string") {
       echo.detectAlternateScreen(chunk);
       const reconciled = echo.reconcileServerOutput(chunk);
       if (reconciled) {
-        terminalWriteBufferRef.current?.enqueue(reconciled);
+        terminalWriteBufferRef.current?.enqueue(reconciled, complete);
+        return;
       }
+      complete();
       return;
     }
     if (echo && chunk instanceof Uint8Array) {
@@ -294,7 +299,7 @@ export const useTerminalRuntime = ({
       // boundaries correctly across write() calls).
       if (echo.pending.length === 0) {
         echo.detectAlternateScreenBinary(chunk);
-        terminalWriteBufferRef.current?.enqueue(chunk);
+        terminalWriteBufferRef.current?.enqueue(chunk, complete);
         return;
       }
       // Slow path: predictions pending — must decode to string for
@@ -303,11 +308,13 @@ export const useTerminalRuntime = ({
       echo.detectAlternateScreen(text);
       const reconciled = echo.reconcileServerOutput(text);
       if (reconciled) {
-        terminalWriteBufferRef.current?.enqueue(reconciled);
+        terminalWriteBufferRef.current?.enqueue(reconciled, complete);
+        return;
       }
+      complete();
       return;
     }
-    terminalWriteBufferRef.current?.enqueue(chunk);
+    terminalWriteBufferRef.current?.enqueue(chunk, complete);
   }, []);
 
   const copySelection = useCallback(async (): Promise<void> => {
@@ -381,8 +388,8 @@ export const useTerminalRuntime = ({
       return true;
     });
     terminal.open(terminalContainerRef.current);
-    terminalWriteBufferRef.current = createTerminalWriteBuffer((chunk) => {
-      terminal.write(chunk);
+    terminalWriteBufferRef.current = createTerminalWriteBuffer((chunk, onWritten) => {
+      terminal.write(chunk, onWritten);
     });
     localEchoRef.current = new LocalEchoPrediction({
       writeToTerminal: (data) => terminal.write(data),

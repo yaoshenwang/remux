@@ -117,14 +117,36 @@ interface DataContext {
 }
 
 interface PaneBridgeSubscriber {
+  viewerId: string;
   socket: WebSocket;
   transportMode: TerminalTransportMode;
   getViewRevision: () => number;
+  queue: PaneBridgeSubscriberQueue;
 }
 
 interface PaneBridgeSubscribeOptions {
   transportMode?: TerminalTransportMode;
   getViewRevision?: () => number;
+  baseRevision?: number;
+}
+
+interface QueuedTerminalFrame {
+  payload: string | Buffer;
+  wireBytes: number;
+  revision: number | null;
+  source: "snapshot" | "stream";
+}
+
+interface PaneBridgeSubscriberQueue {
+  pending: QueuedTerminalFrame[];
+  inFlight: QueuedTerminalFrame | null;
+  queuedBytes: number;
+  draining: boolean;
+  awaitingFreshSnapshot: boolean;
+  pressureHigh: boolean;
+  lastSentRevision: number | null;
+  lastAckedRevision: number | null;
+  highWatermarkHits: number;
 }
 
 interface BufferedTerminalChunk {
@@ -140,6 +162,8 @@ const MAX_BUFFERED_TERMINAL_BYTES = 256 * 1024;
 const TERMINAL_RESIZE_SETTLE_MS = 120;
 const TERMINAL_UPSTREAM_RECONNECT_MS = 150;
 const DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS = 30_000;
+const DEFAULT_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES = 128 * 1024;
+const DEFAULT_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES = 32 * 1024;
 const TERMINAL_RESET_BYTES = Buffer.from("\u001bc", "utf8");
 
 const backendCapabilities: BackendCapabilities = {
@@ -249,6 +273,32 @@ const resolveIdlePaneBridgeGraceMs = (): number => {
     return DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS;
   }
   return Math.max(0, Math.floor(parsed));
+};
+
+const resolveTerminalViewerQueueHighWatermarkBytes = (): number => {
+  const raw = process.env.REMUX_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES?.trim();
+  if (!raw) {
+    return DEFAULT_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES;
+  }
+  return Math.max(1, Math.floor(parsed));
+};
+
+const resolveTerminalViewerQueueLowWatermarkBytes = (
+  highWatermarkBytes: number,
+): number => {
+  const raw = process.env.REMUX_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES?.trim();
+  if (!raw) {
+    return Math.min(DEFAULT_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES, highWatermarkBytes);
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return Math.min(DEFAULT_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES, highWatermarkBytes);
+  }
+  return Math.max(1, Math.min(Math.floor(parsed), highWatermarkBytes));
 };
 
 const sanitizeFilename = (raw: string): string => {
@@ -588,12 +638,17 @@ export class SharedRuntimeV2PaneBridge {
   private latestTransportRevision = 0;
   private awaitingFreshSnapshotReplay = false;
   private snapshotRequestPending = false;
+  private snapshotFanoutMode: "all" | "degraded_only" | "cache_only" = "all";
   private latestViewerId: string | null = null;
   private resizeOwnerViewerId: string | null = null;
   private readonly subscribers = new Map<string, PaneBridgeSubscriber>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
   private readonly bufferedChunks: BufferedTerminalChunk[] = [];
   private bufferedChunkBytes = 0;
+  private readonly viewerQueueHighWatermarkBytes = resolveTerminalViewerQueueHighWatermarkBytes();
+  private readonly viewerQueueLowWatermarkBytes = resolveTerminalViewerQueueLowWatermarkBytes(
+    this.viewerQueueHighWatermarkBytes,
+  );
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -618,6 +673,59 @@ export class SharedRuntimeV2PaneBridge {
     });
   }
 
+  private createSubscriberQueue(): PaneBridgeSubscriberQueue {
+    return {
+      pending: [],
+      inFlight: null,
+      queuedBytes: 0,
+      draining: false,
+      awaitingFreshSnapshot: false,
+      pressureHigh: false,
+      lastSentRevision: null,
+      lastAckedRevision: null,
+      highWatermarkHits: 0,
+    };
+  }
+
+  private canContinueFromBaseRevision(baseRevision: number | undefined): boolean {
+    if (
+      typeof baseRevision !== "number"
+      || !Number.isFinite(baseRevision)
+      || baseRevision < 0
+      || this.latestSnapshotRevision === null
+    ) {
+      return false;
+    }
+    if (baseRevision < this.latestSnapshotRevision) {
+      return false;
+    }
+    if (baseRevision === this.latestTransportRevision) {
+      return true;
+    }
+    let expectedRevision = baseRevision + 1;
+    for (const chunk of this.bufferedChunks) {
+      if (chunk.revision <= baseRevision) {
+        continue;
+      }
+      if (chunk.revision !== expectedRevision) {
+        return false;
+      }
+      expectedRevision += 1;
+    }
+    return expectedRevision - 1 === this.latestTransportRevision;
+  }
+
+  private continueFromBaseRevision(
+    subscriber: PaneBridgeSubscriber,
+    baseRevision: number,
+  ): void {
+    for (const chunk of this.bufferedChunks) {
+      if (chunk.revision > baseRevision) {
+        this.sendChunkToSubscriber(subscriber, chunk);
+      }
+    }
+  }
+
   async subscribe(
     viewerId: string,
     browserSocket: WebSocket,
@@ -631,9 +739,11 @@ export class SharedRuntimeV2PaneBridge {
       const wasEmpty = this.subscribers.size === 0;
       const hadOpenSocket = this.socket?.readyState === WebSocket.OPEN;
       this.subscribers.set(viewerId, {
+        viewerId,
         socket: browserSocket,
         transportMode: options.transportMode ?? "raw",
         getViewRevision: options.getViewRevision ?? (() => 1),
+        queue: this.createSubscriberQueue(),
       });
       this.recordViewerSize(viewerId, size);
       if (wasEmpty) {
@@ -643,13 +753,34 @@ export class SharedRuntimeV2PaneBridge {
       const desiredSize = this.resolveDesiredSize();
       await this.ensureAttached(desiredSize);
       if (wasEmpty && hadOpenSocket) {
-        this.requestSnapshot();
+        this.requestSnapshot("all");
       }
-      if (this.awaitingFreshSnapshotReplay) {
-        return;
+      if (
+        typeof options.baseRevision === "number"
+        && options.transportMode === "patch"
+        && this.awaitingFreshSnapshotReplay
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
       const subscriber = this.subscribers.get(viewerId);
-      if (subscriber && this.latestSnapshotPayload) {
+      if (!subscriber) {
+        return;
+      }
+      const canContinueFromBaseRevision = this.canContinueFromBaseRevision(options.baseRevision);
+      const canContinue = subscriber.transportMode === "patch" && canContinueFromBaseRevision;
+      if (this.awaitingFreshSnapshotReplay) {
+        if (canContinue && this.snapshotRequestPending) {
+          this.awaitingFreshSnapshotReplay = false;
+          this.snapshotFanoutMode = "cache_only";
+          this.continueFromBaseRevision(subscriber, options.baseRevision!);
+        }
+        return;
+      }
+      if (canContinue) {
+        this.continueFromBaseRevision(subscriber, options.baseRevision!);
+        return;
+      }
+      if (this.latestSnapshotPayload) {
         this.sendSnapshotToSubscriber(subscriber);
         for (const chunk of this.bufferedChunks) {
           this.sendChunkToSubscriber(subscriber, chunk);
@@ -671,7 +802,7 @@ export class SharedRuntimeV2PaneBridge {
 
       if (this.subscribers.size === 0) {
         this.awaitingFreshSnapshotReplay = true;
-        this.requestSnapshot();
+        this.requestSnapshot("all");
         this.scheduleIdleClose();
         return;
       }
@@ -733,6 +864,10 @@ export class SharedRuntimeV2PaneBridge {
     return this.latestTransportRevision;
   }
 
+  private measureQueuedFrameBytes(payload: string | Buffer): number {
+    return typeof payload === "string" ? Buffer.byteLength(payload, "utf8") : payload.byteLength;
+  }
+
   private buildTerminalPatchFrame(
     payload: Buffer,
     options: {
@@ -762,33 +897,180 @@ export class SharedRuntimeV2PaneBridge {
     if (!this.latestSnapshotPayload || !this.latestSnapshotContent || this.latestSnapshotRevision === null) {
       return;
     }
-    if (subscriber.transportMode === "patch") {
-      sendRaw(subscriber.socket, this.buildTerminalPatchFrame(this.latestSnapshotContent, {
-        revision: this.latestSnapshotRevision,
-        baseRevision: null,
-        reset: true,
-        source: "snapshot",
-        viewRevision: subscriber.getViewRevision(),
-        size: this.currentSize,
-      }));
-      return;
-    }
-    sendRaw(subscriber.socket, this.latestSnapshotPayload);
+    const payload = subscriber.transportMode === "patch"
+      ? this.buildTerminalPatchFrame(this.latestSnapshotContent, {
+          revision: this.latestSnapshotRevision,
+          baseRevision: null,
+          reset: true,
+          source: "snapshot",
+          viewRevision: subscriber.getViewRevision(),
+          size: this.currentSize,
+        })
+      : this.latestSnapshotPayload;
+    this.enqueueFrameForSubscriber(subscriber, {
+      payload,
+      wireBytes: this.measureQueuedFrameBytes(payload),
+      revision: this.latestSnapshotRevision,
+      source: "snapshot",
+    });
   }
 
   private sendChunkToSubscriber(subscriber: PaneBridgeSubscriber, chunk: BufferedTerminalChunk): void {
-    if (subscriber.transportMode === "patch") {
-      sendRaw(subscriber.socket, this.buildTerminalPatchFrame(chunk.payload, {
-        revision: chunk.revision,
-        baseRevision: chunk.revision > 1 ? chunk.revision - 1 : null,
-        reset: false,
-        source: "stream",
-        viewRevision: subscriber.getViewRevision(),
-        size: this.currentSize,
-      }));
+    const payload = subscriber.transportMode === "patch"
+      ? this.buildTerminalPatchFrame(chunk.payload, {
+          revision: chunk.revision,
+          baseRevision: chunk.revision > 1 ? chunk.revision - 1 : null,
+          reset: false,
+          source: "stream",
+          viewRevision: subscriber.getViewRevision(),
+          size: this.currentSize,
+        })
+      : chunk.payload;
+    this.enqueueFrameForSubscriber(subscriber, {
+      payload,
+      wireBytes: this.measureQueuedFrameBytes(payload),
+      revision: chunk.revision,
+      source: "stream",
+    });
+  }
+
+  private clearPendingSubscriberQueue(subscriber: PaneBridgeSubscriber): void {
+    subscriber.queue.pending.length = 0;
+    subscriber.queue.queuedBytes = subscriber.queue.inFlight?.wireBytes ?? 0;
+  }
+
+  private subscriberHasQueuedSnapshot(subscriber: PaneBridgeSubscriber): boolean {
+    if (subscriber.queue.inFlight?.source === "snapshot") {
+      return true;
+    }
+    return subscriber.queue.pending.some((frame) => frame.source === "snapshot");
+  }
+
+  private buildCurrentSnapshotForSubscriber(subscriber: PaneBridgeSubscriber): QueuedTerminalFrame | null {
+    if (!this.latestSnapshotContent || this.latestSnapshotRevision === null) {
+      return null;
+    }
+    const currentContent = this.bufferedChunks.length === 0
+      ? this.latestSnapshotContent
+      : Buffer.concat([
+          this.latestSnapshotContent,
+          ...this.bufferedChunks.map((chunk) => chunk.payload),
+        ]);
+    const revision = this.bufferedChunks.at(-1)?.revision ?? this.latestSnapshotRevision;
+    const payload = subscriber.transportMode === "patch"
+      ? this.buildTerminalPatchFrame(currentContent, {
+          revision,
+          baseRevision: null,
+          reset: true,
+          source: "snapshot",
+          viewRevision: subscriber.getViewRevision(),
+          size: this.currentSize,
+        })
+      : Buffer.concat([TERMINAL_RESET_BYTES, currentContent]);
+    return {
+      payload,
+      wireBytes: this.measureQueuedFrameBytes(payload),
+      revision,
+      source: "snapshot",
+    };
+  }
+
+  private requestFreshSnapshotForSlowSubscriber(subscriber: PaneBridgeSubscriber): void {
+    if (subscriber.queue.awaitingFreshSnapshot) {
       return;
     }
-    sendRaw(subscriber.socket, chunk.payload);
+    subscriber.queue.awaitingFreshSnapshot = true;
+    subscriber.queue.pressureHigh = true;
+    subscriber.queue.highWatermarkHits += 1;
+    this.clearPendingSubscriberQueue(subscriber);
+    this.logger.log("[runtime-v2] terminal viewer queue hit high watermark; downgrading to fresh snapshot", {
+      paneId: this.paneId,
+      viewerId: subscriber.viewerId,
+      queuedBytes: subscriber.queue.queuedBytes,
+      lastSentRevision: subscriber.queue.lastSentRevision,
+      lastAckedRevision: subscriber.queue.lastAckedRevision,
+      highWatermarkHits: subscriber.queue.highWatermarkHits,
+      highWatermarkBytes: this.viewerQueueHighWatermarkBytes,
+      lowWatermarkBytes: this.viewerQueueLowWatermarkBytes,
+    });
+    const currentSnapshot = this.buildCurrentSnapshotForSubscriber(subscriber);
+    if (currentSnapshot) {
+      this.enqueueFrameForSubscriber(subscriber, currentSnapshot);
+      return;
+    }
+    this.requestSnapshot("degraded_only");
+  }
+
+  private enqueueFrameForSubscriber(
+    subscriber: PaneBridgeSubscriber,
+    frame: QueuedTerminalFrame,
+  ): void {
+    if (subscriber.socket.readyState !== subscriber.socket.OPEN) {
+      return;
+    }
+    if (frame.source === "stream" && subscriber.queue.awaitingFreshSnapshot) {
+      return;
+    }
+    if (frame.source === "snapshot") {
+      subscriber.queue.awaitingFreshSnapshot = false;
+      subscriber.queue.pressureHigh = false;
+      this.clearPendingSubscriberQueue(subscriber);
+    }
+    subscriber.queue.pending.push(frame);
+    subscriber.queue.queuedBytes += frame.wireBytes;
+    const hasQueuedBacklog = subscriber.queue.inFlight !== null || subscriber.queue.pending.length > 1;
+    if (
+      frame.source === "stream"
+      && !subscriber.queue.awaitingFreshSnapshot
+      && !this.subscriberHasQueuedSnapshot(subscriber)
+      && hasQueuedBacklog
+      && (
+        subscriber.queue.queuedBytes > this.viewerQueueHighWatermarkBytes
+        || subscriber.queue.pending.length > 0
+      )
+    ) {
+      this.requestFreshSnapshotForSlowSubscriber(subscriber);
+      return;
+    }
+    this.drainSubscriberQueue(subscriber);
+  }
+
+  private drainSubscriberQueue(subscriber: PaneBridgeSubscriber): void {
+    if (
+      subscriber.queue.draining
+      || subscriber.queue.inFlight
+      || subscriber.queue.pending.length === 0
+      || subscriber.socket.readyState !== subscriber.socket.OPEN
+    ) {
+      return;
+    }
+    const frame = subscriber.queue.pending.shift()!;
+    subscriber.queue.inFlight = frame;
+    subscriber.queue.draining = true;
+    subscriber.socket.send(frame.payload, (error?: Error) => {
+      subscriber.queue.draining = false;
+      subscriber.queue.inFlight = null;
+      subscriber.queue.queuedBytes = Math.max(0, subscriber.queue.queuedBytes - frame.wireBytes);
+      if (frame.revision !== null) {
+        subscriber.queue.lastSentRevision = frame.revision;
+        subscriber.queue.lastAckedRevision = frame.revision;
+      }
+      if (subscriber.queue.pressureHigh && subscriber.queue.queuedBytes <= this.viewerQueueLowWatermarkBytes) {
+        subscriber.queue.pressureHigh = false;
+        this.logger.log("[runtime-v2] terminal viewer queue recovered below low watermark", {
+          paneId: this.paneId,
+          viewerId: subscriber.viewerId,
+          queuedBytes: subscriber.queue.queuedBytes,
+          lastAckedRevision: subscriber.queue.lastAckedRevision,
+          lowWatermarkBytes: this.viewerQueueLowWatermarkBytes,
+        });
+      }
+      if (error) {
+        this.logger.error("runtime terminal subscriber send failed", error);
+        return;
+      }
+      this.drainSubscriberQueue(subscriber);
+    });
   }
 
   private recordViewerSize(viewerId: string, size: RuntimeV2TerminalSize): void {
@@ -903,9 +1185,14 @@ export class SharedRuntimeV2PaneBridge {
     this.cursorTracker.resize(size.cols, size.rows);
   }
 
-  private requestSnapshot(): void {
+  private requestSnapshot(fanoutMode: "all" | "degraded_only" = "all"): void {
     if (!this.socket) {
       return;
+    }
+    if (fanoutMode === "all" || this.awaitingFreshSnapshotReplay) {
+      this.snapshotFanoutMode = "all";
+    } else if (!this.snapshotRequestPending) {
+      this.snapshotFanoutMode = "degraded_only";
     }
     if (this.snapshotRequestPending) {
       return;
@@ -961,7 +1248,7 @@ export class SharedRuntimeV2PaneBridge {
     this.clearPendingSnapshotRequest();
     this.resizeSnapshotTimer = setTimeout(() => {
       this.resizeSnapshotTimer = null;
-      this.requestSnapshot();
+      this.requestSnapshot("all");
     }, TERMINAL_RESIZE_SETTLE_MS);
   }
 
@@ -1001,6 +1288,7 @@ export class SharedRuntimeV2PaneBridge {
     this.clearUpstreamReconnectTimer();
     this.awaitingFreshSnapshotReplay = false;
     this.snapshotRequestPending = false;
+    this.snapshotFanoutMode = "all";
     this.latestSnapshotPayload = null;
     this.latestSnapshotContent = null;
     this.latestSnapshotSequence = null;
@@ -1023,15 +1311,63 @@ export class SharedRuntimeV2PaneBridge {
   }
 
   private rememberBufferedChunk(chunk: Buffer, sequence: number | null, revision: number): void {
-    if (!this.latestSnapshotPayload) {
-      return;
-    }
     this.bufferedChunks.push({ payload: chunk, sequence, revision });
     this.bufferedChunkBytes += chunk.byteLength;
     while (this.bufferedChunkBytes > MAX_BUFFERED_TERMINAL_BYTES && this.bufferedChunks.length > 0) {
       const removed = this.bufferedChunks.shift();
       this.bufferedChunkBytes -= removed?.payload.byteLength ?? 0;
     }
+  }
+
+  private applySnapshotCache(
+    snapshotContent: Buffer,
+    sequence: number,
+    options: { reassignRetainedRevisions: boolean },
+  ): BufferedTerminalChunk[] {
+    const retainedChunks = this.latestSnapshotSequence === null
+      ? []
+      : this.bufferedChunks.filter((chunk) => (
+          chunk.sequence !== null && chunk.sequence > sequence
+        ));
+
+    let nextBufferedChunks = retainedChunks;
+    let snapshotRevision: number;
+    if (options.reassignRetainedRevisions) {
+      snapshotRevision = this.nextTransportRevision();
+      let nextRetainedRevision = snapshotRevision;
+      nextBufferedChunks = retainedChunks.map((chunk) => ({
+        ...chunk,
+        revision: ++nextRetainedRevision,
+      }));
+      this.latestTransportRevision = nextRetainedRevision;
+    } else {
+      snapshotRevision = nextBufferedChunks.length > 0
+        ? Math.max(1, nextBufferedChunks[0]!.revision - 1)
+        : Math.max(1, this.latestTransportRevision);
+    }
+
+    this.latestSnapshotPayload = Buffer.concat([
+      TERMINAL_RESET_BYTES,
+      snapshotContent,
+    ]);
+    this.latestSnapshotContent = snapshotContent;
+    this.latestSnapshotSequence = sequence;
+    this.latestSnapshotRevision = snapshotRevision;
+    this.bufferedChunks.length = 0;
+    this.bufferedChunks.push(...nextBufferedChunks);
+    this.bufferedChunkBytes = nextBufferedChunks.reduce(
+      (total, chunk) => total + chunk.payload.byteLength,
+      0,
+    );
+
+    // Reset cursor tracker and replay snapshot content so cursor position stays in sync.
+    this.cursorTracker.write("\x1bc");
+    this.cursorTracker.write(snapshotContent.toString("utf8"));
+    for (const retained of nextBufferedChunks) {
+      this.cursorTracker.write(retained.payload.toString("utf8"));
+    }
+
+    return nextBufferedChunks;
   }
 
   private handleMessage(version: number, raw: RawData, isBinary: boolean): void {
@@ -1089,44 +1425,26 @@ export class SharedRuntimeV2PaneBridge {
     if (message.type === "snapshot") {
       this.clearPendingSnapshotRequest();
       this.snapshotRequestPending = false;
-      const retainedChunks = this.latestSnapshotSequence === null
-        ? []
-        : this.bufferedChunks.filter((chunk) => (
-            chunk.sequence !== null && chunk.sequence > message.sequence
-          ));
       const snapshotContent = Buffer.from(message.replayBase64 ?? message.contentBase64, "base64");
-      const snapshotRevision = this.nextTransportRevision();
-      let nextRetainedRevision = snapshotRevision;
-      const reassignedRetainedChunks = retainedChunks.map((chunk) => ({
-        ...chunk,
-        revision: ++nextRetainedRevision,
-      }));
-      this.latestSnapshotPayload = Buffer.concat([
-        TERMINAL_RESET_BYTES,
-        snapshotContent,
-      ]);
-      this.latestSnapshotContent = snapshotContent;
-      this.latestSnapshotSequence = message.sequence;
-      this.latestSnapshotRevision = snapshotRevision;
-      this.latestTransportRevision = nextRetainedRevision;
-      this.awaitingFreshSnapshotReplay = false;
-      this.bufferedChunks.length = 0;
-      this.bufferedChunks.push(...reassignedRetainedChunks);
-      this.bufferedChunkBytes = reassignedRetainedChunks.reduce(
-        (total, chunk) => total + chunk.payload.byteLength,
-        0,
-      );
+      const fanoutMode = this.snapshotFanoutMode;
+      const retainedChunks = this.applySnapshotCache(snapshotContent, message.sequence, {
+        reassignRetainedRevisions: fanoutMode === "all" || this.awaitingFreshSnapshotReplay,
+      });
 
-      // Reset cursor tracker and replay snapshot content so cursor position stays in sync.
-      this.cursorTracker.write("\x1bc");
-      this.cursorTracker.write(snapshotContent.toString("utf8"));
-      for (const retained of reassignedRetainedChunks) {
-        this.cursorTracker.write(retained.payload.toString("utf8"));
+      const snapshotRecipients = this.resolveSnapshotRecipients();
+      this.awaitingFreshSnapshotReplay = false;
+      this.snapshotFanoutMode = "all";
+
+      for (const subscriber of snapshotRecipients) {
+        subscriber.queue.awaitingFreshSnapshot = false;
+        subscriber.queue.pressureHigh = false;
       }
 
-      this.broadcastSnapshot();
-      for (const chunk of this.bufferedChunks) {
-        this.broadcastChunk(chunk);
+      if (fanoutMode !== "cache_only") {
+        this.broadcastSnapshot(snapshotRecipients);
+        for (const chunk of retainedChunks) {
+          this.broadcastChunk(chunk, snapshotRecipients);
+        }
       }
       return;
     }
@@ -1163,19 +1481,32 @@ export class SharedRuntimeV2PaneBridge {
     }
   }
 
-  private broadcastSnapshot(): void {
+  private resolveSnapshotRecipients(): PaneBridgeSubscriber[] {
+    if (this.snapshotFanoutMode === "cache_only") {
+      return [];
+    }
+    if (this.snapshotFanoutMode === "all" || this.awaitingFreshSnapshotReplay) {
+      return Array.from(this.subscribers.values());
+    }
+    return Array.from(this.subscribers.values()).filter((subscriber) => subscriber.queue.awaitingFreshSnapshot);
+  }
+
+  private broadcastSnapshot(subscribers: Iterable<PaneBridgeSubscriber> = this.subscribers.values()): void {
     if (!this.latestSnapshotPayload) {
       return;
     }
     this.emitBellIfNeeded(this.latestSnapshotPayload);
-    for (const subscriber of this.subscribers.values()) {
+    for (const subscriber of subscribers) {
       this.sendSnapshotToSubscriber(subscriber);
     }
   }
 
-  private broadcastChunk(chunk: BufferedTerminalChunk): void {
+  private broadcastChunk(
+    chunk: BufferedTerminalChunk,
+    subscribers: Iterable<PaneBridgeSubscriber> = this.subscribers.values(),
+  ): void {
     this.emitBellIfNeeded(chunk.payload);
-    for (const subscriber of this.subscribers.values()) {
+    for (const subscriber of subscribers) {
       this.sendChunkToSubscriber(subscriber, chunk);
     }
   }
@@ -1637,6 +1968,7 @@ export const createRemuxV2GatewayServer = (
   const attachTerminalClientToPane = async (
     context: DataContext,
     paneId: string,
+    options: { baseRevision?: number } = {},
   ): Promise<void> => {
     const size = context.terminalSize ?? DEFAULT_TERMINAL_SIZE;
     if (context.paneBridge?.paneId === paneId) {
@@ -1650,6 +1982,7 @@ export const createRemuxV2GatewayServer = (
     await bridge.subscribe(context.viewerId, context.socket, size, {
       transportMode: context.transportMode,
       getViewRevision: () => context.controlContext?.viewRevision ?? 1,
+      baseRevision: options.baseRevision,
     });
   };
 
@@ -2158,6 +2491,7 @@ export const createRemuxV2GatewayServer = (
           context,
           resolveClientViewForContext(runtimeControl.currentSummary(), controlContext).paneId
             ?? resolveActivePaneId(runtimeControl.currentSummary()),
+          { baseRevision: authMessage.baseRevision },
         );
         return;
       }

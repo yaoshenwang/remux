@@ -44,6 +44,20 @@ const waitForTerminalFrame = (
 const waitForRawMessage = async (socket: WebSocket, timeoutMs = 3_000): Promise<string> =>
   (await waitForTerminalFrame(socket, timeoutMs)).text;
 
+const expectNoRawMessage = async (socket: WebSocket, timeoutMs = 250): Promise<void> =>
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off("message", handler);
+      resolve();
+    }, timeoutMs);
+    const handler = () => {
+      clearTimeout(timeout);
+      socket.off("message", handler);
+      reject(new Error("Unexpected terminal frame"));
+    };
+    socket.on("message", handler);
+  });
+
 const authControlClient = async (
   baseWsUrl: string,
 ): Promise<{ control: WebSocket; clientId: string }> => {
@@ -63,7 +77,7 @@ const authTerminalClient = async (
   baseWsUrl: string,
   clientId: string,
   size: { cols: number; rows: number },
-  options?: { transportMode?: "raw" | "patch" },
+  options?: { transportMode?: "raw" | "patch"; viewRevision?: number; baseRevision?: number },
 ): Promise<{ terminal: WebSocket; initialSnapshot: string }> => {
   const terminal = await openSocket(`${baseWsUrl}/ws/terminal`);
   const initialSnapshotPromise = waitForRawMessage(terminal);
@@ -72,6 +86,8 @@ const authTerminalClient = async (
     token: "test-token",
     clientId,
     ...(options?.transportMode ? { transportMode: options.transportMode } : {}),
+    ...(typeof options?.viewRevision === "number" ? { viewRevision: options.viewRevision } : {}),
+    ...(typeof options?.baseRevision === "number" ? { baseRevision: options.baseRevision } : {}),
     cols: size.cols,
     rows: size.rows,
   }));
@@ -532,6 +548,87 @@ describe("runtime v2 gateway server", () => {
         source: "snapshot",
       });
     } finally {
+      terminal?.close();
+      control.close();
+    }
+  });
+
+  test("continues terminal_patch from the last applied revision when reconnecting before the idle refresh snapshot arrives", async () => {
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+    let resumedTerminal: WebSocket | null = null;
+
+    try {
+      const authResult = await authTerminalClient(
+        baseWsUrl,
+        clientId,
+        { cols: 120, rows: 40 },
+        { transportMode: "patch", viewRevision: 1 },
+      );
+      terminal = authResult.terminal;
+
+      const snapshotFrame = JSON.parse(authResult.initialSnapshot) as {
+        revision: number;
+        reset: boolean;
+        source: string;
+      };
+      expect(snapshotFrame).toMatchObject({
+        revision: 1,
+        reset: true,
+        source: "snapshot",
+      });
+
+      upstream.pushTerminalOutput("pane-1", "REVISION_TWO\r\n");
+      const liveFrame = JSON.parse(await waitForRawMessage(terminal)) as {
+        revision: number;
+        baseRevision: number | null;
+        reset: boolean;
+        source: string;
+      };
+      expect(liveFrame).toMatchObject({
+        revision: 2,
+        baseRevision: 1,
+        reset: false,
+        source: "stream",
+      });
+
+      upstream.delayNextTerminalSnapshot(200);
+      const terminalClosed = new Promise<void>((resolve) => {
+        terminal!.once("close", () => resolve());
+      });
+      terminal.close();
+      await terminalClosed;
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.requestSnapshotCount ?? 0).toBe(1);
+
+      upstream.pushTerminalOutput("pane-1", "MISSED_REVISION_THREE\r\n");
+
+      const resumed = await authTerminalClient(
+        baseWsUrl,
+        clientId,
+        { cols: 120, rows: 40 },
+        { transportMode: "patch", viewRevision: 1, baseRevision: 2 },
+      );
+      resumedTerminal = resumed.terminal;
+
+      const resumedFrame = JSON.parse(resumed.initialSnapshot) as {
+        revision: number;
+        baseRevision: number | null;
+        reset: boolean;
+        source: string;
+        dataBase64: string;
+      };
+      expect(resumedFrame).toMatchObject({
+        revision: 3,
+        baseRevision: 2,
+        reset: false,
+        source: "stream",
+      });
+      expect(Buffer.from(resumedFrame.dataBase64, "base64").toString("utf8")).toBe("MISSED_REVISION_THREE\r\n");
+
+      await expectNoRawMessage(resumedTerminal, 300);
+    } finally {
+      resumedTerminal?.close();
       terminal?.close();
       control.close();
     }
