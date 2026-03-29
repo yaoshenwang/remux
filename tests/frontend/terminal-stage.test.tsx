@@ -25,7 +25,7 @@ describe("TerminalStage", () => {
   it("focuses the terminal even when inner terminal content stops pointer bubbling", () => {
     const onFocusTerminal = vi.fn();
     const terminalContainerRef = { current: null as HTMLDivElement | null };
-    const scrollbackContentRef = { current: null as HTMLDivElement | null };
+    const inspectContentRef = { current: null as HTMLDivElement | null };
 
     container = document.createElement("div");
     document.body.append(container);
@@ -52,8 +52,8 @@ describe("TerminalStage", () => {
           onDragLeave={() => undefined}
           onDragOver={() => undefined}
           onDrop={() => undefined}
-          scrollFontSize={14}
-          scrollbackContentRef={scrollbackContentRef}
+          inspectFontSize={14}
+          inspectContentRef={inspectContentRef}
           terminalContainerRef={terminalContainerRef}
           viewMode="terminal"
         />
@@ -90,7 +90,7 @@ describe("TerminalStage", () => {
 
   it("renders a runtime redline banner when active diagnostics are present", () => {
     const terminalContainerRef = { current: null as HTMLDivElement | null };
-    const scrollbackContentRef = { current: null as HTMLDivElement | null };
+    const inspectContentRef = { current: null as HTMLDivElement | null };
 
     container = document.createElement("div");
     document.body.append(container);
@@ -117,8 +117,8 @@ describe("TerminalStage", () => {
           onDragLeave={() => undefined}
           onDragOver={() => undefined}
           onDrop={() => undefined}
-          scrollFontSize={14}
-          scrollbackContentRef={scrollbackContentRef}
+          inspectFontSize={14}
+          inspectContentRef={inspectContentRef}
           terminalContainerRef={terminalContainerRef}
           viewMode="terminal"
         />

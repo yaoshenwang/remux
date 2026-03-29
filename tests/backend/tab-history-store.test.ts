@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { TabHistoryStore } from "../../src/backend/history/tab-history-store.js";
-import type { WorkspaceSnapshot } from "../../src/shared/protocol.js";
+import type { RuntimeSnapshot } from "../../src/shared/protocol.js";
 
-const buildSnapshot = (paneIds: string[], options?: { tabName?: string; activePaneId?: string }): WorkspaceSnapshot => ({
+const buildSnapshot = (paneIds: string[], options?: { tabName?: string; activePaneId?: string }): RuntimeSnapshot => ({
   capturedAt: "2026-03-26T00:00:00.000Z",
   sessions: [
     {

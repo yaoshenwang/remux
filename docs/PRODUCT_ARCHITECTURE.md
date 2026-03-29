@@ -1,3 +1,5 @@
+> **Note**: The strategic direction in this document has been absorbed into the [Remux Master Plan 2026](remux-master-plan-2026-v1.1-with-checklist.md). This document remains as reference for the current Inspect/Live/Control product architecture.
+
 # Remux Product Architecture
 
 > Status: Proposed

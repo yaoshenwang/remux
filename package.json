@@ -62,6 +62,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "postinstall": "node scripts/patch-snapfeed.mjs && npm rebuild better-sqlite3",
+    "check:terminology": "bash scripts/check-terminology.sh",
     "prepack": "npm run build"
   },
   "engines": {

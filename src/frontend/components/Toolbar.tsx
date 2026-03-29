@@ -181,7 +181,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
           >
             Upload
           </button>
-          {/* file input moved outside toolbar for scroll mode access */}
+          {/* file input moved outside toolbar for inspect mode access */}
           <button onClick={() => sendTerminal("\u001b[3~")}>Del</button>
           <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
           <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>

@@ -4,7 +4,7 @@ export interface RuntimeConfig {
   password?: string;
   tunnel: boolean;
   defaultSession: string;
-  scrollbackLines: number;
+  inspectLines: number;
   pollIntervalMs: number;
   token: string;
   frontendDir: string;

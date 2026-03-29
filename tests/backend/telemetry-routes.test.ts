@@ -22,7 +22,7 @@ describe("telemetry routes", () => {
     server = await startRuntimeV2GatewayTestServer({
       frontendDir: tmpDir,
       pollIntervalMs: 60_000,
-      scrollbackLines: 100,
+      inspectLines: 100,
       token: authToken,
     });
   });

@@ -59,7 +59,7 @@ export const describeRuntimeState = (
       return {
         className: "stream-badge native",
         label: "precise live",
-        title: "Using the runtime-v2 live stream with precise scrollback"
+        title: "Using the runtime-v2 live stream with precise history"
       };
     case "cli-polling":
       return {

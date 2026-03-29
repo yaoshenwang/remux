@@ -22,7 +22,7 @@ import type {
   PaneState,
   TabState,
   SessionState,
-  WorkspaceSnapshot,
+  RuntimeSnapshot,
   BackendCapabilities,
   ClientView,
   TabHistoryEvent,
@@ -67,6 +67,7 @@ describe("ServerCapabilities contract", () => {
       supportsPaneFocusById: true,
       supportsTabRename: true,
       supportsSessionRename: true,
+      supportsPreciseInspect: true,
       supportsPreciseScrollback: true,
       supportsFloatingPanes: false,
       supportsFullscreenPane: true,
@@ -145,8 +146,8 @@ describe("RemuxMessageEnvelope contract", () => {
 // ── Workspace domain contracts ──
 
 describe("workspace domain contracts", () => {
-  it("WorkspaceSnapshot should contain sessions and timestamp", () => {
-    const snapshot: WorkspaceSnapshot = {
+  it("RuntimeSnapshot should contain sessions and timestamp", () => {
+    const snapshot: RuntimeSnapshot = {
       sessions: [],
       capturedAt: new Date().toISOString(),
     };
@@ -195,6 +196,7 @@ describe("workspace domain contracts", () => {
       supportsPaneFocusById: true,
       supportsTabRename: true,
       supportsSessionRename: true,
+      supportsPreciseInspect: true,
       supportsPreciseScrollback: true,
       supportsFloatingPanes: false,
       supportsFullscreenPane: true,

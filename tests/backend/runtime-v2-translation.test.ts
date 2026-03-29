@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   buildLegacyClientView,
-  buildLegacyScrollback,
+  buildLegacyInspectContent,
   buildLegacyTabHistory,
-  buildLegacyWorkspaceSnapshot,
+  buildRuntimeSnapshot,
 } from "../../src/backend/v2/translation.js";
 import type {
   RuntimeV2InspectSnapshot,
@@ -145,7 +145,7 @@ const inspectSnapshots: RuntimeV2InspectSnapshot[] = [
     precision: "precise",
     summary: "pane one",
     previewText: "echo one",
-    scrollbackRows: ["build started", "step 1"],
+    inspectRows: ["build started", "step 1"],
     visibleRows: ["echo one", "done"],
     byteCount: 8,
     size: { cols: 120, rows: 40 },
@@ -155,7 +155,7 @@ const inspectSnapshots: RuntimeV2InspectSnapshot[] = [
     precision: "approximate",
     summary: "pane two",
     previewText: "tail -f",
-    scrollbackRows: ["tail -f logs", "warn: retrying"],
+    inspectRows: ["tail -f logs", "warn: retrying"],
     visibleRows: ["tail -f logs"],
     byteCount: 12,
     size: { cols: 80, rows: 24 },
@@ -164,7 +164,7 @@ const inspectSnapshots: RuntimeV2InspectSnapshot[] = [
 
 describe("runtime v2 translation", () => {
   test("maps a runtime v2 workspace summary to the legacy workspace snapshot", () => {
-    const snapshot = buildLegacyWorkspaceSnapshot(workspaceSummary);
+    const snapshot = buildRuntimeSnapshot(workspaceSummary);
 
     expect(snapshot.sessions).toHaveLength(2);
     expect(snapshot.sessions[0]).toMatchObject({
@@ -197,7 +197,7 @@ describe("runtime v2 translation", () => {
   });
 
   test("falls back to legacy pane defaults when runtime v2 omits pane metadata", () => {
-    const snapshot = buildLegacyWorkspaceSnapshot({
+    const snapshot = buildRuntimeSnapshot({
       ...workspaceSummary,
       sessions: [
         {
@@ -273,7 +273,7 @@ describe("runtime v2 translation", () => {
   });
 
   test("builds a legacy scrollback payload from inspect output", () => {
-    expect(buildLegacyScrollback("pane-2", 64, inspectSnapshots[1]!)).toMatchObject({
+    expect(buildLegacyInspectContent("pane-2", 64, inspectSnapshots[1]!)).toMatchObject({
       type: "scrollback",
       paneId: "pane-2",
       lines: 64,

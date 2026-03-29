@@ -9,6 +9,7 @@ const backendCapabilities: BackendCapabilities = {
   supportsPaneFocusById: true,
   supportsTabRename: true,
   supportsSessionRename: true,
+  supportsPreciseInspect: true,
   supportsPreciseScrollback: true,
   supportsFloatingPanes: false,
   supportsFullscreenPane: true,

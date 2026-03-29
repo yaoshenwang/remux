@@ -58,7 +58,7 @@ interface UseTerminalRuntimeResult {
   readTerminalViewport: () => string;
   requestTerminalFit: (options?: TerminalFitOptions) => void;
   resetTerminalBuffer: () => void;
-  scrollbackContentRef: RefObject<HTMLDivElement | null>;
+  inspectContentRef: RefObject<HTMLDivElement | null>;
   serializeAddonRef: MutableRefObject<SerializeAddon | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
@@ -80,7 +80,7 @@ export const useTerminalRuntime = ({
   toolbarRef
 }: UseTerminalRuntimeOptions): UseTerminalRuntimeResult => {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
-  const scrollbackContentRef = useRef<HTMLDivElement | null>(null);
+  const inspectContentRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const serializeAddonRef = useRef<SerializeAddon | null>(null);
@@ -486,7 +486,7 @@ export const useTerminalRuntime = ({
     readTerminalViewport,
     requestTerminalFit,
     resetTerminalBuffer,
-    scrollbackContentRef,
+    inspectContentRef,
     serializeAddonRef,
     terminalContainerRef,
     terminalRef,

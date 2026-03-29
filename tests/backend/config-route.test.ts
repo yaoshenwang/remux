@@ -32,7 +32,7 @@ describe("GET /api/config", () => {
     server = await startRuntimeV2GatewayTestServer({
       frontendDir: tmpDir,
       pollIntervalMs: 60_000,
-      scrollbackLines: 100,
+      inspectLines: 100,
       token: "test-token-123",
     });
   };
@@ -51,14 +51,14 @@ describe("GET /api/config", () => {
       gitCommitSha?: string;
       gitDirty?: boolean;
       passwordRequired: boolean;
-      scrollbackLines: number;
+      inspectLines: number;
       pollIntervalMs: number;
       localWebSocketOrigin?: string;
     };
 
     expect(json.version).toBe(packageJson.version);
     expect(json.passwordRequired).toBe(false);
-    expect(json.scrollbackLines).toBe(100);
+    expect(json.inspectLines).toBe(100);
     expect(json.pollIntervalMs).toBe(60_000);
     expect(json.localWebSocketOrigin).toBeUndefined();
     expect(json.gitCommitSha).toMatch(/^[0-9a-f]{40}$/);

@@ -197,7 +197,7 @@ test.describe("runtime-v2 browser behavior", () => {
 
   test("renders binary live terminal frames in the browser xterm client", async ({ page }) => {
     const paneId = server.upstream.activePaneId();
-    server.upstream.setPaneScrollback(paneId, []);
+    server.upstream.setPaneInspectContent(paneId, []);
     server.upstream.setPaneContent(paneId, "binary ready\r\n");
     server.upstream.setTerminalStreamTransport("binary");
 
@@ -331,7 +331,7 @@ test.describe("runtime-v2 browser behavior", () => {
   });
 
   test("inspect history survives a browser reconnect with server-backed scrollback", async ({ page }) => {
-    server.upstream.setPaneScrollback("pane-1", [
+    server.upstream.setPaneInspectContent("pane-1", [
       "compile started",
       "test suite booting",
       "history survives reconnect",
@@ -383,7 +383,7 @@ test.describe("runtime-v2 browser behavior", () => {
 
   test("keeps the last live output visible while reconnecting until replay arrives", async ({ page }) => {
     const paneId = server.upstream.activePaneId();
-    server.upstream.setPaneScrollback(paneId, [
+    server.upstream.setPaneInspectContent(paneId, [
       "previous build line",
       "still restoring scrollback",
     ]);
@@ -405,7 +405,7 @@ test.describe("runtime-v2 browser behavior", () => {
 
   test("shows a restore overlay while the live replay is resyncing", async ({ page }) => {
     const paneId = server.upstream.activePaneId();
-    server.upstream.setPaneScrollback(paneId, ["restored line"]);
+    server.upstream.setPaneInspectContent(paneId, ["restored line"]);
     server.upstream.setPaneContent(paneId, "overlay line");
     server.upstream.delayNextTerminalSnapshot(1_200);
     await page.goto(`${server.baseUrl}/?token=${server.token}`);

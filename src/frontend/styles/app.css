@@ -67,8 +67,8 @@
   --expand-btn-bg: rgba(0, 255, 194, 0.10);
   --expand-btn-border: rgba(0, 255, 194, 0.25);
 
-  --scrollback-bg: #0e0e0e;
-  --scrollback-border: rgba(255, 255, 255, 0.08);
+  --inspect-bg: #0e0e0e;
+  --inspect-border: rgba(255, 255, 255, 0.08);
   --password-error: #ffb4ab;
   --drawer-heading: #00FFC2;
 
@@ -137,8 +137,8 @@
   --expand-btn-bg: rgba(81, 95, 116, 0.08);
   --expand-btn-border: rgba(81, 95, 116, 0.20);
 
-  --scrollback-bg: #ffffff;
-  --scrollback-border: rgba(0, 0, 0, 0.08);
+  --inspect-bg: #ffffff;
+  --inspect-border: rgba(0, 0, 0, 0.08);
   --password-error: #b91c1c;
   --drawer-heading: #515f74;
 }
@@ -1327,7 +1327,7 @@ button, input {
   -webkit-overflow-scrolling: touch;
 }
 
-.scrollback-main {
+.inspect-main {
   width: 100%;
   min-width: 0;
   height: 100%;
@@ -1337,11 +1337,11 @@ button, input {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: 'JetBrains Mono', 'MesloLGS NF', 'MesloLGM NF', 'Hack Nerd Font', Menlo, Monaco, 'Courier New', monospace;
-  font-size: var(--scroll-font-size, clamp(11px, 1.1vw, 16px));
+  font-size: var(--inspect-font-size, clamp(11px, 1.1vw, 16px));
   line-height: 1.35;
-  background: var(--scrollback-bg);
+  background: var(--inspect-bg);
   border-radius: 8px;
-  border: 1px solid var(--scrollback-border);
+  border: 1px solid var(--inspect-border);
   padding: 0.5rem;
   color: var(--text-primary);
   user-select: text;
@@ -2242,20 +2242,20 @@ button.danger {
   flex-shrink: 0;
 }
 
-/* Scrollback card (legacy) */
-.scrollback-card {
+/* Inspect card (legacy) */
+.inspect-card {
   width: min(95vw, 48rem);
   height: min(85vh, 45rem);
   display: grid;
   grid-template-rows: auto 1fr;
 }
 
-.scrollback-actions {
+.inspect-actions {
   display: flex;
   gap: 0.5rem;
 }
 
-.scrollback-content {
+.inspect-content {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
@@ -2264,8 +2264,8 @@ button.danger {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.75rem;
   line-height: 1.35;
-  background: var(--scrollback-bg);
-  border: 1px solid var(--scrollback-border);
+  background: var(--inspect-bg);
+  border: 1px solid var(--inspect-border);
   border-radius: 8px;
   padding: 0.5rem;
   color: var(--text-primary);

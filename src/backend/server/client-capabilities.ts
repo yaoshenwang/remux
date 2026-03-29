@@ -31,6 +31,8 @@ export interface BuildServerCapabilitiesOptions {
   device?: DeviceCapabilityDependencies;
   adapterRegistry?: AdapterRegistrySummary;
   semanticTransport?: SemanticTransportSummary;
+  /** Canonical runtime kind identifier (e.g. "runtime-v2"). */
+  runtimeKind?: string;
 }
 
 export const buildServerCapabilities = (
@@ -66,6 +68,7 @@ export const buildServerCapabilities = (
       adaptersAvailable,
       adapterHealth,
       supportsEventStream: options.semanticTransport?.supportsEventStream?.() ?? Boolean(options.semanticTransport),
+      ...(options.runtimeKind ? { runtimeKind: options.runtimeKind } : {}),
     },
   };
 };

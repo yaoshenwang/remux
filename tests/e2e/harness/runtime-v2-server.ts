@@ -44,7 +44,7 @@ export const startRuntimeV2E2EServer = async (
     password: options.password,
     tunnel: false,
     defaultSession: "main",
-    scrollbackLines: 1000,
+    inspectLines: 1000,
     pollIntervalMs: 100,
     token,
     frontendDir: path.resolve(process.cwd(), "dist/frontend"),

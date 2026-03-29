@@ -7,6 +7,8 @@ export type {
   PaneState,
   TabState,
   SessionState,
+  RuntimeSnapshot,
+  // @deprecated Use RuntimeSnapshot
   WorkspaceSnapshot,
   WorkspaceStreamMode,
   WorkspaceDegradedReason,
@@ -60,7 +62,7 @@ export type {
 import type {
   BackendCapabilities,
   SessionSummary,
-  WorkspaceSnapshot,
+  RuntimeSnapshot,
   WorkspaceRuntimeState,
   ClientView,
   ClientDiagnosticDetails,
@@ -107,11 +109,22 @@ export type ControlClientMessage =
   | { type: "set_follow_focus"; follow: boolean };
 
 export type ControlServerMessage =
-  | { type: "auth_ok"; clientId: string; requiresPassword: boolean; capabilities?: BackendCapabilities; serverCapabilities?: ServerCapabilities; backendKind?: string }
+  | {
+      type: "auth_ok";
+      clientId: string;
+      requiresPassword: boolean;
+      capabilities?: BackendCapabilities;
+      serverCapabilities?: ServerCapabilities;
+      /**
+       * @deprecated Use `serverCapabilities.semantic.runtimeKind` instead.
+       * Kept on the wire for backward compatibility with older clients.
+       */
+      backendKind?: string;
+    }
   | { type: "auth_error"; reason: string }
   | { type: "attached"; session: string }
   | { type: "session_picker"; sessions: SessionSummary[] }
-  | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView; streamMode?: string; runtimeState?: WorkspaceRuntimeState }
+  | { type: "workspace_state"; workspace: RuntimeSnapshot; clientView: ClientView; streamMode?: string; runtimeState?: WorkspaceRuntimeState }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
   | {
       type: "tab_history";

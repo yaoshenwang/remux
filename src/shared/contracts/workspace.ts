@@ -37,10 +37,13 @@ export interface SessionState extends SessionSummary {
   tabs: TabState[];
 }
 
-export interface WorkspaceSnapshot {
+export interface RuntimeSnapshot {
   sessions: SessionState[];
   capturedAt: string;
 }
+
+/** @deprecated Use RuntimeSnapshot */
+export type WorkspaceSnapshot = RuntimeSnapshot;
 
 export type WorkspaceStreamMode = "pending" | "native-bridge" | "cli-polling" | "unsupported";
 
@@ -57,6 +60,8 @@ export type WorkspaceDegradedReason =
 export interface WorkspaceRuntimeState {
   streamMode: WorkspaceStreamMode;
   degradedReason?: WorkspaceDegradedReason;
+  inspectPrecision: "precise" | "approximate";
+  /** @deprecated Use inspectPrecision */
   scrollbackPrecision: "precise" | "approximate";
 }
 
@@ -66,6 +71,8 @@ export interface BackendCapabilities {
   supportsPaneFocusById: boolean;
   supportsTabRename: boolean;
   supportsSessionRename: boolean;
+  supportsPreciseInspect: boolean;
+  /** @deprecated Use supportsPreciseInspect */
   supportsPreciseScrollback: boolean;
   supportsFloatingPanes: boolean;
   supportsFullscreenPane: boolean;

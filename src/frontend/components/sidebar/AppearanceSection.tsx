@@ -1,10 +1,10 @@
 interface AppearanceSectionProps {
   followBackendFocus: boolean;
   onToggleFollowBackendFocus: () => void;
-  onResetScrollFontSize: () => void;
+  onResetInspectFontSize: () => void;
   onSetTheme: (theme: "dark" | "light") => void;
-  onUpdateScrollFontSize: (value: number) => void;
-  scrollFontSize: number;
+  onUpdateInspectFontSize: (value: number) => void;
+  inspectFontSize: number;
   showFollowFocus: boolean;
   theme: "dark" | "light";
 }
@@ -12,10 +12,10 @@ interface AppearanceSectionProps {
 export const AppearanceSection = ({
   followBackendFocus,
   onToggleFollowBackendFocus,
-  onResetScrollFontSize,
+  onResetInspectFontSize,
   onSetTheme,
-  onUpdateScrollFontSize,
-  scrollFontSize,
+  onUpdateInspectFontSize,
+  inspectFontSize,
   showFollowFocus,
   theme
 }: AppearanceSectionProps) => (
@@ -46,10 +46,10 @@ export const AppearanceSection = ({
 
     <h3>Font Size</h3>
     <div className="drawer-grid" style={{ gridTemplateColumns: "auto 1fr auto", alignItems: "center" }}>
-      <button onClick={() => onUpdateScrollFontSize(Math.max(8, (scrollFontSize || 14) - 1))}>A-</button>
-      <span style={{ textAlign: "center" }}>{scrollFontSize || "Auto"}</span>
-      <button onClick={() => onUpdateScrollFontSize(Math.min(24, (scrollFontSize || 14) + 1))}>A+</button>
+      <button onClick={() => onUpdateInspectFontSize(Math.max(8, (inspectFontSize || 14) - 1))}>A-</button>
+      <span style={{ textAlign: "center" }}>{inspectFontSize || "Auto"}</span>
+      <button onClick={() => onUpdateInspectFontSize(Math.min(24, (inspectFontSize || 14) + 1))}>A+</button>
     </div>
-    <button className="drawer-section-action" onClick={onResetScrollFontSize}>Reset to Auto</button>
+    <button className="drawer-section-action" onClick={onResetInspectFontSize}>Reset to Auto</button>
   </>
 );

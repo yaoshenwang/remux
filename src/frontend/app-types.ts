@@ -6,11 +6,20 @@ export interface ServerConfig {
   gitCommitSha?: string;
   gitDirty?: boolean;
   passwordRequired: boolean;
-  scrollbackLines: number;
+  /** Inspect history line count. Wire name: scrollbackLines (kept for compat). */
+  inspectLines: number;
   pollIntervalMs: number;
   uploadMaxSize?: number;
   localWebSocketOrigin?: string;
+  /**
+   * @deprecated Use `serverCapabilities.semantic.runtimeKind` instead.
+   * Kept for backward compatibility with older clients.
+   */
   backendKind?: "runtime-v2";
+  /**
+   * @deprecated Duplicates `backendKind`. Use `serverCapabilities.semantic.runtimeKind` instead.
+   * Kept for backward compatibility with older clients.
+   */
   runtimeMode?: "runtime-v2";
 }
 

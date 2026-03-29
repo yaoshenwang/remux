@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
-import type { ClientView, SessionState, WorkspaceSnapshot } from "../../src/shared/protocol.js";
+import type { ClientView, SessionState, RuntimeSnapshot } from "../../src/shared/protocol.js";
 import {
   createInitialWorkspaceState,
   deriveWorkspaceStateView,
   reduceWorkspaceState,
 } from "../../src/frontend/hooks/useWorkspaceState.js";
 
-const buildWorkspace = (sessions: SessionState[]): WorkspaceSnapshot => ({
+const buildWorkspace = (sessions: SessionState[]): RuntimeSnapshot => ({
   sessions,
   capturedAt: "2026-03-26T00:00:00.000Z",
 });

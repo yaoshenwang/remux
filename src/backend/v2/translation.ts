@@ -3,7 +3,7 @@ import type {
   ControlServerMessage,
   SessionState,
   TabState,
-  WorkspaceSnapshot,
+  RuntimeSnapshot,
 } from "../../shared/protocol.js";
 import type {
   RuntimeV2InspectPrecision,
@@ -26,7 +26,7 @@ const collectInspectRows = (
   snapshot: RuntimeV2InspectSnapshot,
   lines: number,
 ): string[] => {
-  const combinedRows = [...(snapshot.scrollbackRows ?? []), ...snapshot.visibleRows];
+  const combinedRows = [...(snapshot.inspectRows ?? snapshot.scrollbackRows ?? []), ...snapshot.visibleRows];
   const rows = combinedRows.length > 0 ? combinedRows : splitPreviewRows(snapshot);
   if (lines <= 0 || rows.length <= lines) {
     return rows;
@@ -66,9 +66,9 @@ const resolvePaneCommand = (command: string | null | undefined): string => {
 
 const resolvePanePath = (currentPath: string | null | undefined): string => currentPath ?? "";
 
-export const buildLegacyWorkspaceSnapshot = (
+export const buildRuntimeSnapshot = (
   summary: RuntimeV2WorkspaceSummary,
-): WorkspaceSnapshot => ({
+): RuntimeSnapshot => ({
   capturedAt: new Date().toISOString(),
   sessions: summary.sessions.map((session) => ({
     name: session.sessionName,
@@ -118,7 +118,7 @@ export const resolveLegacyAttachedSession = (
 export const findLegacySession = (
   summary: RuntimeV2WorkspaceSummary,
   sessionName: string,
-): SessionState | undefined => buildLegacyWorkspaceSnapshot(summary).sessions.find((session) => session.name === sessionName);
+): SessionState | undefined => buildRuntimeSnapshot(summary).sessions.find((session) => session.name === sessionName);
 
 export const findRuntimeTabByLegacyIndex = (
   summary: RuntimeV2WorkspaceSummary,
@@ -172,7 +172,8 @@ export const buildLegacyTabHistory = (
   };
 };
 
-export const buildLegacyScrollback = (
+/** Builds a legacy "scrollback" wire message. The type: "scrollback" value is kept for wire compat. */
+export const buildLegacyInspectContent = (
   paneId: string,
   lines: number,
   snapshot: RuntimeV2InspectSnapshot,
@@ -193,7 +194,7 @@ export const mapInspectPrecision = (
     : "precise";
 
 export const findLegacyActivePane = (
-  snapshot: WorkspaceSnapshot,
+  snapshot: RuntimeSnapshot,
   clientView: ClientView,
 ): TabState["panes"][number] | undefined =>
   snapshot.sessions

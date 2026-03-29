@@ -12,8 +12,8 @@ interface InspectViewProps {
   onSearchQueryChange: (value: string) => void;
   paneFilter: string;
   searchQuery: string;
-  scrollFontSize: number;
-  scrollbackContentRef: RefObject<HTMLDivElement | null>;
+  inspectFontSize: number;
+  inspectContentRef: RefObject<HTMLDivElement | null>;
   snapshot: TabInspectSnapshot | null;
 }
 
@@ -39,8 +39,8 @@ export const InspectView = ({
   onSearchQueryChange,
   paneFilter,
   searchQuery,
-  scrollFontSize,
-  scrollbackContentRef,
+  inspectFontSize,
+  inspectContentRef,
   snapshot
 }: InspectViewProps) => {
   const visibleSections = snapshot
@@ -61,10 +61,10 @@ export const InspectView = ({
 
   return (
     <div
-      className="scrollback-main"
-      ref={scrollbackContentRef}
-      data-testid="scrollback-main"
-      style={scrollFontSize > 0 ? { fontSize: `${scrollFontSize}px` } as CSSProperties : undefined}
+      className="inspect-main"
+      ref={inspectContentRef}
+      data-testid="inspect-main"
+      style={inspectFontSize > 0 ? { fontSize: `${inspectFontSize}px` } as CSSProperties : undefined}
     >
       <div className="inspect-header">
         <div className="inspect-title-wrap">

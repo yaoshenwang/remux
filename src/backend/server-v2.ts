@@ -33,8 +33,8 @@ import { randomToken } from "./util/random.js";
 import { readRuntimeMetadata } from "./util/runtime-metadata.js";
 import {
   buildLegacyClientView,
-  buildLegacyScrollback,
-  buildLegacyWorkspaceSnapshot,
+  buildLegacyInspectContent,
+  buildRuntimeSnapshot,
   findRuntimeTabByLegacyIndex,
   renderInspectText,
   resolveLegacyAttachedSession,
@@ -124,6 +124,8 @@ const backendCapabilities: BackendCapabilities = {
   supportsPaneFocusById: true,
   supportsTabRename: true,
   supportsSessionRename: true,
+  supportsPreciseInspect: true,
+  /** @deprecated Use supportsPreciseInspect */
   supportsPreciseScrollback: true,
   supportsFloatingPanes: false,
   supportsFullscreenPane: true,
@@ -132,6 +134,7 @@ const backendCapabilities: BackendCapabilities = {
 const runtimeServerCapabilities = buildServerCapabilities({
   backendCapabilities,
   supportsUpload: true,
+  runtimeKind: RUNTIME_V2_BACKEND_KIND,
 });
 
 const frontendFallbackRoute = "/{*path}";
@@ -1137,10 +1140,12 @@ const buildWorkspaceStateMessage = (
   clientView: ClientView,
 ): Extract<ControlServerMessage, { type: "workspace_state" }> => ({
   type: "workspace_state",
-  workspace: buildLegacyWorkspaceSnapshot(summary),
+  workspace: buildRuntimeSnapshot(summary),
   clientView,
   runtimeState: {
     streamMode: "native-bridge",
+    inspectPrecision: "precise",
+    /** @deprecated Wire compat alias */
     scrollbackPrecision: "precise",
   },
 });
@@ -1209,11 +1214,13 @@ export const createRemuxV2GatewayServer = (
       gitCommitSha: runtimeMetadata.gitCommitSha,
       gitDirty: runtimeMetadata.gitDirty,
       passwordRequired: authService.requiresPassword(),
-      scrollbackLines: config.scrollbackLines,
+      inspectLines: config.inspectLines,
       pollIntervalMs: config.pollIntervalMs,
       uploadMaxSize: UPLOAD_MAX_BYTES,
       localWebSocketOrigin,
+      // @deprecated — use serverCapabilities.semantic.runtimeKind instead
       backendKind: RUNTIME_V2_BACKEND_KIND,
+      // @deprecated — duplicates backendKind; use serverCapabilities.semantic.runtimeKind
       runtimeMode: RUNTIME_V2_BACKEND_KIND,
     });
   });
@@ -1221,7 +1228,9 @@ export const createRemuxV2GatewayServer = (
   app.get("/api/diagnostics", requireApiAuth, (_req, res) => {
     res.json({
       version: runtimeMetadata.version,
+      // @deprecated — use serverCapabilities.semantic.runtimeKind instead
       backendKind: RUNTIME_V2_BACKEND_KIND,
+      // @deprecated — duplicates backendKind; use serverCapabilities.semantic.runtimeKind
       runtimeMode: RUNTIME_V2_BACKEND_KIND,
       protocolVersion: runtimeControl?.currentMetadata().protocolVersion ?? null,
       supportedRuntimeProtocolVersion: EXPECTED_RUNTIME_V2_CONTRACT.protocolVersion,
@@ -1351,7 +1360,7 @@ export const createRemuxV2GatewayServer = (
       return;
     }
     const summary = runtimeControl.currentSummary();
-    tabHistoryStore.recordSnapshot(buildLegacyWorkspaceSnapshot(summary));
+    tabHistoryStore.recordSnapshot(buildRuntimeSnapshot(summary));
     for (const client of controlClients) {
       if (!client.authed) {
         continue;
@@ -1458,7 +1467,7 @@ export const createRemuxV2GatewayServer = (
       return;
     }
     const summary = runtimeControl.currentSummary();
-    tabHistoryStore.recordSnapshot(buildLegacyWorkspaceSnapshot(summary));
+    tabHistoryStore.recordSnapshot(buildRuntimeSnapshot(summary));
     sendJson(context.socket, buildWorkspaceStateMessage(summary, resolveClientViewForContext(summary, context)));
   };
 
@@ -1530,7 +1539,7 @@ export const createRemuxV2GatewayServer = (
       return;
     }
     const summary = runtimeControl.currentSummary();
-    const workspace = buildLegacyWorkspaceSnapshot(summary);
+    const workspace = buildRuntimeSnapshot(summary);
     tabHistoryStore.recordSnapshot(workspace);
     const tab = findRuntimeTabByLegacyIndex(summary, sessionName, tabIndex);
     if (!tab) {
@@ -1584,7 +1593,7 @@ export const createRemuxV2GatewayServer = (
     });
   };
 
-  const sendScrollback = async (
+  const sendInspectContent = async (
     context: ControlContext,
     paneId: string,
     lines: number,
@@ -1599,7 +1608,7 @@ export const createRemuxV2GatewayServer = (
     if (response.type !== "inspect_snapshot") {
       throw new Error("unexpected runtime inspect response");
     }
-    sendJson(context.socket, buildLegacyScrollback(paneId, lines, response.snapshot));
+    sendJson(context.socket, buildLegacyInspectContent(paneId, lines, response.snapshot));
   };
 
   const runControlMutation = async (
@@ -1692,12 +1701,12 @@ export const createRemuxV2GatewayServer = (
         syncContextTargetToSummary(runtimeControl.currentSummary(), context);
         await publishContextView(context);
         return;
-      case "capture_scrollback":
-        await sendScrollback(context, message.paneId, message.lines ?? config.scrollbackLines);
+      case "capture_scrollback": // Legacy wire protocol message type — kept for backward compat
+        await sendInspectContent(context, message.paneId, message.lines ?? config.inspectLines);
         return;
       case "capture_tab_history": {
         const sessionName = message.session ?? resolveClientViewForContext(runtimeControl.currentSummary(), context).sessionName;
-        await sendTabHistory(context, sessionName, message.tabIndex, message.lines ?? config.scrollbackLines);
+        await sendTabHistory(context, sessionName, message.tabIndex, message.lines ?? config.inspectLines);
         return;
       }
       case "report_client_diagnostic": {
@@ -1705,7 +1714,7 @@ export const createRemuxV2GatewayServer = (
         const resolvedView = resolveClientViewForContext(summary, context);
         const sessionName = message.session ?? resolvedView.sessionName;
         const tabIndex = message.tabIndex ?? resolvedView.tabIndex;
-        const workspace = buildLegacyWorkspaceSnapshot(summary);
+        const workspace = buildRuntimeSnapshot(summary);
         tabHistoryStore.recordSnapshot(workspace);
         const tab = workspace.sessions
           .find((session) => session.name === sessionName)
@@ -1739,7 +1748,7 @@ export const createRemuxV2GatewayServer = (
           logger,
           submitMode: "delayed",
           paneCommand: resolvePaneCommandForView(
-            buildLegacyWorkspaceSnapshot(runtimeControl.currentSummary()),
+            buildRuntimeSnapshot(runtimeControl.currentSummary()),
             resolveClientViewForContext(runtimeControl.currentSummary(), context),
           ),
         });
@@ -1857,6 +1866,7 @@ export const createRemuxV2GatewayServer = (
             requiresPassword: authService.requiresPassword(),
             capabilities: backendCapabilities,
             serverCapabilities: runtimeServerCapabilities,
+            // @deprecated — use serverCapabilities.semantic.runtimeKind instead
             backendKind: RUNTIME_V2_BACKEND_KIND,
           });
           sendAttached(context);
@@ -2024,13 +2034,13 @@ export const createRemuxV2GatewayServer = (
       runtimeControl = new RuntimeV2ControlChannel(runtimeTarget.baseUrl, logger);
       await runtimeControl.start();
       runtimeControl.onWorkspaceSnapshot(() => {
-        tabHistoryStore.recordSnapshot(buildLegacyWorkspaceSnapshot(runtimeControl!.currentSummary()));
+        tabHistoryStore.recordSnapshot(buildRuntimeSnapshot(runtimeControl!.currentSummary()));
         broadcastWorkspaceState();
         void retargetTerminalClients();
       });
 
       const initialSummary = runtimeControl.currentSummary();
-      tabHistoryStore.recordSnapshot(buildLegacyWorkspaceSnapshot(initialSummary));
+      tabHistoryStore.recordSnapshot(buildRuntimeSnapshot(initialSummary));
       if (config.defaultSession && initialSummary.sessions.length === 1) {
         const onlySession = initialSummary.sessions[0]!;
         if (onlySession.sessionName !== config.defaultSession) {

@@ -229,7 +229,7 @@ impl PaneRuntime {
             precision: inspect.precision,
             summary: inspect.summary,
             preview_text: inspect.preview_text,
-            scrollback_rows: inspect.scrollback_rows,
+            inspect_rows: inspect.inspect_rows,
             visible_rows: inspect.visible_rows,
             byte_count: inspect.byte_count,
             size: inspect.size,
@@ -1312,7 +1312,7 @@ async fn send_workspace_snapshot(
     socket: &mut WebSocket,
     runtime: &WorkspaceRuntime,
 ) -> Result<(), axum::Error> {
-    let snapshot = control::ServerMessage::WorkspaceSnapshot {
+    let snapshot = control::ServerMessage::RuntimeSnapshot {
         summary: runtime.workspace_summary(),
     };
     send_json_message(socket, &snapshot).await
@@ -1861,7 +1861,7 @@ mod tests {
             pane_id: pane_id.clone(),
         });
         let inspect_rows = inspect
-            .scrollback_rows
+            .inspect_rows
             .iter()
             .chain(inspect.visible_rows.iter())
             .filter_map(|row| {
@@ -1965,7 +1965,7 @@ mod tests {
                 pane_id: pane_id.clone(),
             });
             let inspect_rows = inspect
-                .scrollback_rows
+                .inspect_rows
                 .iter()
                 .chain(inspect.visible_rows.iter())
                 .filter_map(|row| {
@@ -2048,7 +2048,7 @@ mod tests {
 
         let collect_rows = |inspect: control::InspectSnapshot| {
             inspect
-                .scrollback_rows
+                .inspect_rows
                 .iter()
                 .chain(inspect.visible_rows.iter())
                 .filter_map(|row| {
@@ -2156,7 +2156,7 @@ mod tests {
                 .inspect_snapshot(control::InspectScope::Pane {
                     pane_id: pane_id.clone(),
                 })
-                .scrollback_rows
+                .inspect_rows
                 .into_iter()
                 .chain(
                     runtime

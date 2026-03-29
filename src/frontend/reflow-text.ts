@@ -51,12 +51,12 @@ const isWide = (code: number): boolean =>
   (code >= 0x2580 && code <= 0x259F);
 
 /**
- * Reflow captured terminal text for wider display in scroll mode.
+ * Reflow captured terminal text for wider display in inspect mode.
  *
  * Terminal applications format output to fit the terminal width by inserting
- * newlines. When the scroll view is wider than the terminal, this makes text
+ * newlines. When the inspect view is wider than the terminal, this makes text
  * appear as a narrow column. This function joins lines that were likely
- * wrapped at the terminal width, allowing CSS to re-wrap at the scroll view's
+ * wrapped at the terminal width, allowing CSS to re-wrap at the inspect view's
  * actual width.
  *
  * A line is considered "wrapped" if its visible display width (excluding ANSI

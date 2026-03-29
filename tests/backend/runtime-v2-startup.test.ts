@@ -33,7 +33,7 @@ const buildConfig = (token: string): RuntimeConfig => ({
   password: undefined,
   tunnel: false,
   defaultSession: "main",
-  scrollbackLines: 1000,
+  inspectLines: 1000,
   pollIntervalMs: 100,
   token,
   frontendDir: process.cwd(),

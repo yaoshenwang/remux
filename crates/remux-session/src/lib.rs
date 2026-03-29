@@ -60,10 +60,13 @@ pub struct SessionSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceSnapshot {
+pub struct RuntimeSnapshot {
     pub active_session_id: SessionId,
     pub sessions: Vec<SessionSnapshot>,
 }
+
+/// Deprecated: Use RuntimeSnapshot
+pub type WorkspaceSnapshot = RuntimeSnapshot;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceState {
@@ -211,8 +214,8 @@ impl WorkspaceState {
     }
 
     #[must_use]
-    pub fn snapshot(&self) -> WorkspaceSnapshot {
-        WorkspaceSnapshot {
+    pub fn snapshot(&self) -> RuntimeSnapshot {
+        RuntimeSnapshot {
             active_session_id: self.active_session_id.clone(),
             sessions: self.sessions.iter().map(SessionState::snapshot).collect(),
         }

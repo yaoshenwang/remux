@@ -9,7 +9,7 @@ import {
 const buildConfig = (overrides: Partial<ServerConfig> = {}): ServerConfig => ({
   passwordRequired: false,
   pollIntervalMs: 100,
-  scrollbackLines: 1000,
+  inspectLines: 1000,
   ...overrides,
 });
 

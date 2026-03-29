@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { ClientView, WorkspaceSnapshot } from "../../shared/protocol.js";
+import type { ClientView, RuntimeSnapshot } from "../../shared/protocol.js";
 
 export const CODEX_COMPOSE_SUBMIT_DELAY_MS = 150;
 
@@ -50,7 +50,7 @@ const waitForDelayedWrite = (
   });
 
 export const resolvePaneCommandForView = (
-  snapshot: WorkspaceSnapshot | undefined,
+  snapshot: RuntimeSnapshot | undefined,
   view: ClientView | undefined
 ): string | null => {
   if (!snapshot || !view) {

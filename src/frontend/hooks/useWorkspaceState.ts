@@ -2,10 +2,10 @@ import { useDeferredValue, useMemo, useReducer } from "react";
 import type {
   ClientView,
   PaneState,
+  RuntimeSnapshot,
   SessionState,
   SessionSummary,
   TabState,
-  WorkspaceSnapshot,
 } from "../../shared/protocol.js";
 import {
   inferAttachedSessionFromWorkspace,
@@ -20,7 +20,7 @@ import {
 } from "../workspace-order.js";
 
 export interface WorkspaceState {
-  snapshot: WorkspaceSnapshot;
+  snapshot: RuntimeSnapshot;
   clientView: ClientView | null;
   attachedSession: string;
   pendingSessionAttachment: string | null;
@@ -32,7 +32,7 @@ export interface WorkspaceState {
 export type WorkspaceStateAction =
   | { type: "attached"; sessionName: string }
   | { type: "session_picker"; sessions: SessionSummary[] }
-  | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView | null }
+  | { type: "workspace_state"; workspace: RuntimeSnapshot; clientView: ClientView | null }
   | { type: "begin_session_attachment"; sessionName: string }
   | { type: "clear_local_selection" }
   | { type: "local_selection"; tabIndex: number | null; paneId: string | null };
@@ -184,10 +184,10 @@ export const deriveWorkspaceStateView = (
 };
 
 export interface UseWorkspaceStateResult extends WorkspaceState, DerivedWorkspaceState {
-  deferredSnapshot: WorkspaceSnapshot;
+  deferredSnapshot: RuntimeSnapshot;
   onAttached: (sessionName: string) => void;
   onSessionPicker: (sessions: SessionSummary[]) => void;
-  onWorkspaceState: (workspace: WorkspaceSnapshot, clientView: ClientView | null) => void;
+  onWorkspaceState: (workspace: RuntimeSnapshot, clientView: ClientView | null) => void;
   beginSessionAttachment: (sessionName: string) => void;
   clearLocalSelection: () => void;
   selectWindowIndex: (tabIndex: number | null) => void;

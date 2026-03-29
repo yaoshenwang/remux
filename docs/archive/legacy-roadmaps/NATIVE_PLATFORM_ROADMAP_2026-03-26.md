@@ -1,3 +1,5 @@
+> **Archived**: This document has been superseded by the [Remux Master Plan 2026](../remux-master-plan-2026-v1.1-with-checklist.md). Retained for historical reference only.
+
 # Remux Native Platform Roadmap
 
 Date: 2026-03-26

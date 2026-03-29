@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { deriveContext, formatContext } from "../../context-label";
-import type { SessionState, WorkspaceSnapshot } from "../../../shared/protocol";
+import type { RuntimeSnapshot, SessionState } from "../../../shared/protocol";
 import type { DragEvent, MutableRefObject } from "react";
 
 interface SessionSectionProps {
@@ -20,7 +20,7 @@ interface SessionSectionProps {
   setSelectedPaneId: (value: string | null) => void;
   setSelectedWindowIndex: (value: number | null) => void;
   setSessionDropTarget: (value: string | null | ((current: string | null) => string | null)) => void;
-  snapshot: WorkspaceSnapshot;
+  snapshot: RuntimeSnapshot;
   beginDrag: (event: DragEvent<HTMLElement>, type: "session" | "tab" | "snippet", value: string) => void;
   draggedSessionName: string | null;
   onCloseSession: (sessionName: string) => void;

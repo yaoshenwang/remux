@@ -26,7 +26,7 @@ export const startRuntimeV2GatewayTestServer = async (
     frontendDir?: string;
     password?: string;
     pollIntervalMs?: number;
-    scrollbackLines?: number;
+    inspectLines?: number;
     token?: string;
     upstreamOptions?: FakeRuntimeV2ServerOptions;
   },
@@ -40,7 +40,7 @@ export const startRuntimeV2GatewayTestServer = async (
     password: options?.password,
     tunnel: false,
     defaultSession: "main",
-    scrollbackLines: options?.scrollbackLines ?? 1000,
+    inspectLines: options?.inspectLines ?? 1000,
     pollIntervalMs: options?.pollIntervalMs ?? 100,
     token,
     frontendDir: options?.frontendDir ?? process.cwd(),

@@ -18,7 +18,7 @@ const buildConfig = (token: string): RuntimeConfig => ({
   password: undefined,
   tunnel: false,
   defaultSession: "main",
-  scrollbackLines: 1000,
+  inspectLines: 1000,
   pollIntervalMs: 100,
   token,
   frontendDir: process.cwd(),
@@ -402,14 +402,14 @@ describe("runtime v2 gateway server", () => {
     expect(response.status).toBe(200);
     const config = await response.json() as {
       passwordRequired: boolean;
-      scrollbackLines: number;
+      inspectLines: number;
       runtimeMode: string;
       backendKind?: string;
       localWebSocketOrigin?: string;
     };
 
     expect(config.passwordRequired).toBe(false);
-    expect(config.scrollbackLines).toBe(1000);
+    expect(config.inspectLines).toBe(1000);
     expect(config.runtimeMode).toBe("runtime-v2");
     expect(config.backendKind).toBe("runtime-v2");
     expect(config.localWebSocketOrigin).toBeUndefined();
@@ -534,7 +534,7 @@ describe("runtime v2 gateway server", () => {
   });
 
   test("replays persisted scrollback on attach and exposes it through inspect history", async () => {
-    upstream.setPaneScrollback("pane-1", [
+    upstream.setPaneInspectContent("pane-1", [
       "history line 1",
       "history line 2",
       "history line 3",

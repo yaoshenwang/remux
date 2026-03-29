@@ -9,12 +9,12 @@ describe("app header runtime badges", () => {
     expect(
       describeRuntimeState({
         streamMode: "native-bridge",
-        scrollbackPrecision: "precise",
+        inspectPrecision: "precise",
       })
     ).toEqual({
       className: "stream-badge native",
       label: "precise live",
-      title: "Using the runtime-v2 live stream with precise scrollback",
+      title: "Using the runtime-v2 live stream with precise history",
     });
   });
 
@@ -23,7 +23,7 @@ describe("app header runtime badges", () => {
       describeRuntimeState({
         streamMode: "cli-polling",
         degradedReason: "bridge_crashed",
-        scrollbackPrecision: "approximate",
+        inspectPrecision: "approximate",
       })
     ).toEqual({
       className: "stream-badge degraded",

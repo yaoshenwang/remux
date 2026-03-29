@@ -99,6 +99,8 @@ export interface RuntimeV2InspectSnapshot {
   precision: RuntimeV2InspectPrecision;
   summary: string;
   previewText: string;
+  inspectRows?: string[];
+  /** @deprecated Use inspectRows */
   scrollbackRows?: string[];
   visibleRows: string[];
   byteCount: number;

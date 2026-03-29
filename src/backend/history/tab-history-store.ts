@@ -3,7 +3,7 @@ import type {
   TabHistoryEvent,
   TabHistoryPane,
   TabState,
-  WorkspaceSnapshot
+  RuntimeSnapshot
 } from "../../shared/protocol.js";
 
 interface RecordEventOptions {
@@ -58,10 +58,10 @@ const keyForTab = (sessionName: string, tabIndex: number): string => `${sessionN
 
 export class TabHistoryStore {
   private readonly tabs = new Map<string, StoredTabHistory>();
-  private previousSnapshot?: WorkspaceSnapshot;
+  private previousSnapshot?: RuntimeSnapshot;
   private nextEventId = 1;
 
-  recordSnapshot(snapshot: WorkspaceSnapshot): void {
+  recordSnapshot(snapshot: RuntimeSnapshot): void {
     this.syncTabMetadata(snapshot);
 
     if (!this.previousSnapshot) {
@@ -248,7 +248,7 @@ export class TabHistoryStore {
     };
   }
 
-  private syncTabMetadata(snapshot: WorkspaceSnapshot): void {
+  private syncTabMetadata(snapshot: RuntimeSnapshot): void {
     for (const session of snapshot.sessions) {
       for (const tab of session.tabs) {
         const entry = this.getOrCreateTabEntry(session.name, tab.index, tab.name);

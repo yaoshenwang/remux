@@ -32,6 +32,12 @@ export interface SemanticCapabilitySummary {
   adaptersAvailable: string[];
   adapterHealth: SemanticAdapterHealthSummary[];
   supportsEventStream: boolean;
+  /**
+   * Canonical location for the runtime kind identifier (e.g. "runtime-v2").
+   * Replaces the adapter-specific `backendKind` on auth_ok and `/api/config`.
+   * @since 0.3.0
+   */
+  runtimeKind?: string;
 }
 
 export interface ServerCapabilities {

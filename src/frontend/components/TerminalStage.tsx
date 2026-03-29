@@ -21,8 +21,8 @@ interface TerminalStageProps {
   onDragLeave: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
-  scrollFontSize: number;
-  scrollbackContentRef: RefObject<HTMLDivElement | null>;
+  inspectFontSize: number;
+  inspectContentRef: RefObject<HTMLDivElement | null>;
   terminalStatusMessage?: string;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   uploadOverlayText?: string;
@@ -48,8 +48,8 @@ export const TerminalStage = ({
   onDragLeave,
   onDragOver,
   onDrop,
-  scrollFontSize,
-  scrollbackContentRef,
+  inspectFontSize,
+  inspectContentRef,
   terminalStatusMessage,
   terminalContainerRef,
   uploadOverlayText = "Drop file to upload",
@@ -99,8 +99,8 @@ export const TerminalStage = ({
             onSearchQueryChange={onInspectSearchQueryChange}
             paneFilter={inspectPaneFilter}
             searchQuery={inspectSearchQuery}
-            scrollFontSize={scrollFontSize}
-            scrollbackContentRef={scrollbackContentRef}
+            inspectFontSize={inspectFontSize}
+            inspectContentRef={inspectContentRef}
             snapshot={inspectSnapshot}
           />
         )}

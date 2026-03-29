@@ -1,7 +1,7 @@
 /**
  * Client-side preference persistence.
  *
- * Manages theme, sidebar state, sticky zoom, scroll font size,
+ * Manages theme, sidebar state, sticky zoom, inspect font size,
  * and workspace ordering — all stored in localStorage.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -30,9 +30,9 @@ export interface UseClientPreferencesResult {
   setStickyZoom: React.Dispatch<React.SetStateAction<boolean>>;
   markStickyZoomUserSet: () => void;
 
-  scrollFontSize: number;
-  setScrollFontSize: (size: number) => void;
-  resetScrollFontSize: () => void;
+  inspectFontSize: number;
+  setInspectFontSize: (size: number) => void;
+  resetInspectFontSize: () => void;
 
   workspaceOrder: WorkspaceOrderState;
   setWorkspaceOrder: React.Dispatch<React.SetStateAction<WorkspaceOrderState>>;
@@ -73,23 +73,33 @@ export const useClientPreferences = (): UseClientPreferencesResult => {
     localStorage.setItem("remux-sticky-zoom", stickyZoom ? "true" : "false");
   }, [stickyZoom]);
 
-  // ── Scroll font size ──
-  const [scrollFontSize, setScrollFontSizeRaw] = useState<number>(
-    Number(localStorage.getItem("remux-scroll-font-size")) || 0
+  // ── Inspect font size ──
+  // One-time migration from legacy localStorage key
+  if (typeof window !== "undefined") {
+    const legacyKey = "remux-scroll-font-size";
+    const legacyValue = localStorage.getItem(legacyKey);
+    if (legacyValue !== null) {
+      localStorage.setItem("remux-inspect-font-size", legacyValue);
+      localStorage.removeItem(legacyKey);
+    }
+  }
+
+  const [inspectFontSize, setInspectFontSizeRaw] = useState<number>(
+    Number(localStorage.getItem("remux-inspect-font-size")) || 0
   );
 
-  const setScrollFontSize = useCallback((size: number) => {
-    setScrollFontSizeRaw(size);
+  const setInspectFontSize = useCallback((size: number) => {
+    setInspectFontSizeRaw(size);
     if (size === 0) {
-      localStorage.removeItem("remux-scroll-font-size");
+      localStorage.removeItem("remux-inspect-font-size");
     } else {
-      localStorage.setItem("remux-scroll-font-size", String(size));
+      localStorage.setItem("remux-inspect-font-size", String(size));
     }
   }, []);
 
-  const resetScrollFontSize = useCallback(() => {
-    setScrollFontSizeRaw(0);
-    localStorage.removeItem("remux-scroll-font-size");
+  const resetInspectFontSize = useCallback(() => {
+    setInspectFontSizeRaw(0);
+    localStorage.removeItem("remux-inspect-font-size");
   }, []);
 
   // ── Workspace order ──
@@ -115,9 +125,9 @@ export const useClientPreferences = (): UseClientPreferencesResult => {
     stickyZoom,
     setStickyZoom,
     markStickyZoomUserSet,
-    scrollFontSize,
-    setScrollFontSize,
-    resetScrollFontSize,
+    inspectFontSize,
+    setInspectFontSize,
+    resetInspectFontSize,
     workspaceOrder,
     setWorkspaceOrder,
   };

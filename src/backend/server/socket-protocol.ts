@@ -3,7 +3,7 @@ import type { WebSocket } from "ws";
 import type {
   ControlClientMessage,
   ControlServerMessage,
-  WorkspaceSnapshot,
+  RuntimeSnapshot,
 } from "../../shared/protocol.js";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -66,7 +66,7 @@ const controlClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("split_pane"), paneId: z.string(), direction: z.enum(["right", "down"]) }),
   z.object({ type: z.literal("close_pane"), paneId: z.string() }),
   z.object({ type: z.literal("toggle_fullscreen"), paneId: z.string() }),
-  z.object({ type: z.literal("capture_scrollback"), paneId: z.string(), lines: z.number().optional() }),
+  z.object({ type: z.literal("capture_scrollback"), paneId: z.string(), lines: z.number().optional() }), // Legacy wire name — kept for backward compat
   z.object({ type: z.literal("capture_tab_history"), session: z.string().optional(), tabIndex: z.number(), lines: z.number().optional() }),
   z.object({
     type: z.literal("report_client_diagnostic"),
@@ -128,7 +128,7 @@ export const summarizeClientMessage = (message: ControlClientMessage): string =>
   return JSON.stringify({ type: message.type });
 };
 
-export const summarizeState = (state: WorkspaceSnapshot): string => {
+export const summarizeState = (state: RuntimeSnapshot): string => {
   const sessions = state.sessions.map((session) => {
     const activeTab =
       session.tabs.find((tab) => tab.active) ?? session.tabs[0];

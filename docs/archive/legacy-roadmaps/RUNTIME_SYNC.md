@@ -1,3 +1,5 @@
+> **Archived**: This document has been superseded by the [Remux Master Plan 2026](../remux-master-plan-2026-v1.1-with-checklist.md). Retained for historical reference only.
+
 # Runtime Sync
 
 This repository now includes a dedicated runtime sync path for keeping the long-running `main` and `dev` instances aligned with `origin/main` and `origin/dev`.

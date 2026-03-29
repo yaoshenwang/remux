@@ -157,7 +157,8 @@ pub mod control {
         pub precision: InspectPrecision,
         pub summary: String,
         pub preview_text: String,
-        pub scrollback_rows: Vec<String>,
+        #[serde(alias = "scrollback_rows")]
+        pub inspect_rows: Vec<String>,
         pub visible_rows: Vec<String>,
         pub byte_count: usize,
         pub size: TerminalSize,
@@ -170,7 +171,8 @@ pub mod control {
             protocol_version: String,
             write_lease_model: String,
         },
-        WorkspaceSnapshot {
+        #[serde(rename = "workspace_snapshot")]
+        RuntimeSnapshot {
             summary: WorkspaceSummary,
         },
         DiagnosticsSnapshot {

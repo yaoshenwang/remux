@@ -53,7 +53,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
     .option("scrollback", {
       type: "number",
       default: 1000,
-      describe: "Default scrollback capture lines"
+      describe: "Default inspect history lines"
     })
     .option("debug-log", {
       type: "string",
@@ -132,7 +132,7 @@ const main = async (): Promise<void> => {
     password: effectivePassword,
     tunnel: args.tunnel,
     defaultSession: args.session,
-    scrollbackLines: args.scrollback,
+    inspectLines: args.scrollback,
     pollIntervalMs: 2_500,
     token: authService.token,
     frontendDir

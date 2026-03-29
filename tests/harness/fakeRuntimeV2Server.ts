@@ -75,7 +75,7 @@ export class FakeRuntimeV2Server {
   private readonly terminalPaneBySocket = new Map<WebSocket, string>();
   private readonly terminalObservations = new Map<string, TerminalObservation>();
   private readonly paneContent = new Map<string, string>();
-  private readonly paneScrollback = new Map<string, string[]>();
+  private readonly paneInspectContent = new Map<string, string[]>();
   private readonly paneStreamSequence = new Map<string, number>();
   private readonly metadata: RuntimeV2Metadata;
   private sessionSequence = 1;
@@ -177,8 +177,8 @@ export class FakeRuntimeV2Server {
     this.paneContent.set(paneId, text);
   }
 
-  setPaneScrollback(paneId: string, rows: string[]): void {
-    this.paneScrollback.set(paneId, [...rows]);
+  setPaneInspectContent(paneId: string, rows: string[]): void {
+    this.paneInspectContent.set(paneId, [...rows]);
   }
 
   setPaneMetadata(paneId: string, patch: Partial<RuntimeV2PaneSummary>): void {
@@ -215,8 +215,8 @@ export class FakeRuntimeV2Server {
     return this.paneContent.get(paneId) ?? "";
   }
 
-  getPaneScrollback(paneId: string): string[] {
-    return [...(this.paneScrollback.get(paneId) ?? [])];
+  getPaneInspectContent(paneId: string): string[] {
+    return [...(this.paneInspectContent.get(paneId) ?? [])];
   }
 
   activePaneId(): string {
@@ -326,7 +326,7 @@ export class FakeRuntimeV2Server {
     };
 
     this.paneContent.set(newPaneId, newPaneId === "pane-2" ? "PANE_TWO_READY\r\n" : `READY_${newPaneId}\r\n`);
-    this.paneScrollback.set(newPaneId, []);
+    this.paneInspectContent.set(newPaneId, []);
     this.broadcastWorkspace();
     return newPaneId;
   }
@@ -391,7 +391,7 @@ export class FakeRuntimeV2Server {
     };
 
     this.paneContent.set(paneId, `READY_${paneId}\r\n`);
-    this.paneScrollback.set(paneId, []);
+    this.paneInspectContent.set(paneId, []);
     this.broadcastWorkspace();
     return sessionId;
   }
@@ -452,7 +452,7 @@ export class FakeRuntimeV2Server {
     };
 
     this.paneContent.set(paneId, `READY_${paneId}\r\n`);
-    this.paneScrollback.set(paneId, []);
+    this.paneInspectContent.set(paneId, []);
     this.broadcastWorkspace();
     return tabId;
   }
@@ -607,7 +607,7 @@ export class FakeRuntimeV2Server {
 
     for (const pane of removedTab.panes) {
       this.paneContent.delete(pane.paneId);
-      this.paneScrollback.delete(pane.paneId);
+      this.paneInspectContent.delete(pane.paneId);
       this.terminalObservations.delete(pane.paneId);
       this.terminalSocketsByPane.delete(pane.paneId);
       this.paneStreamSequence.delete(pane.paneId);
@@ -708,7 +708,7 @@ export class FakeRuntimeV2Server {
             precision: paneId === this.activePaneId() ? "precise" : "approximate",
             summary: paneId,
             previewText: this.getPaneContent(paneId).trim(),
-            scrollbackRows: this.getPaneScrollback(paneId),
+            inspectRows: this.getPaneInspectContent(paneId),
             visibleRows: this.getPaneContent(paneId).trim().split("\n").filter(Boolean),
             byteCount: this.getPaneContent(paneId).length,
             size: this.latestTerminal(paneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
@@ -833,7 +833,7 @@ export class FakeRuntimeV2Server {
   }
 
   private buildPaneReplay(paneId: string): string {
-    const scrollback = this.getPaneScrollback(paneId);
+    const scrollback = this.getPaneInspectContent(paneId);
     const live = this.getPaneContent(paneId);
     if (scrollback.length === 0) {
       return live;
@@ -851,7 +851,7 @@ export class FakeRuntimeV2Server {
     this.terminateTerminalSocketAfterSnapshot = false;
     this.workspace = this.buildInitialWorkspace();
     this.paneContent.clear();
-    this.paneScrollback.clear();
+    this.paneInspectContent.clear();
     this.terminalObservations.clear();
     this.paneStreamSequence.clear();
     for (const [paneId, text] of Object.entries(this.initialPaneContent)) {
