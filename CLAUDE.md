@@ -90,6 +90,18 @@ npm run typecheck && npm test && npm run test:e2e && npm run build
 - tmux/zellij 命令使用参数数组，禁止退化为 shell 拼接字符串
 - PTY 路径中的 session 名称必须继续保持安全转义
 
+### 浏览器自动化（强制）
+
+- 使用 `playwright-cli` 进行所有浏览器自动化测试和页面检查
+- **禁止使用 chrome-devtools MCP**
+- 常用命令：
+  - `playwright-cli open <url>` — 打开页面
+  - `playwright-cli snapshot` — 获取页面快照和元素 ref
+  - `playwright-cli click <ref>` — 点击元素
+  - `playwright-cli eval '<js>'` — 执行 JavaScript
+  - `playwright-cli screenshot` — 截图
+  - `playwright-cli -s=<session>` — 指定会话操作
+
 ### 交付流程（强制）
 
 1. 在 feature 分支完成开发 + 自测（`npm run typecheck && npm test && npm run test:e2e && npm run build` 全部通过）

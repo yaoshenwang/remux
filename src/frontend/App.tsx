@@ -49,6 +49,7 @@ import {
   token
 } from "./remux-runtime";
 import { attachWebSocketKeepAlive } from "./websocket-keepalive";
+import { resolveReconnectDelay, shouldPauseReconnect } from "./reconnect-policy";
 import type {
   ClientDiagnosticDetails,
   SessionState,
@@ -86,6 +87,10 @@ export const App = () => {
   const stopTerminalKeepAliveRef = useRef<(() => void) | null>(null);
   /** Deferred terminal auth credentials — stored on auth_ok, consumed on attached. */
   const pendingTerminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
+  /** Persistent terminal auth credentials for reconnection (not cleared after use). */
+  const terminalAuthRef = useRef<{ password: string; clientId: string } | null>(null);
+  const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const terminalReconnectAttemptRef = useRef(0);
   const launchContextRef = useRef(initialLaunchContext);
   const readTerminalGeometryRef = useRef<() => { cols: number; rows: number } | null>(() => null);
   const suppressHistoryGapRef = useRef((_: string) => {});
@@ -172,6 +177,8 @@ export const App = () => {
   const connection = useRemuxConnection({
     onAuthOk: (passwordValue, clientId) => {
       pendingTerminalAuthRef.current = { password: passwordValue, clientId };
+      terminalAuthRef.current = { password: passwordValue, clientId };
+      terminalReconnectAttemptRef.current = 0;
       // Request notification permission for bell alerts.
       if (typeof Notification !== "undefined" && Notification.permission === "default") {
         void Notification.requestPermission();
@@ -271,6 +278,10 @@ export const App = () => {
         setInspectErrorMessage("Inspect disconnected. Reconnecting…");
       }
       recordDiagnosticActionRef.current("control.close", "Control websocket closed");
+      if (terminalReconnectTimerRef.current) {
+        clearTimeout(terminalReconnectTimerRef.current);
+        terminalReconnectTimerRef.current = null;
+      }
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
@@ -341,6 +352,10 @@ export const App = () => {
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
     recordDiagnosticActionRef.current("terminal.connect.begin", "Open live terminal socket");
+    if (terminalReconnectTimerRef.current) {
+      clearTimeout(terminalReconnectTimerRef.current);
+      terminalReconnectTimerRef.current = null;
+    }
     terminalInputBatcherRef.current.clear();
     awaitingTerminalReplayRef.current = true;
     setTerminalViewState(terminalHasReplayRef.current ? "restoring" : "connecting");
@@ -386,6 +401,7 @@ export const App = () => {
       if (awaitingTerminalReplayRef.current && getTerminalChunkLength(chunk) > 0) {
         awaitingTerminalReplayRef.current = false;
         terminalHasReplayRef.current = true;
+        terminalReconnectAttemptRef.current = 0;
         setTerminalViewState("live");
         connectionActionsRef.current.setStatusMessage(
           attachedSessionRef.current ? `attached: ${attachedSessionRef.current}` : "terminal connected"
@@ -427,12 +443,34 @@ export const App = () => {
       awaitingTerminalReplayRef.current = false;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
       recordDiagnosticActionRef.current("terminal.connect.close", `Live terminal socket closed (${event.code})`);
-      if (event.code !== 4001) {
-        connectionActionsRef.current.setStatusMessage("reconnecting live view…");
-      }
       if (event.code === 4001) {
         connectionActionsRef.current.setErrorMessage("terminal authentication failed");
+        return;
       }
+      // Auto-reconnect terminal socket if control socket is still alive
+      const auth = terminalAuthRef.current;
+      const controlAlive = connection.controlSocketRef.current?.readyState === WebSocket.OPEN;
+      if (!auth || !controlAlive) {
+        connectionActionsRef.current.setStatusMessage("reconnecting live view…");
+        return;
+      }
+      const attempt = terminalReconnectAttemptRef.current;
+      if (shouldPauseReconnect(attempt)) {
+        connectionActionsRef.current.setStatusMessage("terminal reconnect failed — switch tab to retry");
+        return;
+      }
+      terminalReconnectAttemptRef.current += 1;
+      const delay = resolveReconnectDelay(attempt, 1_000, 8_000);
+      debugLog("terminal_socket.reconnect.schedule", { attempt, delay });
+      connectionActionsRef.current.setStatusMessage(`reconnecting live view in ${(delay / 1000).toFixed(0)}s…`);
+      terminalReconnectTimerRef.current = setTimeout(() => {
+        terminalReconnectTimerRef.current = null;
+        const stillAlive = connection.controlSocketRef.current?.readyState === WebSocket.OPEN;
+        const currentAuth = terminalAuthRef.current;
+        if (stillAlive && currentAuth) {
+          openTerminalSocket(currentAuth.password, currentAuth.clientId);
+        }
+      }, delay);
     };
     socket.onerror = () => {
       debugLog("terminal_socket.onerror");
@@ -443,6 +481,10 @@ export const App = () => {
   useEffect(() => () => {
     stopTerminalKeepAliveRef.current?.();
     stopTerminalKeepAliveRef.current = null;
+    if (terminalReconnectTimerRef.current) {
+      clearTimeout(terminalReconnectTimerRef.current);
+      terminalReconnectTimerRef.current = null;
+    }
   }, []);
 
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
