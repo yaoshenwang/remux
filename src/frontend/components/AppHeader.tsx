@@ -12,6 +12,7 @@ interface AppHeaderProps {
   draggedTabKey: string | null;
   mobileLayout: boolean;
   onCloseTab: (tabIndex: number) => void;
+  onOpenFeedback: () => void;
   onRenameTab: (tabIndex: number, newName: string) => void;
   onToggleDrawer: () => void;
   onSelectTab: (tabIndex: number) => void;
@@ -104,6 +105,7 @@ export const AppHeader = ({
   draggedTabKey,
   mobileLayout,
   onCloseTab,
+  onOpenFeedback,
   onRenameTab,
   onToggleDrawer,
   onReorderTabs,
@@ -352,6 +354,15 @@ export const AppHeader = ({
             {bandwidthStats.savedPercent > 0 && <span className="saved-badge">{bandwidthStats.savedPercent}%</span>}
           </button>
         )}
+        <button
+          className="top-btn"
+          type="button"
+          onClick={onOpenFeedback}
+          title="Open the feedback reporter. Cmd/Ctrl+Click any element for a more specific report."
+          data-testid="feedback-trigger"
+        >
+          Feedback
+        </button>
         <button
           className={`top-btn${viewMode === "inspect" ? " active" : ""}`}
           title="Toggle between live terminal and inspect history"

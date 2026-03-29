@@ -295,7 +295,8 @@ initSnapfeed({
   trackApiErrors: true, captureConsoleErrors: true,
   feedback: {
     enabled: true, screenshotMaxWidth: 1200, screenshotQuality: 0.6,
-    annotations: true, allowContextToggle: true, allowScreenshotToggle: true,
+    // Screenshot capture stays off until snapfeed/html2canvas handles color() reliably.
+    annotations: false, allowContextToggle: true, allowScreenshotToggle: false,
     defaultIncludeContext: true, defaultIncludeScreenshot: false,
   },
   adapters: [lazyGithubAdapter() as never],

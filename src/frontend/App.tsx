@@ -4,6 +4,7 @@ import { AppHeader } from "./components/AppHeader";
 import { TerminalStage } from "./components/TerminalStage";
 import { ComposeBar } from "./components/ComposeBar";
 import { PinnedSnippetsBar, SnippetPicker, SnippetTemplatePanel } from "./components/SnippetPanels";
+import { openRemuxFeedbackDialog } from "./feedback/trigger";
 import { SessionSection } from "./components/sidebar/SessionSection";
 import { AppearanceSection } from "./components/sidebar/AppearanceSection";
 import { SnippetsSection } from "./components/sidebar/SnippetsSection";
@@ -1032,6 +1033,11 @@ export const App = () => {
         mobileLayout={mobileLayout}
         onCloseTab={closeHeaderTab}
         onCreateTab={activeSession ? () => sendControl({ type: "new_tab", session: activeSession.name }) : undefined}
+        onOpenFeedback={() => {
+          if (!openRemuxFeedbackDialog()) {
+            connection.setStatusMessage("feedback target unavailable");
+          }
+        }}
         onRenameTab={renameHeaderTab}
         onReorderTabs={reorderHeaderTabs}
         onSelectTab={(tabIndex) => {
