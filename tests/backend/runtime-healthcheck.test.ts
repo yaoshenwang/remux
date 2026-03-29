@@ -79,6 +79,21 @@ describe("runtime healthcheck script", () => {
     ).rejects.toThrow();
   });
 
+  test("ignores terminal socket resets that arrive during shutdown after a successful check", async () => {
+    upstream.terminateNextTerminalSocketAfterSnapshot();
+
+    await expect(
+      execFileAsync(
+        process.execPath,
+        ["scripts/runtime-healthcheck.mjs", "--url", baseUrl, "--token", "test-token", "--timeout-ms", "1500"],
+        {
+          cwd: process.cwd(),
+          stdio: "pipe",
+        },
+      ),
+    ).resolves.toMatchObject({});
+  });
+
   test("runs without a ws dependency or global WebSocket", async () => {
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-healthcheck-"));
     tempDirs.push(tempDir);

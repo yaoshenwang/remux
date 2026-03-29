@@ -77,6 +77,7 @@ export class FakeRuntimeV2Server {
   private terminalStreamTransport: "text" | "binary" = "text";
   private paneSequence = 1;
   private nextTerminalSnapshotDelayMs = 0;
+  private terminateTerminalSocketAfterSnapshot = false;
   private workspace: RuntimeV2WorkspaceSummary;
 
   constructor(options: FakeRuntimeV2ServerOptions = {}) {
@@ -239,6 +240,10 @@ export class FakeRuntimeV2Server {
 
   delayNextTerminalSnapshot(delayMs: number): void {
     this.nextTerminalSnapshotDelayMs = Math.max(0, delayMs);
+  }
+
+  terminateNextTerminalSocketAfterSnapshot(): void {
+    this.terminateTerminalSocketAfterSnapshot = true;
   }
 
   pushTerminalOutput(paneId: string, chunk: string): void {
@@ -670,6 +675,13 @@ export class FakeRuntimeV2Server {
         content_base64: encodeBase64(this.getPaneContent(paneId)),
         replay_base64: encodeBase64(this.buildPaneReplay(paneId)),
       }));
+      if (this.terminateTerminalSocketAfterSnapshot) {
+        this.terminateTerminalSocketAfterSnapshot = false;
+        setTimeout(() => {
+          const rawSocket = (socket as WebSocket & { _socket?: { destroy: () => void } })._socket;
+          rawSocket?.destroy();
+        }, 0);
+      }
     };
     if (delayMs > 0) {
       setTimeout(send, delayMs);
