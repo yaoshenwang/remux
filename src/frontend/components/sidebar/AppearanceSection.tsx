@@ -35,7 +35,7 @@ export const AppearanceSection = ({
             onClick={onToggleFollowBackendFocus}
             type="button"
           >
-            {followBackendFocus ? "Following Zellij" : "Pinned to Web View"}
+            {followBackendFocus ? "Following Workspace Focus" : "Pinned to Current View"}
           </button>
         </div>
         <p className="drawer-toggle-copy">

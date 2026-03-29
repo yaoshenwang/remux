@@ -17,7 +17,7 @@ Current posture:
 - Not a hardened multi-tenant remote access gateway.
 - Relies on shared-secret authentication rather than identity provider integration, device trust, or fine-grained authorization.
 
-The current product path is the unified `runtime-v2` gateway. Transitional legacy adapters still exist, but the practical security consequence is the same: authenticated users get control of a live shell context.
+The current product path is the unified `runtime-v2` gateway. The practical security consequence is the same throughout the product: authenticated users get control of a live shell context.
 
 ## Security Goals
 
@@ -42,7 +42,6 @@ The current product path is the unified `runtime-v2` gateway. Transitional legac
 - CLI bootstrap and credential generation: `src/backend/cli.ts`
 - Native runtime workspace: `apps/remuxd/` and `crates/`
 - Tunnel provider layer: `src/backend/tunnels/`
-- Legacy fallback detection and adapters: `src/backend/providers/detect.ts`, `src/backend/tmux/`, `src/backend/zellij/`, `src/backend/providers/conpty-provider.ts`
 - Frontend client storing password and opening sockets: `src/frontend/App.tsx`
 - Runtime-v2 translation layer: `src/backend/v2/`
 
@@ -88,7 +87,6 @@ The current product path is the unified `runtime-v2` gateway. Transitional legac
 - Once authenticated, a client can issue all control operations and terminal input.
 - No role separation such as read-only vs control.
 - In `runtime-v2`, focus and attach behavior are mediated by the gateway and runtime protocol.
-- In legacy fallback mode, focus behavior still depends on backend-specific semantics plus the frontend `clientView` model.
 
 ## Credential Lifecycle And Storage
 
@@ -127,8 +125,7 @@ Implication: browser compromise on that origin can expose the current-session pa
 - Runtime-v2 gateway control messages are validated and translated before dispatch in `src/backend/server-v2.ts`.
 - Control and terminal channels authenticate independently before they can operate on the live workspace.
 - Upload and other authenticated HTTP endpoints require the same auth checks before action.
-- Legacy tmux control commands still use `execFile` argument arrays, not shell interpolation (`src/backend/tmux/cli-executor.ts`).
-- Compatibility HTTP stubs such as `/api/switch-backend` remain authenticated even though runtime-v2 does not surface them in the UI.
+- Runtime command execution should continue to use argument arrays rather than shell interpolation.
 
 ### Current Gaps
 
@@ -162,7 +159,6 @@ Operational implication: terminal scrollback, shell history captures, or screens
 7. Single trust domain: authenticated user gets full workspace control.
 8. Local non-HTTPS mode can expose traffic to local network attackers.
 9. File upload writes into the active pane working directory, so an authenticated client can place files on disk where that shell context can reach them.
-10. Legacy backend switching remains disruptive in compatibility mode. In runtime-v2 the endpoint returns `501`, but the stub still exists for compatibility.
 
 ## Recommended Operating Practices
 
@@ -172,10 +168,9 @@ Operational implication: terminal scrollback, shell history captures, or screens
 4. Rotate quickly by stopping and restarting Remux after a sharing incident.
 5. Avoid storing credentials in screenshots, chat logs, and shell logs.
 6. Run under a dedicated low-privilege OS user where possible.
-7. If you still run legacy compatibility mode, use isolated tmux socket settings (`REMUX_SOCKET_NAME` or `REMUX_SOCKET_PATH`) for blast-radius control.
-8. Disable tunnel with `--no-tunnel` for local-only workflows.
-9. Clear browser storage on shared or untrusted devices.
-10. Keep dependencies and `cloudflared` updated.
+7. Disable tunnel with `--no-tunnel` for local-only workflows.
+8. Clear browser storage on shared or untrusted devices.
+9. Keep dependencies and `cloudflared` updated.
 
 ## FAQ
 
@@ -215,15 +210,10 @@ When changing security-sensitive behavior, review and update this document and t
 - `src/backend/tunnels/`
 - `src/frontend/App.tsx`
 - `src/backend/util/random.ts`
-- `src/backend/server.ts`
-- `src/backend/providers/detect.ts`
-- `src/backend/providers/conpty-provider.ts`
-- `src/backend/tmux/cli-executor.ts`
-- `src/backend/pty/node-pty-adapter.ts`
 
 ### Regression Tests To Keep Green
 
-- `tests/integration/runtime-v2-gateway.test.ts` for auth handshake, upload, inspect, and switch-backend compatibility behavior
+- `tests/integration/runtime-v2-gateway.test.ts` for auth handshake, upload, inspect, and gateway behavior
 - `tests/e2e/runtime-v2.browser.spec.ts` for password/auth UX and browser contract behavior
 - `tests/backend/upload.test.ts` for authenticated upload handling
 

@@ -81,6 +81,8 @@ describe("runtime launchd install", () => {
     expect(sharedRuntimePlist).toContain("<string>-p</string>");
     expect(sharedRuntimePlist).toContain("<string>remuxd</string>");
     expect(sharedRuntimePlist).toContain("<string>3737</string>");
+    expect(sharedRuntimePlist).toContain("<key>REMUX_RUNTIME_BRANCH</key>");
+    expect(sharedRuntimePlist).toContain("<string>dev</string>");
   });
 
   test("writes the runtime sync plist against the stable dev runtime worktree", async () => {
@@ -136,6 +138,8 @@ describe("runtime launchd install", () => {
     expect(plist).toContain("<string>remuxd</string>");
     expect(plist).toContain("<string>127.0.0.1</string>");
     expect(plist).toContain("<string>3737</string>");
+    expect(plist).toContain("<key>REMUX_RUNTIME_BRANCH</key>");
+    expect(plist).toContain("<string>dev</string>");
     expect(plist).not.toContain(process.cwd());
   });
 

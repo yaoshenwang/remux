@@ -60,20 +60,6 @@ export interface WorkspaceRuntimeState {
   scrollbackPrecision: "precise" | "approximate";
 }
 
-export type TerminalGeometryStatus = "syncing" | "stable";
-
-export interface TerminalGeometryState {
-  requested: {
-    cols: number;
-    rows: number;
-  };
-  confirmed: {
-    cols: number;
-    rows: number;
-  };
-  status: TerminalGeometryStatus;
-}
-
 // ── Backend capabilities ──
 
 export interface BackendCapabilities {
@@ -116,20 +102,3 @@ export interface TabHistoryPane {
   capturedAt: string;
   lines: number;
 }
-
-// ── Deprecated aliases ──
-
-/** @deprecated Use TabState */
-export type WindowState = TabState;
-/** @deprecated Use WorkspaceSnapshot */
-export type StateSnapshot = WorkspaceSnapshot;
-/** @deprecated Use SessionSummary */
-export type TmuxSessionSummary = SessionSummary;
-/** @deprecated Use PaneState */
-export type TmuxPaneState = PaneState;
-/** @deprecated Use TabState */
-export type TmuxWindowState = TabState;
-/** @deprecated Use SessionState */
-export type TmuxSessionState = SessionState;
-/** @deprecated Use WorkspaceSnapshot */
-export type TmuxStateSnapshot = WorkspaceSnapshot;

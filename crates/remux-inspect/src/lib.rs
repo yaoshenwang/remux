@@ -16,7 +16,7 @@ pub struct PaneInspectView {
 }
 
 #[must_use]
-pub fn build_pane_inspect_view(terminal: &TerminalState) -> PaneInspectView {
+pub fn build_pane_inspect_view(terminal: &mut TerminalState) -> PaneInspectView {
     let snapshot = terminal.snapshot();
     PaneInspectView {
         precision: snapshot.precision,
@@ -45,7 +45,7 @@ mod tests {
         terminal.ingest(b"line 1\r\nbuild ok\r\nnext line\r\nlast line");
         terminal.set_precision(InspectPrecision::Partial);
 
-        let inspect = build_pane_inspect_view(&terminal);
+        let inspect = build_pane_inspect_view(&mut terminal);
         assert_eq!(inspect.precision, InspectPrecision::Partial);
         assert!(inspect.preview_text.contains("build ok"));
         assert_eq!(inspect.scrollback_rows, vec!["line 1".to_owned()]);

@@ -199,8 +199,29 @@ button, input {
   grid-column: 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(10rem, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+  min-height: 0;
+}
+
+.workspace-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-stage {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-bottom-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   min-height: 0;
 }
 
@@ -1186,10 +1207,44 @@ button, input {
 
 /* --- Terminal --- */
 .terminal-wrap {
+  height: 100%;
   min-height: 0;
   min-width: 0;
+  display: flex;
   padding: 0.35rem;
   overflow: hidden;
+}
+
+.terminal-stage {
+  position: relative;
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-layer,
+.inspect-layer {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-layer.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inspect-layer {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.inspect-layer.is-active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .terminal-host {
@@ -1204,13 +1259,42 @@ button, input {
   touch-action: pan-y;
 }
 
+.terminal-status-overlay {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  max-width: calc(100% - 1.5rem);
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--btn-border);
+  background: color-mix(in srgb, var(--bg-app) 92%, transparent);
+  color: var(--text-secondary);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 .terminal-host .xterm {
   height: 100%;
   padding: 0.25rem;
+  touch-action: pan-y;
 }
 
 .terminal-host .xterm-screen {
   height: 100% !important;
+  touch-action: pan-y;
+}
+
+.terminal-host .xterm-viewport {
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .scrollback-main {

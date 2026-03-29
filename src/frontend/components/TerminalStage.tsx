@@ -21,6 +21,7 @@ interface TerminalStageProps {
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   scrollFontSize: number;
   scrollbackContentRef: RefObject<HTMLDivElement | null>;
+  terminalStatusMessage?: string;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   uploadOverlayText?: string;
   viewMode: "inspect" | "terminal";
@@ -45,44 +46,55 @@ export const TerminalStage = ({
   onDrop,
   scrollFontSize,
   scrollbackContentRef,
+  terminalStatusMessage,
   terminalContainerRef,
   uploadOverlayText = "Drop file to upload",
   viewMode
 }: TerminalStageProps) => (
   <main className="terminal-wrap">
-    <div
-      className="terminal-host"
-      ref={terminalContainerRef}
-      data-testid="terminal-host"
-      style={viewMode !== "terminal" ? { display: "none" } : undefined}
-      onPointerDown={onFocusTerminal}
-      onContextMenu={(event) => event.preventDefault()}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
-      {dragOver && (
-        <div className="upload-overlay">
-          <span>{uploadOverlayText}</span>
+    <div className={`terminal-stage${viewMode === "inspect" ? " inspect-active" : " live-active"}`}>
+      <div className={`terminal-layer${viewMode !== "terminal" ? " is-hidden" : ""}`}>
+        <div
+          className="terminal-host"
+          ref={terminalContainerRef}
+          data-testid="terminal-host"
+          onPointerDown={onFocusTerminal}
+          onContextMenu={(event) => event.preventDefault()}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
+          {dragOver && (
+            <div className="upload-overlay">
+              <span>{uploadOverlayText}</span>
+            </div>
+          )}
+          {terminalStatusMessage && (
+            <div className="terminal-status-overlay" data-testid="terminal-status-overlay">
+              <span>{terminalStatusMessage}</span>
+            </div>
+          )}
         </div>
-      )}
+      </div>
+      <div className={`inspect-layer${viewMode === "inspect" ? " is-active" : ""}`}>
+        {viewMode === "inspect" && (
+          <InspectView
+            errorMessage={inspectErrorMessage}
+            lineCount={inspectLineCount}
+            loading={inspectLoading}
+            mobileLayout={mobileLayout}
+            onLoadMore={onInspectLoadMore}
+            onPaneFilterChange={onInspectPaneFilterChange}
+            onRefresh={onInspectRefresh}
+            onSearchQueryChange={onInspectSearchQueryChange}
+            paneFilter={inspectPaneFilter}
+            searchQuery={inspectSearchQuery}
+            scrollFontSize={scrollFontSize}
+            scrollbackContentRef={scrollbackContentRef}
+            snapshot={inspectSnapshot}
+          />
+        )}
+      </div>
     </div>
-    {viewMode === "inspect" && (
-      <InspectView
-        errorMessage={inspectErrorMessage}
-        lineCount={inspectLineCount}
-        loading={inspectLoading}
-        mobileLayout={mobileLayout}
-        onLoadMore={onInspectLoadMore}
-        onPaneFilterChange={onInspectPaneFilterChange}
-        onRefresh={onInspectRefresh}
-        onSearchQueryChange={onInspectSearchQueryChange}
-        paneFilter={inspectPaneFilter}
-        searchQuery={inspectSearchQuery}
-        scrollFontSize={scrollFontSize}
-        scrollbackContentRef={scrollbackContentRef}
-        snapshot={inspectSnapshot}
-      />
-    )}
   </main>
 );

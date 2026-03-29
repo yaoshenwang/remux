@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type {
   RuntimeV2InspectSnapshot,
   RuntimeV2SplitDirection,
@@ -12,6 +12,8 @@ const encodeBase64 = (text: string): string => Buffer.from(text, "utf8").toStrin
 
 type FakeRuntimeV2ControlClientMessage =
   | { type: "subscribe_workspace" }
+  | { type: "create_session"; session_name: string }
+  | { type: "select_session"; session_id: string }
   | { type: "split_pane"; pane_id: string; direction: "vertical" | "horizontal" }
   | {
       type: "request_inspect";
@@ -42,7 +44,9 @@ type FakeRuntimeV2TerminalClientMessage =
 
 export interface TerminalObservation {
   attachCount: number;
+  inputFrameTypes: Array<"text" | "binary">;
   paneId: string;
+  requestSnapshotCount: number;
   sizes: RuntimeV2TerminalSize[];
   writes: string[];
 }
@@ -58,11 +62,18 @@ export class FakeRuntimeV2Server {
   private readonly wss = new WebSocketServer({ noServer: true });
   private readonly controlSockets = new Set<WebSocket>();
   private readonly sockets = new Set<WebSocket>();
+  private readonly terminalSocketsByPane = new Map<string, Set<WebSocket>>();
+  private readonly terminalPaneBySocket = new Map<WebSocket, string>();
   private readonly terminalObservations = new Map<string, TerminalObservation>();
   private readonly paneContent = new Map<string, string>();
   private readonly paneScrollback = new Map<string, string[]>();
+  private readonly paneStreamSequence = new Map<string, number>();
+  private sessionSequence = 1;
+  private tabSequence = 1;
   private terminalClientSequence = 0;
+  private terminalStreamTransport: "text" | "binary" = "text";
   private paneSequence = 1;
+  private nextTerminalSnapshotDelayMs = 0;
   private workspace: RuntimeV2WorkspaceSummary;
 
   constructor(options: FakeRuntimeV2ServerOptions = {}) {
@@ -203,6 +214,41 @@ export class FakeRuntimeV2Server {
     return this.terminalObservations.get(paneId) ?? null;
   }
 
+  allTerminalWrites(): string[] {
+    return Array.from(this.terminalObservations.values()).flatMap((observation) => observation.writes);
+  }
+
+  setTerminalStreamTransport(mode: "text" | "binary"): void {
+    this.terminalStreamTransport = mode;
+  }
+
+  delayNextTerminalSnapshot(delayMs: number): void {
+    this.nextTerminalSnapshotDelayMs = Math.max(0, delayMs);
+  }
+
+  pushTerminalOutput(paneId: string, chunk: string): void {
+    const next = `${this.getPaneContent(paneId)}${chunk}`;
+    this.setPaneContent(paneId, next);
+
+    const sockets = this.terminalSocketsByPane.get(paneId);
+    if (!sockets || sockets.size === 0) {
+      return;
+    }
+
+    const sequence = this.nextStreamSequence(paneId);
+    for (const socket of sockets) {
+      if (socket.readyState === socket.OPEN) {
+        this.sendTerminalStream(socket, chunk, sequence);
+      }
+    }
+  }
+
+  disconnectClients(): void {
+    for (const socket of this.sockets) {
+      socket.close(1012, "test reconnect");
+    }
+  }
+
   splitActivePane(direction: RuntimeV2SplitDirection = "right"): string {
     const activeSession = this.workspace.sessions[0]!;
     const activeTab = activeSession.tabs[0]!;
@@ -255,6 +301,123 @@ export class FakeRuntimeV2Server {
     return newPaneId;
   }
 
+  createSession(sessionName: string): string {
+    const sessionId = `session-${++this.sessionSequence}`;
+    const tabId = `tab-${++this.tabSequence}`;
+    const paneId = `pane-${++this.paneSequence}`;
+    const nextSessions = this.workspace.sessions.map((session) => ({
+      ...session,
+      isActive: false,
+      tabs: session.tabs.map((tab) => ({
+        ...tab,
+        isActive: false,
+        panes: tab.panes.map((pane) => ({
+          ...pane,
+          isActive: false,
+        })),
+      })),
+    }));
+
+    nextSessions.push({
+      sessionId,
+      sessionName,
+      sessionState: "live",
+      isActive: true,
+      activeTabId: tabId,
+      tabCount: 1,
+      tabs: [
+        {
+          tabId,
+          tabTitle: "Shell",
+          isActive: true,
+          activePaneId: paneId,
+          zoomedPaneId: null,
+          paneCount: 1,
+          layout: { type: "leaf", paneId },
+          panes: [
+            {
+              paneId,
+              isActive: true,
+              isZoomed: false,
+              leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId,
+      tabId,
+      paneId,
+      sessionName,
+      tabTitle: "Shell",
+      sessionCount: nextSessions.length,
+      tabCount: 1,
+      paneCount: 1,
+      activeSessionId: sessionId,
+      activeTabId: tabId,
+      activePaneId: paneId,
+      zoomedPaneId: null,
+      layout: { type: "leaf", paneId },
+      leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+      sessions: nextSessions,
+    };
+
+    this.paneContent.set(paneId, `READY_${paneId}\r\n`);
+    this.paneScrollback.set(paneId, []);
+    this.broadcastWorkspace();
+    return sessionId;
+  }
+
+  selectSession(sessionId: string): void {
+    const targetSession = this.workspace.sessions.find((session) => session.sessionId === sessionId);
+    if (!targetSession) {
+      return;
+    }
+
+    const activeTab = targetSession.tabs.find((tab) => tab.isActive)
+      ?? targetSession.tabs.find((tab) => tab.tabId === targetSession.activeTabId)
+      ?? targetSession.tabs[0];
+    const activePane = activeTab?.panes.find((pane) => pane.isActive)
+      ?? activeTab?.panes.find((pane) => pane.paneId === activeTab.activePaneId)
+      ?? activeTab?.panes[0];
+    if (!activeTab || !activePane) {
+      return;
+    }
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId,
+      tabId: activeTab.tabId,
+      paneId: activePane.paneId,
+      sessionName: targetSession.sessionName,
+      tabTitle: activeTab.tabTitle,
+      activeSessionId: sessionId,
+      activeTabId: activeTab.tabId,
+      activePaneId: activePane.paneId,
+      zoomedPaneId: activeTab.zoomedPaneId ?? null,
+      layout: activeTab.layout,
+      tabCount: targetSession.tabCount,
+      paneCount: activeTab.paneCount,
+      sessions: this.workspace.sessions.map((session) => ({
+        ...session,
+        isActive: session.sessionId === sessionId,
+        tabs: session.tabs.map((tab) => ({
+          ...tab,
+          isActive: session.sessionId === sessionId && tab.tabId === activeTab.tabId,
+          panes: tab.panes.map((pane) => ({
+            ...pane,
+            isActive: session.sessionId === sessionId && tab.tabId === activeTab.tabId && pane.paneId === activePane.paneId,
+          })),
+        })),
+      })),
+    };
+
+    this.broadcastWorkspace();
+  }
+
   private handleHttpRequest(request: http.IncomingMessage, response: http.ServerResponse): void {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/healthz") {
@@ -267,10 +430,14 @@ export class FakeRuntimeV2Server {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         service: "remuxd",
+        version: "test",
         protocolVersion: "2",
         controlWebsocketPath: "/v2/control",
         terminalWebsocketPath: "/v2/terminal",
         publicBaseUrl: null,
+        gitBranch: "dev",
+        gitCommitSha: "fake-runtime-sha",
+        gitDirty: false,
       }));
       return;
     }
@@ -300,6 +467,12 @@ export class FakeRuntimeV2Server {
       switch (message.type) {
         case "subscribe_workspace":
           socket.send(JSON.stringify({ type: "workspace_snapshot", summary: this.workspace }));
+          return;
+        case "create_session":
+          this.createSession(message.session_name);
+          return;
+        case "select_session":
+          this.selectSession(message.session_id);
           return;
         case "split_pane": {
           if (message.pane_id !== this.activePaneId() && message.pane_id !== "pane-1") {
@@ -336,45 +509,51 @@ export class FakeRuntimeV2Server {
     let attachedPaneId = "pane-1";
     let terminalClientId = "terminal-client-1";
 
-    socket.on("message", (raw) => {
+    socket.on("close", () => {
+      this.detachTerminalSocket(socket);
+    });
+
+    socket.on("message", (raw, isBinary) => {
+      if (isBinary) {
+        const chunk = this.readRawData(raw).toString("utf8");
+        const observation = this.observeTerminal(attachedPaneId);
+        observation.inputFrameTypes.push("binary");
+        observation.writes.push(chunk);
+        const next = `${this.getPaneContent(attachedPaneId)}${chunk}`;
+        this.setPaneContent(attachedPaneId, next);
+        this.sendTerminalStream(socket, chunk, observation.writes.length + observation.attachCount);
+        return;
+      }
+
       const message = JSON.parse(raw.toString("utf8")) as FakeRuntimeV2TerminalClientMessage;
       switch (message.type) {
         case "attach": {
+          this.detachTerminalSocket(socket);
           attachedPaneId = message.pane_id;
+          this.attachTerminalSocket(socket, attachedPaneId);
           terminalClientId = `terminal-client-${++this.terminalClientSequence}`;
           const observation = this.observeTerminal(attachedPaneId);
           observation.attachCount += 1;
           observation.sizes.push(message.size);
+          const snapshotDelayMs = this.takeTerminalSnapshotDelay();
 
           socket.send(JSON.stringify({
             type: "hello",
             protocol_version: "2",
             pane_id: attachedPaneId,
           }));
-          socket.send(JSON.stringify({
-            type: "snapshot",
-            size: message.size,
-            sequence: observation.attachCount,
-            content_base64: encodeBase64(this.getPaneContent(attachedPaneId)),
-            replay_base64: encodeBase64(this.buildPaneReplay(attachedPaneId)),
-          }));
-          socket.send(JSON.stringify({
-            type: "lease_state",
-            client_id: terminalClientId,
-          }));
+          this.sendTerminalSnapshot(socket, attachedPaneId, message.size, observation.attachCount, snapshotDelayMs);
+          this.sendTerminalLeaseState(socket, terminalClientId, snapshotDelayMs);
           return;
         }
         case "input": {
           const chunk = Buffer.from(message.data_base64, "base64").toString("utf8");
           const observation = this.observeTerminal(attachedPaneId);
+          observation.inputFrameTypes.push("text");
           observation.writes.push(chunk);
           const next = `${this.getPaneContent(attachedPaneId)}${chunk}`;
           this.setPaneContent(attachedPaneId, next);
-          socket.send(JSON.stringify({
-            type: "stream",
-            sequence: observation.writes.length + observation.attachCount,
-            chunk_base64: encodeBase64(chunk),
-          }));
+          this.sendTerminalStream(socket, chunk, observation.writes.length + observation.attachCount);
           return;
         }
         case "resize": {
@@ -383,14 +562,17 @@ export class FakeRuntimeV2Server {
           socket.send(JSON.stringify({ type: "resize_confirmed", size: message.size }));
           return;
         }
-        case "request_snapshot":
-          socket.send(JSON.stringify({
-            type: "snapshot",
-            size: this.latestTerminal(attachedPaneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
-            sequence: (this.latestTerminal(attachedPaneId)?.attachCount ?? 0) + 10,
-            content_base64: encodeBase64(this.getPaneContent(attachedPaneId)),
-            replay_base64: encodeBase64(this.buildPaneReplay(attachedPaneId)),
-          }));
+        case "request_snapshot": {
+          this.observeTerminal(attachedPaneId).requestSnapshotCount += 1;
+          this.sendTerminalSnapshot(
+            socket,
+            attachedPaneId,
+            this.latestTerminal(attachedPaneId)?.sizes.at(-1) ?? { cols: 120, rows: 40 },
+            (this.latestTerminal(attachedPaneId)?.attachCount ?? 0) + 10,
+            this.takeTerminalSnapshotDelay(),
+          );
+          return;
+        }
       }
     });
   }
@@ -409,13 +591,28 @@ export class FakeRuntimeV2Server {
     if (!observation) {
       observation = {
         attachCount: 0,
+        inputFrameTypes: [],
         paneId,
+        requestSnapshotCount: 0,
         sizes: [],
         writes: [],
       };
       this.terminalObservations.set(paneId, observation);
     }
     return observation;
+  }
+
+  private readRawData(raw: RawData): Buffer {
+    if (Buffer.isBuffer(raw)) {
+      return raw;
+    }
+    if (raw instanceof ArrayBuffer) {
+      return Buffer.from(raw);
+    }
+    if (Array.isArray(raw)) {
+      return Buffer.concat(raw);
+    }
+    return Buffer.from(raw);
   }
 
   private buildPaneReplay(paneId: string): string {
@@ -425,5 +622,99 @@ export class FakeRuntimeV2Server {
       return live;
     }
     return `${scrollback.join("\r\n")}\r\n${live}`;
+  }
+
+  private takeTerminalSnapshotDelay(): number {
+    const delayMs = this.nextTerminalSnapshotDelayMs;
+    this.nextTerminalSnapshotDelayMs = 0;
+    return delayMs;
+  }
+
+  private sendTerminalLeaseState(socket: WebSocket, clientId: string, delayMs: number): void {
+    const send = () => {
+      if (socket.readyState !== socket.OPEN) {
+        return;
+      }
+      socket.send(JSON.stringify({
+        type: "lease_state",
+        client_id: clientId,
+      }));
+    };
+    if (delayMs > 0) {
+      setTimeout(send, delayMs);
+      return;
+    }
+    send();
+  }
+
+  private sendTerminalSnapshot(
+    socket: WebSocket,
+    paneId: string,
+    size: RuntimeV2TerminalSize,
+    sequence: number,
+    delayMs: number,
+  ): void {
+    const send = () => {
+      if (socket.readyState !== socket.OPEN) {
+        return;
+      }
+      socket.send(JSON.stringify({
+        type: "snapshot",
+        size,
+        sequence,
+        content_base64: encodeBase64(this.getPaneContent(paneId)),
+        replay_base64: encodeBase64(this.buildPaneReplay(paneId)),
+      }));
+    };
+    if (delayMs > 0) {
+      setTimeout(send, delayMs);
+      return;
+    }
+    send();
+  }
+
+  private sendTerminalStream(socket: WebSocket, chunk: string, sequence: number): void {
+    if (this.terminalStreamTransport === "binary") {
+      socket.send(Buffer.from(chunk, "utf8"));
+      return;
+    }
+
+    socket.send(JSON.stringify({
+      type: "stream",
+      sequence,
+      chunk_base64: encodeBase64(chunk),
+    }));
+  }
+
+  private attachTerminalSocket(socket: WebSocket, paneId: string): void {
+    this.terminalPaneBySocket.set(socket, paneId);
+    let sockets = this.terminalSocketsByPane.get(paneId);
+    if (!sockets) {
+      sockets = new Set<WebSocket>();
+      this.terminalSocketsByPane.set(paneId, sockets);
+    }
+    sockets.add(socket);
+  }
+
+  private detachTerminalSocket(socket: WebSocket): void {
+    const paneId = this.terminalPaneBySocket.get(socket);
+    if (!paneId) {
+      return;
+    }
+    this.terminalPaneBySocket.delete(socket);
+    const sockets = this.terminalSocketsByPane.get(paneId);
+    if (!sockets) {
+      return;
+    }
+    sockets.delete(socket);
+    if (sockets.size === 0) {
+      this.terminalSocketsByPane.delete(paneId);
+    }
+  }
+
+  private nextStreamSequence(paneId: string): number {
+    const next = (this.paneStreamSequence.get(paneId) ?? 0) + 1;
+    this.paneStreamSequence.set(paneId, next);
+    return next;
   }
 }

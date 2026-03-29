@@ -31,11 +31,7 @@ export const useFileUpload = ({
   }
 
   const paneCwd = activePane?.currentPath ?? "";
-  if (serverConfig?.backendKind === "zellij" && !paneCwd) {
-    setStatusMessage(`uploading ${file.name}... (zellij uses server cwd)`);
-  } else {
-    setStatusMessage(`uploading ${file.name}...`);
-  }
+  setStatusMessage(`uploading ${file.name}...`);
 
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/upload");

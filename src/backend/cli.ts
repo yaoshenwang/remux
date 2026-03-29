@@ -8,23 +8,17 @@ import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 import { AuthService } from "./auth/auth-service.js";
 import type { CliArgs, RuntimeConfig } from "./config.js";
-import { createRemuxServer } from "./server.js";
 import {
   createRemuxV2GatewayServer,
   type RunningServer,
 } from "./server-v2.js";
-import { createExtensions } from "./extensions.js";
-import { detectSessionBackend } from "./providers/detect.js";
 import { createTunnelProvider } from "./tunnels/index.js";
 import { createLogger } from "./util/file-logger.js";
 import { randomToken } from "./util/random.js";
 import {
   buildLaunchUrl,
-  detectTmuxLaunchContext,
   type LaunchContext
 } from "./launch-context.js";
-import { shouldAllowLegacyFallback } from "./runtime-mode.js";
-import { cleanupSocketDir } from "./zellij/socket-dir.js";
 
 const parseCliArgs = async (): Promise<CliArgs> => {
   const argv = await yargs(hideBin(process.argv))
@@ -68,12 +62,6 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       type: "string",
       describe: "Write debug logs to a file"
     })
-    .option("backend", {
-      type: "string",
-      choices: ["auto", "tmux", "zellij", "conpty"] as const,
-      default: "auto",
-      describe: "Force a legacy fallback backend"
-    })
     .option("tunnel-provider", {
       type: "string",
       choices: ["auto", "devtunnel", "cloudflare"] as const,
@@ -81,7 +69,6 @@ const parseCliArgs = async (): Promise<CliArgs> => {
       describe: "Tunnel provider (auto-detects devtunnel, falls back to cloudflare)"
     })
     .strict()
-    .hide("backend")
     .help()
     .parseAsync();
 
@@ -94,8 +81,7 @@ const parseCliArgs = async (): Promise<CliArgs> => {
     tunnelProvider: argv.tunnelProvider as CliArgs["tunnelProvider"],
     session: argv.session,
     scrollback: argv.scrollback,
-    debugLog: argv.debugLog,
-    backend: argv.backend
+    debugLog: argv.debugLog
   };
 };
 
@@ -156,73 +142,12 @@ const main = async (): Promise<void> => {
     frontendDir
   };
   let launchContext: LaunchContext | null = null;
-  let extensions: ReturnType<typeof createExtensions> | null = null;
-  let runningServer: RunningServer | null = null;
-  const allowLegacyFallback = shouldAllowLegacyFallback(process.env);
-
-  if (process.env.REMUX_RUNTIME_V2 !== "0") {
-    const candidate = createRemuxV2GatewayServer(config, {
-      authService,
-      logger,
-    });
-    try {
-      await candidate.start();
-      runningServer = candidate;
-      logger.log("Runtime mode: runtime-v2");
-    } catch (error) {
-      await candidate.stop().catch(() => undefined);
-      if (!allowLegacyFallback) {
-        throw error;
-      }
-      logger.error(`runtime-v2 startup failed, falling back to legacy backend: ${String(error)}`);
-    }
-  }
-
-  if (!runningServer) {
-    extensions = createExtensions(logger);
-    const forceBackend = args.backend !== "auto"
-      ? (args.backend as "tmux" | "zellij" | "conpty")
-      : undefined;
-    const backend = detectSessionBackend(logger, {
-      force: forceBackend,
-      socketName: process.env.REMUX_SOCKET_NAME,
-      socketPath: process.env.REMUX_SOCKET_PATH,
-      socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
-      scrollbackLines: args.scrollback,
-    });
-    logger.log(`Session backend: ${backend.kind}`);
-
-    const legacyConfig: RuntimeConfig = {
-      ...config,
-      pollIntervalMs: backend.kind === "zellij" ? 10_000 : 2_500,
-    };
-    launchContext = detectTmuxLaunchContext({ backendKind: backend.kind });
-    runningServer = createRemuxServer(legacyConfig, {
-      backend: backend.gateway,
-      ptyFactory: backend.ptyFactory,
-      authService,
-      logger,
-      extensions,
-      onSwitchBackend: (kind) => {
-        try {
-          const newBackend = detectSessionBackend(logger, {
-            force: kind,
-            socketName: process.env.REMUX_SOCKET_NAME,
-            socketPath: process.env.REMUX_SOCKET_PATH,
-            socketDir: process.env.REMUX_ZELLIJ_SOCKET_DIR,
-            scrollbackLines: args.scrollback,
-          });
-          return {
-            backend: newBackend.gateway,
-            ptyFactory: newBackend.ptyFactory,
-          };
-        } catch {
-          return null;
-        }
-      }
-    });
-    await runningServer.start();
-  }
+  const runningServer: RunningServer = createRemuxV2GatewayServer(config, {
+    authService,
+    logger,
+  });
+  await runningServer.start();
+  logger.log("Runtime mode: runtime-v2");
 
   if (debugLogPath) {
     logger.log(`Debug log file: ${path.resolve(debugLogPath)}`);
@@ -259,9 +184,7 @@ const main = async (): Promise<void> => {
 
     shutdownPromise = (async () => {
       tunnelProvider.stop();
-      extensions?.dispose();
       await runningServer?.stop();
-      cleanupSocketDir();
     })();
 
     try {

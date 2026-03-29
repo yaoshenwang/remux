@@ -6,8 +6,7 @@
 
 Current direction note:
 
-- `runtime-v2` is now the primary product path
-- legacy `tmux` / `zellij` / `conpty` adapters should be treated as migration-era compatibility layers, not the main product model
+- `runtime-v2` is now the only product path
 
 ---
 
@@ -317,7 +316,7 @@ Default inspect experience on mobile:
 4. Allow filtering to one pane
 5. Allow jumping back to Live instantly
 
-This is a better product than trying to imitate tmux copy-mode inside a browser.
+This is a better product than trying to imitate terminal copy-mode inside a browser.
 
 ---
 

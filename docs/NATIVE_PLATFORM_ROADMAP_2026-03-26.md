@@ -8,14 +8,14 @@ Audience: project maintainer
 
 Remux should evolve in two deliberately separated directions:
 
-1. A strong multiplexer-native remote platform.
+1. A strong runtime-native remote platform.
 2. A semantic adapter platform for AI coding tools.
 
 The first direction is the product foundation. The second direction is an optional depth layer that should sit on top of the foundation, not replace it.
 
 This separation is the main strategic difference between Remux and tools that are built directly around one runtime such as Codex. Remux should remain useful in three progressively richer modes:
 
-- Core mode: remote terminal multiplexer control with no tool-specific assumptions.
+- Core mode: remote terminal workspace control with no tool-specific assumptions.
 - Passive semantic mode: detect and display richer events from compatible tools when available.
 - Active semantic mode: allow deep structured control for tools that expose enough stable surface area.
 
@@ -32,16 +32,16 @@ The core promise is:
 - control the workspace safely and quickly
 - layer richer AI-runtime context on top when available
 
-This means the multiplexer remains the universal transport and state substrate, while semantic integrations are adapters with capability declarations and isolated failure domains.
+This means the runtime remains the universal transport and state substrate, while semantic integrations are adapters with capability declarations and isolated failure domains.
 
 ## Why This Direction
 
 Remux already has the right base shape for a general platform:
 
 - backend-neutral workspace model in `src/shared/protocol.ts`
-- backend abstraction in `src/backend/multiplexer/types.ts`
-- split control and terminal transports in `src/backend/server.ts`
-- extension entrypoint in `src/backend/extensions.ts`
+- runtime-v2 workspace contract in `src/backend/v2/types.ts`
+- split control and terminal transports in `src/backend/server-v2.ts`
+- capability and semantic transport infrastructure in `src/backend/server/`
 - mobile-oriented browser UX in `src/frontend/App.tsx`
 
 What Remux does not yet have is a product architecture that cleanly separates:
@@ -57,7 +57,7 @@ That separation is the next major architectural milestone.
 
 ### Existing Strengths
 
-- Multiplexer-neutral internal model for `tmux`, `zellij`, and `conpty`.
+- Shared internal model for sessions, tabs, panes, and inspect history.
 - Strong browser-first mobile UX for sessions, tabs, panes, scrollback, compose, snippets, upload, and reconnect.
 - Clear transport split between control-plane JSON and terminal-plane streaming.
 - Authentication defaults that are practical for self-hosting.
@@ -81,7 +81,7 @@ That separation is the next major architectural milestone.
 ### What Must Not Regress
 
 - fast browser setup via `npx remux`
-- current tmux-first reliability
+- current runtime-v2 reliability
 - web accessibility from any modern browser
 - low operational complexity for single-user self-hosting
 
@@ -139,9 +139,9 @@ Responsibilities:
 
 Source alignment today:
 
-- `src/backend/multiplexer/`
-- `src/backend/pty/`
-- `src/backend/state/`
+- `src/backend/v2/`
+- `src/backend/server/`
+- `src/backend/terminal-state/`
 - `src/shared/protocol.ts`
 
 ### 2. Device And Transport Layer
@@ -437,24 +437,23 @@ The roadmap should translate directly into code movement. The table below shows 
 
 ### Backend Server
 
-- `src/backend/server.ts`
-  - extract `src/backend/server/http-routes.ts`
-  - extract `src/backend/server/control-socket.ts`
-  - extract `src/backend/server/terminal-socket.ts`
-  - extract `src/backend/server/session-attach-service.ts`
-  - extract `src/backend/server/client-capabilities.ts`
-  - keep `server.ts` as composition root
+- `src/backend/server-v2.ts`
+  - keep gateway lifecycle, auth gates, and upstream bridge coordination
+- `src/backend/server/client-capabilities.ts`
+  - keep runtime capability projection for browser and native clients
+- `src/backend/server/compose-submit.ts`
+  - keep structured compose forwarding for the live runtime
+- `src/backend/server/socket-protocol.ts`
+  - keep websocket message parsing and transport helpers
 
 ### Workspace Core
 
-- `src/backend/multiplexer/types.ts`
-  - keep as workspace backend contract
-- `src/backend/state/state-monitor.ts`
-  - move toward `src/backend/core/workspace-monitor.ts`
-- `src/backend/view/client-view-store.ts`
-  - move toward `src/backend/core/client-view-store.ts`
-- `src/backend/pty/terminal-runtime.ts`
-  - move toward `src/backend/core/terminal-session-runtime.ts`
+- `src/backend/v2/types.ts`
+  - keep as runtime workspace contract
+- `src/backend/v2/translation.ts`
+  - move toward `src/backend/core/workspace-translation.ts`
+- `src/backend/terminal-state/tracker.ts`
+  - move toward `src/backend/core/terminal-session-tracker.ts`
 
 ### Device And Transport
 
@@ -468,8 +467,6 @@ This directory should stay independent from any single semantic adapter.
 
 ### Semantic Runtime
 
-- `src/backend/extensions.ts`
-  - keep only as a temporary compatibility composition layer
 - `src/backend/events/event-watcher.ts`
   - move under `src/backend/adapters/sources/` once the adapter registry exists
 - create `src/backend/adapters/registry.ts`
@@ -790,7 +787,7 @@ The following backlog was completed on 2026-03-26 as the first native-platform e
 - ~~create `src/backend/adapters/registry.ts`~~ ✅ done
 - ~~move notification concerns behind a stable transport interface~~ ✅ done via `src/backend/server/client-capabilities.ts`
 - ~~define semantic event broadcast path separate from terminal data~~ ✅ done via `src/backend/server/semantic-event-transport.ts`
-- ~~split `src/backend/server.ts` into composition modules~~ ✅ done via `src/backend/server/http-routes.ts`, `src/backend/server/control-socket.ts`, `src/backend/server/terminal-socket.ts`, `src/backend/server/session-attach-service.ts`
+- ~~split server composition into focused transport and capability modules~~ ✅ done via `src/backend/server-v2.ts`, `src/backend/server/client-capabilities.ts`, `src/backend/server/compose-submit.ts`, `src/backend/server/socket-protocol.ts`
 
 ### Web Client
 
@@ -845,11 +842,9 @@ Status:
 Delivered:
 
 - `src/backend/server/client-capabilities.ts`
-- `src/backend/server/http-routes.ts`
-- `src/backend/server/control-socket.ts`
-- `src/backend/server/terminal-socket.ts`
-- `src/backend/server/session-attach-service.ts`
-- `src/backend/server.ts` reduced to assembly, mutation routing, broadcast, and lifecycle
+- `src/backend/server/compose-submit.ts`
+- `src/backend/server/socket-protocol.ts`
+- `src/backend/server-v2.ts` serving as the runtime gateway composition root
 
 ### Slice 3: `chore/native-contract-fixtures`
 
@@ -945,7 +940,7 @@ The next architecture phase needs stronger contract-level testing.
 
 - protocol contract fixtures consumed by server and web
 - semantic adapter fixture tests
-- capability matrix tests across `tmux`, `zellij`, and `conpty`
+- capability matrix tests across runtime-v2 client surfaces and semantic adapters
 - reconnect tests for device trust state
 - notification payload tests for native clients
 
@@ -954,7 +949,7 @@ The next architecture phase needs stronger contract-level testing.
 - backend unit coverage
 - integration WebSocket tests
 - browser E2E for core flows
-- real tmux smoke tests
+- real browser and runtime smoke tests
 
 ### New Native Testing Philosophy
 
@@ -1001,7 +996,7 @@ Mitigation:
 - ship local direct-connect MVP first
 - make relay mode optional
 
-### Risk: zellij and non-tmux backends regress during refactor
+### Risk: secondary runtime layers regress during refactor
 
 Mitigation:
 
@@ -1105,14 +1100,14 @@ Done:
 
 - shared contract split under `src/shared/contracts/`
 - `ServerCapabilities` and protocol versioning
-- server composition split into `http-routes.ts`, `control-socket.ts`, `terminal-socket.ts`, and `session-attach-service.ts`
+- server composition reduced to focused runtime gateway modules and shared transport helpers
 - web hooks extracted for connection, workspace state, terminal runtime, and client preferences
 - native-client contract fixtures and integration coverage
 
 Partial:
 
 - `src/frontend/App.tsx` is still a large assembly file rather than a thin composition root
-- `src/backend/extensions.ts` still acts as a compatibility composition layer instead of being fully separated into transport, semantic, and observability modules
+- semantic, transport, and observability concerns still need a cleaner long-term separation inside `src/backend/events/`, `src/backend/stats/`, and `src/backend/notifications/`
 
 Assessment:
 

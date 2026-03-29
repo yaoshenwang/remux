@@ -79,6 +79,11 @@ interface ControlContext {
   authed: boolean;
   clientId: string;
   followBackendFocus: boolean;
+  targetView: {
+    sessionName: string | null;
+    tabIndex: number | null;
+    paneId: string | null;
+  };
   messageQueue: Promise<void>;
   terminalClients: Set<DataContext>;
 }
@@ -87,13 +92,18 @@ interface DataContext {
   socket: WebSocket;
   authed: boolean;
   controlContext?: ControlContext;
-  bridge?: RuntimeV2TerminalBridge;
+  paneBridge?: SharedRuntimeV2PaneBridge;
   terminalSize?: RuntimeV2TerminalSize;
+  viewerId: string;
 }
 
 const RUNTIME_V2_BACKEND_KIND = "runtime-v2";
 const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 const DEFAULT_TERMINAL_SIZE: RuntimeV2TerminalSize = { cols: 80, rows: 24 };
+const MAX_BUFFERED_TERMINAL_BYTES = 256 * 1024;
+const TERMINAL_RESIZE_SETTLE_MS = 120;
+const DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS = 30_000;
+const TERMINAL_RESET_BYTES = Buffer.from("\u001bc", "utf8");
 
 const backendCapabilities: BackendCapabilities = {
   supportsPaneFocusById: true,
@@ -113,10 +123,23 @@ const frontendFallbackRoute = "/{*path}";
 
 const isWebSocketPath = (requestPath: string): boolean => requestPath.startsWith("/ws/");
 
-const sendRaw = (socket: WebSocket, payload: string): void => {
+const sendRaw = (socket: WebSocket, payload: string | Uint8Array | Buffer): void => {
   if (socket.readyState === socket.OPEN) {
     socket.send(payload);
   }
+};
+
+const toBuffer = (raw: RawData): Buffer => {
+  if (Buffer.isBuffer(raw)) {
+    return raw;
+  }
+  if (raw instanceof ArrayBuffer) {
+    return Buffer.from(raw);
+  }
+  if (Array.isArray(raw)) {
+    return Buffer.concat(raw);
+  }
+  return Buffer.from(raw);
 };
 
 const toWsOrigin = (baseUrl: string): string => {
@@ -128,9 +151,46 @@ const toWsOrigin = (baseUrl: string): string => {
   return url.toString().replace(/\/$/, "");
 };
 
-const encodeBase64 = (text: string): string => Buffer.from(text, "utf8").toString("base64");
+type TerminalSizePolicy = "largest" | "smallest" | "latest";
 
-const decodeBase64 = (value: string): string => Buffer.from(value, "base64").toString("utf8");
+const areTerminalSizesEqual = (
+  left: RuntimeV2TerminalSize,
+  right: RuntimeV2TerminalSize,
+): boolean => left.cols === right.cols && left.rows === right.rows;
+
+const compareTerminalSizes = (
+  left: RuntimeV2TerminalSize,
+  right: RuntimeV2TerminalSize,
+): number => {
+  const areaDelta = (left.cols * left.rows) - (right.cols * right.rows);
+  if (areaDelta !== 0) {
+    return areaDelta;
+  }
+  if (left.cols !== right.cols) {
+    return left.cols - right.cols;
+  }
+  return left.rows - right.rows;
+};
+
+const resolveTerminalSizePolicy = (): TerminalSizePolicy => {
+  const raw = process.env.REMUX_TERMINAL_SIZE_POLICY?.trim().toLowerCase();
+  if (raw === "smallest" || raw === "latest" || raw === "largest") {
+    return raw;
+  }
+  return "largest";
+};
+
+const resolveIdlePaneBridgeGraceMs = (): number => {
+  const raw = process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS?.trim();
+  if (!raw) {
+    return DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS;
+  }
+  return Math.max(0, Math.floor(parsed));
+};
 
 const sanitizeFilename = (raw: string): string => {
   let name = raw.replace(/[\\/\0]/g, "").replace(/\.\./g, "");
@@ -456,18 +516,137 @@ class RuntimeV2ControlChannel {
   }
 }
 
-class RuntimeV2TerminalBridge {
+export class SharedRuntimeV2PaneBridge {
   private socket: WebSocket | null = null;
   private attachVersion = 0;
-  private currentPaneId: string | null = null;
+  private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
+  private latestSnapshotPayload: Buffer | null = null;
+  private latestSnapshotSequence: number | null = null;
+  private latestViewerId: string | null = null;
+  private readonly subscribers = new Map<string, WebSocket>();
+  private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
+  private readonly bufferedChunks: Array<{ payload: Buffer; sequence: number | null }> = [];
+  private bufferedChunkBytes = 0;
+  private mutationQueue = Promise.resolve();
+  private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    private readonly browserSocket: WebSocket,
+    readonly paneId: string,
     private readonly terminalWsUrl: string,
     private readonly logger: Pick<Console, "log" | "error">,
+    private readonly sizePolicy: TerminalSizePolicy,
+    private readonly onIdle: (paneId: string) => void,
   ) {}
 
-  async attach(paneId: string, size: RuntimeV2TerminalSize): Promise<void> {
+  async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
+    await this.enqueue(async () => {
+      this.clearIdleCloseTimer();
+      this.subscribers.set(viewerId, browserSocket);
+      this.recordViewerSize(viewerId, size);
+      const desiredSize = this.resolveDesiredSize();
+      await this.ensureAttached(desiredSize);
+      if (this.latestSnapshotPayload) {
+        sendRaw(browserSocket, this.latestSnapshotPayload);
+        for (const chunk of this.bufferedChunks) {
+          sendRaw(browserSocket, chunk.payload);
+        }
+      }
+    });
+  }
+
+  async unsubscribe(viewerId: string): Promise<void> {
+    await this.enqueue(async () => {
+      this.subscribers.delete(viewerId);
+      this.viewerSizes.delete(viewerId);
+      if (this.latestViewerId === viewerId) {
+        this.latestViewerId = this.viewerSizes.keys().next().value ?? null;
+      }
+
+      if (this.subscribers.size === 0) {
+        this.requestSnapshot();
+        this.scheduleIdleClose();
+        return;
+      }
+
+      await this.syncSize();
+    });
+  }
+
+  async updateViewerSize(viewerId: string, size: RuntimeV2TerminalSize): Promise<void> {
+    await this.enqueue(async () => {
+      if (!this.subscribers.has(viewerId)) {
+        return;
+      }
+      this.recordViewerSize(viewerId, size);
+      await this.syncSize();
+    });
+  }
+
+  write(input: string | Uint8Array): void {
+    if (!this.socket || this.socket.readyState !== this.socket.OPEN) {
+      return;
+    }
+    const payload = typeof input === "string"
+      ? Buffer.from(input, "utf8")
+      : Buffer.from(input);
+    this.socket.send(payload);
+  }
+
+  async close(): Promise<void> {
+    await this.enqueue(async () => {
+      this.clearIdleCloseTimer();
+      this.subscribers.clear();
+      this.viewerSizes.clear();
+      this.latestViewerId = null;
+      await this.closeSocket();
+      this.onIdle(this.paneId);
+    });
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const run = async (): Promise<void> => {
+      await task();
+    };
+
+    const next = this.mutationQueue.then(run, run);
+    this.mutationQueue = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private recordViewerSize(viewerId: string, size: RuntimeV2TerminalSize): void {
+    this.viewerSizes.set(viewerId, size);
+    this.latestViewerId = viewerId;
+  }
+
+  private resolveDesiredSize(): RuntimeV2TerminalSize {
+    if (this.viewerSizes.size === 0) {
+      return DEFAULT_TERMINAL_SIZE;
+    }
+
+    if (this.sizePolicy === "latest" && this.latestViewerId) {
+      return this.viewerSizes.get(this.latestViewerId) ?? Array.from(this.viewerSizes.values())[0]!;
+    }
+
+    const sizes = Array.from(this.viewerSizes.values());
+    return sizes.reduce((chosen, candidate) => {
+      const delta = compareTerminalSizes(candidate, chosen);
+      if (this.sizePolicy === "smallest") {
+        return delta < 0 ? candidate : chosen;
+      }
+      return delta > 0 ? candidate : chosen;
+    });
+  }
+
+  private async ensureAttached(size: RuntimeV2TerminalSize): Promise<void> {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      if (!areTerminalSizesEqual(this.currentSize, size)) {
+        this.resize(size);
+        this.scheduleSnapshotRequest();
+      }
+      return;
+    }
+
     this.attachVersion += 1;
     const version = this.attachVersion;
 
@@ -476,7 +655,6 @@ class RuntimeV2TerminalBridge {
       this.socket = null;
     }
 
-    this.currentPaneId = paneId;
     const socket = await openWebSocket(this.terminalWsUrl);
     if (version !== this.attachVersion) {
       socket.close();
@@ -484,8 +662,8 @@ class RuntimeV2TerminalBridge {
     }
 
     this.socket = socket;
-    socket.on("message", (raw) => {
-      this.handleMessage(version, raw);
+    socket.on("message", (raw, isBinary) => {
+      this.handleMessage(version, raw, isBinary);
     });
     socket.on("close", () => {
       if (version === this.attachVersion && this.socket === socket) {
@@ -496,35 +674,17 @@ class RuntimeV2TerminalBridge {
       this.logger.error("runtime terminal socket error", error);
     });
 
+    this.currentSize = size;
     const payload: RuntimeV2TerminalClientMessage = {
       type: "attach",
-      paneId,
+      paneId: this.paneId,
       mode: "interactive",
       size,
     };
     socket.send(serializeRuntimeV2TerminalMessage(payload));
   }
 
-  async retarget(paneId: string, size: RuntimeV2TerminalSize): Promise<void> {
-    const socket = this.socket;
-    if (this.currentPaneId === paneId && socket?.readyState === WebSocket.OPEN) {
-      return;
-    }
-    await this.attach(paneId, size);
-  }
-
-  write(input: string): void {
-    if (!this.socket || this.socket.readyState !== this.socket.OPEN) {
-      return;
-    }
-    const payload: RuntimeV2TerminalClientMessage = {
-      type: "input",
-      dataBase64: encodeBase64(input),
-    };
-    this.socket.send(serializeRuntimeV2TerminalMessage(payload));
-  }
-
-  resize(size: RuntimeV2TerminalSize): void {
+  private resize(size: RuntimeV2TerminalSize): void {
     if (!this.socket || this.socket.readyState !== this.socket.OPEN) {
       return;
     }
@@ -533,10 +693,77 @@ class RuntimeV2TerminalBridge {
       size,
     };
     this.socket.send(serializeRuntimeV2TerminalMessage(payload));
+    this.currentSize = size;
   }
 
-  async close(): Promise<void> {
+  private requestSnapshot(): void {
+    if (!this.socket) {
+      return;
+    }
+    this.socket.send(serializeRuntimeV2TerminalMessage({ type: "request_snapshot" }));
+  }
+
+  private clearPendingSnapshotRequest(): void {
+    if (this.resizeSnapshotTimer !== null) {
+      clearTimeout(this.resizeSnapshotTimer);
+      this.resizeSnapshotTimer = null;
+    }
+  }
+
+  private clearIdleCloseTimer(): void {
+    if (this.idleCloseTimer !== null) {
+      clearTimeout(this.idleCloseTimer);
+      this.idleCloseTimer = null;
+    }
+  }
+
+  private scheduleSnapshotRequest(): void {
+    this.clearPendingSnapshotRequest();
+    this.resizeSnapshotTimer = setTimeout(() => {
+      this.resizeSnapshotTimer = null;
+      this.requestSnapshot();
+    }, TERMINAL_RESIZE_SETTLE_MS);
+  }
+
+  private scheduleIdleClose(): void {
+    this.clearIdleCloseTimer();
+    const graceMs = resolveIdlePaneBridgeGraceMs();
+    if (graceMs === 0) {
+      void this.enqueue(async () => {
+        if (this.subscribers.size > 0) {
+          return;
+        }
+        await this.closeSocket();
+        this.onIdle(this.paneId);
+      });
+      return;
+    }
+    this.idleCloseTimer = setTimeout(() => {
+      this.idleCloseTimer = null;
+      void this.enqueue(async () => {
+        if (this.subscribers.size > 0) {
+          return;
+        }
+        await this.closeSocket();
+        this.onIdle(this.paneId);
+      });
+    }, graceMs);
+  }
+
+  private async syncSize(): Promise<void> {
+    const desiredSize = this.resolveDesiredSize();
+    await this.ensureAttached(desiredSize);
+  }
+
+  private async closeSocket(): Promise<void> {
     this.attachVersion += 1;
+    this.clearPendingSnapshotRequest();
+    this.clearIdleCloseTimer();
+    this.latestSnapshotPayload = null;
+    this.latestSnapshotSequence = null;
+    this.bufferedChunks.length = 0;
+    this.bufferedChunkBytes = 0;
+    this.currentSize = DEFAULT_TERMINAL_SIZE;
     if (!this.socket) {
       return;
     }
@@ -549,8 +776,27 @@ class RuntimeV2TerminalBridge {
     });
   }
 
-  private handleMessage(version: number, raw: RawData): void {
+  private rememberBufferedChunk(chunk: Buffer, sequence: number | null): void {
+    if (!this.latestSnapshotPayload) {
+      return;
+    }
+    this.bufferedChunks.push({ payload: chunk, sequence });
+    this.bufferedChunkBytes += chunk.byteLength;
+    while (this.bufferedChunkBytes > MAX_BUFFERED_TERMINAL_BYTES && this.bufferedChunks.length > 0) {
+      const removed = this.bufferedChunks.shift();
+      this.bufferedChunkBytes -= removed?.payload.byteLength ?? 0;
+    }
+  }
+
+  private handleMessage(version: number, raw: RawData, isBinary: boolean): void {
     if (version !== this.attachVersion) {
+      return;
+    }
+
+    if (isBinary) {
+      const chunk = toBuffer(raw);
+      this.broadcast(chunk);
+      this.rememberBufferedChunk(chunk, null);
       return;
     }
 
@@ -563,15 +809,40 @@ class RuntimeV2TerminalBridge {
     }
 
     if (message.type === "snapshot") {
-      sendRaw(
-        this.browserSocket,
-        `\u001bc${decodeBase64(message.replayBase64 ?? message.contentBase64)}`,
+      this.clearPendingSnapshotRequest();
+      const retainedChunks = this.latestSnapshotSequence === null
+        ? []
+        : this.bufferedChunks.filter((chunk) => (
+            chunk.sequence !== null && chunk.sequence > message.sequence
+          ));
+      this.latestSnapshotPayload = Buffer.concat([
+        TERMINAL_RESET_BYTES,
+        Buffer.from(message.replayBase64 ?? message.contentBase64, "base64"),
+      ]);
+      this.latestSnapshotSequence = message.sequence;
+      this.bufferedChunks.length = 0;
+      this.bufferedChunks.push(...retainedChunks);
+      this.bufferedChunkBytes = retainedChunks.reduce(
+        (total, chunk) => total + chunk.payload.byteLength,
+        0,
       );
+      this.broadcast(this.latestSnapshotPayload);
+      for (const chunk of this.bufferedChunks) {
+        this.broadcast(chunk.payload);
+      }
       return;
     }
 
     if (message.type === "stream") {
-      sendRaw(this.browserSocket, decodeBase64(message.chunkBase64));
+      const chunk = Buffer.from(message.chunkBase64, "base64");
+      this.broadcast(chunk);
+      this.rememberBufferedChunk(chunk, message.sequence);
+    }
+  }
+
+  private broadcast(payload: Buffer): void {
+    for (const subscriber of this.subscribers.values()) {
+      sendRaw(subscriber, payload);
     }
   }
 }
@@ -587,16 +858,110 @@ const findTabByIndex = (
   tabIndex: number,
 ): RuntimeV2TabSummary | undefined => findSessionByName(summary, sessionName)?.tabs[tabIndex];
 
+const findActiveSession = (
+  summary: RuntimeV2WorkspaceSummary,
+): RuntimeV2SessionSummary | undefined =>
+  summary.sessions.find((session) => session.isActive)
+  ?? summary.sessions.find((session) => session.sessionId === summary.activeSessionId)
+  ?? summary.sessions[0];
+
 const resolveActivePaneId = (summary: RuntimeV2WorkspaceSummary): string =>
   summary.activePaneId ?? summary.paneId;
 
+const findPaneLocation = (
+  summary: RuntimeV2WorkspaceSummary,
+  paneId: string,
+): {
+  session: RuntimeV2SessionSummary;
+  tab: RuntimeV2TabSummary;
+  tabIndex: number;
+} | null => {
+  for (const session of summary.sessions) {
+    for (const [tabIndex, tab] of session.tabs.entries()) {
+      if (tab.panes.some((pane) => pane.paneId === paneId)) {
+        return { session, tab, tabIndex };
+      }
+    }
+  }
+  return null;
+};
+
+const resolveSessionForContext = (
+  summary: RuntimeV2WorkspaceSummary,
+  context: ControlContext,
+): RuntimeV2SessionSummary | undefined => {
+  if (!context.followBackendFocus && context.targetView.sessionName) {
+    return findSessionByName(summary, context.targetView.sessionName) ?? findActiveSession(summary);
+  }
+  return findActiveSession(summary);
+};
+
+const resolveClientViewForContext = (
+  summary: RuntimeV2WorkspaceSummary,
+  context: ControlContext,
+): ClientView => {
+  if (context.followBackendFocus) {
+    return buildLegacyClientView(summary, true);
+  }
+
+  const session = resolveSessionForContext(summary, context) ?? findActiveSession(summary);
+  if (!session) {
+    return buildLegacyClientView(summary, false);
+  }
+
+  const paneLocation = context.targetView.paneId
+    ? findPaneLocation(summary, context.targetView.paneId)
+    : null;
+  const tabFromPane = paneLocation && paneLocation.session.sessionId === session.sessionId
+    ? paneLocation.tab
+    : undefined;
+  const tabIndexFromPane = paneLocation && paneLocation.session.sessionId === session.sessionId
+    ? paneLocation.tabIndex
+    : undefined;
+  const tab = tabFromPane
+    ?? (typeof context.targetView.tabIndex === "number" ? session.tabs[context.targetView.tabIndex] : undefined)
+    ?? session.tabs.find((candidate) => candidate.isActive)
+    ?? session.tabs.find((candidate) => candidate.tabId === session.activeTabId)
+    ?? session.tabs[0];
+
+  const tabIndex = tabIndexFromPane
+    ?? (typeof context.targetView.tabIndex === "number" && session.tabs[context.targetView.tabIndex] ? context.targetView.tabIndex : undefined)
+    ?? session.tabs.findIndex((candidate) => candidate.tabId === tab?.tabId);
+  const paneFromTarget = context.targetView.paneId
+    ? tab?.panes.find((candidate) => candidate.paneId === context.targetView.paneId)
+    : undefined;
+  const pane = paneFromTarget
+    ?? tab?.panes.find((candidate) => candidate.isActive)
+    ?? tab?.panes.find((candidate) => candidate.paneId === tab.activePaneId)
+    ?? tab?.panes[0];
+
+  return {
+    sessionName: session.sessionName,
+    tabIndex: tabIndex >= 0 ? tabIndex : 0,
+    paneId: pane?.paneId ?? tab?.activePaneId ?? summary.activePaneId ?? summary.paneId,
+    followBackendFocus: false,
+  };
+};
+
+const syncContextTargetToSummary = (
+  summary: RuntimeV2WorkspaceSummary,
+  context: ControlContext,
+): void => {
+  const clientView = buildLegacyClientView(summary, true);
+  context.targetView = {
+    sessionName: clientView.sessionName,
+    tabIndex: clientView.tabIndex,
+    paneId: clientView.paneId ?? null,
+  };
+};
+
 const buildWorkspaceStateMessage = (
   summary: RuntimeV2WorkspaceSummary,
-  followBackendFocus: boolean,
+  clientView: ClientView,
 ): Extract<ControlServerMessage, { type: "workspace_state" }> => ({
   type: "workspace_state",
   workspace: buildLegacyWorkspaceSnapshot(summary),
-  clientView: buildLegacyClientView(summary, followBackendFocus),
+  clientView,
   runtimeState: {
     streamMode: "native-bridge",
     scrollbackPrecision: "precise",
@@ -623,6 +988,7 @@ export const createRemuxV2GatewayServer = (
   const logger = deps.logger ?? console;
   const authService = deps.authService ?? new AuthService({ password: config.password, token: config.token });
   const runtimeMetadata = readRuntimeMetadata();
+  const terminalSizePolicy = resolveTerminalSizePolicy();
 
   const app = express();
   app.use(express.json());
@@ -632,6 +998,7 @@ export const createRemuxV2GatewayServer = (
   const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const controlClients = new Set<ControlContext>();
   const terminalClients = new Set<DataContext>();
+  const paneBridges = new Map<string, SharedRuntimeV2PaneBridge>();
 
   let runtimeTarget: RuntimeTargetHandle | null = null;
   let runtimeControl: RuntimeV2ControlChannel | null = null;
@@ -678,10 +1045,6 @@ export const createRemuxV2GatewayServer = (
       nodeVersion: process.version,
       uptime: Math.round(process.uptime()),
     });
-  });
-
-  app.post("/api/switch-backend", requireApiAuth, (_req, res) => {
-    res.status(501).json({ ok: false, error: "runtime-v2 backend switching is not supported" });
   });
 
   app.get("/api/auth/github-token", requireApiAuth, (_req, res) => {
@@ -815,7 +1178,7 @@ export const createRemuxV2GatewayServer = (
       if (!client.authed) {
         continue;
       }
-      sendJson(client.socket, buildWorkspaceStateMessage(summary, client.followBackendFocus));
+      sendJson(client.socket, buildWorkspaceStateMessage(summary, resolveClientViewForContext(summary, client)));
     }
   };
 
@@ -823,29 +1186,114 @@ export const createRemuxV2GatewayServer = (
     if (!runtimeControl) {
       return;
     }
-    const paneId = resolveActivePaneId(runtimeControl.currentSummary());
+    const summary = runtimeControl.currentSummary();
     await Promise.all(
       Array.from(terminalClients).map(async (ctx) => {
-        if (!ctx.authed || !ctx.bridge) {
+        if (!ctx.authed || !ctx.controlContext) {
           return;
         }
-        await ctx.bridge.retarget(paneId, ctx.terminalSize ?? DEFAULT_TERMINAL_SIZE);
+        const paneId = resolveClientViewForContext(summary, ctx.controlContext).paneId ?? resolveActivePaneId(summary);
+        await attachTerminalClientToPane(ctx, paneId);
       }),
     );
+  };
+
+  const getOrCreatePaneBridge = (paneId: string): SharedRuntimeV2PaneBridge => {
+    let bridge = paneBridges.get(paneId);
+    if (!bridge) {
+      if (!runtimeTarget || !runtimeControl) {
+        throw new Error("runtime terminal bridge is unavailable");
+      }
+      const terminalPath = runtimeControl.currentMetadata().terminalWebsocketPath;
+      bridge = new SharedRuntimeV2PaneBridge(
+        paneId,
+        `${toWsOrigin(runtimeTarget.baseUrl)}${terminalPath}`,
+        logger,
+        terminalSizePolicy,
+        (idlePaneId) => {
+          paneBridges.delete(idlePaneId);
+        },
+      );
+      paneBridges.set(paneId, bridge);
+    }
+    return bridge;
+  };
+
+  const detachTerminalClient = async (context: DataContext): Promise<void> => {
+    const bridge = context.paneBridge;
+    context.paneBridge = undefined;
+    if (!bridge) {
+      return;
+    }
+    await bridge.unsubscribe(context.viewerId);
+  };
+
+  const attachTerminalClientToPane = async (
+    context: DataContext,
+    paneId: string,
+  ): Promise<void> => {
+    const size = context.terminalSize ?? DEFAULT_TERMINAL_SIZE;
+    if (context.paneBridge?.paneId === paneId) {
+      await context.paneBridge.updateViewerSize(context.viewerId, size);
+      return;
+    }
+
+    await detachTerminalClient(context);
+    const bridge = getOrCreatePaneBridge(paneId);
+    context.paneBridge = bridge;
+    await bridge.subscribe(context.viewerId, context.socket, size);
   };
 
   const sendAttached = (context: ControlContext): void => {
     if (!runtimeControl) {
       return;
     }
+    const summary = runtimeControl.currentSummary();
+    const clientView = resolveClientViewForContext(summary, context);
     sendJson(context.socket, {
       type: "attached",
-      session: resolveLegacyAttachedSession(runtimeControl.currentSummary()),
+      session: clientView.sessionName,
     });
+  };
+
+  const sendWorkspaceState = (context: ControlContext): void => {
+    if (!runtimeControl) {
+      return;
+    }
+    const summary = runtimeControl.currentSummary();
+    sendJson(context.socket, buildWorkspaceStateMessage(summary, resolveClientViewForContext(summary, context)));
+  };
+
+  const syncContextTerminalClients = async (context: ControlContext): Promise<void> => {
+    if (!runtimeControl) {
+      return;
+    }
+    const summary = runtimeControl.currentSummary();
+    const paneId = resolveClientViewForContext(summary, context).paneId ?? resolveActivePaneId(summary);
+    await Promise.all(
+      Array.from(context.terminalClients).map(async (terminalClient) => {
+        if (!terminalClient.authed) {
+          return;
+        }
+        await attachTerminalClientToPane(terminalClient, paneId);
+      }),
+    );
+  };
+
+  const publishContextView = async (
+    context: ControlContext,
+    options: { includeAttached?: boolean } = {},
+  ): Promise<void> => {
+    if (options.includeAttached) {
+      sendAttached(context);
+    }
+    sendWorkspaceState(context);
+    await syncContextTerminalClients(context);
   };
 
   const applyInitialSelection = async (
     message: Extract<ControlClientMessage, { type: "auth" }>,
+    context: ControlContext,
   ): Promise<void> => {
     if (!runtimeControl) {
       return;
@@ -870,6 +1318,8 @@ export const createRemuxV2GatewayServer = (
     if (message.paneId) {
       await runtimeControl.command({ type: "focus_pane", paneId: message.paneId });
     }
+
+    syncContextTargetToSummary(runtimeControl.currentSummary(), context);
   };
 
   const sendTabHistory = async (
@@ -937,10 +1387,14 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`session not found: ${message.session}`);
         }
         await runtimeControl.command({ type: "select_session", sessionId: session.sessionId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context, { includeAttached: true });
         return;
       }
       case "new_session":
         await runtimeControl.command({ type: "create_session", sessionName: message.name });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context, { includeAttached: true });
         return;
       case "close_session": {
         const session = findSessionByName(runtimeControl.currentSummary(), message.session);
@@ -948,6 +1402,8 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`session not found: ${message.session}`);
         }
         await runtimeControl.command({ type: "close_session", sessionId: session.sessionId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context, { includeAttached: true });
         return;
       }
       case "new_tab": {
@@ -956,6 +1412,8 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`session not found: ${message.session}`);
         }
         await runtimeControl.command({ type: "create_tab", sessionId: session.sessionId, tabTitle: "Shell" });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       }
       case "select_tab": {
@@ -964,6 +1422,8 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`tab not found: ${message.session}:${message.tabIndex}`);
         }
         await runtimeControl.command({ type: "select_tab", tabId: tab.tabId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       }
       case "close_tab": {
@@ -972,10 +1432,14 @@ export const createRemuxV2GatewayServer = (
           throw new Error(`tab not found: ${message.session}:${message.tabIndex}`);
         }
         await runtimeControl.command({ type: "close_tab", tabId: tab.tabId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       }
       case "select_pane":
         await runtimeControl.command({ type: "focus_pane", paneId: message.paneId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "split_pane":
         await runtimeControl.command({
@@ -983,33 +1447,39 @@ export const createRemuxV2GatewayServer = (
           paneId: message.paneId,
           direction: message.direction,
         });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "close_pane":
         await runtimeControl.command({ type: "close_pane", paneId: message.paneId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "toggle_fullscreen":
         await runtimeControl.command({ type: "toggle_pane_zoom", paneId: message.paneId });
+        syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        await publishContextView(context);
         return;
       case "capture_scrollback":
         await sendScrollback(context, message.paneId, message.lines ?? config.scrollbackLines);
         return;
       case "capture_tab_history": {
-        const sessionName = message.session ?? resolveLegacyAttachedSession(runtimeControl.currentSummary());
+        const sessionName = message.session ?? resolveClientViewForContext(runtimeControl.currentSummary(), context).sessionName;
         await sendTabHistory(context, sessionName, message.tabIndex, message.lines ?? config.scrollbackLines);
         return;
       }
       case "send_compose": {
         const terminalClient = Array.from(context.terminalClients)[0];
-        if (!terminalClient?.bridge) {
+        if (!terminalClient?.paneBridge) {
           return;
         }
         sendComposeToRuntime({
-          runtime: terminalClient.bridge,
+          runtime: terminalClient.paneBridge,
           text: message.text,
           submitMode: "delayed",
           paneCommand: resolvePaneCommandForView(
             buildLegacyWorkspaceSnapshot(runtimeControl.currentSummary()),
-            buildLegacyClientView(runtimeControl.currentSummary(), context.followBackendFocus),
+            resolveClientViewForContext(runtimeControl.currentSummary(), context),
           ),
         });
         return;
@@ -1040,7 +1510,10 @@ export const createRemuxV2GatewayServer = (
       }
       case "set_follow_focus":
         context.followBackendFocus = message.follow;
-        sendJson(context.socket, buildWorkspaceStateMessage(runtimeControl.currentSummary(), context.followBackendFocus));
+        if (!context.followBackendFocus) {
+          syncContextTargetToSummary(runtimeControl.currentSummary(), context);
+        }
+        await publishContextView(context, { includeAttached: true });
         return;
       default: {
         const exhaustive: never = message;
@@ -1054,7 +1527,7 @@ export const createRemuxV2GatewayServer = (
       if (terminalClient.socket.readyState === terminalClient.socket.OPEN) {
         terminalClient.socket.close();
       }
-      await terminalClient.bridge?.close();
+      await detachTerminalClient(terminalClient);
     }
     context.terminalClients.clear();
   };
@@ -1065,6 +1538,11 @@ export const createRemuxV2GatewayServer = (
       authed: false,
       clientId: randomToken(12),
       followBackendFocus: false,
+      targetView: {
+        sessionName: null,
+        tabIndex: null,
+        paneId: null,
+      },
       messageQueue: Promise.resolve(),
       terminalClients: new Set(),
     };
@@ -1111,7 +1589,7 @@ export const createRemuxV2GatewayServer = (
           }
 
           context.authed = true;
-          await applyInitialSelection(message);
+          await applyInitialSelection(message, context);
           sendJson(socket, {
             type: "auth_ok",
             clientId: context.clientId,
@@ -1121,9 +1599,7 @@ export const createRemuxV2GatewayServer = (
             backendKind: RUNTIME_V2_BACKEND_KIND,
           });
           sendAttached(context);
-          if (runtimeControl) {
-            sendJson(socket, buildWorkspaceStateMessage(runtimeControl.currentSummary(), context.followBackendFocus));
-          }
+          sendWorkspaceState(context);
           return;
         }
 
@@ -1153,6 +1629,7 @@ export const createRemuxV2GatewayServer = (
     const context: DataContext = {
       socket,
       authed: false,
+      viewerId: randomToken(12),
     };
     terminalClients.add(context);
 
@@ -1187,30 +1664,20 @@ export const createRemuxV2GatewayServer = (
         context.controlContext = controlContext;
         context.terminalSize = toRuntimeTerminalSize(extractTerminalDimensions(authMessage));
         controlContext.terminalClients.add(context);
-
-        const terminalPath = runtimeControl.currentMetadata().terminalWebsocketPath;
-        context.bridge = new RuntimeV2TerminalBridge(
-          socket,
-          `${toWsOrigin(runtimeTarget.baseUrl)}${terminalPath}`,
-          logger,
+        await attachTerminalClientToPane(
+          context,
+          resolveClientViewForContext(runtimeControl.currentSummary(), controlContext).paneId
+            ?? resolveActivePaneId(runtimeControl.currentSummary()),
         );
-        await context.bridge.attach(resolveActivePaneId(runtimeControl.currentSummary()), context.terminalSize);
         return;
       }
 
-      if (!context.bridge) {
+      if (!context.paneBridge) {
         return;
       }
 
       if (isBinary) {
-        const chunk = Buffer.isBuffer(rawData)
-          ? rawData
-          : rawData instanceof ArrayBuffer
-            ? Buffer.from(rawData)
-            : Array.isArray(rawData)
-              ? Buffer.concat(rawData)
-              : Buffer.from(rawData);
-        context.bridge.write(chunk.toString("utf8"));
+        context.paneBridge.write(toBuffer(rawData));
         return;
       }
 
@@ -1231,7 +1698,7 @@ export const createRemuxV2GatewayServer = (
             && typeof payload.rows === "number"
           ) {
             context.terminalSize = { cols: payload.cols, rows: payload.rows };
-            context.bridge.resize(context.terminalSize);
+            await context.paneBridge.updateViewerSize(context.viewerId, context.terminalSize);
             return;
           }
         } catch {
@@ -1239,13 +1706,13 @@ export const createRemuxV2GatewayServer = (
         }
       }
 
-      context.bridge.write(text);
+      context.paneBridge.write(text);
     });
 
     socket.on("close", () => {
       terminalClients.delete(context);
       context.controlContext?.terminalClients.delete(context);
-      void context.bridge?.close();
+      void detachTerminalClient(context);
     });
   });
 
@@ -1360,6 +1827,8 @@ export const createRemuxV2GatewayServer = (
         await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
         controlWss.close();
         terminalWss.close();
+        await Promise.all(Array.from(paneBridges.values()).map((bridge) => bridge.close()));
+        paneBridges.clear();
         await runtimeControl?.close();
         await runtimeTarget?.stop();
         await new Promise<void>((resolve, reject) => {

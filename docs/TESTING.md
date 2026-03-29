@@ -9,8 +9,6 @@ The default test loop should therefore optimize for:
 - explicit terminal width validation
 - minimal high-cost harness coverage
 
-Legacy `tmux` / `zellij` / `conpty` suites are transitional and are no longer part of the default CI path or the default `npm test` path.
-The default `npm run build` also skips the legacy `zellij-bridge` compile, which keeps normal iteration materially shorter.
 
 ## Quick Loop
 
@@ -76,16 +74,3 @@ This adds:
 
 - screenshot capture for PR/release review
 - `npm pack --dry-run` package verification
-
-## Legacy Compatibility Coverage
-
-These paths remain available only for migration and debugging work:
-
-```bash
-npm run test:legacy
-npm run test:e2e:legacy-ui
-npm run test:legacy:tmux-smoke
-npm run build:legacy:zellij-bridge
-```
-
-They are intentionally excluded from the default CI workflow so the normal feedback loop stays focused and short.

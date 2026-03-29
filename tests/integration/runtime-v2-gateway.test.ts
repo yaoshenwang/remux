@@ -24,16 +24,58 @@ const buildConfig = (token: string): RuntimeConfig => ({
   frontendDir: process.cwd(),
 });
 
-const waitForRawMessage = (socket: WebSocket, timeoutMs = 3_000): Promise<string> =>
+const waitForTerminalFrame = (
+  socket: WebSocket,
+  timeoutMs = 3_000
+): Promise<{ isBinary: boolean; text: string }> =>
   new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for raw ws message")), timeoutMs);
-    const handler = (raw: RawData) => {
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for terminal frame")), timeoutMs);
+    const handler = (raw: RawData, isBinary: boolean) => {
       clearTimeout(timeout);
       socket.off("message", handler);
-      resolve(raw.toString("utf8"));
+      resolve({
+        isBinary,
+        text: raw.toString("utf8"),
+      });
     };
     socket.on("message", handler);
   });
+
+const waitForRawMessage = async (socket: WebSocket, timeoutMs = 3_000): Promise<string> =>
+  (await waitForTerminalFrame(socket, timeoutMs)).text;
+
+const authControlClient = async (
+  baseWsUrl: string,
+): Promise<{ control: WebSocket; clientId: string }> => {
+  const control = await openSocket(`${baseWsUrl}/ws/control`);
+  const authOkPromise = waitForMessage<{ type: "auth_ok"; clientId: string }>(
+    control,
+    (message) => message.type === "auth_ok",
+  );
+  control.send(JSON.stringify({ type: "auth", token: "test-token" }));
+  const authOk = await authOkPromise;
+  await waitForMessage(control, (message: { type: string }) => message.type === "attached");
+  await waitForMessage(control, (message: { type: string }) => message.type === "workspace_state");
+  return { control, clientId: authOk.clientId };
+};
+
+const authTerminalClient = async (
+  baseWsUrl: string,
+  clientId: string,
+  size: { cols: number; rows: number },
+): Promise<{ terminal: WebSocket; initialSnapshot: string }> => {
+  const terminal = await openSocket(`${baseWsUrl}/ws/terminal`);
+  const initialSnapshotPromise = waitForRawMessage(terminal);
+  terminal.send(JSON.stringify({
+    type: "auth",
+    token: "test-token",
+    clientId,
+    cols: size.cols,
+    rows: size.rows,
+  }));
+  const initialSnapshot = await initialSnapshotPromise;
+  return { terminal, initialSnapshot };
+};
 
 describe("runtime v2 gateway server", () => {
   let upstream: FakeRuntimeV2Server;
@@ -143,7 +185,157 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
-  test("serves runtime-v2 config metadata without backend switching", async () => {
+  test("shares one upstream pane bridge across multiple browser viewers without shrinking to the latest narrow viewport", async () => {
+    const first = await authControlClient(baseWsUrl);
+    const second = await authControlClient(baseWsUrl);
+    let terminalA: WebSocket | null = null;
+    let terminalB: WebSocket | null = null;
+
+    try {
+      ({ terminal: terminalA } = await authTerminalClient(baseWsUrl, first.clientId, { cols: 120, rows: 40 }));
+      ({ terminal: terminalB } = await authTerminalClient(baseWsUrl, second.clientId, { cols: 48, rows: 18 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes.at(-1)).toEqual({ cols: 120, rows: 40 });
+
+      const firstViewerEcho = waitForRawMessage(terminalA);
+      const secondViewerEcho = waitForRawMessage(terminalB);
+      terminalB.send("echo shared-view\r");
+
+      expect(await firstViewerEcho).toContain("echo shared-view\r");
+      expect(await secondViewerEcho).toContain("echo shared-view\r");
+      expect(upstream.latestTerminal("pane-1")?.writes.at(-1)).toBe("echo shared-view\r");
+    } finally {
+      terminalA?.close();
+      terminalB?.close();
+      first.control.close();
+      second.control.close();
+    }
+  });
+
+  test("keeps each viewer pinned to its own session when another client switches the backend focus", async () => {
+    const first = await authControlClient(baseWsUrl);
+    const second = await authControlClient(baseWsUrl);
+    let terminalA: WebSocket | null = null;
+
+    try {
+      ({ terminal: terminalA } = await authTerminalClient(baseWsUrl, first.clientId, { cols: 120, rows: 40 }));
+
+      const firstWorkspaceUpdate = waitForMessage<{
+        type: "workspace_state";
+        workspace: { sessions: Array<{ name: string }> };
+        clientView: { sessionName: string };
+      }>(
+        first.control,
+        (message) => message.type === "workspace_state" && message.workspace.sessions.some((session) => session.name === "other"),
+      );
+      const secondWorkspaceUpdate = waitForMessage<{
+        type: "workspace_state";
+        clientView: { sessionName: string };
+      }>(
+        second.control,
+        (message) => message.type === "workspace_state" && message.clientView.sessionName === "other",
+      );
+
+      second.control.send(JSON.stringify({ type: "new_session", name: "other" }));
+
+      const [firstWorkspace, secondWorkspace] = await Promise.all([
+        firstWorkspaceUpdate,
+        secondWorkspaceUpdate,
+      ]);
+
+      expect(secondWorkspace.clientView.sessionName).toBe("other");
+      expect(firstWorkspace.clientView.sessionName).toBe("main");
+      expect(upstream.latestTerminal("pane-2")?.attachCount ?? 0).toBe(0);
+      expect(upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
+    } finally {
+      terminalA?.close();
+      first.control.close();
+      second.control.close();
+    }
+  });
+
+  test("moves only the initiating viewer terminal bridge when switching to a new session", async () => {
+    const first = await authControlClient(baseWsUrl);
+    const second = await authControlClient(baseWsUrl);
+    let terminalA: WebSocket | null = null;
+    let terminalB: WebSocket | null = null;
+
+    try {
+      ({ terminal: terminalA } = await authTerminalClient(baseWsUrl, first.clientId, { cols: 120, rows: 40 }));
+      ({ terminal: terminalB } = await authTerminalClient(baseWsUrl, second.clientId, { cols: 80, rows: 24 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
+
+      const secondWorkspaceUpdate = waitForMessage<{
+        type: "workspace_state";
+        clientView: { sessionName: string };
+      }>(
+        second.control,
+        (message) => message.type === "workspace_state" && message.clientView.sessionName === "other",
+      );
+
+      second.control.send(JSON.stringify({ type: "new_session", name: "other" }));
+
+      await secondWorkspaceUpdate;
+      await expect.poll(() => upstream.latestTerminal("pane-2")?.attachCount ?? 0).toBe(1);
+
+      terminalA.send("echo first-viewer\r");
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.writes.at(-1)).toBe("echo first-viewer\r");
+
+      terminalB.send("echo second-viewer\r");
+      await expect.poll(() => upstream.latestTerminal("pane-2")?.writes.at(-1)).toBe("echo second-viewer\r");
+    } finally {
+      terminalA?.close();
+      terminalB?.close();
+      first.control.close();
+      second.control.close();
+    }
+  });
+
+  test("bridges terminal live data as binary frames and writes raw binary upstream", async () => {
+    upstream.setTerminalStreamTransport("binary");
+
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+
+    try {
+      ({ terminal } = await authTerminalClient(baseWsUrl, clientId, { cols: 120, rows: 40 }));
+
+      const echoedFramePromise = waitForTerminalFrame(terminal);
+      terminal.send(Buffer.from("echo binary\r", "utf8"));
+
+      const echoedFrame = await echoedFramePromise;
+      expect(echoedFrame.isBinary).toBe(true);
+      expect(echoedFrame.text).toContain("echo binary\r");
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.inputFrameTypes.at(-1)).toBe("binary");
+      expect(upstream.latestTerminal("pane-1")?.writes.at(-1)).toBe("echo binary\r");
+    } finally {
+      terminal?.close();
+      control.close();
+    }
+  });
+
+  test("debounces repeated resize bursts down to one upstream snapshot request", async () => {
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+
+    try {
+      ({ terminal } = await authTerminalClient(baseWsUrl, clientId, { cols: 120, rows: 40 }));
+
+      terminal.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+      terminal.send(JSON.stringify({ type: "resize", cols: 110, rows: 30 }));
+      terminal.send(JSON.stringify({ type: "resize", cols: 132, rows: 30 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes.at(-1)).toEqual({ cols: 132, rows: 30 });
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.requestSnapshotCount ?? 0).toBe(1);
+    } finally {
+      terminal?.close();
+      control.close();
+    }
+  });
+
+  test("serves runtime-v2 config metadata", async () => {
     const response = await fetch(`${baseUrl}/api/config`);
     expect(response.status).toBe(200);
     const config = await response.json() as {
@@ -265,7 +457,7 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
-  test("rejects invalid control auth and keeps backend switching disabled", async () => {
+  test("rejects invalid control auth", async () => {
     const control = await openSocket(`${baseWsUrl}/ws/control`);
     try {
       control.send(JSON.stringify({ type: "auth", token: "bad-token" }));
@@ -277,29 +469,6 @@ describe("runtime v2 gateway server", () => {
     } finally {
       control.close();
     }
-
-    const unauthorized = await fetch(`${baseUrl}/api/switch-backend`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ backend: "tmux" }),
-    });
-    expect(unauthorized.status).toBe(401);
-
-    const disabled = await fetch(`${baseUrl}/api/switch-backend`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer test-token",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ backend: "tmux" }),
-    });
-    expect(disabled.status).toBe(501);
-    await expect(disabled.json()).resolves.toEqual({
-      ok: false,
-      error: "runtime-v2 backend switching is not supported",
-    });
   });
 
   test("replays persisted scrollback on attach and exposes it through inspect history", async () => {

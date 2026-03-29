@@ -161,6 +161,9 @@ printf '%s\\n' "$*" >> "${launchctlLogPath}"
 if [[ "$1" == "print" ]]; then
   cat <<'EOF'
 working directory = ${sharedWorkdir}
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+}
 EOF
   exit 0
 fi
@@ -172,7 +175,7 @@ exit 0
       path.join(fakeBinDir, "curl"),
       `#!/bin/bash
 set -euo pipefail
-printf '%s' '{"service":"remuxd","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal"}'
+printf '%s' '{"service":"remuxd","version":"0.2.18","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal","gitBranch":"dev","gitCommitSha":"abc123","gitDirty":false}'
 `,
       { mode: 0o755 }
     );
@@ -194,6 +197,83 @@ printf '%s' '{"service":"remuxd","protocolVersion":"2026-03-27-draft","controlWe
 
     const log = await fs.promises.readFile(launchctlLogPath, "utf8");
     expect(log).toContain(`print gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
+    expect(log).not.toContain("bootout");
+    expect(log).not.toContain("bootstrap");
+  });
+
+  test("restarts a healthy shared runtime daemon when its reported sha is stale", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-shared-restart-test-"));
+    tempDirs.push(tempHome);
+
+    const fakeBinDir = path.join(tempHome, "bin");
+    const launchAgentsDir = path.join(tempHome, "Library", "LaunchAgents");
+    const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
+    const sharedWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const launchctlLogPath = path.join(tempHome, "launchctl.log");
+    const runtimeStatePath = path.join(tempHome, "shared-runtime-state");
+
+    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    await fs.promises.mkdir(launchAgentsDir, { recursive: true });
+    await fs.promises.mkdir(sharedWorkdir, { recursive: true });
+    await fs.promises.writeFile(path.join(launchAgentsDir, "com.remux.runtime-v2-shared.plist"), "<plist />\n");
+    await fs.promises.writeFile(runtimeStatePath, "stale\n");
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "launchctl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${launchctlLogPath}"
+if [[ "$1" == "print" ]]; then
+  cat <<'EOF'
+working directory = ${sharedWorkdir}
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+}
+EOF
+  exit 0
+fi
+if [[ "$1" == "kickstart" ]]; then
+  printf 'fresh\\n' > "${runtimeStatePath}"
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "curl"),
+      `#!/bin/bash
+set -euo pipefail
+if [[ "$(cat "${runtimeStatePath}")" == "stale" ]]; then
+  printf '%s' '{"service":"remuxd","version":"0.2.18","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal","gitBranch":"dev","gitCommitSha":"old-sha","gitDirty":false}'
+else
+  printf '%s' '{"service":"remuxd","version":"0.2.19","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal","gitBranch":"dev","gitCommitSha":"new-sha","gitDirty":false}'
+fi
+`,
+      { mode: 0o755 }
+    );
+
+    expect(() =>
+      execFileSync(
+        "bash",
+        [
+          "-c",
+          "source scripts/runtime-lib.sh && ensure_shared_runtime_matches_expected new-sha dev 0.2.19"
+        ],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+            REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot
+          },
+          stdio: "pipe"
+        }
+      )
+    ).not.toThrow();
+
+    const log = await fs.promises.readFile(launchctlLogPath, "utf8");
+    expect(log).toContain(`print gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
+    expect(log).toContain(`kickstart -k gui/${process.getuid?.() ?? process.getuid()}/com.remux.runtime-v2-shared`);
     expect(log).not.toContain("bootout");
     expect(log).not.toContain("bootstrap");
   });

@@ -64,42 +64,11 @@ describe("buildServerCapabilities", () => {
     expect(capabilities.semantic.supportsEventStream).toBe(true);
   });
 
-  test("marks terminal snapshots available when extensions are wired", () => {
+  test("marks terminal snapshots available when explicitly enabled", () => {
     const capabilities = buildServerCapabilities({
       backendCapabilities,
       supportsUpload: true,
-      extensions: {
-        notificationRoutes: {} as never,
-        onSessionCreated: () => {},
-        onTerminalData: () => {},
-        onSessionExit: () => {},
-        onSessionResize: () => {},
-        getSnapshot: () => null,
-        getDiff: () => null,
-        getScrollback: () => [],
-        getGastownInfo: () => ({}),
-        gastownDetected: false,
-        getEventWatcher: () => {
-          throw new Error("not implemented in test");
-        },
-        recordRawBytes: () => {},
-        recordCompressedBytes: () => {},
-        setRtt: () => {},
-        getBandwidthStats: () => ({
-          rawBytesPerSec: 0,
-          compressedBytesPerSec: 0,
-          savedPercent: 0,
-          fullSnapshotsSent: 0,
-          diffUpdatesSent: 0,
-          avgChangedRowsPerDiff: 0,
-          totalRawBytes: 0,
-          totalCompressedBytes: 0,
-          totalSavedBytes: 0,
-          rttMs: null,
-          protocol: "ws",
-        }),
-        dispose: () => {},
-      },
+      supportsTerminalSnapshots: true,
     });
 
     expect(capabilities.workspace.supportsTerminalSnapshots).toBe(true);

@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::env;
+use std::fs;
 use std::future::pending;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -59,10 +62,22 @@ pub enum ConfigError {
 #[serde(rename_all = "camelCase")]
 pub struct ServerMetadata {
     pub service: String,
+    pub version: String,
     pub protocol_version: String,
     pub control_websocket_path: String,
     pub terminal_websocket_path: String,
     pub public_base_url: Option<String>,
+    pub git_branch: Option<String>,
+    pub git_commit_sha: Option<String>,
+    pub git_dirty: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeIdentity {
+    version: String,
+    git_branch: Option<String>,
+    git_commit_sha: Option<String>,
+    git_dirty: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -73,7 +88,7 @@ struct AppState {
 
 #[derive(Debug, Clone)]
 enum RuntimeUpdate {
-    Output { sequence: u64, chunk_base64: String },
+    Output { sequence: u64, chunk: Vec<u8> },
     Exit { exit_code: Option<i32> },
 }
 
@@ -159,10 +174,7 @@ impl PaneRuntime {
                     .expect("runtime terminal lock poisoned")
                     .ingest(&chunk);
                 let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = self.updates.send(RuntimeUpdate::Output {
-                    sequence,
-                    chunk_base64: BASE64.encode(chunk),
-                });
+                let _ = self.updates.send(RuntimeUpdate::Output { sequence, chunk });
             }
             PtyEvent::Exited { exit_code, .. } => {
                 *self.exit_code.lock().expect("runtime exit lock poisoned") =
@@ -196,11 +208,11 @@ impl PaneRuntime {
     }
 
     fn inspect_snapshot(&self, scope: control::InspectScope) -> control::InspectSnapshot {
-        let terminal = self
+        let mut terminal = self
             .terminal
             .lock()
             .expect("runtime terminal lock poisoned");
-        let inspect = build_pane_inspect_view(&terminal);
+        let inspect = build_pane_inspect_view(&mut terminal);
 
         control::InspectSnapshot {
             scope,
@@ -677,6 +689,16 @@ impl WorkspaceRuntime {
         data_base64: &str,
         client_id: Option<&str>,
     ) -> Result<(), RuntimeError> {
+        let bytes = BASE64.decode(data_base64).map_err(RuntimeError::Decode)?;
+        self.write_input_bytes(pane_id, &bytes, client_id)
+    }
+
+    fn write_input_bytes(
+        &self,
+        pane_id: &PaneId,
+        bytes: &[u8],
+        client_id: Option<&str>,
+    ) -> Result<(), RuntimeError> {
         if let Some(client_id) = client_id {
             let lease_changed = {
                 let mut workspace = self
@@ -692,9 +714,8 @@ impl WorkspaceRuntime {
         }
 
         self.ensure_write_lease(pane_id, client_id)?;
-        let bytes = BASE64.decode(data_base64).map_err(RuntimeError::Decode)?;
         self.pane_runtime(pane_id)?
-            .write_all(&bytes)
+            .write_all(bytes)
             .map_err(RuntimeError::Write)
     }
 
@@ -814,14 +835,93 @@ impl ServerConfig {
 
     #[must_use]
     pub fn metadata(&self) -> ServerMetadata {
+        let identity = discover_runtime_identity();
         ServerMetadata {
             service: "remuxd".to_owned(),
+            version: identity.version,
             protocol_version: RUNTIME_V2_PROTOCOL_VERSION.to_owned(),
             control_websocket_path: "/v2/control".to_owned(),
             terminal_websocket_path: "/v2/terminal".to_owned(),
             public_base_url: self.public_base_url.clone(),
+            git_branch: identity.git_branch,
+            git_commit_sha: identity.git_commit_sha,
+            git_dirty: identity.git_dirty,
         }
     }
+}
+
+fn discover_runtime_identity() -> RuntimeIdentity {
+    let cwd = env::current_dir().ok();
+    let version = cwd
+        .as_deref()
+        .and_then(package_version_from_dir)
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
+    let git_branch = env::var("REMUX_RUNTIME_BRANCH")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .or_else(|| cwd.as_deref().and_then(|dir| run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])))
+        .filter(|value| value != "HEAD");
+    let git_commit_sha = cwd
+        .as_deref()
+        .and_then(|dir| run_git(dir, &["rev-parse", "HEAD"]));
+    let git_dirty = cwd.as_deref().and_then(git_dirty_state);
+
+    RuntimeIdentity {
+        version,
+        git_branch,
+        git_commit_sha,
+        git_dirty,
+    }
+}
+
+fn package_version_from_dir(dir: &Path) -> Option<String> {
+    let package_path = find_repo_package_json(dir)?;
+    let raw = fs::read_to_string(package_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    json.get("version")?.as_str().map(ToOwned::to_owned)
+}
+
+fn find_repo_package_json(dir: &Path) -> Option<PathBuf> {
+    for ancestor in dir.ancestors() {
+        let candidate = ancestor.join("package.json");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn run_git(dir: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn git_dirty_state(dir: &Path) -> Option<bool> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(!output.stdout.is_empty())
 }
 
 #[must_use]
@@ -1245,6 +1345,15 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
         tokio::select! {
             update = recv_runtime_update(runtime_updates.as_mut()), if runtime_updates.is_some() => {
                 match update {
+                    Some(RuntimeStreamMessage::Stream { sequence, chunk }) => {
+                        let stream = terminal::ServerMessage::Stream {
+                            sequence,
+                            chunk_base64: BASE64.encode(chunk),
+                        };
+                        if send_json_message(&mut socket, &stream).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(RuntimeStreamMessage::Event(event)) => {
                         if send_json_message(&mut socket, &event).await.is_err() {
                             break;
@@ -1266,6 +1375,23 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
             }
             message = socket.next() => {
                 match message {
+                    Some(Ok(Message::Binary(bytes))) => {
+                        let Some(pane_id) = attached_pane_id.as_ref() else {
+                            continue;
+                        };
+                        match runtime.write_input_bytes(pane_id, &bytes, attached_client_id.as_deref()) {
+                            Ok(()) => {}
+                            Err(RuntimeError::WriteLeaseUnavailable { current_client_id, .. }) => {
+                                let lease_state = terminal::ServerMessage::LeaseState {
+                                    client_id: current_client_id,
+                                };
+                                if send_json_message(&mut socket, &lease_state).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
                     Some(Ok(Message::Text(text))) if text.trim() == "ping" => {
                         if socket.send(Message::Text("pong".into())).await.is_err() {
                             break;
@@ -1361,6 +1487,7 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
 }
 
 enum RuntimeStreamMessage {
+    Stream { sequence: u64, chunk: Vec<u8> },
     Event(terminal::ServerMessage),
     Resync,
 }
@@ -1374,15 +1501,9 @@ async fn recv_runtime_update(
     };
 
     match receiver.recv().await {
-        Ok(RuntimeUpdate::Output {
-            sequence,
-            chunk_base64,
-        }) => Some(RuntimeStreamMessage::Event(
-            terminal::ServerMessage::Stream {
-                sequence,
-                chunk_base64,
-            },
-        )),
+        Ok(RuntimeUpdate::Output { sequence, chunk }) => {
+            Some(RuntimeStreamMessage::Stream { sequence, chunk })
+        }
         Ok(RuntimeUpdate::Exit { exit_code }) => {
             Some(RuntimeStreamMessage::Event(terminal::ServerMessage::Exit {
                 exit_code,
@@ -1508,6 +1629,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let payload = response.into_body().collect().await.unwrap().to_bytes();
         let metadata: ServerMetadata = serde_json::from_slice(&payload).expect("json metadata");
+        assert!(!metadata.version.is_empty());
         assert_eq!(metadata.protocol_version, RUNTIME_V2_PROTOCOL_VERSION);
         assert_eq!(metadata.control_websocket_path, "/v2/control");
         assert_eq!(metadata.terminal_websocket_path, "/v2/terminal");
@@ -1653,6 +1775,400 @@ mod tests {
             .expect("subscriber B update should be readable");
 
         assert_eq!(runtime.workspace_summary().session_count, 2);
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    #[ignore = "diagnostic"]
+    async fn debug_real_shell_printf_loop_snapshot_tail() {
+        let size = TerminalSize::new(177, 31);
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let pane_id = runtime.pane_id();
+        let attachment = runtime
+            .attach(&pane_id, ClientMode::Interactive, size)
+            .expect("attach should succeed");
+        let client_id = attachment.client_id.as_deref();
+        let mut updates = runtime.subscribe(&pane_id).expect("subscribe should succeed");
+        let command =
+            "for i in $(seq 1 120); do printf \"RUST-%03d\\n\" \"$i\"; sleep 0.01; done\r";
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        while let Ok(Ok(RuntimeUpdate::Output { .. })) =
+            timeout(Duration::from_millis(50), updates.recv()).await
+        {}
+
+        runtime
+            .write_input_bytes(&pane_id, command.as_bytes(), client_id)
+            .expect("write should succeed");
+
+        let mut live = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            match timeout(Duration::from_millis(500), updates.recv()).await {
+                Ok(Ok(RuntimeUpdate::Output { chunk, .. })) => {
+                    live.push_str(&String::from_utf8_lossy(&chunk));
+                    if live.contains("RUST-120") {
+                        break;
+                    }
+                }
+                Ok(Ok(RuntimeUpdate::Exit { .. })) => break,
+                Ok(Err(_)) | Err(_) => {}
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        let inspect = runtime.inspect_snapshot(control::InspectScope::Pane {
+            pane_id: pane_id.clone(),
+        });
+        let inspect_rows = inspect
+            .scrollback_rows
+            .iter()
+            .chain(inspect.visible_rows.iter())
+            .filter_map(|row| {
+                let trimmed = row.trim_end().to_owned();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            })
+            .collect::<Vec<_>>();
+        let rust_rows = inspect_rows
+            .iter()
+            .filter(|row| row.contains("RUST-"))
+            .cloned()
+            .collect::<Vec<_>>();
+        let live_rows = live
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| line.contains("RUST-"))
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+
+        eprintln!(
+            "live_has_120={} live_count={} live_tail={:?} inspect_count={} inspect_tail={:?} live_preview={:?}",
+            live.contains("RUST-120"),
+            live_rows.len(),
+            live_rows
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            rust_rows.len(),
+            rust_rows
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            live.chars().rev().take(240).collect::<String>().chars().rev().collect::<String>(),
+        );
+
+        runtime.detach(&pane_id, client_id);
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    #[ignore = "diagnostic"]
+    async fn debug_real_shell_two_printf_loops_snapshot_tail() {
+        let size = TerminalSize::new(177, 31);
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let pane_id = runtime.pane_id();
+        let attachment = runtime
+            .attach(&pane_id, ClientMode::Interactive, size)
+            .expect("attach should succeed");
+        let client_id = attachment.client_id.as_deref();
+        let mut updates = runtime.subscribe(&pane_id).expect("subscribe should succeed");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        while let Ok(Ok(RuntimeUpdate::Output { .. })) =
+            timeout(Duration::from_millis(50), updates.recv()).await
+        {}
+
+        for (prefix, label) in [("MARK", "mark"), ("PROBE", "probe")] {
+            let command = format!(
+                "for i in $(seq 1 120); do printf \"{prefix}-%03d\\n\" \"$i\"; sleep 0.01; done\r"
+            );
+            runtime
+                .write_input_bytes(&pane_id, command.as_bytes(), client_id)
+                .expect("write should succeed");
+
+            let mut live = String::new();
+            let target = format!("{prefix}-120");
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+
+                match timeout(Duration::from_millis(500), updates.recv()).await {
+                    Ok(Ok(RuntimeUpdate::Output { chunk, .. })) => {
+                        live.push_str(&String::from_utf8_lossy(&chunk));
+                        if live.contains(&target) {
+                            break;
+                        }
+                    }
+                    Ok(Ok(RuntimeUpdate::Exit { .. })) => break,
+                    Ok(Err(_)) | Err(_) => {}
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(800)).await;
+
+            let inspect = runtime.inspect_snapshot(control::InspectScope::Pane {
+                pane_id: pane_id.clone(),
+            });
+            let inspect_rows = inspect
+                .scrollback_rows
+                .iter()
+                .chain(inspect.visible_rows.iter())
+                .filter_map(|row| {
+                    let trimmed = row.trim_end().to_owned();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let matched_rows = inspect_rows
+                .iter()
+                .filter(|row| row.contains(prefix))
+                .cloned()
+                .collect::<Vec<_>>();
+            eprintln!(
+                "{label} live_has_120={} inspect_count={} inspect_tail={:?}",
+                live.contains(&target),
+                matched_rows.len(),
+                matched_rows
+                    .iter()
+                    .rev()
+                    .take(15)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        runtime.detach(&pane_id, client_id);
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    #[ignore = "diagnostic"]
+    async fn debug_reattach_after_complete_history() {
+        let size = TerminalSize::new(177, 31);
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let pane_id = runtime.pane_id();
+        let initial = runtime
+            .attach(&pane_id, ClientMode::Interactive, size)
+            .expect("initial attach should succeed");
+        let client_id = initial.client_id.as_deref();
+        let mut updates = runtime.subscribe(&pane_id).expect("subscribe should succeed");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        while let Ok(Ok(RuntimeUpdate::Output { .. })) =
+            timeout(Duration::from_millis(50), updates.recv()).await
+        {}
+
+        let command =
+            "for i in $(seq 1 120); do printf \"REATTACH-%03d\\n\" \"$i\"; sleep 0.01; done\r";
+        runtime
+            .write_input_bytes(&pane_id, command.as_bytes(), client_id)
+            .expect("write should succeed");
+
+        let target = "REATTACH-120";
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let mut live = String::new();
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            match timeout(Duration::from_millis(500), updates.recv()).await {
+                Ok(Ok(RuntimeUpdate::Output { chunk, .. })) => {
+                    live.push_str(&String::from_utf8_lossy(&chunk));
+                    if live.contains(target) {
+                        break;
+                    }
+                }
+                Ok(Ok(RuntimeUpdate::Exit { .. })) => break,
+                Ok(Err(_)) | Err(_) => {}
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        let collect_rows = |inspect: control::InspectSnapshot| {
+            inspect
+                .scrollback_rows
+                .iter()
+                .chain(inspect.visible_rows.iter())
+                .filter_map(|row| {
+                    let trimmed = row.trim_end().to_owned();
+                    if trimmed.is_empty() || !trimmed.contains("REATTACH-") {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let before = collect_rows(runtime.inspect_snapshot(control::InspectScope::Pane {
+            pane_id: pane_id.clone(),
+        }));
+        let reattach = runtime
+            .attach(&pane_id, ClientMode::ReadOnly, size)
+            .expect("reattach should succeed");
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let after = collect_rows(runtime.inspect_snapshot(control::InspectScope::Pane {
+            pane_id: pane_id.clone(),
+        }));
+
+        eprintln!(
+            "before_count={} before_tail={:?} reattach_snapshot_is_snapshot={} after_count={} after_tail={:?}",
+            before.len(),
+            before
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            matches!(reattach.snapshot, terminal::ServerMessage::Snapshot { .. }),
+            after.len(),
+            after
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+        );
+
+        runtime.detach(&pane_id, client_id);
+        runtime.shutdown();
+    }
+
+    #[tokio::test]
+    #[ignore = "diagnostic"]
+    async fn debug_workspace_tab_switch_after_complete_history() {
+        let size = TerminalSize::new(177, 31);
+        let runtime = WorkspaceRuntime::spawn_with_command(test_runtime_command())
+            .expect("test runtime should spawn");
+        let summary = runtime.workspace_summary();
+        let original_session = summary
+            .active_session_id
+            .clone()
+            .expect("active session should exist");
+        let original_tab = summary.active_tab_id.clone().expect("active tab should exist");
+        let pane_id = runtime.pane_id();
+        let attachment = runtime
+            .attach(&pane_id, ClientMode::Interactive, size)
+            .expect("attach should succeed");
+        let client_id = attachment.client_id.as_deref();
+        let mut updates = runtime.subscribe(&pane_id).expect("subscribe should succeed");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        while let Ok(Ok(RuntimeUpdate::Output { .. })) =
+            timeout(Duration::from_millis(50), updates.recv()).await
+        {}
+
+        let command =
+            "for i in $(seq 1 120); do printf \"TABSW-%03d\\n\" \"$i\"; sleep 0.01; done\r";
+        runtime
+            .write_input_bytes(&pane_id, command.as_bytes(), client_id)
+            .expect("write should succeed");
+
+        let target = "TABSW-120";
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let mut live = String::new();
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            match timeout(Duration::from_millis(500), updates.recv()).await {
+                Ok(Ok(RuntimeUpdate::Output { chunk, .. })) => {
+                    live.push_str(&String::from_utf8_lossy(&chunk));
+                    if live.contains(target) {
+                        break;
+                    }
+                }
+                Ok(Ok(RuntimeUpdate::Exit { .. })) => break,
+                Ok(Err(_)) | Err(_) => {}
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        let collect_rows = |runtime: &WorkspaceRuntime| {
+            runtime
+                .inspect_snapshot(control::InspectScope::Pane {
+                    pane_id: pane_id.clone(),
+                })
+                .scrollback_rows
+                .into_iter()
+                .chain(
+                    runtime
+                        .inspect_snapshot(control::InspectScope::Pane {
+                            pane_id: pane_id.clone(),
+                        })
+                        .visible_rows
+                        .into_iter(),
+                )
+                .filter_map(|row| {
+                    let trimmed = row.trim_end().to_owned();
+                    if trimmed.is_empty() || !trimmed.contains("TABSW-") {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let before = collect_rows(&runtime);
+        let other_tab = runtime
+            .create_tab(&original_session, "Scratch")
+            .expect("create tab should succeed");
+        runtime.select_tab(&other_tab).expect("select other tab should succeed");
+        runtime
+            .select_tab(&original_tab)
+            .expect("select original tab should succeed");
+        let after = collect_rows(&runtime);
+
+        eprintln!(
+            "live_has_120={} before_count={} after_count={} after_tail={:?}",
+            live.contains(target),
+            before.len(),
+            after.len(),
+            after
+                .iter()
+                .rev()
+                .take(15)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+        );
+
+        runtime.detach(&pane_id, client_id);
         runtime.shutdown();
     }
 

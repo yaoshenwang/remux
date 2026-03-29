@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Remux 是一个基于 Web 的远程 tmux / zellij 客户端，通过 cloudflared 隧道让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
+Remux 是一个基于 Web 的远程终端工作区控制台，通过 cloudflared 隧道让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
 
 - **GitHub**: github.com/yaoshenwang/remux
 - **许可证**: MIT
@@ -45,8 +45,8 @@ Remux 是一个基于 Web 的远程 tmux / zellij 客户端，通过 cloudflared
 
 ### Runtime V2 约束（强制）
 
-- `runtime-v2` 是当前公开产品路径，**禁止**为了 session 持久化问题把 public `main` / `dev` 服务回退到 legacy `tmux` / `zellij` / `conpty` backend
-- 持久化问题必须在 `runtime-v2` 架构内解决，可以借鉴 tmux / zellij 的 server-client、daemon、socket、state store 原理，但不能把公开运行路径切回 legacy backend
+- `runtime-v2` 是当前公开产品路径，**禁止**为了 session 持久化问题把 public `main` / `dev` 服务回退到任何旧 runtime 或兼容后端
+- 持久化问题必须在 `runtime-v2` 架构内解决，可以借鉴成熟的 server-client、daemon、socket、state store 原理，但不能把公开运行路径切回旧架构
 - 对 `https://remux.yaoshen.wang` 和 `https://remux-dev.yaoshen.wang` 的修复，目标是两者共享同一套机器级 runtime-v2 会话真相，而不是各自维护独立易失 workspace
 
 ## 常用命令
@@ -89,7 +89,7 @@ npm run typecheck && npm test && npm run build
 ### 安全要点
 
 - 两个 WebSocket 端点独立认证，修改 `server.ts` 或 `auth-service.ts` 时必须保持此特性
-- tmux/zellij 命令使用参数数组，禁止退化为 shell 拼接字符串
+- runtime 与 shell 相关命令使用参数数组，禁止退化为 shell 拼接字符串
 - PTY 路径中的 session 名称必须继续保持安全转义
 
 ### 交付流程

@@ -4,7 +4,7 @@
 
 Remux is a remote workspace cockpit for terminal-first work. It helps users monitor, inspect, and control live terminal workspaces from another device without pretending the browser is a full desktop terminal.
 
-The active product contract is the unified `runtime-v2` backend. Legacy `tmux` / `zellij` / `conpty` code remains only as a shrinking compatibility boundary and is not part of the default release path.
+The active product contract is the unified `runtime-v2` backend.
 
 Primary use cases:
 
@@ -70,7 +70,7 @@ The protocol now uses multiplexer-neutral naming:
 - `PaneState`
 - `WorkspaceSnapshot`
 
-Deprecated tmux-flavored aliases still exist in `src/shared/protocol.ts` for compatibility, but the active design vocabulary is `session/tab/pane`.
+The active design vocabulary is `session/tab/pane`.
 
 ## Transport Model
 
@@ -128,19 +128,6 @@ The frontend still consumes translated `BackendCapabilities`, which it uses to a
 - fullscreen support
 - session and tab rename support
 
-## Compatibility Boundary
-
-The old `tmux` / `zellij` / `conpty` adapters remain in the repository only as migration-era compatibility code.
-
-They are intentionally outside the default contract:
-
-- hidden from the normal CLI help
-- excluded from the default CI matrix
-- excluded from the default `npm test` and default Playwright path
-- retained only for debugging, migration, and staged removal work
-
-See `docs/LEGACY_COMPAT.md` for the remaining escape hatches.
-
 ## Runtime Flow
 
 ### Startup
@@ -152,10 +139,6 @@ See `docs/LEGACY_COMPAT.md` for the remaining escape hatches.
 5. HTTP and WebSocket server start
 6. Optional Cloudflare tunnel starts
 7. CLI prints launch URLs and QR code
-
-Compatibility note:
-
-- if runtime-v2 is explicitly disabled or fails to start, Remux can still fall back to the old adapters during migration work
 
 ### Frontend Connection
 
@@ -203,7 +186,7 @@ It supports:
 
 ### Inspect View
 
-The current Inspect surface renders captured history as HTML instead of relying on native multiplexer copy mode.
+The current Inspect surface renders captured history as HTML instead of relying on native terminal copy mode.
 
 Today it is still grounded in historical `scroll` naming in some APIs and UI labels, but the product semantics are moving toward `Inspect`.
 
@@ -233,8 +216,6 @@ Current server endpoints include:
   - returns version, password requirement, scrollback defaults, upload limit, and runtime mode metadata
 - `POST /api/upload`
   - uploads a file into the active pane working directory after auth
-- `POST /api/switch-backend`
-  - returns `501` under runtime-v2 and exists only as a compatibility stub
 
 The frontend bundle is served statically, and all non-API non-WS paths fall back to the app shell.
 

@@ -8,7 +8,7 @@ RUNTIME_STATE_ROOT="${REMUX_RUNTIME_STATE_ROOT:-$HOME/.remux}"
 RUNTIME_WORKTREE_ROOT="${REMUX_RUNTIME_WORKTREE_ROOT:-$RUNTIME_STATE_ROOT/runtime-worktrees}"
 # Keep the sync lock outside ephemeral checkouts so launchd sync and Actions deploys share it.
 SYNC_LOCK_DIR="${REMUX_RUNTIME_SYNC_LOCK_DIR:-$RUNTIME_STATE_ROOT/runtime-sync.lock}"
-# Include Cargo so runtime deploys can build the native zellij bridge without shell init files.
+# Include Cargo so runtime deploys can build native workspace components without shell init files.
 RUNTIME_BASE_PATH="${REMUX_RUNTIME_BASE_PATH:-${CARGO_HOME:-$HOME/.cargo}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}"
 LAUNCHD_GUI_DOMAIN="gui/$(id -u)"
 
@@ -255,6 +255,10 @@ runtime_shared_meta_url() {
   echo "$(runtime_shared_base_url)/v2/meta"
 }
 
+shared_runtime_meta_json() {
+  fetch_json "$(runtime_shared_meta_url)"
+}
+
 json_field_or_empty() {
   local json="$1"
   local field="$2"
@@ -417,6 +421,12 @@ verify_shared_runtime_plist() {
     return 1
   fi
 
+  if ! grep -Fq "<key>REMUX_RUNTIME_BRANCH</key>" "$plist" || ! grep -Fq "<string>dev</string>" "$plist"; then
+    echo "[runtime] $plist does not pin the shared runtime branch to dev" >&2
+    echo "[runtime] rerun: npm run runtime:install-launchd" >&2
+    return 1
+  fi
+
   if ! grep -Fq "$expected_path" "$plist"; then
     echo "[runtime] $plist does not prefix PATH with the resolved runtime toolchain" >&2
     echo "[runtime] rerun: npm run runtime:install-launchd" >&2
@@ -439,6 +449,17 @@ loaded_service_description() {
   launchctl print "$(runtime_service_domain "$service")" 2>/dev/null || true
 }
 
+loaded_shared_runtime_service_matches_expected() {
+  local service_description=""
+  service_description="$(loaded_service_description "$(runtime_shared_service)")"
+
+  [[ -n "$service_description" ]] || return 1
+  grep -Fq "working directory = $(runtime_shared_workdir)" <<<"$service_description" || return 1
+  grep -Fq "REMUX_RUNTIME_BRANCH => dev" <<<"$service_description" || return 1
+
+  return 0
+}
+
 loaded_runtime_service_matches_expected() {
   ensure_instance_name "$1"
   local name="$1"
@@ -453,6 +474,32 @@ loaded_runtime_service_matches_expected() {
   grep -Fq "REMUXD_BASE_URL => $(runtime_shared_base_url)" <<<"$service_description" || return 1
   grep -Fq "REMUX_RUNTIME_V2_REQUIRED => 1" <<<"$service_description" || return 1
   grep -Fq "REMUX_LOCAL_WS_ORIGIN => $(runtime_local_ws_origin "$name")" <<<"$service_description" || return 1
+
+  return 0
+}
+
+shared_runtime_matches_expected() {
+  local expected_sha="$1"
+  local expected_branch="$2"
+  local expected_version="$3"
+  local json actual_sha actual_branch actual_version actual_dirty
+
+  if ! json="$(shared_runtime_meta_json 2>/dev/null)"; then
+    return 1
+  fi
+
+  actual_sha="$(json_field_or_empty "$json" gitCommitSha 2>/dev/null || true)"
+  actual_branch="$(json_field_or_empty "$json" gitBranch 2>/dev/null || true)"
+  actual_version="$(json_field_or_empty "$json" version 2>/dev/null || true)"
+  actual_dirty="$(json_field_or_empty "$json" gitDirty 2>/dev/null || true)"
+
+  [[ "$actual_sha" == "$expected_sha" ]] || return 1
+  [[ "$actual_version" == "$expected_version" ]] || return 1
+  [[ "$actual_dirty" == "false" ]] || return 1
+
+  if [[ -n "$expected_branch" ]]; then
+    [[ "$actual_branch" == "$expected_branch" ]] || return 1
+  fi
 
   return 0
 }
@@ -499,10 +546,30 @@ load_runtime_launchd() {
   load_launchd_service "$(runtime_service "$1")" "$(runtime_plist_path "$1")"
 }
 
+restart_shared_runtime_service() {
+  local service
+  local plist
+  service="$(runtime_shared_service)"
+  plist="$(runtime_shared_plist_path)"
+
+  if [[ ! -f "$plist" ]]; then
+    echo "[runtime] shared runtime launchd plist not installed: $plist" >&2
+    return 1
+  fi
+
+  if loaded_shared_runtime_service_matches_expected; then
+    launchctl kickstart -k "$(runtime_service_domain "$service")"
+    return 0
+  fi
+
+  load_launchd_service "$service" "$plist"
+  launchctl kickstart -k "$(runtime_service_domain "$service")"
+}
+
 load_shared_runtime_launchd() {
   local loaded_working_dir
   loaded_working_dir="$(loaded_service_working_dir "$(runtime_shared_service)")"
-  if [[ "$loaded_working_dir" == "$(runtime_shared_workdir)" ]] && fetch_json "$(runtime_shared_meta_url)" >/dev/null 2>&1; then
+  if loaded_shared_runtime_service_matches_expected && [[ "$loaded_working_dir" == "$(runtime_shared_workdir)" ]] && shared_runtime_meta_json >/dev/null 2>&1; then
     return 0
   fi
   load_launchd_service "$(runtime_shared_service)" "$(runtime_shared_plist_path)"
@@ -513,7 +580,7 @@ load_sync_launchd() {
 }
 
 ensure_shared_runtime_running() {
-  if fetch_json "$(runtime_shared_meta_url)" >/dev/null 2>&1; then
+  if shared_runtime_meta_json >/dev/null 2>&1; then
     return 0
   fi
 
@@ -521,7 +588,7 @@ ensure_shared_runtime_running() {
 
   local deadline=$((SECONDS + 60))
   while (( SECONDS < deadline )); do
-    if fetch_json "$(runtime_shared_meta_url)" >/dev/null 2>&1; then
+    if shared_runtime_meta_json >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -529,6 +596,51 @@ ensure_shared_runtime_running() {
 
   echo "[runtime] shared runtime-v2 daemon failed to become healthy at $(runtime_shared_base_url)" >&2
   return 1
+}
+
+wait_for_shared_runtime_api() {
+  local expected_sha="$1"
+  local expected_branch="$2"
+  local expected_version="$3"
+  local json
+  local deadline=$((SECONDS + 60))
+
+  while (( SECONDS < deadline )); do
+    if shared_runtime_matches_expected "$expected_sha" "$expected_branch" "$expected_version"; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  if json="$(shared_runtime_meta_json 2>/dev/null)"; then
+    local actual_sha actual_branch actual_dirty actual_version
+    actual_sha="$(json_field_or_empty "$json" gitCommitSha 2>/dev/null || true)"
+    actual_branch="$(json_field_or_empty "$json" gitBranch 2>/dev/null || true)"
+    actual_dirty="$(json_field_or_empty "$json" gitDirty 2>/dev/null || true)"
+    actual_version="$(json_field_or_empty "$json" version 2>/dev/null || true)"
+    echo "[runtime] shared runtime mismatch: expected branch=$expected_branch sha=$expected_sha version=$expected_version dirty=false" >&2
+    echo "[runtime] shared runtime actual: version=${actual_version:-?} branch=${actual_branch:-?} sha=${actual_sha:-?} dirty=${actual_dirty:-?}" >&2
+  fi
+
+  return 1
+}
+
+ensure_shared_runtime_matches_expected() {
+  local expected_sha="$1"
+  local expected_branch="$2"
+  local expected_version="$3"
+
+  if shared_runtime_matches_expected "$expected_sha" "$expected_branch" "$expected_version"; then
+    return 0
+  fi
+
+  if shared_runtime_meta_json >/dev/null 2>&1 || loaded_shared_runtime_service_matches_expected; then
+    restart_shared_runtime_service
+  else
+    load_shared_runtime_launchd
+  fi
+
+  wait_for_shared_runtime_api "$expected_sha" "$expected_branch" "$expected_version"
 }
 
 wait_for_runtime_api() {

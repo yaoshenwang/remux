@@ -67,7 +67,6 @@ npm start
 
 - Node.js 20+
 - Rust toolchain when running or checking the native `runtime-v2` workspace from source
-- Legacy compatibility setup notes live in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md)
 
 ## Features
 
@@ -98,8 +97,6 @@ Options:
   --debug-log <path>               Write backend debug logs to a file
 ```
 
-Advanced legacy compatibility flags are documented in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
-
 ## Environment Variables
 
 | Variable | Description |
@@ -110,8 +107,6 @@ Advanced legacy compatibility flags are documented in [docs/LEGACY_COMPAT.md](./
 | `REMUX_VERBOSE_DEBUG=1` | Enable verbose server logging |
 | `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
 | `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
-
-Legacy-only environment variables are listed in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
 
 ## Security Defaults
 
@@ -126,7 +121,6 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 ## Documentation
 
 - [docs/TESTING.md](./docs/TESTING.md): current runtime-v2-first test flow and release gate
-- [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md): hidden compatibility flags, fallback env vars, and non-default legacy tests
 - [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
@@ -174,8 +168,6 @@ npm run test:e2e:screenshots
 npm run test:release
 ```
 
-Legacy compatibility commands are documented in [docs/LEGACY_COMPAT.md](./docs/LEGACY_COMPAT.md).
-
 ## Tech Stack
 
 - Backend gateway: Node.js, Express 5, `ws`, `yargs`, `zod`
@@ -186,7 +178,7 @@ Legacy compatibility commands are documented in [docs/LEGACY_COMPAT.md](./docs/L
 
 ## Acknowledgments
 
-Remux was originally inspired by [tmux-mobile](https://github.com/DagsHub/tmux-mobile) and [porterminal](https://github.com/lyehe/porterminal), then substantially rewritten around a dedicated mobile-first control surface.
+Remux was originally inspired by existing browser-based terminal access tools and then substantially rewritten around a dedicated mobile-first control surface.
 
 ## Contributors
 

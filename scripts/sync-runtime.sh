@@ -66,6 +66,7 @@ sync_instance() {
   local needs_checkout=false
   local needs_restart=false
   local needs_install=true
+  local needs_shared_runtime_restart=false
 
   verify_runtime_plist "$name"
   ensure_runtime_worktree "$name"
@@ -105,7 +106,12 @@ sync_instance() {
     needs_restart=true
   fi
 
-  if [[ "$needs_checkout" == false && "$needs_restart" == false ]]; then
+  if [[ "$name" == "dev" ]] && ! shared_runtime_matches_expected "$target_sha" "$branch" "$target_version"; then
+    needs_shared_runtime_restart=true
+    needs_restart=true
+  fi
+
+  if [[ "$needs_checkout" == false && "$needs_restart" == false && "$needs_shared_runtime_restart" == false ]]; then
     echo "[sync] $name already aligned at $target_version ($target_sha)"
     if [[ "$VERIFY_PUBLIC" == true ]]; then
       verify_public_runtime "$name" "$target_sha" "$branch" "$target_version"
@@ -121,6 +127,9 @@ sync_instance() {
     echo "  current sha:  $current_sha"
     echo "  checkout:     $needs_checkout"
     echo "  npm ci:       $needs_install"
+    if [[ "$name" == "dev" ]]; then
+      echo "  shared-v2:    $needs_shared_runtime_restart"
+    fi
     echo "  restart:      $needs_restart"
     return 0
   fi
@@ -139,6 +148,14 @@ sync_instance() {
   run_runtime_npm "$dir" run typecheck
   run_runtime_npm "$dir" test
   run_runtime_npm "$dir" run build
+
+  if [[ "$name" == "dev" ]]; then
+    echo "[sync] aligning shared runtime-v2 -> origin/$branch ($target_version / $target_sha)"
+    if ! ensure_shared_runtime_matches_expected "$target_sha" "$branch" "$target_version"; then
+      echo "[sync] shared runtime verification failed for $name" >&2
+      return 1
+    fi
+  fi
 
   echo "[sync] restarting $name"
   restart_runtime_service "$name"

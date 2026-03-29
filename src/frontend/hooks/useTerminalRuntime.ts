@@ -3,16 +3,22 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "../themes";
-import type { ServerConfig } from "../app-types";
 import type { ToolbarHandle } from "../components/Toolbar";
-import type { TerminalGeometryState } from "../../shared/protocol.js";
+import { loadPreferredTerminalRenderer } from "../terminal-renderer";
+
+declare global {
+  interface Window {
+    __remuxTestTerminal?: {
+      focus: () => boolean;
+      readBuffer: () => string;
+      scrollToLine: (line: number) => boolean;
+    };
+  }
+}
 
 interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
   onSendRaw: (data: string) => void;
-  runtimeGeometryRef: MutableRefObject<TerminalGeometryState | null>;
-  runtimeGeometryVersion: number;
-  serverConfig: ServerConfig | null;
   setStatusMessage: Dispatch<SetStateAction<string>>;
   terminalVisible: boolean;
   terminalSocketRef: MutableRefObject<WebSocket | null>;
@@ -41,13 +47,11 @@ interface UseTerminalRuntimeResult {
 }
 
 const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLayout ? 12 : 14;
+const TERMINAL_RESIZE_DEBOUNCE_MS = 80;
 
 export const useTerminalRuntime = ({
   mobileLayout,
   onSendRaw,
-  runtimeGeometryRef,
-  runtimeGeometryVersion,
-  serverConfig,
   setStatusMessage,
   terminalVisible,
   terminalSocketRef,
@@ -66,10 +70,12 @@ export const useTerminalRuntime = ({
   const focusTerminalRef = useRef<() => void>(() => undefined);
   const fitFrameRef = useRef<number | null>(null);
   const fitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastResizeSignatureRef = useRef("");
   const lastResizeSocketRef = useRef<WebSocket | null>(null);
   const requestTerminalFitRef = useRef<(options?: TerminalFitOptions) => void>(() => undefined);
   const terminalVisibleRef = useRef(terminalVisible);
+  const rendererAddonRef = useRef<{ dispose(): void } | null>(null);
 
   sendRawToSocketRef.current = onSendRaw;
   setStatusMessageRef.current = setStatusMessage;
@@ -86,7 +92,14 @@ export const useTerminalRuntime = ({
     }
   }, []);
 
-  const sendTerminalResize = useCallback((): void => {
+  const clearPendingResize = useCallback((): void => {
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+  }, []);
+
+  const sendTerminalResizeNow = useCallback((): void => {
     const socket = terminalSocketRef.current;
     const terminal = terminalRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN || !terminal) {
@@ -105,6 +118,14 @@ export const useTerminalRuntime = ({
     lastResizeSignatureRef.current = signature;
   }, [terminalSocketRef]);
 
+  const scheduleTerminalResize = useCallback((): void => {
+    clearPendingResize();
+    resizeTimerRef.current = window.setTimeout(() => {
+      resizeTimerRef.current = null;
+      sendTerminalResizeNow();
+    }, TERMINAL_RESIZE_DEBOUNCE_MS);
+  }, [clearPendingResize, sendTerminalResizeNow]);
+
   const applyTerminalFit = useCallback((notify: boolean): boolean => {
     const container = terminalContainerRef.current;
     const terminal = terminalRef.current;
@@ -121,13 +142,12 @@ export const useTerminalRuntime = ({
     fitAddon.fit();
 
     if (notify) {
-      // Send the unconstrained (full container) size to the backend first.
-      // Runtime-specific geometry calibration will compensate downstream.
-      sendTerminalResize();
+      // Keep the runtime terminal size aligned with the visible container.
+      scheduleTerminalResize();
     }
 
     return true;
-  }, [mobileLayout, sendTerminalResize]);
+  }, [mobileLayout, scheduleTerminalResize]);
 
   const requestTerminalFit = useCallback((options: TerminalFitOptions = {}): void => {
     const { notify = true, retryUntilVisible = false } = options;
@@ -232,6 +252,7 @@ export const useTerminalRuntime = ({
     const serializeAddon = new SerializeAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(serializeAddon);
+    rendererAddonRef.current = loadPreferredTerminalRenderer(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
       const modifierKey = navigator.platform.toLowerCase().includes("mac")
         ? event.metaKey
@@ -295,9 +316,12 @@ export const useTerminalRuntime = ({
 
     return () => {
       clearPendingFit();
+      clearPendingResize();
       resizeObserver.disconnect();
       fontSet?.removeEventListener?.("loadingdone", handleFontsChanged);
       disposable.dispose();
+      rendererAddonRef.current?.dispose();
+      rendererAddonRef.current = null;
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -307,7 +331,7 @@ export const useTerminalRuntime = ({
     };
   // Terminal initialization happens once; subsequent layout changes use
   // requestTerminalFit plus the effects below instead of recreating xterm.
-  }, []);
+  }, [clearPendingFit, clearPendingResize]);
 
   useEffect(() => {
     const themeConfig = themes[theme];
@@ -324,31 +348,29 @@ export const useTerminalRuntime = ({
   }, [mobileLayout, requestTerminalFit, terminalVisible]);
 
   useEffect(() => {
-    if (!terminalVisible || serverConfig?.backendKind !== "zellij") {
+    if (!navigator.webdriver) {
       return;
     }
-    const geometry = runtimeGeometryRef.current;
-    if (!geometry || geometry.status !== "stable") {
-      return;
-    }
-    const terminal = terminalRef.current;
-    if (!terminal) {
-      return;
-    }
-    const cols = geometry.confirmed.cols;
-    const rows = geometry.confirmed.rows;
-    if (cols < 2 || rows < 2) {
-      return;
-    }
-    if (terminal.cols !== cols || terminal.rows !== rows) {
-      terminal.resize(cols, rows);
-    }
-  }, [
-    runtimeGeometryRef,
-    runtimeGeometryVersion,
-    serverConfig?.backendKind,
-    terminalVisible
-  ]);
+
+    window.__remuxTestTerminal = {
+      focus: () => {
+        focusTerminal();
+        return Boolean(terminalRef.current);
+      },
+      readBuffer: () => readTerminalBuffer(),
+      scrollToLine: (line: number) => {
+        if (!terminalRef.current) {
+          return false;
+        }
+        terminalRef.current.scrollToLine(Math.max(0, line));
+        return true;
+      }
+    };
+
+    return () => {
+      delete window.__remuxTestTerminal;
+    };
+  }, [focusTerminal, readTerminalBuffer]);
 
   return {
     copySelection,

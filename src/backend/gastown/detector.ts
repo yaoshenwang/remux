@@ -76,7 +76,7 @@ function buildWorkspaceInfo(root: string): GastownWorkspace {
 }
 
 /**
- * Enrich a tmux/ConPTY session name with Gastown metadata.
+ * Enrich a runtime session name with Gastown metadata.
  *
  * Gastown session names follow patterns like:
  * - "mayor" or "gt-mayor" → role: mayor

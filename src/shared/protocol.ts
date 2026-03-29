@@ -11,20 +11,10 @@ export type {
   WorkspaceStreamMode,
   WorkspaceDegradedReason,
   WorkspaceRuntimeState,
-  TerminalGeometryState,
-  TerminalGeometryStatus,
   BackendCapabilities,
   ClientView,
   TabHistoryEvent,
-  TabHistoryPane,
-  // Deprecated aliases
-  WindowState,
-  StateSnapshot,
-  TmuxSessionSummary,
-  TmuxPaneState,
-  TmuxWindowState,
-  TmuxSessionState,
-  TmuxStateSnapshot
+  TabHistoryPane
 } from "./contracts/workspace.js";
 
 export type {
@@ -66,7 +56,6 @@ import type {
   SessionSummary,
   WorkspaceSnapshot,
   WorkspaceRuntimeState,
-  TerminalGeometryState,
   ClientView,
   TabHistoryPane,
   TabHistoryEvent
@@ -109,7 +98,6 @@ export type ControlServerMessage =
   | { type: "attached"; session: string }
   | { type: "session_picker"; sessions: SessionSummary[] }
   | { type: "workspace_state"; workspace: WorkspaceSnapshot; clientView: ClientView; streamMode?: string; runtimeState?: WorkspaceRuntimeState }
-  | { type: "runtime_geometry"; geometry: TerminalGeometryState }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
   | {
       type: "tab_history";

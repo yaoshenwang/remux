@@ -24,6 +24,8 @@ const silentLogger = {
 export const startRuntimeV2E2EServer = async (
   options: RuntimeV2E2EServerOptions = {},
 ): Promise<StartedRuntimeV2E2EServer> => {
+  const previousIdleBridgeGraceMs = process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS;
+  process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS = "0";
   const token = "runtime-v2-e2e-token";
   const upstream = new FakeRuntimeV2Server();
   const upstreamBaseUrl = await upstream.start();
@@ -62,6 +64,11 @@ export const startRuntimeV2E2EServer = async (
         new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
       ]);
       await upstream.stop().catch(() => undefined);
+      if (previousIdleBridgeGraceMs === undefined) {
+        delete process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS;
+      } else {
+        process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS = previousIdleBridgeGraceMs;
+      }
     },
   };
 };
