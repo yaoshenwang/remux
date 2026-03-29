@@ -364,6 +364,8 @@ sync_instance() {
     needs_restart=true
     if git -C "$dir" diff --quiet "$current_sha" "$target_sha" -- package.json package-lock.json; then
       needs_install=false
+    else
+      needs_install=true
     fi
   fi
 
