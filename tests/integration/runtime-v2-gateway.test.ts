@@ -185,7 +185,7 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
-  test("shares one upstream pane bridge across multiple browser viewers without shrinking to the latest narrow viewport", async () => {
+  test("resizes one shared upstream pane bridge to match the latest viewer viewport", async () => {
     const first = await authControlClient(baseWsUrl);
     const second = await authControlClient(baseWsUrl);
     let terminalA: WebSocket | null = null;
@@ -196,7 +196,10 @@ describe("runtime v2 gateway server", () => {
       ({ terminal: terminalB } = await authTerminalClient(baseWsUrl, second.clientId, { cols: 48, rows: 18 }));
 
       await expect.poll(() => upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
-      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes.at(-1)).toEqual({ cols: 120, rows: 40 });
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes ?? []).toEqual([
+        { cols: 120, rows: 40 },
+        { cols: 48, rows: 18 },
+      ]);
 
       const firstViewerEcho = waitForRawMessage(terminalA);
       const secondViewerEcho = waitForRawMessage(terminalB);

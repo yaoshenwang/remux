@@ -182,7 +182,7 @@ const resolveTerminalSizePolicy = (): TerminalSizePolicy => {
   if (raw === "smallest" || raw === "latest" || raw === "largest") {
     return raw;
   }
-  return "largest";
+  return "latest";
 };
 
 const resolveIdlePaneBridgeGraceMs = (): number => {
