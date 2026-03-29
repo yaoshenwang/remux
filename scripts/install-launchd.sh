@@ -119,7 +119,7 @@ write_shared_runtime_plist() {
       <key>HOME</key>
       <string>$HOME</string>
       <key>REMUX_RUNTIME_BRANCH</key>
-      <string>dev</string>
+      <string>$(runtime_shared_branch)</string>
       <key>LANG</key>
       <string>en_US.UTF-8</string>
       <key>TERM</key>
