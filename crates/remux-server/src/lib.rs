@@ -1352,11 +1352,11 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
             update = recv_runtime_update(runtime_updates.as_mut()), if runtime_updates.is_some() => {
                 match update {
                     Some(RuntimeStreamMessage::Stream { sequence, chunk }) => {
-                        let stream = terminal::ServerMessage::Stream {
-                            sequence,
-                            chunk_base64: BASE64.encode(chunk),
-                        };
-                        if send_json_message(&mut socket, &stream).await.is_err() {
+                        // Binary stream frame: [8-byte BE u64 sequence][raw PTY data]
+                        let mut frame = Vec::with_capacity(8 + chunk.len());
+                        frame.extend_from_slice(&sequence.to_be_bytes());
+                        frame.extend_from_slice(&chunk);
+                        if socket.send(Message::Binary(frame.into())).await.is_err() {
                             break;
                         }
                     }

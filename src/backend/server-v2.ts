@@ -155,6 +155,25 @@ const toBuffer = (raw: RawData): Buffer => {
   return Buffer.from(raw);
 };
 
+/**
+ * Binary stream frame layout (from runtime):
+ *   [8 bytes: u64 big-endian sequence number][N bytes: raw PTY data]
+ *
+ * The minimum valid frame is 9 bytes (8-byte header + at least 1 byte of data).
+ */
+const BINARY_STREAM_HEADER_BYTES = 8;
+
+export const parseSequencedBinaryFrame = (
+  buf: Buffer,
+): { sequence: number; chunk: Buffer } | null => {
+  if (buf.byteLength < BINARY_STREAM_HEADER_BYTES + 1) {
+    return null;
+  }
+  const sequence = Number(buf.readBigUInt64BE(0));
+  const chunk = buf.subarray(BINARY_STREAM_HEADER_BYTES);
+  return { sequence, chunk };
+};
+
 const toWsOrigin = (baseUrl: string): string => {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -843,7 +862,19 @@ export class SharedRuntimeV2PaneBridge {
     }
 
     if (isBinary) {
-      let chunk = toBuffer(raw);
+      const buf = toBuffer(raw);
+      const parsed = parseSequencedBinaryFrame(buf);
+      let chunk: Buffer;
+      let sequence: number | null;
+
+      if (parsed) {
+        chunk = parsed.chunk;
+        sequence = parsed.sequence;
+      } else {
+        chunk = buf;
+        sequence = null;
+      }
+
       const text = chunk.toString("utf8");
 
       // Feed data to cursor tracker for DSR interception.
@@ -852,17 +883,16 @@ export class SharedRuntimeV2PaneBridge {
       // Intercept DSR (cursor position query) and respond server-side.
       const dsr = interceptDsr(text);
       if (dsr.count > 0) {
-        const buf = this.cursorTracker.buffer.active;
-        const cpr = buildCprResponse(buf.cursorY + 1, buf.cursorX + 1);
+        const cursorBuf = this.cursorTracker.buffer.active;
+        const cpr = buildCprResponse(cursorBuf.cursorY + 1, cursorBuf.cursorX + 1);
         this.write(cpr);
-        // Forward the cleaned data (DSR stripped) to clients.
         chunk = Buffer.from(dsr.cleaned, "utf8");
         if (chunk.byteLength === 0) {
           return;
         }
       }
 
-      this.rememberBufferedChunk(chunk, null);
+      this.rememberBufferedChunk(chunk, sequence);
       if (!this.awaitingFreshSnapshotReplay) {
         this.broadcast(chunk);
       }
