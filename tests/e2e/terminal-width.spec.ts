@@ -143,11 +143,11 @@ const waitForTerminalWidthInvariant = async (
 test.describe("terminal width invariants", () => {
   let server: StartedRuntimeV2E2EServer;
 
-  test.beforeAll(async () => {
+  test.beforeEach(async () => {
     server = await startRuntimeV2E2EServer();
   });
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
     await server.stop();
   });
 

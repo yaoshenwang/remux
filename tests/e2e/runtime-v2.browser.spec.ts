@@ -4,6 +4,82 @@ import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harne
 const readTerminalText = async (page: Page): Promise<string> =>
   await page.evaluate(() => window.__remuxTestTerminal?.readViewport() ?? "");
 
+const normalizeTerminalText = (text: string): string => text
+  .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+  .replace(/\r/g, "");
+
+const readTerminalBufferText = async (page: Page): Promise<string> =>
+  normalizeTerminalText(await page.evaluate(() => window.__remuxTestTerminal?.readBuffer() ?? ""));
+
+const countOccurrences = (text: string, needle: string): number =>
+  needle.length === 0 ? 0 : text.split(needle).length - 1;
+
+const buildRepaintHeavyTranscript = (id: string): string => [
+  "\u001b[?1049h",
+  "\u001b[2J\u001b[H",
+  "Complete job\r\n",
+  "Worked for 1m 30s\r\n",
+  `TRANSIENT-${id}\r\n`,
+  "\u001b[H\u001b[2J",
+  "Complete job\r\n",
+  "Worked for 1m 30s\r\n",
+  `FINAL-${id}\r\n`,
+  `PROMPT-${id}\r\n`,
+  `STATUS-${id}\r\n`,
+  "\u001b[2A",
+  "\r\u001b[2K",
+  `PROMPT-${id}\r\n`,
+  "\r\u001b[2K",
+  `STATUS-${id}\r\n`,
+].join("");
+
+const textMatchesIntegrity = (
+  text: string,
+  options: {
+    required: string[];
+    forbidden: string[];
+    unique?: string[];
+  },
+): boolean => (
+  options.required.every((marker) => text.includes(marker))
+  && options.forbidden.every((marker) => !text.includes(marker))
+  && (options.unique ?? []).every((marker) => countOccurrences(text, marker) === 1)
+);
+
+const expectTerminalUiIntegrity = async (
+  page: Page,
+  label: string,
+  options: {
+    required: string[];
+    forbidden: string[];
+    unique?: string[];
+  },
+): Promise<void> => {
+  let viewport = "";
+  let buffer = "";
+
+  await expect
+    .poll(async () => {
+      viewport = await readTerminalText(page);
+      buffer = await readTerminalBufferText(page);
+      return textMatchesIntegrity(viewport, options) && textMatchesIntegrity(buffer, options);
+    }, { message: label, timeout: 7_000 })
+    .toBe(true);
+
+  for (const marker of options.required) {
+    expect(viewport, `${label} viewport`).toContain(marker);
+    expect(buffer, `${label} buffer`).toContain(marker);
+  }
+  for (const marker of options.forbidden) {
+    expect(viewport, `${label} viewport`).not.toContain(marker);
+    expect(buffer, `${label} buffer`).not.toContain(marker);
+  }
+  for (const marker of options.unique ?? []) {
+    expect(countOccurrences(viewport, marker), `${label} viewport: ${marker}`).toBe(1);
+    expect(countOccurrences(buffer, marker), `${label} buffer: ${marker}`).toBe(1);
+  }
+};
+
 const expectAttachedStatus = async (page: Page): Promise<void> => {
   await expect.poll(() => page.evaluate(() => {
     const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
@@ -48,18 +124,15 @@ const readTerminalBufferLines = async (page: Page, prefix?: string): Promise<str
 test.describe("runtime-v2 browser behavior", () => {
   let server: StartedRuntimeV2E2EServer;
 
-  test.beforeAll(async () => {
+  test.beforeEach(async () => {
     server = await startRuntimeV2E2EServer();
-  });
-
-  test.afterAll(async () => {
-    await server.stop();
   });
 
   test.afterEach(async ({ page }) => {
     if (!page.isClosed()) {
       await page.goto("about:blank").catch(() => undefined);
     }
+    await server.stop();
   });
 
   test("renders the runtime-v2 workspace without console errors", async ({ page }) => {
@@ -400,5 +473,89 @@ test.describe("runtime-v2 browser behavior", () => {
     await expect(page.getByTestId("inspect-search-input")).toBeVisible();
     await expect(page.getByTestId("inspect-refresh-button")).toBeVisible();
     await expect(page.getByTestId("inspect-pane-filter-all")).toBeVisible();
+  });
+
+  test("switching tabs clears repaint-heavy stale terminal UI instead of leaking the previous tab", async ({ page }) => {
+    const firstPaneId = server.upstream.activePaneId();
+    server.upstream.setPaneContent(firstPaneId, buildRepaintHeavyTranscript("TAB-0"));
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expectAttachedStatus(page);
+    await expectTerminalUiIntegrity(page, "initial tab", {
+      required: ["FINAL-TAB-0", "PROMPT-TAB-0", "STATUS-TAB-0"],
+      forbidden: ["TRANSIENT-TAB-0", "FINAL-TAB-1", "PROMPT-TAB-1", "STATUS-TAB-1"],
+      unique: ["PROMPT-TAB-0", "STATUS-TAB-0"],
+    });
+
+    server.upstream.delayNextTerminalSnapshot(1_000);
+    await page.getByRole("button", { name: "New tab" }).click();
+    await expect(page.getByRole("button", { name: "1: Shell" })).toBeVisible();
+    await expect
+      .poll(async () => (await readTerminalText(page)).includes("FINAL-TAB-0"), {
+        timeout: 400,
+        message: "new tab switch should not keep the old tab viewport visible",
+      })
+      .toBe(false);
+
+    let secondPaneId = firstPaneId;
+    await expect.poll(() => {
+      secondPaneId = server.upstream.activePaneId();
+      return secondPaneId !== firstPaneId;
+    }).toBe(true);
+
+    server.upstream.pushTerminalOutput(secondPaneId, buildRepaintHeavyTranscript("TAB-1"));
+    await expectTerminalUiIntegrity(page, "second tab", {
+      required: ["FINAL-TAB-1", "PROMPT-TAB-1", "STATUS-TAB-1"],
+      forbidden: ["TRANSIENT-TAB-1", "FINAL-TAB-0", "PROMPT-TAB-0", "STATUS-TAB-0"],
+      unique: ["PROMPT-TAB-1", "STATUS-TAB-1"],
+    });
+
+    server.upstream.delayNextTerminalSnapshot(1_000);
+    await page.getByRole("button", { name: "0: Shell" }).click();
+    await expect
+      .poll(async () => (await readTerminalText(page)).includes("FINAL-TAB-1"), {
+        timeout: 400,
+        message: "switching back should not keep the second tab viewport visible",
+      })
+      .toBe(false);
+
+    await expectTerminalUiIntegrity(page, "returned first tab", {
+      required: ["FINAL-TAB-0", "PROMPT-TAB-0", "STATUS-TAB-0"],
+      forbidden: ["TRANSIENT-TAB-0", "FINAL-TAB-1", "PROMPT-TAB-1", "STATUS-TAB-1"],
+      unique: ["PROMPT-TAB-0", "STATUS-TAB-0"],
+    });
+  });
+
+  test("refresh restores the active tab's repaint-heavy terminal UI without duplicate prompt lines", async ({ page }) => {
+    const firstPaneId = server.upstream.activePaneId();
+    server.upstream.setPaneContent(firstPaneId, buildRepaintHeavyTranscript("TAB-0"));
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expectAttachedStatus(page);
+
+    await page.getByRole("button", { name: "New tab" }).click();
+    await expect(page.getByRole("button", { name: "1: Shell" })).toBeVisible();
+
+    let secondPaneId = firstPaneId;
+    await expect.poll(() => {
+      secondPaneId = server.upstream.activePaneId();
+      return secondPaneId !== firstPaneId;
+    }).toBe(true);
+
+    server.upstream.pushTerminalOutput(secondPaneId, buildRepaintHeavyTranscript("TAB-1"));
+    await expectTerminalUiIntegrity(page, "active second tab before reload", {
+      required: ["FINAL-TAB-1", "PROMPT-TAB-1", "STATUS-TAB-1"],
+      forbidden: ["TRANSIENT-TAB-1", "FINAL-TAB-0", "PROMPT-TAB-0", "STATUS-TAB-0"],
+      unique: ["PROMPT-TAB-1", "STATUS-TAB-1"],
+    });
+
+    await page.reload();
+    await expectAttachedStatus(page);
+    await expect(page.getByRole("button", { name: "1: Shell" })).toBeVisible();
+    await expectTerminalUiIntegrity(page, "active second tab after reload", {
+      required: ["FINAL-TAB-1", "PROMPT-TAB-1", "STATUS-TAB-1"],
+      forbidden: ["TRANSIENT-TAB-1", "FINAL-TAB-0", "PROMPT-TAB-0", "STATUS-TAB-0"],
+      unique: ["PROMPT-TAB-1", "STATUS-TAB-1"],
+    });
   });
 });

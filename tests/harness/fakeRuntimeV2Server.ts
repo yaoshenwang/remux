@@ -15,6 +15,9 @@ type FakeRuntimeV2ControlClientMessage =
   | { type: "subscribe_workspace" }
   | { type: "create_session"; session_name: string }
   | { type: "select_session"; session_id: string }
+  | { type: "create_tab"; session_id: string; tab_title: string }
+  | { type: "select_tab"; tab_id: string }
+  | { type: "close_tab"; tab_id: string }
   | { type: "split_pane"; pane_id: string; direction: "vertical" | "horizontal" }
   | {
       type: "request_inspect";
@@ -62,6 +65,9 @@ export interface FakeRuntimeV2ServerOptions {
 export class FakeRuntimeV2Server {
   private readonly server = http.createServer(this.handleHttpRequest.bind(this));
   private readonly wss = new WebSocketServer({ noServer: true });
+  private readonly initialPaneContent: Record<string, string>;
+  private readonly initialSessionName: string;
+  private readonly initialTabTitle: string;
   private readonly controlSockets = new Set<WebSocket>();
   private readonly sockets = new Set<WebSocket>();
   private readonly terminalSocketsByPane = new Map<string, Set<WebSocket>>();
@@ -81,6 +87,12 @@ export class FakeRuntimeV2Server {
   private workspace: RuntimeV2WorkspaceSummary;
 
   constructor(options: FakeRuntimeV2ServerOptions = {}) {
+    this.initialSessionName = options.sessionName ?? "main";
+    this.initialTabTitle = options.tabTitle ?? "Shell";
+    this.initialPaneContent = {
+      "pane-1": "PANE_ONE_READY\r\n",
+      ...(options.initialPaneContent ?? {}),
+    };
     this.metadata = {
       service: "remuxd",
       version: "test",
@@ -93,64 +105,7 @@ export class FakeRuntimeV2Server {
       gitDirty: false,
       ...options.metadata,
     };
-    const sessionName = options.sessionName ?? "main";
-    const tabTitle = options.tabTitle ?? "Shell";
-    this.workspace = {
-      sessionId: "session-1",
-      tabId: "tab-1",
-      paneId: "pane-1",
-      sessionName,
-      tabTitle,
-      sessionState: "live",
-      sessionCount: 1,
-      tabCount: 1,
-      paneCount: 1,
-      activeSessionId: "session-1",
-      activeTabId: "tab-1",
-      activePaneId: "pane-1",
-      zoomedPaneId: null,
-      layout: { type: "leaf", paneId: "pane-1" },
-      leaseHolderClientId: "terminal-client-1",
-      sessions: [
-        {
-          sessionId: "session-1",
-          sessionName,
-          sessionState: "live",
-          isActive: true,
-          activeTabId: "tab-1",
-          tabCount: 1,
-          tabs: [
-            {
-              tabId: "tab-1",
-              tabTitle,
-              isActive: true,
-              activePaneId: "pane-1",
-              zoomedPaneId: null,
-              paneCount: 1,
-              layout: { type: "leaf", paneId: "pane-1" },
-              panes: [
-                {
-                  paneId: "pane-1",
-                  isActive: true,
-                  isZoomed: false,
-                  leaseHolderClientId: "terminal-client-1",
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-
-    const initialPaneContent = options.initialPaneContent ?? {
-      "pane-1": "PANE_ONE_READY\r\n",
-    };
-    for (const [paneId, text] of Object.entries(initialPaneContent)) {
-      this.paneContent.set(paneId, text);
-    }
-    if (!this.paneContent.has("pane-1")) {
-      this.paneContent.set("pane-1", "RUNTIME_V2_READY\r\n");
-    }
+    this.initializeState();
 
     this.server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", "http://localhost");
@@ -204,6 +159,17 @@ export class FakeRuntimeV2Server {
         resolve();
       });
     });
+  }
+
+  reset(): void {
+    for (const socket of Array.from(this.sockets)) {
+      socket.close();
+    }
+    this.controlSockets.clear();
+    this.sockets.clear();
+    this.terminalSocketsByPane.clear();
+    this.terminalPaneBySocket.clear();
+    this.initializeState();
   }
 
   setPaneContent(paneId: string, text: string): void {
@@ -391,6 +357,72 @@ export class FakeRuntimeV2Server {
     return sessionId;
   }
 
+  createTab(sessionId: string, tabTitle = "Shell"): string {
+    const nextSessions = this.workspace.sessions.map((session) => ({
+      ...session,
+      isActive: session.sessionId === sessionId,
+      tabs: session.tabs.map((tab) => ({
+        ...tab,
+        isActive: false,
+        panes: tab.panes.map((pane) => ({
+          ...pane,
+          isActive: false,
+        })),
+      })),
+    }));
+    const targetSession = nextSessions.find((session) => session.sessionId === sessionId);
+    if (!targetSession) {
+      return "";
+    }
+
+    const tabId = `tab-${++this.tabSequence}`;
+    const paneId = `pane-${++this.paneSequence}`;
+    targetSession.activeTabId = tabId;
+    targetSession.tabCount = targetSession.tabs.length + 1;
+    targetSession.tabs.push({
+      tabId,
+      tabTitle,
+      isActive: true,
+      activePaneId: paneId,
+      zoomedPaneId: null,
+      paneCount: 1,
+      layout: { type: "leaf", paneId },
+      panes: [
+        {
+          paneId,
+          isActive: true,
+          isZoomed: false,
+          leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+        },
+      ],
+    });
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId,
+      tabId,
+      paneId,
+      sessionName: targetSession.sessionName,
+      tabTitle,
+      sessionState: targetSession.sessionState,
+      sessionCount: nextSessions.length,
+      tabCount: targetSession.tabCount,
+      paneCount: 1,
+      activeSessionId: sessionId,
+      activeTabId: tabId,
+      activePaneId: paneId,
+      zoomedPaneId: null,
+      layout: { type: "leaf", paneId },
+      leaseHolderClientId: `terminal-client-${this.terminalClientSequence + 1}`,
+      sessions: nextSessions,
+    };
+
+    this.paneContent.set(paneId, `READY_${paneId}\r\n`);
+    this.paneScrollback.set(paneId, []);
+    this.broadcastWorkspace();
+    return tabId;
+  }
+
   selectSession(sessionId: string): void {
     const targetSession = this.workspace.sessions.find((session) => session.sessionId === sessionId);
     if (!targetSession) {
@@ -433,6 +465,138 @@ export class FakeRuntimeV2Server {
           })),
         })),
       })),
+    };
+
+    this.broadcastWorkspace();
+  }
+
+  selectTab(tabId: string): void {
+    const nextSessions = this.workspace.sessions.map((session) => ({
+      ...session,
+      tabs: session.tabs.map((tab) => ({
+        ...tab,
+        panes: tab.panes.map((pane) => ({
+          ...pane,
+        })),
+      })),
+    }));
+    let targetSession = nextSessions.find((session) => session.tabs.some((tab) => tab.tabId === tabId));
+    if (!targetSession) {
+      return;
+    }
+    const targetTab = targetSession.tabs.find((tab) => tab.tabId === tabId);
+    if (!targetTab) {
+      return;
+    }
+    const activePane = targetTab.panes.find((pane) => pane.isActive)
+      ?? targetTab.panes.find((pane) => pane.paneId === targetTab.activePaneId)
+      ?? targetTab.panes[0];
+    if (!activePane) {
+      return;
+    }
+
+    for (const session of nextSessions) {
+      session.isActive = session.sessionId === targetSession.sessionId;
+      for (const tab of session.tabs) {
+        tab.isActive = session.sessionId === targetSession.sessionId && tab.tabId === tabId;
+        for (const pane of tab.panes) {
+          pane.isActive = session.sessionId === targetSession.sessionId && tab.tabId === tabId && pane.paneId === activePane.paneId;
+        }
+      }
+    }
+    targetSession = nextSessions.find((session) => session.sessionId === targetSession.sessionId)!;
+    targetSession.activeTabId = tabId;
+    targetTab.activePaneId = activePane.paneId;
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId: targetSession.sessionId,
+      tabId,
+      paneId: activePane.paneId,
+      sessionName: targetSession.sessionName,
+      tabTitle: targetTab.tabTitle,
+      sessionState: targetSession.sessionState,
+      sessionCount: nextSessions.length,
+      tabCount: targetSession.tabCount,
+      paneCount: targetTab.paneCount,
+      activeSessionId: targetSession.sessionId,
+      activeTabId: tabId,
+      activePaneId: activePane.paneId,
+      zoomedPaneId: targetTab.zoomedPaneId ?? null,
+      layout: targetTab.layout,
+      leaseHolderClientId: activePane.leaseHolderClientId ?? null,
+      sessions: nextSessions,
+    };
+
+    this.broadcastWorkspace();
+  }
+
+  closeTab(tabId: string): void {
+    const nextSessions = this.workspace.sessions.map((session) => ({
+      ...session,
+      tabs: session.tabs.map((tab) => ({
+        ...tab,
+        panes: tab.panes.map((pane) => ({
+          ...pane,
+        })),
+      })),
+    }));
+    const targetSession = nextSessions.find((session) => session.tabs.some((tab) => tab.tabId === tabId));
+    if (!targetSession || targetSession.tabs.length <= 1) {
+      return;
+    }
+
+    const targetIndex = targetSession.tabs.findIndex((tab) => tab.tabId === tabId);
+    if (targetIndex < 0) {
+      return;
+    }
+    const [removedTab] = targetSession.tabs.splice(targetIndex, 1);
+    targetSession.tabCount = targetSession.tabs.length;
+
+    const fallbackTab = targetSession.tabs[Math.min(targetIndex, targetSession.tabs.length - 1)]!;
+    const fallbackPane = fallbackTab.panes.find((pane) => pane.isActive)
+      ?? fallbackTab.panes.find((pane) => pane.paneId === fallbackTab.activePaneId)
+      ?? fallbackTab.panes[0]!;
+    targetSession.activeTabId = fallbackTab.tabId;
+
+    for (const session of nextSessions) {
+      session.isActive = session.sessionId === targetSession.sessionId;
+      for (const tab of session.tabs) {
+        tab.isActive = session.sessionId === targetSession.sessionId && tab.tabId === fallbackTab.tabId;
+        for (const pane of tab.panes) {
+          pane.isActive = session.sessionId === targetSession.sessionId
+            && tab.tabId === fallbackTab.tabId
+            && pane.paneId === fallbackPane.paneId;
+        }
+      }
+    }
+
+    for (const pane of removedTab.panes) {
+      this.paneContent.delete(pane.paneId);
+      this.paneScrollback.delete(pane.paneId);
+      this.terminalObservations.delete(pane.paneId);
+      this.terminalSocketsByPane.delete(pane.paneId);
+      this.paneStreamSequence.delete(pane.paneId);
+    }
+
+    this.workspace = {
+      ...this.workspace,
+      sessionId: targetSession.sessionId,
+      tabId: fallbackTab.tabId,
+      paneId: fallbackPane.paneId,
+      sessionName: targetSession.sessionName,
+      tabTitle: fallbackTab.tabTitle,
+      sessionState: targetSession.sessionState,
+      sessionCount: nextSessions.length,
+      tabCount: targetSession.tabCount,
+      paneCount: fallbackTab.paneCount,
+      activeSessionId: targetSession.sessionId,
+      activeTabId: fallbackTab.tabId,
+      activePaneId: fallbackPane.paneId,
+      zoomedPaneId: fallbackTab.zoomedPaneId ?? null,
+      layout: fallbackTab.layout,
+      leaseHolderClientId: fallbackPane.leaseHolderClientId ?? null,
+      sessions: nextSessions,
     };
 
     this.broadcastWorkspace();
@@ -483,6 +647,15 @@ export class FakeRuntimeV2Server {
           return;
         case "select_session":
           this.selectSession(message.session_id);
+          return;
+        case "create_tab":
+          this.createTab(message.session_id, message.tab_title);
+          return;
+        case "select_tab":
+          this.selectTab(message.tab_id);
+          return;
+        case "close_tab":
+          this.closeTab(message.tab_id);
           return;
         case "split_pane": {
           if (message.pane_id !== this.activePaneId() && message.pane_id !== "pane-1") {
@@ -632,6 +805,73 @@ export class FakeRuntimeV2Server {
       return live;
     }
     return `${scrollback.join("\r\n")}\r\n${live}`;
+  }
+
+  private initializeState(): void {
+    this.sessionSequence = 1;
+    this.tabSequence = 1;
+    this.terminalClientSequence = 0;
+    this.terminalStreamTransport = "text";
+    this.paneSequence = 1;
+    this.nextTerminalSnapshotDelayMs = 0;
+    this.terminateTerminalSocketAfterSnapshot = false;
+    this.workspace = this.buildInitialWorkspace();
+    this.paneContent.clear();
+    this.paneScrollback.clear();
+    this.terminalObservations.clear();
+    this.paneStreamSequence.clear();
+    for (const [paneId, text] of Object.entries(this.initialPaneContent)) {
+      this.paneContent.set(paneId, text);
+    }
+  }
+
+  private buildInitialWorkspace(): RuntimeV2WorkspaceSummary {
+    return {
+      sessionId: "session-1",
+      tabId: "tab-1",
+      paneId: "pane-1",
+      sessionName: this.initialSessionName,
+      tabTitle: this.initialTabTitle,
+      sessionState: "live",
+      sessionCount: 1,
+      tabCount: 1,
+      paneCount: 1,
+      activeSessionId: "session-1",
+      activeTabId: "tab-1",
+      activePaneId: "pane-1",
+      zoomedPaneId: null,
+      layout: { type: "leaf", paneId: "pane-1" },
+      leaseHolderClientId: "terminal-client-1",
+      sessions: [
+        {
+          sessionId: "session-1",
+          sessionName: this.initialSessionName,
+          sessionState: "live",
+          isActive: true,
+          activeTabId: "tab-1",
+          tabCount: 1,
+          tabs: [
+            {
+              tabId: "tab-1",
+              tabTitle: this.initialTabTitle,
+              isActive: true,
+              activePaneId: "pane-1",
+              zoomedPaneId: null,
+              paneCount: 1,
+              layout: { type: "leaf", paneId: "pane-1" },
+              panes: [
+                {
+                  paneId: "pane-1",
+                  isActive: true,
+                  isZoomed: false,
+                  leaseHolderClientId: "terminal-client-1",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
   }
 
   private takeTerminalSnapshotDelay(): number {
