@@ -54,6 +54,18 @@ const findActiveTab = (summary: RuntimeV2WorkspaceSummary) => {
     ?? session.tabs[0];
 };
 
+const resolvePaneDimension = (
+  value: number | null | undefined,
+  fallback: number,
+): number => typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+
+const resolvePaneCommand = (command: string | null | undefined): string => {
+  const normalized = command?.trim();
+  return normalized ? normalized : "shell";
+};
+
+const resolvePanePath = (currentPath: string | null | undefined): string => currentPath ?? "";
+
 export const buildLegacyWorkspaceSnapshot = (
   summary: RuntimeV2WorkspaceSummary,
 ): WorkspaceSnapshot => ({
@@ -72,12 +84,12 @@ export const buildLegacyWorkspaceSnapshot = (
       panes: tab.panes.map((pane, paneIndex) => ({
         index: paneIndex,
         id: pane.paneId,
-        currentCommand: "shell",
+        currentCommand: resolvePaneCommand(pane.command),
         active: pane.isActive,
-        width: 80,
-        height: 24,
+        width: resolvePaneDimension(pane.width, 80),
+        height: resolvePaneDimension(pane.height, 24),
         zoomed: pane.isZoomed,
-        currentPath: "",
+        currentPath: resolvePanePath(pane.currentPath),
       })),
     })),
   })),

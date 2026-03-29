@@ -65,12 +65,20 @@ const workspaceSummary: RuntimeV2WorkspaceSummary = {
               isActive: true,
               isZoomed: false,
               leaseHolderClientId: "terminal-client-1",
+              command: "codex",
+              currentPath: "/workspace/remux",
+              width: 132,
+              height: 40,
             },
             {
               paneId: "pane-2",
               isActive: false,
               isZoomed: false,
               leaseHolderClientId: null,
+              command: "bash",
+              currentPath: "/workspace/remux",
+              width: 90,
+              height: 40,
             },
           ],
         },
@@ -88,6 +96,10 @@ const workspaceSummary: RuntimeV2WorkspaceSummary = {
               isActive: true,
               isZoomed: false,
               leaseHolderClientId: null,
+              command: "tail",
+              currentPath: "/var/log",
+              width: 120,
+              height: 40,
             },
           ],
         },
@@ -115,6 +127,10 @@ const workspaceSummary: RuntimeV2WorkspaceSummary = {
               isActive: true,
               isZoomed: true,
               leaseHolderClientId: null,
+              command: "htop",
+              currentPath: "/",
+              width: 100,
+              height: 30,
             },
           ],
         },
@@ -168,13 +184,46 @@ describe("runtime v2 translation", () => {
       id: "pane-1",
       active: true,
       zoomed: false,
-      currentCommand: "shell",
-      currentPath: "",
+      currentCommand: "codex",
+      currentPath: "/workspace/remux",
+      width: 132,
+      height: 40,
     });
     expect(snapshot.sessions[1]).toMatchObject({
       name: "ops",
       attached: false,
       lifecycle: "exited",
+    });
+  });
+
+  test("falls back to legacy pane defaults when runtime v2 omits pane metadata", () => {
+    const snapshot = buildLegacyWorkspaceSnapshot({
+      ...workspaceSummary,
+      sessions: [
+        {
+          ...workspaceSummary.sessions[0]!,
+          tabs: [
+            {
+              ...workspaceSummary.sessions[0]!.tabs[0]!,
+              panes: [
+                {
+                  paneId: "pane-1",
+                  isActive: true,
+                  isZoomed: false,
+                  leaseHolderClientId: "terminal-client-1",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(snapshot.sessions[0]?.tabs[0]?.panes[0]).toMatchObject({
+      currentCommand: "shell",
+      currentPath: "",
+      width: 80,
+      height: 24,
     });
   });
 

@@ -42,6 +42,10 @@ export interface RuntimeV2PaneSummary {
   paneId: string;
   isActive: boolean;
   isZoomed: boolean;
+  command?: string | null;
+  currentPath?: string | null;
+  width?: number | null;
+  height?: number | null;
   leaseHolderClientId?: string | null;
 }
 

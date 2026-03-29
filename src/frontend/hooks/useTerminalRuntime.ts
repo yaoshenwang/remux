@@ -5,6 +5,11 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "../themes";
 import type { ToolbarHandle } from "../components/Toolbar";
 import { loadPreferredTerminalRenderer } from "../terminal-renderer";
+import {
+  createTerminalWriteBuffer,
+  type TerminalWriteBuffer,
+  type TerminalWriteChunk
+} from "../terminal-write-buffer";
 
 declare global {
   interface Window {
@@ -46,6 +51,7 @@ interface UseTerminalRuntimeResult {
   serializeAddonRef: MutableRefObject<SerializeAddon | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
+  writeToTerminal: (chunk: TerminalWriteChunk) => void;
 }
 
 const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLayout ? 12 : 14;
@@ -78,6 +84,7 @@ export const useTerminalRuntime = ({
   const requestTerminalFitRef = useRef<(options?: TerminalFitOptions) => void>(() => undefined);
   const terminalVisibleRef = useRef(terminalVisible);
   const rendererAddonRef = useRef<{ dispose(): void } | null>(null);
+  const terminalWriteBufferRef = useRef<TerminalWriteBuffer | null>(null);
 
   sendRawToSocketRef.current = onSendRaw;
   setStatusMessageRef.current = setStatusMessage;
@@ -242,12 +249,17 @@ export const useTerminalRuntime = ({
     if (!terminal) {
       return;
     }
+    terminalWriteBufferRef.current?.clear();
     terminal.reset();
     const themeConfig = themes[theme];
     if (themeConfig) {
       terminal.options.theme = themeConfig.xterm;
     }
   }, [theme]);
+
+  const writeToTerminal = useCallback((chunk: TerminalWriteChunk): void => {
+    terminalWriteBufferRef.current?.enqueue(chunk);
+  }, []);
 
   const copySelection = useCallback(async (): Promise<void> => {
     let text = window.getSelection()?.toString() || "";
@@ -320,6 +332,9 @@ export const useTerminalRuntime = ({
       return true;
     });
     terminal.open(terminalContainerRef.current);
+    terminalWriteBufferRef.current = createTerminalWriteBuffer((chunk) => {
+      terminal.write(chunk);
+    });
     requestAnimationFrame(() => {
       terminal.focus();
       requestTerminalFitRef.current({ notify: false, retryUntilVisible: true });
@@ -359,6 +374,8 @@ export const useTerminalRuntime = ({
       disposable.dispose();
       rendererAddonRef.current?.dispose();
       rendererAddonRef.current = null;
+      terminalWriteBufferRef.current?.clear();
+      terminalWriteBufferRef.current = null;
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -423,6 +440,7 @@ export const useTerminalRuntime = ({
     scrollbackContentRef,
     serializeAddonRef,
     terminalContainerRef,
-    terminalRef
+    terminalRef,
+    writeToTerminal
   };
 };
