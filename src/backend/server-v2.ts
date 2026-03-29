@@ -558,6 +558,7 @@ export class SharedRuntimeV2PaneBridge {
       }
 
       if (this.subscribers.size === 0) {
+        this.requestSnapshot();
         this.scheduleIdleClose();
         return;
       }
