@@ -28,11 +28,15 @@ describe("SharedRuntimeV2PaneBridge", () => {
   let wsUrl: string;
   let runtimeSocket: WebSocket | null;
   let attachCount: number;
+  let snapshotRequestCount: number;
+  let replayText: string;
   let bridge: SharedRuntimeV2PaneBridge | null;
 
   beforeEach(async () => {
     runtimeSocket = null;
     attachCount = 0;
+    snapshotRequestCount = 0;
+    replayText = "BASELINE-HISTORY\r\n";
     bridge = null;
     httpServer = http.createServer();
     runtimeWss = new WebSocketServer({ server: httpServer });
@@ -55,7 +59,18 @@ describe("SharedRuntimeV2PaneBridge", () => {
             size: message.size,
             sequence: attachCount,
             content_base64: encodeBase64("VISIBLE-TAIL\r\n"),
-            replay_base64: encodeBase64("BASELINE-HISTORY\r\n"),
+            replay_base64: encodeBase64(replayText),
+          }));
+          return;
+        }
+        if (message.type === "request_snapshot") {
+          snapshotRequestCount += 1;
+          socket.send(JSON.stringify({
+            type: "snapshot",
+            size: message.size ?? { cols: 120, rows: 40 },
+            sequence: attachCount + snapshotRequestCount,
+            content_base64: encodeBase64("VISIBLE-TAIL\r\n"),
+            replay_base64: encodeBase64(replayText),
           }));
         }
       });
@@ -115,5 +130,50 @@ describe("SharedRuntimeV2PaneBridge", () => {
     await expect
       .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
       .toContain("MISSED-WHILE-INACTIVE");
+  });
+
+  test("refreshes the cached snapshot when the last viewer leaves so tab restores keep earlier active history", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+
+    await expect.poll(() => attachCount).toBe(1);
+
+    const earlyChunk = "ACTIVE-HISTORY-0001 ".repeat(96) + "\r\n";
+    const fillerChunk = "ACTIVE-HISTORY-FILLER ".repeat(96) + "\r\n";
+
+    replayText += earlyChunk;
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64(earlyChunk),
+    }));
+
+    for (let index = 0; index < 180; index += 1) {
+      replayText += fillerChunk;
+      runtimeSocket?.send(JSON.stringify({
+        type: "stream",
+        sequence: 3 + index,
+        chunk_base64: encodeBase64(fillerChunk),
+      }));
+    }
+
+    await bridge.unsubscribe("viewer-1");
+
+    await expect.poll(() => snapshotRequestCount).toBe(1);
+
+    const secondBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
+
+    await expect
+      .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
+      .toContain(earlyChunk.trim());
   });
 });
