@@ -185,6 +185,31 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
+  test("restores live terminal streaming after the upstream pane socket drops unexpectedly", async () => {
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+
+    try {
+      upstream.terminateNextTerminalSocketAfterSnapshot();
+      const authResult = await authTerminalClient(baseWsUrl, clientId, { cols: 120, rows: 40 });
+      terminal = authResult.terminal;
+      expect(authResult.initialSnapshot).toContain("PANE_ONE_READY");
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      upstream.pushTerminalOutput("pane-1", "RECOVERED_AFTER_UPSTREAM_DROP\r\n");
+
+      await expect
+        .poll(async () => {
+          const frame = await waitForTerminalFrame(terminal!, 1_000).catch(() => null);
+          return frame?.text ?? "";
+        }, { timeout: 5_000 })
+        .toContain("RECOVERED_AFTER_UPSTREAM_DROP");
+    } finally {
+      terminal?.close();
+      control.close();
+    }
+  });
+
   test("preserves runtime pane command metadata in workspace snapshots", async () => {
     const control = await openSocket(`${baseWsUrl}/ws/control`);
 

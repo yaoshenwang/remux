@@ -116,6 +116,7 @@ const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 const DEFAULT_TERMINAL_SIZE: RuntimeV2TerminalSize = { cols: 80, rows: 24 };
 const MAX_BUFFERED_TERMINAL_BYTES = 256 * 1024;
 const TERMINAL_RESIZE_SETTLE_MS = 120;
+const TERMINAL_UPSTREAM_RECONNECT_MS = 150;
 const DEFAULT_IDLE_PANE_BRIDGE_GRACE_MS = 30_000;
 const TERMINAL_RESET_BYTES = Buffer.from("\u001bc", "utf8");
 
@@ -567,6 +568,7 @@ export class SharedRuntimeV2PaneBridge {
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  private upstreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Headless terminal used solely for cursor position tracking (DSR interception). */
   private cursorTracker: InstanceType<typeof HeadlessTerminal>;
   private bellCooldown = false;
@@ -591,6 +593,7 @@ export class SharedRuntimeV2PaneBridge {
     this.activityVersion += 1;
     await this.enqueue(async () => {
       this.clearIdleCloseTimer();
+      this.clearUpstreamReconnectTimer();
       const wasEmpty = this.subscribers.size === 0;
       const hadOpenSocket = this.socket?.readyState === WebSocket.OPEN;
       this.subscribers.set(viewerId, browserSocket);
@@ -730,6 +733,7 @@ export class SharedRuntimeV2PaneBridge {
     socket.on("close", () => {
       if (version === this.attachVersion && this.socket === socket) {
         this.socket = null;
+        this.scheduleUpstreamReconnect();
       }
     });
     socket.on("error", (error) => {
@@ -785,6 +789,35 @@ export class SharedRuntimeV2PaneBridge {
     }
   }
 
+  private clearUpstreamReconnectTimer(): void {
+    if (this.upstreamReconnectTimer !== null) {
+      clearTimeout(this.upstreamReconnectTimer);
+      this.upstreamReconnectTimer = null;
+    }
+  }
+
+  private scheduleUpstreamReconnect(): void {
+    this.clearUpstreamReconnectTimer();
+    if (this.subscribers.size === 0) {
+      return;
+    }
+    this.awaitingFreshSnapshotReplay = true;
+    this.upstreamReconnectTimer = setTimeout(() => {
+      this.upstreamReconnectTimer = null;
+      void this.enqueue(async () => {
+        if (this.subscribers.size === 0 || this.socket?.readyState === WebSocket.OPEN) {
+          return;
+        }
+        try {
+          await this.ensureAttached(this.resolveDesiredSize());
+        } catch (error) {
+          this.logger.error("runtime terminal reconnect failed", error);
+          this.scheduleUpstreamReconnect();
+        }
+      });
+    }, TERMINAL_UPSTREAM_RECONNECT_MS);
+  }
+
   private scheduleSnapshotRequest(): void {
     this.clearPendingSnapshotRequest();
     this.resizeSnapshotTimer = setTimeout(() => {
@@ -826,6 +859,7 @@ export class SharedRuntimeV2PaneBridge {
     this.attachVersion += 1;
     this.clearPendingSnapshotRequest();
     this.clearIdleCloseTimer();
+    this.clearUpstreamReconnectTimer();
     this.awaitingFreshSnapshotReplay = false;
     this.snapshotRequestPending = false;
     this.latestSnapshotPayload = null;
