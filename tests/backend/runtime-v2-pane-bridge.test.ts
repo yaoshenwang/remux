@@ -31,6 +31,8 @@ describe("SharedRuntimeV2PaneBridge", () => {
   let snapshotRequestCount: number;
   let replayText: string;
   let requestSnapshotSequence: number | null;
+  let delaySnapshotResponses: boolean;
+  let pendingSnapshotSend: (() => void) | null;
   let bridge: SharedRuntimeV2PaneBridge | null;
 
   beforeEach(async () => {
@@ -39,6 +41,8 @@ describe("SharedRuntimeV2PaneBridge", () => {
     snapshotRequestCount = 0;
     replayText = "BASELINE-HISTORY\r\n";
     requestSnapshotSequence = null;
+    delaySnapshotResponses = false;
+    pendingSnapshotSend = null;
     bridge = null;
     httpServer = http.createServer();
     runtimeWss = new WebSocketServer({ server: httpServer });
@@ -67,13 +71,20 @@ describe("SharedRuntimeV2PaneBridge", () => {
         }
         if (message.type === "request_snapshot") {
           snapshotRequestCount += 1;
-          socket.send(JSON.stringify({
-            type: "snapshot",
-            size: message.size ?? { cols: 120, rows: 40 },
-            sequence: requestSnapshotSequence ?? attachCount + snapshotRequestCount,
-            content_base64: encodeBase64("VISIBLE-TAIL\r\n"),
-            replay_base64: encodeBase64(replayText),
-          }));
+          const sendSnapshot = () => {
+            socket.send(JSON.stringify({
+              type: "snapshot",
+              size: message.size ?? { cols: 120, rows: 40 },
+              sequence: requestSnapshotSequence ?? attachCount + snapshotRequestCount,
+              content_base64: encodeBase64("VISIBLE-TAIL\r\n"),
+              replay_base64: encodeBase64(replayText),
+            }));
+          };
+          if (delaySnapshotResponses) {
+            pendingSnapshotSend = sendSnapshot;
+            return;
+          }
+          sendSnapshot();
         }
       });
     });
@@ -98,6 +109,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
 
   test("keeps an idle pane bridge warm long enough to replay chunks that arrive while the tab is inactive", async () => {
     const idlePaneIds: string[] = [];
+    requestSnapshotSequence = 1;
     bridge = new SharedRuntimeV2PaneBridge(
       "pane-1",
       wsUrl,
@@ -128,7 +140,9 @@ describe("SharedRuntimeV2PaneBridge", () => {
     await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
 
     expect(attachCount).toBe(1);
-    expect(Buffer.concat(secondBrowser.sent).toString("utf8")).toContain("BASELINE-HISTORY");
+    await expect
+      .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
+      .toContain("BASELINE-HISTORY");
     await expect
       .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
       .toContain("MISSED-WHILE-INACTIVE");
@@ -214,9 +228,54 @@ describe("SharedRuntimeV2PaneBridge", () => {
     const secondBrowser = createBrowserSocket();
     await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
 
+    await expect
+      .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
+      .toContain("109");
     const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
-    expect(restored).toContain("109");
     expect(restored).toContain("110");
     expect(restored).toContain("120");
+  });
+
+  test("waits for a fresh snapshot before replaying cached terminal bytes to the first viewer after a refresh", async () => {
+    delaySnapshotResponses = true;
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+
+    await expect.poll(() => attachCount).toBe(1);
+    expect(Buffer.concat(firstBrowser.sent).toString("utf8")).toContain("BASELINE-HISTORY");
+
+    replayText = "FRESH-SNAPSHOT\r\n";
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("STALE-PARTIAL-REPAINT\r\n"),
+    }));
+
+    await bridge.unsubscribe("viewer-1");
+    await expect.poll(() => snapshotRequestCount).toBe(1);
+
+    const secondBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
+
+    const beforeFreshSnapshot = Buffer.concat(secondBrowser.sent).toString("utf8");
+    expect(beforeFreshSnapshot).not.toContain("BASELINE-HISTORY");
+    expect(beforeFreshSnapshot).not.toContain("STALE-PARTIAL-REPAINT");
+
+    pendingSnapshotSend?.();
+    pendingSnapshotSend = null;
+
+    await expect
+      .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
+      .toContain("FRESH-SNAPSHOT");
+    const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
+    expect(restored).not.toContain("BASELINE-HISTORY");
   });
 });

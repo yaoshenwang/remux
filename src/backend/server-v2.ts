@@ -527,6 +527,7 @@ export class SharedRuntimeV2PaneBridge {
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
   private latestSnapshotPayload: Buffer | null = null;
   private latestSnapshotSequence: number | null = null;
+  private awaitingFreshSnapshotReplay = false;
   private latestViewerId: string | null = null;
   private readonly subscribers = new Map<string, WebSocket>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
@@ -547,10 +548,21 @@ export class SharedRuntimeV2PaneBridge {
   async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
     await this.enqueue(async () => {
       this.clearIdleCloseTimer();
+      const wasEmpty = this.subscribers.size === 0;
+      const hadOpenSocket = this.socket?.readyState === WebSocket.OPEN;
       this.subscribers.set(viewerId, browserSocket);
       this.recordViewerSize(viewerId, size);
       const desiredSize = this.resolveDesiredSize();
+      if (wasEmpty) {
+        this.awaitingFreshSnapshotReplay = true;
+      }
       await this.ensureAttached(desiredSize);
+      if (wasEmpty && hadOpenSocket) {
+        this.requestSnapshot();
+      }
+      if (this.awaitingFreshSnapshotReplay) {
+        return;
+      }
       if (this.latestSnapshotPayload) {
         sendRaw(browserSocket, this.latestSnapshotPayload);
         for (const chunk of this.bufferedChunks) {
@@ -569,6 +581,7 @@ export class SharedRuntimeV2PaneBridge {
       }
 
       if (this.subscribers.size === 0) {
+        this.awaitingFreshSnapshotReplay = true;
         this.requestSnapshot();
         this.scheduleIdleClose();
         return;
@@ -764,6 +777,7 @@ export class SharedRuntimeV2PaneBridge {
     this.attachVersion += 1;
     this.clearPendingSnapshotRequest();
     this.clearIdleCloseTimer();
+    this.awaitingFreshSnapshotReplay = false;
     this.latestSnapshotPayload = null;
     this.latestSnapshotSequence = null;
     this.bufferedChunks.length = 0;
@@ -800,8 +814,10 @@ export class SharedRuntimeV2PaneBridge {
 
     if (isBinary) {
       const chunk = toBuffer(raw);
-      this.broadcast(chunk);
       this.rememberBufferedChunk(chunk, null);
+      if (!this.awaitingFreshSnapshotReplay) {
+        this.broadcast(chunk);
+      }
       return;
     }
 
@@ -825,6 +841,7 @@ export class SharedRuntimeV2PaneBridge {
         Buffer.from(message.replayBase64 ?? message.contentBase64, "base64"),
       ]);
       this.latestSnapshotSequence = message.sequence;
+      this.awaitingFreshSnapshotReplay = false;
       this.bufferedChunks.length = 0;
       this.bufferedChunks.push(...retainedChunks);
       this.bufferedChunkBytes = retainedChunks.reduce(
@@ -840,8 +857,10 @@ export class SharedRuntimeV2PaneBridge {
 
     if (message.type === "stream") {
       const chunk = Buffer.from(message.chunkBase64, "base64");
-      this.broadcast(chunk);
       this.rememberBufferedChunk(chunk, message.sequence);
+      if (!this.awaitingFreshSnapshotReplay) {
+        this.broadcast(chunk);
+      }
     }
   }
 

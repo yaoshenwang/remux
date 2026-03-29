@@ -159,9 +159,7 @@ fn build_replay_formatted(
         }
     }
 
-    replay.extend_from_slice(&screen.input_mode_formatted());
-    replay.extend_from_slice(&screen.cursor_state_formatted());
-    replay.extend_from_slice(&screen.attributes_formatted());
+    replay.extend_from_slice(&screen.state_formatted());
     replay
 }
 
@@ -335,8 +333,39 @@ mod tests {
           assert!(
               rows.iter().any(|row| row.contains(expected)),
               "expected snapshot rows to contain {expected}, got {rows:?}",
-          );
+            );
         }
+    }
+
+    #[test]
+    fn replay_formatted_preserves_visible_cell_colors_across_snapshot_restore() {
+        let size = TerminalSize::new(32, 4);
+        let mut terminal = TerminalState::new(size, 100);
+        terminal.ingest(b"\x1b[31mRED\x1b[0m default\r\n\x1b[32mGREEN\x1b[0m prompt % ");
+
+        let snapshot = terminal.snapshot();
+        let original_screen = terminal.parser.screen().clone();
+
+        let mut replayed = TerminalState::new(size, 100);
+        replayed.ingest(&snapshot.replay_formatted);
+        let replayed_screen = replayed.parser.screen();
+
+        assert_eq!(
+            original_screen.cell(0, 0).map(vt100::Cell::fgcolor),
+            Some(vt100::Color::Idx(1)),
+        );
+        assert_eq!(
+            replayed_screen.cell(0, 0).map(vt100::Cell::fgcolor),
+            Some(vt100::Color::Idx(1)),
+        );
+        assert_eq!(
+            original_screen.cell(1, 0).map(vt100::Cell::fgcolor),
+            Some(vt100::Color::Idx(2)),
+        );
+        assert_eq!(
+            replayed_screen.cell(1, 0).map(vt100::Cell::fgcolor),
+            Some(vt100::Color::Idx(2)),
+        );
     }
 
     #[test]
