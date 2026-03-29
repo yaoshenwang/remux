@@ -257,11 +257,14 @@ class SimpleWebSocket extends EventEmitter {
 
   #fragmentOpcode = null;
 
+  #closing = false;
+
   #socket;
 
   constructor(socket) {
     super();
     this.#socket = socket;
+    this.on("error", () => undefined);
     socket.on("data", (chunk) => {
       try {
         this.#ingest(chunk);
@@ -271,6 +274,9 @@ class SimpleWebSocket extends EventEmitter {
       }
     });
     socket.on("error", (error) => {
+      if (this.#closing && error?.code === "ECONNRESET") {
+        return;
+      }
       this.emit("error", error);
     });
     socket.on("close", () => {
@@ -289,6 +295,7 @@ class SimpleWebSocket extends EventEmitter {
   }
 
   close() {
+    this.#closing = true;
     if (this.#socket.destroyed) {
       return;
     }
