@@ -17,6 +17,19 @@ const scrollTerminalViewportToLine = async (page: Page, lineIndex: number): Prom
   await page.evaluate((targetLine) => window.__remuxTestTerminal?.scrollToLine(targetLine) ?? false, lineIndex);
 };
 
+const readTerminalBufferLines = async (page: Page, prefix?: string): Promise<string[]> =>
+  await page.evaluate((expectedPrefix) => (
+    (window.__remuxTestTerminal?.readBuffer() ?? "")
+      .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => (
+        line.length > 0
+        && (!expectedPrefix || line.startsWith(expectedPrefix))
+      ))
+  ), prefix ?? null);
+
 test.describe("runtime-v2 browser behavior", () => {
   let server: StartedRuntimeV2E2EServer;
 
@@ -156,6 +169,23 @@ test.describe("runtime-v2 browser behavior", () => {
     await scrollTerminalViewportToLine(page, 235);
     await expect.poll(() => readTerminalText(page)).toContain(lines.at(-1) ?? "");
     await expect.poll(() => readTerminalText(page)).toContain(lines.at(-3) ?? "");
+  });
+
+  test("restores large snapshot-backed scrollback without dropping middle rows", async ({ page }) => {
+    const paneId = server.upstream.activePaneId();
+    const lines = Array.from(
+      { length: 120 },
+      (_, index) => `RESTORE-LINE-${String(index + 1).padStart(4, "0")}`
+    );
+    server.upstream.setPaneContent(paneId, `${lines.join("\r\n")}\r\n`);
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expect.poll(() => readTerminalBufferLines(page, "RESTORE-LINE-")).toEqual(lines);
+
+    await page.reload();
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expect.poll(() => readTerminalBufferLines(page, "RESTORE-LINE-")).toEqual(lines);
   });
 
   test("inspect history survives a browser reconnect with server-backed scrollback", async ({ page }) => {

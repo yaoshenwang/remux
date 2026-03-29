@@ -86,7 +86,7 @@ impl TerminalState {
 
             TerminalSnapshot {
                 size,
-                replay_formatted: build_replay_formatted(&scrollback_rows, &formatted_state),
+                replay_formatted: build_replay_formatted(screen, size.cols),
                 formatted_state,
                 scrollback_rows,
                 visible_text: screen.contents(),
@@ -137,20 +137,60 @@ fn collect_scrollback_rows(screen: &vt100::Screen, width: u16) -> Vec<String> {
 }
 
 fn build_replay_formatted(
-    scrollback_rows: &[String],
-    formatted_state: &[u8],
+    screen: &vt100::Screen,
+    width: u16,
 ) -> Vec<u8> {
-    if scrollback_rows.is_empty() {
-        return formatted_state.to_vec();
+    let replay_rows = collect_replay_rows(screen, width);
+    let mut replay = Vec::new();
+
+    for (index, row) in replay_rows.iter().enumerate() {
+        replay.extend_from_slice(row.text.as_bytes());
+        if !row.wrapped && index + 1 < replay_rows.len() {
+            replay.extend_from_slice(b"\r\n");
+        }
     }
 
-    let mut replay = Vec::new();
-    for row in scrollback_rows {
-        replay.extend_from_slice(row.as_bytes());
-        replay.extend_from_slice(b"\r\n");
-    }
-    replay.extend_from_slice(formatted_state);
+    replay.extend_from_slice(&screen.input_mode_formatted());
+    replay.extend_from_slice(&screen.cursor_state_formatted());
+    replay.extend_from_slice(&screen.attributes_formatted());
     replay
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplayRow {
+    text: String,
+    wrapped: bool,
+}
+
+fn collect_replay_rows(screen: &vt100::Screen, width: u16) -> Vec<ReplayRow> {
+    let mut history = screen.clone();
+    history.set_scrollback(usize::MAX);
+    let total_scrollback = history.scrollback();
+    let mut rows = Vec::with_capacity(total_scrollback + usize::from(screen.size().0));
+
+    for offset in (1..=total_scrollback).rev() {
+        history.set_scrollback(offset);
+        rows.push(ReplayRow {
+            text: history.rows(0, width).next().unwrap_or_default(),
+            wrapped: history.row_wrapped(0),
+        });
+    }
+
+    let visible_rows = screen.rows(0, width).collect::<Vec<_>>();
+    let (cursor_row, _) = screen.cursor_position();
+    let visible_limit = visible_rows
+        .iter()
+        .rposition(|row| !row.is_empty())
+        .map_or(usize::from(cursor_row), |index| index.max(usize::from(cursor_row)));
+
+    for (index, text) in visible_rows.into_iter().enumerate().take(visible_limit + 1) {
+        rows.push(ReplayRow {
+            text,
+            wrapped: screen.row_wrapped(index as u16),
+        });
+    }
+
+    rows
 }
 
 #[cfg(test)]
@@ -158,6 +198,22 @@ mod tests {
     use remux_core::{InspectPrecision, TerminalSize};
 
     use super::*;
+
+    fn collect_all_rows(snapshot: &TerminalSnapshot) -> Vec<String> {
+        snapshot
+            .scrollback_rows
+            .iter()
+            .chain(snapshot.visible_rows.iter())
+            .filter_map(|row| {
+                let trimmed = row.trim_end().to_owned();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            })
+            .collect()
+    }
 
     #[test]
     fn terminal_state_tracks_bytes_and_plain_text_snapshot() {
@@ -206,6 +262,27 @@ mod tests {
         assert!(replay.contains("line 2"));
         assert!(replay.contains("line 3"));
         assert!(replay.contains("line 4"));
+    }
+
+    #[test]
+    fn replay_formatted_reconstructs_full_scrollback_without_dropping_middle_rows() {
+        let size = TerminalSize::new(80, 30);
+        let mut terminal = TerminalState::new(size, 200);
+        let content = (1..=120)
+            .map(|line| format!("{line}\r\n"))
+            .collect::<String>();
+        terminal.ingest(content.as_bytes());
+
+        let snapshot = terminal.snapshot();
+        let original_rows = collect_all_rows(&snapshot);
+        let expected_rows = (1..=120).map(|line| line.to_string()).collect::<Vec<_>>();
+        assert_eq!(original_rows, expected_rows);
+
+        let mut replayed = TerminalState::new(size, 200);
+        replayed.ingest(&snapshot.replay_formatted);
+        let replay_snapshot = replayed.snapshot();
+
+        assert_eq!(collect_all_rows(&replay_snapshot), expected_rows);
     }
 
     #[test]
