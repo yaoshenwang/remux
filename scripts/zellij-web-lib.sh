@@ -58,7 +58,18 @@ zellij_web_path() {
 }
 
 zellij_web_port_is_listening() {
-  lsof -nP -iTCP:"$(zellij_web_port)" -sTCP:LISTEN >/dev/null 2>&1
+  local port
+  port="$(zellij_web_port)"
+
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if bash -lc "exec 3<>/dev/tcp/127.0.0.1/${port}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
 }
 
 ensure_zellij_web_binary() {
