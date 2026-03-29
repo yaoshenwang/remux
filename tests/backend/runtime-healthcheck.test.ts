@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
@@ -12,6 +15,7 @@ import { FakeRuntimeV2Server } from "../harness/fakeRuntimeV2Server.js";
 
 const silentLogger = { log: () => undefined, error: () => undefined };
 const execFileAsync = promisify(execFile);
+const tempDirs: string[] = [];
 
 const buildConfig = (token: string): RuntimeConfig => ({
   port: 0,
@@ -46,6 +50,7 @@ describe("runtime healthcheck script", () => {
   afterEach(async () => {
     await server.stop();
     await upstream.stop();
+    await Promise.all(tempDirs.splice(0).map((dir) => fs.promises.rm(dir, { recursive: true, force: true })));
   });
 
   test("verifies config, inspect, and terminal attach through the gateway", async () => {
@@ -72,5 +77,33 @@ describe("runtime healthcheck script", () => {
         }
       )
     ).rejects.toThrow();
+  });
+
+  test("runs without a ws dependency or global WebSocket", async () => {
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-healthcheck-"));
+    tempDirs.push(tempDir);
+
+    const copiedScriptPath = path.join(tempDir, "runtime-healthcheck.mjs");
+    await fs.promises.copyFile(path.join(process.cwd(), "scripts", "runtime-healthcheck.mjs"), copiedScriptPath);
+
+    const bootstrap = `
+process.argv = ${JSON.stringify([
+  "node",
+  copiedScriptPath,
+  "--url",
+  baseUrl,
+  "--token",
+  "test-token",
+])};
+delete globalThis.WebSocket;
+await import(${JSON.stringify(`file://${copiedScriptPath}`)});
+`;
+
+    await expect(
+      execFileAsync(process.execPath, ["--input-type=module", "-e", bootstrap], {
+        cwd: tempDir,
+        stdio: "pipe",
+      }),
+    ).resolves.toMatchObject({});
   });
 });
