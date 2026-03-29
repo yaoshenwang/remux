@@ -155,6 +155,10 @@ export const App = () => {
   const connection = useRemuxConnection({
     onAuthOk: (passwordValue, clientId) => {
       pendingTerminalAuthRef.current = { password: passwordValue, clientId };
+      // Request notification permission for bell alerts.
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
     },
     onControlMessage: (message) => {
       switch (message.type) {
@@ -213,6 +217,17 @@ export const App = () => {
           return;
         case "scrollback":
           return;
+        case "bell": {
+          setBellSessions((current) => new Set(current).add(message.session));
+          // Show browser notification when tab is not focused.
+          if (document.hidden && Notification.permission === "granted") {
+            new Notification("Terminal Bell", {
+              body: `Session "${message.session}" rang the bell`,
+              tag: `bell-${message.session}`,
+            });
+          }
+          return;
+        }
         case "tab_history": {
           const pending = inspectRequestRef.current;
           if (!pending) return;

@@ -310,4 +310,69 @@ describe("SharedRuntimeV2PaneBridge", () => {
     const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
     expect(restored).not.toContain("BASELINE-HISTORY");
   });
+
+  test("fires onBell callback when terminal data contains the bell character", async () => {
+    const bellPaneIds: string[] = [];
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-bell",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+      (paneId) => {
+        bellPaneIds.push(paneId);
+      },
+    );
+
+    const browser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", browser.socket, { cols: 80, rows: 24 });
+    await expect.poll(() => attachCount).toBe(1);
+
+    // Send a stream chunk containing the bell character.
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("hello\x07world"),
+    }));
+
+    await expect.poll(() => bellPaneIds).toEqual(["pane-bell"]);
+
+    // Rapid subsequent bells should be suppressed by cooldown.
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 3,
+      chunk_base64: encodeBase64("again\x07"),
+    }));
+
+    // Wait a tick for the message to be processed.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(bellPaneIds).toEqual(["pane-bell"]);
+  });
+
+  test("does not fire onBell for data without bell character", async () => {
+    const bellPaneIds: string[] = [];
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-no-bell",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+      (paneId) => {
+        bellPaneIds.push(paneId);
+      },
+    );
+
+    const browser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", browser.socket, { cols: 80, rows: 24 });
+    await expect.poll(() => attachCount).toBe(1);
+
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("normal output without bell"),
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(bellPaneIds).toEqual([]);
+  });
 });

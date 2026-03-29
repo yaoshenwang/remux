@@ -16,6 +16,7 @@ import type {
 } from "../shared/protocol.js";
 import type { RuntimeConfig } from "./config.js";
 import { AuthService } from "./auth/auth-service.js";
+import { NotificationManager } from "./notifications/push-manager.js";
 import { buildServerCapabilities } from "./server/client-capabilities.js";
 import {
   resolvePaneCommandForView,
@@ -538,6 +539,7 @@ export class SharedRuntimeV2PaneBridge {
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  private bellCooldown = false;
 
   constructor(
     readonly paneId: string,
@@ -545,6 +547,7 @@ export class SharedRuntimeV2PaneBridge {
     private readonly logger: Pick<Console, "log" | "error">,
     private readonly sizePolicy: TerminalSizePolicy,
     private readonly onIdle: (paneId: string) => void,
+    private readonly onBell?: (paneId: string) => void,
   ) {}
 
   async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
@@ -867,6 +870,14 @@ export class SharedRuntimeV2PaneBridge {
   }
 
   private broadcast(payload: Buffer): void {
+    // Detect bell character (0x07) in terminal output.
+    if (this.onBell && !this.bellCooldown && payload.includes(0x07)) {
+      this.bellCooldown = true;
+      this.onBell(this.paneId);
+      setTimeout(() => {
+        this.bellCooldown = false;
+      }, 5000);
+    }
     for (const subscriber of this.subscribers.values()) {
       sendRaw(subscriber, payload);
     }
@@ -1025,6 +1036,8 @@ export const createRemuxV2GatewayServer = (
   const controlClients = new Set<ControlContext>();
   const terminalClients = new Set<DataContext>();
   const paneBridges = new Map<string, SharedRuntimeV2PaneBridge>();
+
+  const notificationManager = new NotificationManager(logger);
 
   let runtimeTarget: RuntimeTargetHandle | null = null;
   let runtimeControl: RuntimeV2ControlChannel | null = null;
@@ -1189,6 +1202,9 @@ export const createRemuxV2GatewayServer = (
     },
   );
 
+  // Push notification routes (require auth except for vapid-key).
+  app.use("/api/push", requireApiAuth, notificationManager.createRoutes());
+
   const broadcastWorkspaceState = (): void => {
     if (!runtimeControl) {
       return;
@@ -1200,6 +1216,24 @@ export const createRemuxV2GatewayServer = (
       }
       sendJson(client.socket, buildWorkspaceStateMessage(summary, resolveClientViewForContext(summary, client)));
     }
+  };
+
+  const broadcastBell = (paneId: string): void => {
+    const summary = runtimeControl?.currentSummary();
+    const sessionName = summary?.sessions.find((s) =>
+      s.tabs.some((t) => t.panes.some((p) => p.paneId === paneId)),
+    )?.sessionName ?? "unknown";
+
+    // Send bell event to all authenticated control clients.
+    const bellMessage: ControlServerMessage = { type: "bell", session: sessionName, paneId };
+    for (const client of controlClients) {
+      if (client.authed) {
+        sendJson(client.socket, bellMessage);
+      }
+    }
+
+    // Send web push notification.
+    void notificationManager.notifyBell(sessionName);
   };
 
   const retargetTerminalClients = async (): Promise<void> => {
@@ -1233,6 +1267,7 @@ export const createRemuxV2GatewayServer = (
         (idlePaneId) => {
           paneBridges.delete(idlePaneId);
         },
+        broadcastBell,
       );
       paneBridges.set(paneId, bridge);
     }

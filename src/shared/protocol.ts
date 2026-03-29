@@ -112,4 +112,5 @@ export type ControlServerMessage =
       events: TabHistoryEvent[];
     }
   | { type: "error"; message: string }
-  | { type: "info"; message: string };
+  | { type: "info"; message: string }
+  | { type: "bell"; session: string; paneId: string };
