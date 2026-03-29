@@ -60,6 +60,13 @@ import {
   serializeRuntimeV2ControlMessage,
   serializeRuntimeV2TerminalMessage,
 } from "./v2/wire.js";
+import {
+  buildCprResponse,
+  filterCprFromInput,
+  interceptDsr,
+} from "./terminal-state/dsr-interceptor.js";
+import headless from "@xterm/headless";
+const { Terminal: HeadlessTerminal } = headless;
 
 export interface RunningServer {
   start(): Promise<void>;
@@ -538,6 +545,8 @@ export class SharedRuntimeV2PaneBridge {
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Headless terminal used solely for cursor position tracking (DSR interception). */
+  private cursorTracker: InstanceType<typeof HeadlessTerminal>;
 
   constructor(
     readonly paneId: string,
@@ -545,7 +554,14 @@ export class SharedRuntimeV2PaneBridge {
     private readonly logger: Pick<Console, "log" | "error">,
     private readonly sizePolicy: TerminalSizePolicy,
     private readonly onIdle: (paneId: string) => void,
-  ) {}
+  ) {
+    this.cursorTracker = new HeadlessTerminal({
+      cols: DEFAULT_TERMINAL_SIZE.cols,
+      rows: DEFAULT_TERMINAL_SIZE.rows,
+      allowProposedApi: true,
+      scrollback: 0,
+    });
+  }
 
   async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
     this.activityVersion += 1;
@@ -620,6 +636,7 @@ export class SharedRuntimeV2PaneBridge {
       this.subscribers.clear();
       this.viewerSizes.clear();
       this.latestViewerId = null;
+      this.cursorTracker.dispose();
       await this.closeSocket();
       this.onIdle(this.paneId);
     });
@@ -696,6 +713,7 @@ export class SharedRuntimeV2PaneBridge {
     });
 
     this.currentSize = size;
+    this.cursorTracker.resize(size.cols, size.rows);
     const payload: RuntimeV2TerminalClientMessage = {
       type: "attach",
       paneId: this.paneId,
@@ -715,6 +733,7 @@ export class SharedRuntimeV2PaneBridge {
     };
     this.socket.send(serializeRuntimeV2TerminalMessage(payload));
     this.currentSize = size;
+    this.cursorTracker.resize(size.cols, size.rows);
   }
 
   private requestSnapshot(): void {
@@ -815,7 +834,25 @@ export class SharedRuntimeV2PaneBridge {
     }
 
     if (isBinary) {
-      const chunk = toBuffer(raw);
+      let chunk = toBuffer(raw);
+      const text = chunk.toString("utf8");
+
+      // Feed data to cursor tracker for DSR interception.
+      this.cursorTracker.write(text);
+
+      // Intercept DSR (cursor position query) and respond server-side.
+      const dsr = interceptDsr(text);
+      if (dsr.count > 0) {
+        const buf = this.cursorTracker.buffer.active;
+        const cpr = buildCprResponse(buf.cursorY + 1, buf.cursorX + 1);
+        this.write(cpr);
+        // Forward the cleaned data (DSR stripped) to clients.
+        chunk = Buffer.from(dsr.cleaned, "utf8");
+        if (chunk.byteLength === 0) {
+          return;
+        }
+      }
+
       this.rememberBufferedChunk(chunk, null);
       if (!this.awaitingFreshSnapshotReplay) {
         this.broadcast(chunk);
@@ -850,6 +887,16 @@ export class SharedRuntimeV2PaneBridge {
         (total, chunk) => total + chunk.payload.byteLength,
         0,
       );
+
+      // Reset cursor tracker and replay snapshot content so cursor position stays in sync.
+      this.cursorTracker.write("\x1bc");
+      this.cursorTracker.write(
+        Buffer.from(message.replayBase64 ?? message.contentBase64, "base64").toString("utf8"),
+      );
+      for (const retained of retainedChunks) {
+        this.cursorTracker.write(retained.payload.toString("utf8"));
+      }
+
       this.broadcast(this.latestSnapshotPayload);
       for (const chunk of this.bufferedChunks) {
         this.broadcast(chunk.payload);
@@ -859,6 +906,27 @@ export class SharedRuntimeV2PaneBridge {
 
     if (message.type === "stream") {
       const chunk = Buffer.from(message.chunkBase64, "base64");
+      const text = chunk.toString("utf8");
+
+      // Feed stream data to cursor tracker for DSR interception.
+      this.cursorTracker.write(text);
+
+      // Intercept DSR in stream messages too.
+      const dsr = interceptDsr(text);
+      if (dsr.count > 0) {
+        const buf = this.cursorTracker.buffer.active;
+        const cpr = buildCprResponse(buf.cursorY + 1, buf.cursorX + 1);
+        this.write(cpr);
+        const cleaned = Buffer.from(dsr.cleaned, "utf8");
+        if (cleaned.byteLength > 0) {
+          this.rememberBufferedChunk(cleaned, message.sequence);
+          if (!this.awaitingFreshSnapshotReplay) {
+            this.broadcast(cleaned);
+          }
+        }
+        return;
+      }
+
       this.rememberBufferedChunk(chunk, message.sequence);
       if (!this.awaitingFreshSnapshotReplay) {
         this.broadcast(chunk);
