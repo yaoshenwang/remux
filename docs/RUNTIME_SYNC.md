@@ -13,12 +13,15 @@ The new runtime flow fixes that by:
 - polling `origin/main` and `origin/dev`, fast-forwarding runtime worktrees, and rebuilding only from those refs
 - verifying the local and public `/api/config` responses after each sync
 - keeping a shared machine-level `remuxd` daemon alive across `main` / `dev` gateway restarts so both public URLs attach to the same runtime-v2 workspace truth
+- separating the shared runtime core into its own detached worktree so `dev` gateway deploys do not mutate the shared daemon by default
+- requiring an explicit promote step before the shared core moves to a newer `dev` SHA, with attach healthchecks and automatic rollback on failure
 
 ## Runtime Layout
 
 - runtime worktree root: `$HOME/.remux/runtime-worktrees`
 - `main` runtime worktree: `$HOME/.remux/runtime-worktrees/runtime-main`
 - `dev` runtime worktree: `$HOME/.remux/runtime-worktrees/runtime-dev`
+- shared runtime core worktree: `$HOME/.remux/runtime-worktrees/runtime-shared`
 - local services:
   - `com.remux.runtime-v2-shared`
   - `com.remux.main`
@@ -38,6 +41,7 @@ Then sync once to create the detached worktrees, install dependencies, build the
 
 ```bash
 npm run runtime:sync
+npm run runtime:promote-shared
 ```
 
 ## Manual Commands
@@ -54,6 +58,12 @@ Force a one-shot sync:
 npm run runtime:sync
 ```
 
+Promote the shared runtime core to the current `origin/dev` SHA:
+
+```bash
+npm run runtime:promote-shared
+```
+
 Dry-run a sync:
 
 ```bash
@@ -62,8 +72,10 @@ scripts/sync-runtime.sh all --dry-run
 
 ## Operational Rules
 
-- do not make manual edits inside `$HOME/.remux/runtime-worktrees/runtime-main` or `$HOME/.remux/runtime-worktrees/runtime-dev`
+- do not make manual edits inside `$HOME/.remux/runtime-worktrees/runtime-main`, `$HOME/.remux/runtime-worktrees/runtime-dev`, or `$HOME/.remux/runtime-worktrees/runtime-shared`
 - public `main` and `dev` must stay on the shared local `remuxd` daemon instead of spawning per-version private runtimes
+- ordinary `dev` syncs may update the `dev` gateway only; they do not automatically replace the shared runtime core
+- only explicit shared-core promotion is allowed to move `com.remux.runtime-v2-shared` forward
 - if `runtime:status` shows `dirty=true`, treat that instance as out of policy
 - if `runtime:status` shows a branch or SHA mismatch, run `runtime:sync`
 - if launchd plists still point at the root repo checkout or `.worktrees/main`, rerun `runtime:install-launchd`
@@ -76,5 +88,6 @@ If you want push-triggered deploys instead of 60-second polling, the next step i
 - use separate GitHub environments for production and development
 - use workflow `concurrency` so each environment deploy stays single-flight
 - call `scripts/sync-runtime.sh main --verify-public` or `scripts/sync-runtime.sh dev --verify-public`
+- call `scripts/sync-runtime.sh dev --verify-public --promote-shared-runtime` only when you explicitly want to advance the shared runtime core
 
 That second stage is now wired through [docs/SELF_HOSTED_RUNNER.md](./SELF_HOSTED_RUNNER.md) and [deploy-runtime.yml](../.github/workflows/deploy-runtime.yml).

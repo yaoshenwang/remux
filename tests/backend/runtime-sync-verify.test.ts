@@ -143,7 +143,7 @@ printf '%s' '{"version":"0.1.48","passwordRequired":false}'
     const fakeBinDir = path.join(tempHome, "bin");
     const launchAgentsDir = path.join(tempHome, "Library", "LaunchAgents");
     const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
-    const sharedWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const sharedWorkdir = path.join(runtimeRoot, "runtime-shared");
     const launchctlLogPath = path.join(tempHome, "launchctl.log");
 
     await fs.promises.mkdir(fakeBinDir, { recursive: true });
@@ -208,7 +208,7 @@ printf '%s' '{"service":"remuxd","version":"0.2.18","protocolVersion":"2026-03-2
     const fakeBinDir = path.join(tempHome, "bin");
     const launchAgentsDir = path.join(tempHome, "Library", "LaunchAgents");
     const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
-    const sharedWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const sharedWorkdir = path.join(runtimeRoot, "runtime-shared");
     const launchctlLogPath = path.join(tempHome, "launchctl.log");
     const runtimeStatePath = path.join(tempHome, "shared-runtime-state");
 
@@ -285,7 +285,7 @@ fi
     const fakeBinDir = path.join(tempHome, "bin");
     const launchAgentsDir = path.join(tempHome, "Library", "LaunchAgents");
     const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
-    const sharedWorkdir = path.join(runtimeRoot, "runtime-dev");
+    const sharedWorkdir = path.join(runtimeRoot, "runtime-shared");
     const launchctlLogPath = path.join(tempHome, "launchctl.log");
     const sharedPlistPath = path.join(launchAgentsDir, "com.remux.runtime-v2-shared.plist");
     const sharedPlist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -398,5 +398,286 @@ exit 0
 
     const log = await fs.promises.readFile(launchctlLogPath, "utf8");
     expect(log).toContain(`print gui/${process.getuid?.() ?? process.getuid()}/com.remux.dev`);
+  });
+
+  test("does not mark the shared runtime for restart during a default dev dry-run", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-dry-run-test-"));
+    tempDirs.push(tempHome);
+
+    const fakeBinDir = path.join(tempHome, "bin");
+    const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
+    const runtimeNodeDir = path.join(tempHome, "toolchains", "node-lts", "bin");
+    const cargoHome = path.join(tempHome, ".cargo");
+    const cargoBinDir = path.join(cargoHome, "bin");
+    const runtimeNodeBin = path.join(runtimeNodeDir, "node");
+    const runtimeCargoBin = path.join(cargoBinDir, "cargo");
+    const launchctlLogPath = path.join(tempHome, "launchctl.log");
+
+    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    await fs.promises.mkdir(path.join(runtimeRoot, "runtime-dev"), { recursive: true });
+    await fs.promises.mkdir(path.join(runtimeRoot, "runtime-shared"), { recursive: true });
+    await fs.promises.mkdir(runtimeNodeDir, { recursive: true });
+    await fs.promises.mkdir(cargoBinDir, { recursive: true });
+    await fs.promises.writeFile(runtimeNodeBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    await fs.promises.writeFile(runtimeCargoBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    execFileSync("bash", ["scripts/install-launchd.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: tempHome,
+        REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot,
+        REMUX_RUNTIME_NODE_BIN: runtimeNodeBin,
+        CARGO_HOME: cargoHome
+      },
+      stdio: "pipe"
+    });
+
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "git"),
+      `#!/bin/bash
+set -euo pipefail
+if [[ "$*" == *"fetch origin --prune"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"rev-parse --is-inside-work-tree"* ]]; then
+  printf 'true\\n'
+  exit 0
+fi
+if [[ "$*" == *"rev-parse HEAD"* ]]; then
+  if [[ "$*" == *"runtime-shared"* ]]; then
+    printf 'shared-current-sha\\n'
+  else
+    printf 'dev-current-sha\\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"rev-parse origin/dev"* ]]; then
+  printf 'dev-target-sha\\n'
+  exit 0
+fi
+if [[ "$*" == *"show origin/dev:package.json"* ]]; then
+  printf '%s' '{"version":"0.2.99"}'
+  exit 0
+fi
+if [[ "$*" == *"show HEAD:package.json"* ]]; then
+  printf '%s' '{"version":"0.2.98"}'
+  exit 0
+fi
+if [[ "$*" == *"status --porcelain --untracked-files=no"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"diff --quiet"* ]]; then
+  exit 1
+fi
+echo "unexpected git invocation: $*" >&2
+exit 1
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "curl"),
+      `#!/bin/bash
+set -euo pipefail
+exit 7
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "launchctl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${launchctlLogPath}"
+if [[ "$1" == "print" ]]; then
+  if [[ "$2" == *"com.remux.dev" ]]; then
+    cat <<'EOF'
+working directory = ${runtimeRoot}/runtime-dev
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+  REMUXD_BASE_URL => http://127.0.0.1:3737
+  REMUX_RUNTIME_V2_REQUIRED => 1
+  REMUX_LOCAL_WS_ORIGIN => ws://127.0.0.1:3457
+}
+EOF
+    exit 0
+  fi
+  cat <<'EOF'
+working directory = ${runtimeRoot}/runtime-shared
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+}
+EOF
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    );
+
+    const output = execFileSync("bash", ["scripts/sync-runtime.sh", "dev", "--dry-run"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: tempHome,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+        REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot,
+        REMUX_RUNTIME_NODE_BIN: runtimeNodeBin,
+        CARGO_HOME: cargoHome
+      },
+      stdio: "pipe"
+    }).toString("utf8");
+
+    expect(output).toContain("[sync] dry-run dev");
+    expect(output).toContain("shared-v2:    false");
+  });
+
+  test("marks the shared runtime for restart when dev dry-run explicitly promotes it", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-promote-dry-run-test-"));
+    tempDirs.push(tempHome);
+
+    const fakeBinDir = path.join(tempHome, "bin");
+    const runtimeRoot = path.join(tempHome, ".remux", "runtime-worktrees");
+    const runtimeNodeDir = path.join(tempHome, "toolchains", "node-lts", "bin");
+    const cargoHome = path.join(tempHome, ".cargo");
+    const cargoBinDir = path.join(cargoHome, "bin");
+    const runtimeNodeBin = path.join(runtimeNodeDir, "node");
+    const runtimeCargoBin = path.join(cargoBinDir, "cargo");
+    const launchctlLogPath = path.join(tempHome, "launchctl.log");
+    const sharedStatePath = path.join(tempHome, "shared-state");
+
+    await fs.promises.mkdir(fakeBinDir, { recursive: true });
+    await fs.promises.mkdir(path.join(runtimeRoot, "runtime-dev"), { recursive: true });
+    await fs.promises.mkdir(path.join(runtimeRoot, "runtime-shared"), { recursive: true });
+    await fs.promises.mkdir(runtimeNodeDir, { recursive: true });
+    await fs.promises.mkdir(cargoBinDir, { recursive: true });
+    await fs.promises.writeFile(runtimeNodeBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    await fs.promises.writeFile(runtimeCargoBin, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    await fs.promises.writeFile(sharedStatePath, "stale\n");
+    execFileSync("bash", ["scripts/install-launchd.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: tempHome,
+        REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot,
+        REMUX_RUNTIME_NODE_BIN: runtimeNodeBin,
+        CARGO_HOME: cargoHome
+      },
+      stdio: "pipe"
+    });
+
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "git"),
+      `#!/bin/bash
+set -euo pipefail
+if [[ "$*" == *"fetch origin --prune"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"rev-parse --is-inside-work-tree"* ]]; then
+  printf 'true\\n'
+  exit 0
+fi
+if [[ "$*" == *"rev-parse HEAD"* ]]; then
+  if [[ "$*" == *"runtime-shared"* ]]; then
+    printf 'shared-current-sha\\n'
+  else
+    printf 'dev-current-sha\\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"rev-parse origin/dev"* ]]; then
+  printf 'dev-target-sha\\n'
+  exit 0
+fi
+if [[ "$*" == *"show origin/dev:package.json"* ]]; then
+  printf '%s' '{"version":"0.2.99"}'
+  exit 0
+fi
+if [[ "$*" == *"show HEAD:package.json"* ]]; then
+  if [[ "$*" == *"runtime-shared"* ]]; then
+    printf '%s' '{"version":"0.2.98"}'
+  else
+    printf '%s' '{"version":"0.2.98"}'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"status --porcelain --untracked-files=no"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"diff --quiet"* ]]; then
+  exit 1
+fi
+echo "unexpected git invocation: $*" >&2
+exit 1
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "curl"),
+      `#!/bin/bash
+set -euo pipefail
+if [[ "$*" == *"/v2/meta"* ]]; then
+  if [[ "$(cat "${sharedStatePath}")" == "stale" ]]; then
+    printf '%s' '{"service":"remuxd","version":"0.2.98","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal","gitBranch":"dev","gitCommitSha":"shared-current-sha","gitDirty":false}'
+  else
+    printf '%s' '{"service":"remuxd","version":"0.2.99","protocolVersion":"2026-03-27-draft","controlWebsocketPath":"/v2/control","terminalWebsocketPath":"/v2/terminal","gitBranch":"dev","gitCommitSha":"dev-target-sha","gitDirty":false}'
+  fi
+  exit 0
+fi
+exit 7
+`,
+      { mode: 0o755 }
+    );
+    await fs.promises.writeFile(
+      path.join(fakeBinDir, "launchctl"),
+      `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${launchctlLogPath}"
+if [[ "$1" == "print" ]]; then
+  if [[ "$2" == *"com.remux.dev" ]]; then
+    cat <<'EOF'
+working directory = ${runtimeRoot}/runtime-dev
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+  REMUXD_BASE_URL => http://127.0.0.1:3737
+  REMUX_RUNTIME_V2_REQUIRED => 1
+  REMUX_LOCAL_WS_ORIGIN => ws://127.0.0.1:3457
+}
+EOF
+    exit 0
+  fi
+  cat <<'EOF'
+working directory = ${runtimeRoot}/runtime-shared
+environment = {
+  REMUX_RUNTIME_BRANCH => dev
+}
+EOF
+  exit 0
+fi
+if [[ "$1" == "kickstart" ]]; then
+  printf 'fresh\\n' > "${sharedStatePath}"
+fi
+exit 0
+`,
+      { mode: 0o755 }
+    );
+
+    const output = execFileSync(
+      "bash",
+      ["scripts/sync-runtime.sh", "dev", "--dry-run", "--promote-shared-runtime"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+          REMUX_RUNTIME_WORKTREE_ROOT: runtimeRoot,
+          REMUX_RUNTIME_NODE_BIN: runtimeNodeBin,
+          CARGO_HOME: cargoHome
+        },
+        stdio: "pipe"
+      }
+    ).toString("utf8");
+
+    expect(output).toContain("[sync] dry-run dev");
+    expect(output).toContain("shared-v2:    true");
   });
 });

@@ -7,6 +7,7 @@ This repository can now deploy `main` and `dev` automatically through a reposito
 - deploys are triggered by `push` to `main` and `dev`
 - deploy jobs run on the local Mac instead of a GitHub-hosted VM
 - the workflow calls `scripts/sync-runtime.sh` so the deployed runtime is verified against the remote branch SHA
+- pushes to `dev` only roll the `dev` gateway by default; promoting the shared runtime-v2 core is an explicit manual action
 - the custom label avoids accidentally routing unrelated jobs onto the deployment machine
 
 ## Security boundary
@@ -60,6 +61,8 @@ npm run runner:remove
 ## Optional manual bootstrap
 
 The `Deploy Runtime` workflow already runs `install-launchd` and `sync-runtime`, so a manual bootstrap is not required after merge.
+
+When you want to advance the shared `runtime-v2` core itself, use `workflow_dispatch` and set `promote_shared_runtime=true`. That path runs the attach healthchecks and rolls back automatically if the promoted shared runtime breaks either public gateway.
 
 If you want to preheat the runtime services from the runner workspace clone before the first workflow run, use:
 

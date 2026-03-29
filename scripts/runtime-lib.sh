@@ -139,12 +139,20 @@ runtime_branch() {
   echo "$1"
 }
 
+runtime_shared_branch() {
+  echo "${REMUX_SHARED_RUNTIME_BRANCH:-dev}"
+}
+
 runtime_dir() {
   ensure_instance_name "$1"
   case "$1" in
     main) echo "$RUNTIME_WORKTREE_ROOT/runtime-main" ;;
     dev) echo "$RUNTIME_WORKTREE_ROOT/runtime-dev" ;;
   esac
+}
+
+runtime_shared_dir() {
+  echo "$RUNTIME_WORKTREE_ROOT/runtime-shared"
 }
 
 runtime_service() {
@@ -234,7 +242,7 @@ runtime_shared_plist_path() {
 }
 
 runtime_shared_workdir() {
-  echo "$(runtime_dir dev)"
+  echo "$(runtime_shared_dir)"
 }
 
 runtime_service_domain() {
@@ -317,6 +325,19 @@ ensure_runtime_worktree() {
   local branch dir
   branch="$(runtime_branch "$1")"
   dir="$(runtime_dir "$1")"
+
+  mkdir -p "$RUNTIME_WORKTREE_ROOT"
+  if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  git -C "$PROJECT_DIR" worktree add --detach "$dir" "origin/$branch"
+}
+
+ensure_shared_runtime_worktree() {
+  local branch dir
+  branch="$(runtime_shared_branch)"
+  dir="$(runtime_shared_dir)"
 
   mkdir -p "$RUNTIME_WORKTREE_ROOT"
   if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -421,8 +442,8 @@ verify_shared_runtime_plist() {
     return 1
   fi
 
-  if ! grep -Fq "<key>REMUX_RUNTIME_BRANCH</key>" "$plist" || ! grep -Fq "<string>dev</string>" "$plist"; then
-    echo "[runtime] $plist does not pin the shared runtime branch to dev" >&2
+  if ! grep -Fq "<key>REMUX_RUNTIME_BRANCH</key>" "$plist" || ! grep -Fq "<string>$(runtime_shared_branch)</string>" "$plist"; then
+    echo "[runtime] $plist does not pin the shared runtime branch to $(runtime_shared_branch)" >&2
     echo "[runtime] rerun: npm run runtime:install-launchd" >&2
     return 1
   fi
@@ -455,7 +476,7 @@ loaded_shared_runtime_service_matches_expected() {
 
   [[ -n "$service_description" ]] || return 1
   grep -Fq "working directory = $(runtime_shared_workdir)" <<<"$service_description" || return 1
-  grep -Fq "REMUX_RUNTIME_BRANCH => dev" <<<"$service_description" || return 1
+  grep -Fq "REMUX_RUNTIME_BRANCH => $(runtime_shared_branch)" <<<"$service_description" || return 1
 
   return 0
 }
@@ -721,4 +742,13 @@ acquire_sync_lock() {
 
 release_sync_lock() {
   rm -rf "$SYNC_LOCK_DIR"
+}
+current_shared_worktree_sha() {
+  git -C "$(runtime_shared_dir)" rev-parse HEAD
+}
+
+shared_worktree_is_clean() {
+  local dir
+  dir="$(runtime_shared_dir)"
+  [[ -z "$(git -C "$dir" status --porcelain --untracked-files=no)" ]]
 }

@@ -137,10 +137,11 @@ Managed runtime sync for long-running `main` / `dev` instances:
 ```bash
 npm run runtime:install-launchd
 npm run runtime:sync
+npm run runtime:promote-shared
 npm run runtime:status
 ```
 
-Those public `main` / `dev` gateways are intended to share one machine-level `runtime-v2` daemon, so deploys do not create a fresh private workspace per version.
+Those public `main` / `dev` gateways are intended to share one machine-level `runtime-v2` daemon, so deploys do not create a fresh private workspace per version. The shared runtime core now lives in its own detached worktree and is only updated by an explicit promote step; normal `dev` syncs only roll the `dev` gateway and auto-rollback if attach healthchecks fail.
 
 See [docs/RUNTIME_SYNC.md](./docs/RUNTIME_SYNC.md) for the detached runtime worktree layout and launchd setup.
 
