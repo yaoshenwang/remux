@@ -1009,6 +1009,7 @@ export const createRemuxV2GatewayServer = (
   let runtimeControl: RuntimeV2ControlChannel | null = null;
   let started = false;
   let stopPromise: Promise<void> | null = null;
+  let feedbackDb: { close(): void } | null = null;
 
   const requireApiAuth: RequestHandler = (req, res, next) => {
     const authResult = authService.verify(readAuthHeaders(req));
@@ -1752,7 +1753,8 @@ export const createRemuxV2GatewayServer = (
       try {
         const { openDb } = await import("@microsoft/snapfeed-server");
         fs.mkdirSync(path.join(os.homedir(), ".remux"), { recursive: true });
-        const feedbackDb = openDb({ path: path.join(os.homedir(), ".remux", "feedback.db") });
+        const db = openDb({ path: path.join(os.homedir(), ".remux", "feedback.db") });
+        feedbackDb = db;
 
         app.post("/api/telemetry/events", (req, res) => {
           const body = req.body as { events?: Array<Record<string, unknown>> };
@@ -1762,12 +1764,12 @@ export const createRemuxV2GatewayServer = (
             return;
           }
 
-          const insert = feedbackDb.prepare(
+          const insert = db.prepare(
             `INSERT OR IGNORE INTO ui_telemetry
               (session_id, seq, ts, event_type, page, target, detail_json, screenshot)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           );
-          const insertMany = feedbackDb.transaction((rows: Array<Record<string, unknown>>) => {
+          const insertMany = db.transaction((rows: Array<Record<string, unknown>>) => {
             for (const event of rows) {
               insert.run(
                 event.session_id,
@@ -1832,6 +1834,7 @@ export const createRemuxV2GatewayServer = (
         return;
       }
       stopPromise = (async () => {
+        feedbackDb?.close();
         await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
         controlWss.close();
         terminalWss.close();

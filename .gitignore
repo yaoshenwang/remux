@@ -10,8 +10,7 @@ screenshots
 .playwright-mcp/
 .worktrees/
 
-# AI agent 本地指令文件（不入库）
-CLAUDE.md
+# AI agent local instruction files (CLAUDE.md is tracked as project config)
 AGENTS.md
 
 # Temp uploads from Claude Code / CleanShot
