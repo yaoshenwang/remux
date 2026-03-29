@@ -46,6 +46,9 @@ const readTerminalWidthSnapshot = async (
     const host = document.querySelector("[data-testid='terminal-host']") as HTMLElement | null;
     const viewport = document.querySelector(".terminal-host .xterm-viewport") as HTMLElement | null;
     const screen = document.querySelector(".terminal-host .xterm-screen") as HTMLElement | null;
+    const renderSurfaces = Array.from(
+      document.querySelectorAll(".terminal-host .xterm-screen, .terminal-host .xterm-viewport, .terminal-host canvas")
+    ) as HTMLElement[];
     const rows = document.querySelector(".terminal-host .xterm-rows") as HTMLElement | null;
     const measure = document.querySelector(".terminal-host .xterm-char-measure-element") as HTMLElement | null;
     const row = rows?.firstElementChild as HTMLElement | null;
@@ -53,8 +56,12 @@ const readTerminalWidthSnapshot = async (
     const terminalGeometry = window.__remuxTestTerminal?.readGeometry() ?? null;
     const hostWidth = host?.getBoundingClientRect().width ?? 0;
     const hostHeight = host?.getBoundingClientRect().height ?? 0;
-    const screenWidth = screen?.getBoundingClientRect().width ?? viewport?.getBoundingClientRect().width ?? 0;
-    const screenHeight = screen?.getBoundingClientRect().height ?? viewport?.getBoundingClientRect().height ?? 0;
+    const screenWidth = renderSurfaces.reduce((maxWidth, node) => {
+      return Math.max(maxWidth, node.getBoundingClientRect().width);
+    }, 0);
+    const screenHeight = renderSurfaces.reduce((maxHeight, node) => {
+      return Math.max(maxHeight, node.getBoundingClientRect().height);
+    }, 0);
     const measureWidth = measure?.getBoundingClientRect().width ?? 0;
     const rowHeight = row?.getBoundingClientRect().height ?? 0;
     const letterSpacing = rowStyle ? Number.parseFloat(rowStyle.letterSpacing || "0") : 0;
