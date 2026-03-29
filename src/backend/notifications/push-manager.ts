@@ -78,7 +78,11 @@ export class NotificationManager {
   ) {
     this.configDir = path.join(os.homedir(), ".remux");
     this.vapidSubject = process.env.REMUX_PUSH_SUBJECT || "mailto:remux@localhost.invalid";
-    this.vapidKeys = this.loadOrGenerateVapidKeys();
+    // When a custom pushClient is injected (testing), use its keys directly
+    // instead of loading from disk.
+    this.vapidKeys = pushClient === webpush
+      ? this.loadOrGenerateVapidKeys()
+      : pushClient.generateVAPIDKeys();
   }
 
   /** Get the VAPID public key (clients need this to subscribe). */
