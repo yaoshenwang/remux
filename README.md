@@ -141,7 +141,7 @@ npm run runtime:promote-shared
 npm run runtime:status
 ```
 
-Those public `main` / `dev` gateways are intended to share one machine-level `runtime-v2` daemon, so deploys do not create a fresh private workspace per version. The shared runtime core now lives in its own detached worktree and is only updated by an explicit promote step; normal `dev` syncs only roll the `dev` gateway and auto-rollback if attach healthchecks fail.
+Those public `main` / `dev` gateways are intended to share one machine-level `runtime-v2` daemon, so deploys do not create a fresh private workspace per version. The shared runtime core now lives in its own detached worktree and is only updated by an explicit promote step; normal `dev` syncs only roll the `dev` gateway and auto-rollback if attach healthchecks fail. Shared-core promote now has a protocol compatibility gate against the `main` and `dev` gateway sources, and every promote writes a before/after report under `$HOME/.remux/reports/`.
 
 See [docs/RUNTIME_SYNC.md](./docs/RUNTIME_SYNC.md) for the detached runtime worktree layout and launchd setup.
 

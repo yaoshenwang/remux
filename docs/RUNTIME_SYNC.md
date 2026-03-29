@@ -15,6 +15,8 @@ The new runtime flow fixes that by:
 - keeping a shared machine-level `remuxd` daemon alive across `main` / `dev` gateway restarts so both public URLs attach to the same runtime-v2 workspace truth
 - separating the shared runtime core into its own detached worktree so `dev` gateway deploys do not mutate the shared daemon by default
 - requiring an explicit promote step before the shared core moves to a newer `dev` SHA, with attach healthchecks and automatic rollback on failure
+- blocking shared-core promotion when the target runtime-v2 protocol contract does not match the `main` or `dev` gateway source contract
+- writing a promote report with before/target/after shared-runtime state under `$HOME/.remux/reports/`
 
 ## Runtime Layout
 
@@ -64,6 +66,8 @@ Promote the shared runtime core to the current `origin/dev` SHA:
 npm run runtime:promote-shared
 ```
 
+Every explicit shared-core promote prints a short compatibility summary and writes a JSON report to `$HOME/.remux/reports/shared-runtime-promote-<timestamp>.json`.
+
 Dry-run a sync:
 
 ```bash
@@ -76,6 +80,7 @@ scripts/sync-runtime.sh all --dry-run
 - public `main` and `dev` must stay on the shared local `remuxd` daemon instead of spawning per-version private runtimes
 - ordinary `dev` syncs may update the `dev` gateway only; they do not automatically replace the shared runtime core
 - only explicit shared-core promotion is allowed to move `com.remux.runtime-v2-shared` forward
+- shared-core promotion must keep the target runtime protocol identical to the `main` and `dev` gateway contracts; mismatched promotes are blocked before restart
 - if `runtime:status` shows `dirty=true`, treat that instance as out of policy
 - if `runtime:status` shows a branch or SHA mismatch, run `runtime:sync`
 - if launchd plists still point at the root repo checkout or `.worktrees/main`, rerun `runtime:install-launchd`

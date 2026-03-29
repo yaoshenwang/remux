@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { RuntimeConfig } from "../../src/backend/config.js";
+import { FakeRuntimeV2Server } from "../harness/fakeRuntimeV2Server.js";
 
 const spawnMock = vi.fn();
 
@@ -80,5 +81,28 @@ describe("runtime-v2 startup fallback safety", () => {
     });
 
     await expect(server.start()).rejects.toThrow(/spawn cargo ENOENT|failed to start remuxd/i);
+  });
+
+  test("rejects an incompatible shared runtime-v2 contract before opening sockets", async () => {
+    const upstream = new FakeRuntimeV2Server({
+      metadata: {
+        protocolVersion: "2026-04-01-breaking",
+        controlWebsocketPath: "/v3/control",
+        terminalWebsocketPath: "/v3/terminal",
+      },
+    });
+    const upstreamBaseUrl = await upstream.start();
+
+    try {
+      const { createRemuxV2GatewayServer } = await import("../../src/backend/server-v2.js");
+      const server = createRemuxV2GatewayServer(buildConfig("test-token"), {
+        logger: { log: vi.fn(), error: vi.fn() },
+        upstreamBaseUrl,
+      });
+
+      await expect(server.start()).rejects.toThrow(/runtime-v2 contract mismatch/i);
+    } finally {
+      await upstream.stop();
+    }
   });
 });

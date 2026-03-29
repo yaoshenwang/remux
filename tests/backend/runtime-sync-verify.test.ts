@@ -6,6 +6,33 @@ import { afterEach, describe, expect, test } from "vitest";
 
 const tempDirs: string[] = [];
 
+const writeRuntimeContractSource = async (
+  dir: string,
+  options?: {
+    version?: string;
+    protocolVersion?: string;
+    controlWebsocketPath?: string;
+    terminalWebsocketPath?: string;
+  },
+): Promise<void> => {
+  const version = options?.version ?? "0.2.99";
+  const protocolVersion = options?.protocolVersion ?? "2026-03-27-draft";
+  const controlWebsocketPath = options?.controlWebsocketPath ?? "/v2/control";
+  const terminalWebsocketPath = options?.terminalWebsocketPath ?? "/v2/terminal";
+
+  await fs.promises.mkdir(path.join(dir, "crates", "remux-core", "src"), { recursive: true });
+  await fs.promises.mkdir(path.join(dir, "crates", "remux-server", "src"), { recursive: true });
+  await fs.promises.writeFile(path.join(dir, "package.json"), JSON.stringify({ version }, null, 2));
+  await fs.promises.writeFile(
+    path.join(dir, "crates", "remux-core", "src", "lib.rs"),
+    `pub const RUNTIME_V2_PROTOCOL_VERSION: &str = "${protocolVersion}";\n`,
+  );
+  await fs.promises.writeFile(
+    path.join(dir, "crates", "remux-server", "src", "lib.rs"),
+    `fn build_router() {\n    Router::new()\n        .route("${controlWebsocketPath}", get(control_socket))\n        .route("${terminalWebsocketPath}", get(terminal_socket));\n}\n`,
+  );
+};
+
 afterEach(async () => {
   await Promise.all(tempDirs.map((dir) => fs.promises.rm(dir, { recursive: true, force: true })));
   tempDirs.length = 0;
@@ -100,6 +127,78 @@ printf 'node=%s\\n' "$(command -v node)" >> "${npmLogPath}"
 
     await expect(fs.promises.readFile(npmLogPath, "utf8")).resolves.toContain("ci --include=dev");
     await expect(fs.promises.readFile(npmLogPath, "utf8")).resolves.toContain(`node=${runtimeNodeBin}`);
+  });
+
+  test("reads a runtime-v2 contract from source files", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-contract-source-test-"));
+    tempDirs.push(tempHome);
+
+    const targetDir = path.join(tempHome, "runtime-source");
+    await writeRuntimeContractSource(targetDir, {
+      version: "0.3.10",
+      protocolVersion: "2026-04-02",
+      controlWebsocketPath: "/v3/control",
+      terminalWebsocketPath: "/v3/terminal",
+    });
+
+    const output = execFileSync(
+      "bash",
+      ["-c", "source scripts/runtime-lib.sh && source_runtime_contract_json \"$TARGET_DIR\""],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          TARGET_DIR: targetDir,
+        },
+        stdio: "pipe",
+      },
+    ).toString("utf8");
+
+    expect(JSON.parse(output)).toMatchObject({
+      version: "0.3.10",
+      protocolVersion: "2026-04-02",
+      controlWebsocketPath: "/v3/control",
+      terminalWebsocketPath: "/v3/terminal",
+    });
+  });
+
+  test("summarizes mismatched runtime-v2 contracts between target and gateway sources", async () => {
+    const tempHome = await fs.promises.mkdtemp(path.join(os.tmpdir(), "remux-runtime-contract-diff-test-"));
+    tempDirs.push(tempHome);
+
+    const targetDir = path.join(tempHome, "target");
+    const gatewayDir = path.join(tempHome, "gateway");
+    await writeRuntimeContractSource(targetDir, {
+      protocolVersion: "2026-04-02",
+      controlWebsocketPath: "/v3/control",
+      terminalWebsocketPath: "/v3/terminal",
+    });
+    await writeRuntimeContractSource(gatewayDir, {
+      protocolVersion: "2026-03-27-draft",
+      controlWebsocketPath: "/v2/control",
+      terminalWebsocketPath: "/v2/terminal",
+    });
+
+    const output = execFileSync(
+      "bash",
+      [
+        "-c",
+        "source scripts/runtime-lib.sh && TARGET=$(source_runtime_contract_json \"$TARGET_DIR\") && GATEWAY=$(source_runtime_contract_json \"$GATEWAY_DIR\") && runtime_contract_diff_summary \"$TARGET\" \"$GATEWAY\"",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          TARGET_DIR: targetDir,
+          GATEWAY_DIR: gatewayDir,
+        },
+        stdio: "pipe",
+      },
+    ).toString("utf8");
+
+    expect(output).toContain("protocolVersion expected=2026-03-27-draft actual=2026-04-02");
+    expect(output).toContain("controlWebsocketPath expected=/v2/control actual=/v3/control");
+    expect(output).toContain("terminalWebsocketPath expected=/v2/terminal actual=/v3/terminal");
   });
 
   test("accepts legacy config payloads that only expose version", async () => {

@@ -62,7 +62,7 @@ npm run runner:remove
 
 The `Deploy Runtime` workflow already runs `install-launchd` and `sync-runtime`, so a manual bootstrap is not required after merge.
 
-When you want to advance the shared `runtime-v2` core itself, use `workflow_dispatch` and set `promote_shared_runtime=true`. That path runs the attach healthchecks and rolls back automatically if the promoted shared runtime breaks either public gateway.
+When you want to advance the shared `runtime-v2` core itself, use `workflow_dispatch` and set `promote_shared_runtime=true`. That path runs the protocol compatibility gate against the `main` and `dev` gateway sources, executes the attach healthchecks, rolls back automatically if the promoted shared runtime breaks either public gateway, and writes a promote report under `$HOME/.remux/reports/`.
 
 If you want to preheat the runtime services from the runner workspace clone before the first workflow run, use:
 

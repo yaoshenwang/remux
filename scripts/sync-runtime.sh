@@ -83,6 +83,81 @@ run_gateway_healthchecks() {
   fi
 }
 
+shared_runtime_promote_report() {
+  local status="$1"
+  local before_json="$2"
+  local target_json="$3"
+  local after_json="$4"
+  local main_gateway_json="$5"
+  local dev_gateway_json="$6"
+  local report_dir report_path
+
+  report_dir="$RUNTIME_STATE_ROOT/reports"
+  report_path="$report_dir/shared-runtime-promote-$(date -u +"%Y%m%dT%H%M%SZ").json"
+  mkdir -p "$report_dir"
+
+  "$(resolve_runtime_node_bin)" - "$report_path" "$status" "$before_json" "$target_json" "$after_json" "$main_gateway_json" "$dev_gateway_json" <<'NODE'
+const fs = require("fs");
+
+const [reportPath, status, beforeRaw, targetRaw, afterRaw, mainRaw, devRaw] = process.argv.slice(2);
+const parse = (raw) => (raw ? JSON.parse(raw) : null);
+
+fs.writeFileSync(
+  reportPath,
+  JSON.stringify(
+    {
+      status,
+      generatedAt: new Date().toISOString(),
+      beforeSharedRuntime: parse(beforeRaw),
+      targetSharedRuntimeContract: parse(targetRaw),
+      afterSharedRuntime: parse(afterRaw),
+      gateways: {
+        main: parse(mainRaw),
+        dev: parse(devRaw),
+      },
+    },
+    null,
+    2,
+  ),
+);
+NODE
+
+  echo "[sync] shared runtime promote report ($status)"
+  echo "  report:       $report_path"
+  if [[ -n "$before_json" ]]; then
+    echo "  before:       $(runtime_contract_summary "$before_json")"
+  fi
+  echo "  target:       $(runtime_contract_summary "$target_json")"
+  echo "  gateway main: $(runtime_contract_summary "$main_gateway_json") compat=$(runtime_contract_compat_label "$target_json" "$main_gateway_json")"
+  echo "  gateway dev:  $(runtime_contract_summary "$dev_gateway_json") compat=$(runtime_contract_compat_label "$target_json" "$dev_gateway_json")"
+  if [[ -n "$after_json" ]]; then
+    echo "  after:        $(runtime_contract_summary "$after_json")"
+  fi
+}
+
+verify_shared_runtime_target_compatible() {
+  local target_json="$1"
+  local main_gateway_json="$2"
+  local dev_gateway_json="$3"
+  local failed=false
+
+  if ! runtime_contract_matches "$target_json" "$main_gateway_json"; then
+    echo "[sync] shared runtime target is incompatible with main gateway source: $(runtime_contract_diff_summary "$target_json" "$main_gateway_json")" >&2
+    failed=true
+  fi
+
+  if ! runtime_contract_matches "$target_json" "$dev_gateway_json"; then
+    echo "[sync] shared runtime target is incompatible with dev gateway source: $(runtime_contract_diff_summary "$target_json" "$dev_gateway_json")" >&2
+    failed=true
+  fi
+
+  if [[ "$failed" == true ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
 restart_and_verify_gateway() {
   local name="$1"
   local branch dir sha version
@@ -168,8 +243,10 @@ promote_shared_runtime() {
   local target_sha="$1"
   local target_version="$2"
   local shared_dir previous_sha previous_version
+  local before_shared_json target_contract_json main_gateway_contract_json dev_gateway_contract_json after_shared_json
 
   ensure_shared_runtime_worktree
+  ensure_runtime_worktree main
   verify_shared_runtime_plist
 
   if ! shared_worktree_is_clean; then
@@ -177,12 +254,27 @@ promote_shared_runtime() {
     return 1
   fi
 
+  if ! worktree_is_clean main; then
+    echo "[sync] main runtime worktree is dirty: $(runtime_dir main)" >&2
+    return 1
+  fi
+
   shared_dir="$(runtime_shared_dir)"
   previous_sha="$(current_shared_worktree_sha)"
   previous_version="$(package_version_for_ref "$shared_dir" HEAD)"
+  before_shared_json="$(shared_runtime_meta_json 2>/dev/null || true)"
+  target_contract_json="$(source_runtime_contract_json_for_ref "$(runtime_dir dev)" "$target_sha")"
+  main_gateway_contract_json="$(source_runtime_contract_json "$(runtime_dir main)")"
+  dev_gateway_contract_json="$target_contract_json"
+
+  if ! verify_shared_runtime_target_compatible "$target_contract_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"; then
+    shared_runtime_promote_report "blocked" "$before_shared_json" "$target_contract_json" "" "$main_gateway_contract_json" "$dev_gateway_contract_json"
+    return 1
+  fi
 
   if [[ "$previous_sha" == "$target_sha" ]] && shared_runtime_matches_expected "$target_sha" "$(runtime_shared_branch)" "$target_version"; then
     echo "[sync] shared runtime-v2 already aligned at $target_version ($target_sha)"
+    shared_runtime_promote_report "noop" "$before_shared_json" "$target_contract_json" "$before_shared_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"
     return 0
   fi
 
@@ -192,21 +284,38 @@ promote_shared_runtime() {
   if ! ensure_shared_runtime_matches_expected "$target_sha" "$(runtime_shared_branch)" "$target_version"; then
     echo "[sync] shared runtime verification failed after promote" >&2
     rollback_shared_runtime "$previous_sha" "$previous_version" "$target_sha" || true
+    after_shared_json="$(shared_runtime_meta_json 2>/dev/null || true)"
+    shared_runtime_promote_report "rolled-back" "$before_shared_json" "$target_contract_json" "$after_shared_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"
+    return 1
+  fi
+
+  after_shared_json="$(shared_runtime_meta_json)"
+  if ! runtime_contract_matches "$after_shared_json" "$target_contract_json"; then
+    echo "[sync] shared runtime contract verification failed after promote: $(runtime_contract_diff_summary "$after_shared_json" "$target_contract_json")" >&2
+    rollback_shared_runtime "$previous_sha" "$previous_version" "$target_sha" || true
+    after_shared_json="$(shared_runtime_meta_json 2>/dev/null || true)"
+    shared_runtime_promote_report "rolled-back" "$before_shared_json" "$target_contract_json" "$after_shared_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"
     return 1
   fi
 
   if ! restart_and_verify_gateway dev || ! restart_and_verify_gateway main; then
     echo "[sync] gateway restart failed after shared runtime promote" >&2
     rollback_shared_runtime "$previous_sha" "$previous_version" "$target_sha" || true
+    after_shared_json="$(shared_runtime_meta_json 2>/dev/null || true)"
+    shared_runtime_promote_report "rolled-back" "$before_shared_json" "$target_contract_json" "$after_shared_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"
     return 1
   fi
 
   if ! run_gateway_healthchecks dev || ! run_gateway_healthchecks main; then
     echo "[sync] attach healthcheck failed after shared runtime promote" >&2
     rollback_shared_runtime "$previous_sha" "$previous_version" "$target_sha" || true
+    after_shared_json="$(shared_runtime_meta_json 2>/dev/null || true)"
+    shared_runtime_promote_report "rolled-back" "$before_shared_json" "$target_contract_json" "$after_shared_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"
     return 1
   fi
 
+  after_shared_json="$(shared_runtime_meta_json)"
+  shared_runtime_promote_report "applied" "$before_shared_json" "$target_contract_json" "$after_shared_json" "$main_gateway_contract_json" "$dev_gateway_contract_json"
   echo "[sync] shared runtime-v2 aligned at $target_version ($target_sha)"
 }
 

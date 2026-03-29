@@ -37,6 +37,10 @@ import {
   findRuntimeTabByLegacyIndex,
   resolveLegacyAttachedSession,
 } from "./v2/translation.js";
+import {
+  EXPECTED_RUNTIME_V2_CONTRACT,
+  assertCompatibleRuntimeV2Metadata,
+} from "./v2/runtime-contract.js";
 import type {
   RuntimeV2ControlClientMessage,
   RuntimeV2ControlServerMessage,
@@ -384,6 +388,7 @@ class RuntimeV2ControlChannel {
       }
       return await response.json() as RuntimeV2Metadata;
     });
+    assertCompatibleRuntimeV2Metadata(metadata);
     this.metadata = metadata;
 
     const socket = new WebSocket(`${toWsOrigin(this.baseUrl)}${metadata.controlWebsocketPath}`);
@@ -1039,6 +1044,9 @@ export const createRemuxV2GatewayServer = (
       backendKind: RUNTIME_V2_BACKEND_KIND,
       runtimeMode: RUNTIME_V2_BACKEND_KIND,
       protocolVersion: runtimeControl?.currentMetadata().protocolVersion ?? null,
+      supportedRuntimeProtocolVersion: EXPECTED_RUNTIME_V2_CONTRACT.protocolVersion,
+      supportedRuntimeControlWebsocketPath: EXPECTED_RUNTIME_V2_CONTRACT.controlWebsocketPath,
+      supportedRuntimeTerminalWebsocketPath: EXPECTED_RUNTIME_V2_CONTRACT.terminalWebsocketPath,
       upstreamBaseUrl: runtimeTarget?.baseUrl ?? null,
       platform: process.platform,
       arch: process.arch,
