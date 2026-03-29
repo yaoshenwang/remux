@@ -17,16 +17,96 @@ const buildBinaryStreamFrame = (sequence: number, text: string): Buffer => {
   return Buffer.concat([header, Buffer.from(text, "utf8")]);
 };
 
-const createBrowserSocket = (): { sent: Buffer[]; socket: WebSocket } => {
+const createBrowserSocket = (
+  options: { autoDrain?: boolean } = {},
+): {
+  sent: Buffer[];
+  socket: WebSocket;
+  flushNext: () => void;
+  flushAll: () => void;
+  pendingCallbacks: () => number;
+} => {
+  const { autoDrain = true } = options;
   const sent: Buffer[] = [];
+  const callbacks: Array<() => void> = [];
   const socket = {
     OPEN: WebSocket.OPEN,
     readyState: WebSocket.OPEN,
-    send: (payload: string | Uint8Array | Buffer) => {
+    send: (
+      payload: string | Uint8Array | Buffer,
+      callback?: (error?: Error) => void,
+    ) => {
       sent.push(Buffer.isBuffer(payload) ? payload : Buffer.from(payload));
+      if (!callback) {
+        return;
+      }
+      if (autoDrain) {
+        callback();
+        return;
+      }
+      callbacks.push(() => callback());
     },
   } as unknown as WebSocket;
-  return { sent, socket };
+  return {
+    sent,
+    socket,
+    flushNext: () => {
+      callbacks.shift()?.();
+    },
+    flushAll: () => {
+      while (callbacks.length > 0) {
+        callbacks.shift()?.();
+      }
+    },
+    pendingCallbacks: () => callbacks.length,
+  };
+};
+
+const createBufferedBrowserSocket = (
+  options: { autoFlushCount?: number } = {},
+): {
+  sent: Buffer[];
+  socket: WebSocket;
+  flushNext: () => void;
+  flushAll: () => void;
+  pendingCallbacks: () => number;
+} => {
+  const { autoFlushCount = 0 } = options;
+  const sent: Buffer[] = [];
+  const callbacks: Array<() => void> = [];
+  let sendCount = 0;
+  const socket = {
+    OPEN: WebSocket.OPEN,
+    readyState: WebSocket.OPEN,
+    send: (
+      payload: string | Uint8Array | Buffer,
+      callback?: (error?: Error) => void,
+    ) => {
+      sendCount += 1;
+      const flush = () => {
+        sent.push(Buffer.isBuffer(payload) ? payload : Buffer.from(payload));
+        callback?.();
+      };
+      if (sendCount <= autoFlushCount) {
+        flush();
+        return;
+      }
+      callbacks.push(flush);
+    },
+  } as unknown as WebSocket;
+  return {
+    sent,
+    socket,
+    flushNext: () => {
+      callbacks.shift()?.();
+    },
+    flushAll: () => {
+      while (callbacks.length > 0) {
+        callbacks.shift()?.();
+      }
+    },
+    pendingCallbacks: () => callbacks.length,
+  };
 };
 
 type RuntimeInboundMessage =
@@ -159,6 +239,8 @@ describe("SharedRuntimeV2PaneBridge", () => {
 
   afterEach(async () => {
     delete process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS;
+    delete process.env.REMUX_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES;
+    delete process.env.REMUX_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES;
     await bridge?.close().catch(() => undefined);
     runtimeWss.clients.forEach((client) => client.terminate());
     await new Promise<void>((resolve) => runtimeWss.close(() => resolve()));
@@ -384,6 +466,165 @@ describe("SharedRuntimeV2PaneBridge", () => {
 
     const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
     expect(restored.match(/\u001bc/g)?.length ?? 0).toBe(1);
+  });
+
+  test("continues patch replay from the last applied revision while the idle refresh snapshot is still pending", async () => {
+    delaySnapshotResponses = true;
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-1",
+      firstBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+
+    await expect.poll(() => attachCount).toBe(1);
+    const initialSnapshot = JSON.parse(firstBrowser.sent[0]!.toString("utf8")) as {
+      revision: number;
+      reset: boolean;
+      source: string;
+    };
+    expect(initialSnapshot).toMatchObject({
+      revision: 1,
+      reset: true,
+      source: "snapshot",
+    });
+
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("REVISION-TWO\r\n"),
+    }));
+
+    await expect.poll(() => firstBrowser.sent.length).toBe(2);
+    const liveFrame = JSON.parse(firstBrowser.sent[1]!.toString("utf8")) as {
+      revision: number;
+      baseRevision: number | null;
+      reset: boolean;
+    };
+    expect(liveFrame).toMatchObject({
+      revision: 2,
+      baseRevision: 1,
+      reset: false,
+    });
+
+    await bridge.unsubscribe("viewer-1");
+    await expect.poll(() => snapshotRequestCount).toBe(1);
+
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 3,
+      chunk_base64: encodeBase64("MISSED-REVISION-THREE\r\n"),
+    }));
+
+    const resumedBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-2",
+      resumedBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+        baseRevision: 2,
+      },
+    );
+
+    await expect.poll(() => resumedBrowser.sent.length).toBe(1);
+    const resumedFrame = JSON.parse(resumedBrowser.sent[0]!.toString("utf8")) as {
+      revision: number;
+      baseRevision: number | null;
+      reset: boolean;
+      source: string;
+      dataBase64: string;
+    };
+    expect(resumedFrame).toMatchObject({
+      revision: 3,
+      baseRevision: 2,
+      reset: false,
+      source: "stream",
+    });
+    expect(Buffer.from(resumedFrame.dataBase64, "base64").toString("utf8")).toBe("MISSED-REVISION-THREE\r\n");
+
+    pendingSnapshotSend?.();
+    pendingSnapshotSend = null;
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(resumedBrowser.sent).toHaveLength(1);
+  });
+
+  test("drops queued stream backlog for a slow patch viewer and resyncs it with a fresh snapshot", async () => {
+    process.env.REMUX_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES = "80";
+    process.env.REMUX_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES = "32";
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const slowBrowser = createBufferedBrowserSocket({ autoFlushCount: 1 });
+    await bridge.subscribe(
+      "viewer-1",
+      slowBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+
+    await expect.poll(() => attachCount).toBe(1);
+    expect(slowBrowser.sent).toHaveLength(1);
+
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("BLOCKED-FIRST-STREAM ".repeat(6)),
+    }));
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 3,
+      chunk_base64: encodeBase64("STALE-QUEUED-ONE ".repeat(6)),
+    }));
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 4,
+      chunk_base64: encodeBase64("STALE-QUEUED-TWO ".repeat(6)),
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(snapshotRequestCount).toBe(0);
+    expect(slowBrowser.pendingCallbacks()).toBeGreaterThan(0);
+
+    slowBrowser.flushAll();
+
+    await expect.poll(() => slowBrowser.sent.length).toBeGreaterThanOrEqual(3);
+    const deliveredFrames = slowBrowser.sent.map((frame) => JSON.parse(frame.toString("utf8")) as {
+      source: string;
+      reset: boolean;
+      dataBase64: string;
+    });
+    expect(deliveredFrames.filter((frame) => frame.source === "stream").length).toBeLessThan(3);
+    const resyncSnapshot = deliveredFrames.findLast((frame) => frame.source === "snapshot" && frame.reset);
+    expect(resyncSnapshot).toMatchObject({
+      source: "snapshot",
+      reset: true,
+    });
+    const finalSnapshotText = Buffer.from(resyncSnapshot!.dataBase64, "base64").toString("utf8");
+    expect(finalSnapshotText).toContain("BLOCKED-FIRST-STREAM");
+    expect(finalSnapshotText).toContain("STALE-QUEUED-ONE");
   });
 
   test("keeps upstream PTY size pinned to the resize owner when passive viewers resize", async () => {
@@ -672,5 +913,75 @@ describe("SharedRuntimeV2PaneBridge", () => {
       source: "stream",
     });
     expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("PATCH-LIVE\r\n");
+  });
+
+  test("downgrades a slow patch viewer backlog to a fresh snapshot without blocking fast viewers", async () => {
+    process.env.REMUX_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES = "200";
+    process.env.REMUX_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES = "80";
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const fastBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "fast-viewer",
+      fastBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+    await expect.poll(() => attachCount).toBe(1);
+
+    const slowBrowser = createBrowserSocket({ autoDrain: false });
+    await bridge.subscribe(
+      "slow-viewer",
+      slowBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+    slowBrowser.flushAll();
+
+    const liveChunk = "SLOW-VIEWER-LIVE-OUTPUT ".repeat(6) + "\r\n";
+    for (let index = 0; index < 4; index += 1) {
+      runtimeSocket?.send(JSON.stringify({
+        type: "stream",
+        sequence: 2 + index,
+        chunk_base64: encodeBase64(liveChunk),
+      }));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(snapshotRequestCount).toBe(0);
+
+    const fastFrames = fastBrowser.sent
+      .map((frame) => JSON.parse(frame.toString("utf8")) as { source: string; reset: boolean });
+    expect(fastFrames.filter((frame) => frame.source === "stream")).toHaveLength(4);
+    expect(fastFrames.filter((frame) => frame.source === "snapshot" && frame.reset)).toHaveLength(1);
+
+    expect(slowBrowser.pendingCallbacks()).toBeGreaterThan(0);
+    const slowFramesBeforeDrain = slowBrowser.sent
+      .map((frame) => JSON.parse(frame.toString("utf8")) as { source: string; reset: boolean });
+    expect(slowFramesBeforeDrain.filter((frame) => frame.source === "stream")).toHaveLength(1);
+
+    slowBrowser.flushNext();
+
+    await expect.poll(() => slowBrowser.sent.length).toBeGreaterThanOrEqual(3);
+    const lastSlowFrame = JSON.parse(
+      slowBrowser.sent[slowBrowser.sent.length - 1]!.toString("utf8"),
+    ) as { source: string; reset: boolean; dataBase64: string };
+    expect(lastSlowFrame).toMatchObject({
+      source: "snapshot",
+      reset: true,
+    });
+    expect(Buffer.from(lastSlowFrame.dataBase64, "base64").toString("utf8")).toContain("SLOW-VIEWER-LIVE-OUTPUT");
   });
 });

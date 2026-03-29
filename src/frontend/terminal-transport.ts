@@ -57,10 +57,54 @@ export const decodeTerminalPatchData = (message: TerminalPatchMessage): Uint8Arr
   return bytes;
 };
 
+export const resolveTerminalPatchDisposition = (
+  message: TerminalPatchMessage,
+  activeViewRevision: number | null | undefined,
+  lastAppliedRevision: number | null | undefined,
+): { apply: boolean; reason: "ok" | "stale_view" | "revision_gap" } => {
+  if (
+    typeof activeViewRevision === "number"
+    && Number.isFinite(activeViewRevision)
+    && message.viewRevision !== activeViewRevision
+  ) {
+    return { apply: false, reason: "stale_view" };
+  }
+  if (message.reset) {
+    return { apply: true, reason: "ok" };
+  }
+  if (typeof lastAppliedRevision === "number" && Number.isFinite(lastAppliedRevision)) {
+    return message.baseRevision === lastAppliedRevision
+      ? { apply: true, reason: "ok" }
+      : { apply: false, reason: "revision_gap" };
+  }
+  return message.baseRevision === null
+    ? { apply: true, reason: "ok" }
+    : { apply: false, reason: "revision_gap" };
+};
+
 export const shouldApplyTerminalPatch = (
   message: TerminalPatchMessage,
   activeViewRevision: number | null | undefined,
+  lastAppliedRevision?: number | null,
 ): boolean =>
-  typeof activeViewRevision !== "number" || !Number.isFinite(activeViewRevision)
-    ? true
-    : message.viewRevision === activeViewRevision;
+  resolveTerminalPatchDisposition(message, activeViewRevision, lastAppliedRevision).apply;
+
+export const resolveTerminalBaseRevision = (
+  activeViewRevision: number | null | undefined,
+  lastAppliedViewRevision: number | null | undefined,
+  lastAppliedRevision: number | null | undefined,
+): number | undefined => {
+  if (
+    typeof activeViewRevision !== "number"
+    || !Number.isFinite(activeViewRevision)
+    || typeof lastAppliedViewRevision !== "number"
+    || !Number.isFinite(lastAppliedViewRevision)
+    || activeViewRevision !== lastAppliedViewRevision
+    || typeof lastAppliedRevision !== "number"
+    || !Number.isFinite(lastAppliedRevision)
+    || lastAppliedRevision < 0
+  ) {
+    return undefined;
+  }
+  return lastAppliedRevision;
+};
