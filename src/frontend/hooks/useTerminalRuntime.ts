@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "../themes";
 import type { ToolbarHandle } from "../components/Toolbar";
+import { loadPreferredTerminalRenderer } from "../terminal-renderer";
 
 interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
@@ -36,6 +37,7 @@ interface UseTerminalRuntimeResult {
 }
 
 const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLayout ? 12 : 14;
+const TERMINAL_RESIZE_DEBOUNCE_MS = 80;
 
 export const useTerminalRuntime = ({
   mobileLayout,
@@ -58,10 +60,12 @@ export const useTerminalRuntime = ({
   const focusTerminalRef = useRef<() => void>(() => undefined);
   const fitFrameRef = useRef<number | null>(null);
   const fitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastResizeSignatureRef = useRef("");
   const lastResizeSocketRef = useRef<WebSocket | null>(null);
   const requestTerminalFitRef = useRef<(options?: TerminalFitOptions) => void>(() => undefined);
   const terminalVisibleRef = useRef(terminalVisible);
+  const rendererAddonRef = useRef<{ dispose(): void } | null>(null);
 
   sendRawToSocketRef.current = onSendRaw;
   setStatusMessageRef.current = setStatusMessage;
@@ -78,7 +82,14 @@ export const useTerminalRuntime = ({
     }
   }, []);
 
-  const sendTerminalResize = useCallback((): void => {
+  const clearPendingResize = useCallback((): void => {
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+  }, []);
+
+  const sendTerminalResizeNow = useCallback((): void => {
     const socket = terminalSocketRef.current;
     const terminal = terminalRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN || !terminal) {
@@ -97,6 +108,14 @@ export const useTerminalRuntime = ({
     lastResizeSignatureRef.current = signature;
   }, [terminalSocketRef]);
 
+  const scheduleTerminalResize = useCallback((): void => {
+    clearPendingResize();
+    resizeTimerRef.current = window.setTimeout(() => {
+      resizeTimerRef.current = null;
+      sendTerminalResizeNow();
+    }, TERMINAL_RESIZE_DEBOUNCE_MS);
+  }, [clearPendingResize, sendTerminalResizeNow]);
+
   const applyTerminalFit = useCallback((notify: boolean): boolean => {
     const container = terminalContainerRef.current;
     const terminal = terminalRef.current;
@@ -114,11 +133,11 @@ export const useTerminalRuntime = ({
 
     if (notify) {
       // Keep the runtime terminal size aligned with the visible container.
-      sendTerminalResize();
+      scheduleTerminalResize();
     }
 
     return true;
-  }, [mobileLayout, sendTerminalResize]);
+  }, [mobileLayout, scheduleTerminalResize]);
 
   const requestTerminalFit = useCallback((options: TerminalFitOptions = {}): void => {
     const { notify = true, retryUntilVisible = false } = options;
@@ -223,6 +242,7 @@ export const useTerminalRuntime = ({
     const serializeAddon = new SerializeAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(serializeAddon);
+    rendererAddonRef.current = loadPreferredTerminalRenderer(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
       const modifierKey = navigator.platform.toLowerCase().includes("mac")
         ? event.metaKey
@@ -286,9 +306,12 @@ export const useTerminalRuntime = ({
 
     return () => {
       clearPendingFit();
+      clearPendingResize();
       resizeObserver.disconnect();
       fontSet?.removeEventListener?.("loadingdone", handleFontsChanged);
       disposable.dispose();
+      rendererAddonRef.current?.dispose();
+      rendererAddonRef.current = null;
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -298,7 +321,7 @@ export const useTerminalRuntime = ({
     };
   // Terminal initialization happens once; subsequent layout changes use
   // requestTerminalFit plus the effects below instead of recreating xterm.
-  }, []);
+  }, [clearPendingFit, clearPendingResize]);
 
   useEffect(() => {
     const themeConfig = themes[theme];

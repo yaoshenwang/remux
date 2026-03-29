@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type {
   RuntimeV2InspectSnapshot,
   RuntimeV2SplitDirection,
@@ -42,7 +42,9 @@ type FakeRuntimeV2TerminalClientMessage =
 
 export interface TerminalObservation {
   attachCount: number;
+  inputFrameTypes: Array<"text" | "binary">;
   paneId: string;
+  requestSnapshotCount: number;
   sizes: RuntimeV2TerminalSize[];
   writes: string[];
 }
@@ -62,6 +64,7 @@ export class FakeRuntimeV2Server {
   private readonly paneContent = new Map<string, string>();
   private readonly paneScrollback = new Map<string, string[]>();
   private terminalClientSequence = 0;
+  private terminalStreamTransport: "text" | "binary" = "text";
   private paneSequence = 1;
   private nextTerminalSnapshotDelayMs = 0;
   private workspace: RuntimeV2WorkspaceSummary;
@@ -208,6 +211,10 @@ export class FakeRuntimeV2Server {
     return Array.from(this.terminalObservations.values()).flatMap((observation) => observation.writes);
   }
 
+  setTerminalStreamTransport(mode: "text" | "binary"): void {
+    this.terminalStreamTransport = mode;
+  }
+
   delayNextTerminalSnapshot(delayMs: number): void {
     this.nextTerminalSnapshotDelayMs = Math.max(0, delayMs);
   }
@@ -351,7 +358,18 @@ export class FakeRuntimeV2Server {
     let attachedPaneId = "pane-1";
     let terminalClientId = "terminal-client-1";
 
-    socket.on("message", (raw) => {
+    socket.on("message", (raw, isBinary) => {
+      if (isBinary) {
+        const chunk = this.readRawData(raw).toString("utf8");
+        const observation = this.observeTerminal(attachedPaneId);
+        observation.inputFrameTypes.push("binary");
+        observation.writes.push(chunk);
+        const next = `${this.getPaneContent(attachedPaneId)}${chunk}`;
+        this.setPaneContent(attachedPaneId, next);
+        this.sendTerminalStream(socket, chunk, observation.writes.length + observation.attachCount);
+        return;
+      }
+
       const message = JSON.parse(raw.toString("utf8")) as FakeRuntimeV2TerminalClientMessage;
       switch (message.type) {
         case "attach": {
@@ -374,14 +392,11 @@ export class FakeRuntimeV2Server {
         case "input": {
           const chunk = Buffer.from(message.data_base64, "base64").toString("utf8");
           const observation = this.observeTerminal(attachedPaneId);
+          observation.inputFrameTypes.push("text");
           observation.writes.push(chunk);
           const next = `${this.getPaneContent(attachedPaneId)}${chunk}`;
           this.setPaneContent(attachedPaneId, next);
-          socket.send(JSON.stringify({
-            type: "stream",
-            sequence: observation.writes.length + observation.attachCount,
-            chunk_base64: encodeBase64(chunk),
-          }));
+          this.sendTerminalStream(socket, chunk, observation.writes.length + observation.attachCount);
           return;
         }
         case "resize": {
@@ -390,7 +405,8 @@ export class FakeRuntimeV2Server {
           socket.send(JSON.stringify({ type: "resize_confirmed", size: message.size }));
           return;
         }
-        case "request_snapshot":
+        case "request_snapshot": {
+          this.observeTerminal(attachedPaneId).requestSnapshotCount += 1;
           this.sendTerminalSnapshot(
             socket,
             attachedPaneId,
@@ -398,6 +414,8 @@ export class FakeRuntimeV2Server {
             (this.latestTerminal(attachedPaneId)?.attachCount ?? 0) + 10,
             this.takeTerminalSnapshotDelay(),
           );
+          return;
+        }
       }
     });
   }
@@ -416,13 +434,28 @@ export class FakeRuntimeV2Server {
     if (!observation) {
       observation = {
         attachCount: 0,
+        inputFrameTypes: [],
         paneId,
+        requestSnapshotCount: 0,
         sizes: [],
         writes: [],
       };
       this.terminalObservations.set(paneId, observation);
     }
     return observation;
+  }
+
+  private readRawData(raw: RawData): Buffer {
+    if (Buffer.isBuffer(raw)) {
+      return raw;
+    }
+    if (raw instanceof ArrayBuffer) {
+      return Buffer.from(raw);
+    }
+    if (Array.isArray(raw)) {
+      return Buffer.concat(raw);
+    }
+    return Buffer.from(raw);
   }
 
   private buildPaneReplay(paneId: string): string {
@@ -481,5 +514,18 @@ export class FakeRuntimeV2Server {
       return;
     }
     send();
+  }
+
+  private sendTerminalStream(socket: WebSocket, chunk: string, sequence: number): void {
+    if (this.terminalStreamTransport === "binary") {
+      socket.send(Buffer.from(chunk, "utf8"));
+      return;
+    }
+
+    socket.send(JSON.stringify({
+      type: "stream",
+      sequence,
+      chunk_base64: encodeBase64(chunk),
+    }));
   }
 }

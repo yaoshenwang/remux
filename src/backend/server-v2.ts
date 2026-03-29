@@ -96,6 +96,8 @@ const RUNTIME_V2_BACKEND_KIND = "runtime-v2";
 const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 const DEFAULT_TERMINAL_SIZE: RuntimeV2TerminalSize = { cols: 80, rows: 24 };
 const MAX_BUFFERED_TERMINAL_BYTES = 256 * 1024;
+const TERMINAL_RESIZE_SETTLE_MS = 120;
+const TERMINAL_RESET_BYTES = Buffer.from("\u001bc", "utf8");
 
 const backendCapabilities: BackendCapabilities = {
   supportsPaneFocusById: true,
@@ -115,10 +117,23 @@ const frontendFallbackRoute = "/{*path}";
 
 const isWebSocketPath = (requestPath: string): boolean => requestPath.startsWith("/ws/");
 
-const sendRaw = (socket: WebSocket, payload: string): void => {
+const sendRaw = (socket: WebSocket, payload: string | Uint8Array | Buffer): void => {
   if (socket.readyState === socket.OPEN) {
     socket.send(payload);
   }
+};
+
+const toBuffer = (raw: RawData): Buffer => {
+  if (Buffer.isBuffer(raw)) {
+    return raw;
+  }
+  if (raw instanceof ArrayBuffer) {
+    return Buffer.from(raw);
+  }
+  if (Array.isArray(raw)) {
+    return Buffer.concat(raw);
+  }
+  return Buffer.from(raw);
 };
 
 const toWsOrigin = (baseUrl: string): string => {
@@ -129,10 +144,6 @@ const toWsOrigin = (baseUrl: string): string => {
   url.hash = "";
   return url.toString().replace(/\/$/, "");
 };
-
-const encodeBase64 = (text: string): string => Buffer.from(text, "utf8").toString("base64");
-
-const decodeBase64 = (value: string): string => Buffer.from(value, "base64").toString("utf8");
 
 type TerminalSizePolicy = "largest" | "smallest" | "latest";
 
@@ -491,13 +502,14 @@ class SharedRuntimeV2PaneBridge {
   private socket: WebSocket | null = null;
   private attachVersion = 0;
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
-  private latestSnapshotPayload: string | null = null;
+  private latestSnapshotPayload: Buffer | null = null;
   private latestViewerId: string | null = null;
   private readonly subscribers = new Map<string, WebSocket>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
-  private readonly bufferedChunks: string[] = [];
+  private readonly bufferedChunks: Buffer[] = [];
   private bufferedChunkBytes = 0;
   private mutationQueue = Promise.resolve();
+  private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly paneId: string,
@@ -550,15 +562,14 @@ class SharedRuntimeV2PaneBridge {
     });
   }
 
-  write(input: string): void {
+  write(input: string | Uint8Array): void {
     if (!this.socket || this.socket.readyState !== this.socket.OPEN) {
       return;
     }
-    const payload: RuntimeV2TerminalClientMessage = {
-      type: "input",
-      dataBase64: encodeBase64(input),
-    };
-    this.socket.send(serializeRuntimeV2TerminalMessage(payload));
+    const payload = typeof input === "string"
+      ? Buffer.from(input, "utf8")
+      : Buffer.from(input);
+    this.socket.send(payload);
   }
 
   async close(): Promise<void> {
@@ -608,7 +619,7 @@ class SharedRuntimeV2PaneBridge {
     if (this.socket?.readyState === WebSocket.OPEN) {
       if (!areTerminalSizesEqual(this.currentSize, size)) {
         this.resize(size);
-        this.requestSnapshot();
+        this.scheduleSnapshotRequest();
       }
       return;
     }
@@ -628,8 +639,8 @@ class SharedRuntimeV2PaneBridge {
     }
 
     this.socket = socket;
-    socket.on("message", (raw) => {
-      this.handleMessage(version, raw);
+    socket.on("message", (raw, isBinary) => {
+      this.handleMessage(version, raw, isBinary);
     });
     socket.on("close", () => {
       if (version === this.attachVersion && this.socket === socket) {
@@ -669,6 +680,21 @@ class SharedRuntimeV2PaneBridge {
     this.socket.send(serializeRuntimeV2TerminalMessage({ type: "request_snapshot" }));
   }
 
+  private clearPendingSnapshotRequest(): void {
+    if (this.resizeSnapshotTimer !== null) {
+      clearTimeout(this.resizeSnapshotTimer);
+      this.resizeSnapshotTimer = null;
+    }
+  }
+
+  private scheduleSnapshotRequest(): void {
+    this.clearPendingSnapshotRequest();
+    this.resizeSnapshotTimer = setTimeout(() => {
+      this.resizeSnapshotTimer = null;
+      this.requestSnapshot();
+    }, TERMINAL_RESIZE_SETTLE_MS);
+  }
+
   private async syncSize(): Promise<void> {
     const desiredSize = this.resolveDesiredSize();
     await this.ensureAttached(desiredSize);
@@ -676,6 +702,7 @@ class SharedRuntimeV2PaneBridge {
 
   private async closeSocket(): Promise<void> {
     this.attachVersion += 1;
+    this.clearPendingSnapshotRequest();
     this.latestSnapshotPayload = null;
     this.bufferedChunks.length = 0;
     this.bufferedChunkBytes = 0;
@@ -692,8 +719,27 @@ class SharedRuntimeV2PaneBridge {
     });
   }
 
-  private handleMessage(version: number, raw: RawData): void {
+  private rememberBufferedChunk(chunk: Buffer): void {
+    if (!this.latestSnapshotPayload) {
+      return;
+    }
+    this.bufferedChunks.push(chunk);
+    this.bufferedChunkBytes += chunk.byteLength;
+    while (this.bufferedChunkBytes > MAX_BUFFERED_TERMINAL_BYTES && this.bufferedChunks.length > 0) {
+      const removed = this.bufferedChunks.shift();
+      this.bufferedChunkBytes -= removed?.byteLength ?? 0;
+    }
+  }
+
+  private handleMessage(version: number, raw: RawData, isBinary: boolean): void {
     if (version !== this.attachVersion) {
+      return;
+    }
+
+    if (isBinary) {
+      const chunk = toBuffer(raw);
+      this.broadcast(chunk);
+      this.rememberBufferedChunk(chunk);
       return;
     }
 
@@ -706,7 +752,11 @@ class SharedRuntimeV2PaneBridge {
     }
 
     if (message.type === "snapshot") {
-      this.latestSnapshotPayload = `\u001bc${decodeBase64(message.replayBase64 ?? message.contentBase64)}`;
+      this.clearPendingSnapshotRequest();
+      this.latestSnapshotPayload = Buffer.concat([
+        TERMINAL_RESET_BYTES,
+        Buffer.from(message.replayBase64 ?? message.contentBase64, "base64"),
+      ]);
       this.bufferedChunks.length = 0;
       this.bufferedChunkBytes = 0;
       this.broadcast(this.latestSnapshotPayload);
@@ -714,20 +764,13 @@ class SharedRuntimeV2PaneBridge {
     }
 
     if (message.type === "stream") {
-      const chunk = decodeBase64(message.chunkBase64);
+      const chunk = Buffer.from(message.chunkBase64, "base64");
       this.broadcast(chunk);
-      if (this.latestSnapshotPayload) {
-        this.bufferedChunks.push(chunk);
-        this.bufferedChunkBytes += chunk.length;
-        while (this.bufferedChunkBytes > MAX_BUFFERED_TERMINAL_BYTES && this.bufferedChunks.length > 0) {
-          const removed = this.bufferedChunks.shift();
-          this.bufferedChunkBytes -= removed?.length ?? 0;
-        }
-      }
+      this.rememberBufferedChunk(chunk);
     }
   }
 
-  private broadcast(payload: string): void {
+  private broadcast(payload: Buffer): void {
     for (const subscriber of this.subscribers.values()) {
       sendRaw(subscriber, payload);
     }
@@ -1399,14 +1442,7 @@ export const createRemuxV2GatewayServer = (
       }
 
       if (isBinary) {
-        const chunk = Buffer.isBuffer(rawData)
-          ? rawData
-          : rawData instanceof ArrayBuffer
-            ? Buffer.from(rawData)
-            : Array.isArray(rawData)
-              ? Buffer.concat(rawData)
-              : Buffer.from(rawData);
-        context.paneBridge.write(chunk.toString("utf8"));
+        context.paneBridge.write(toBuffer(rawData));
         return;
       }
 

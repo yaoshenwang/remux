@@ -44,7 +44,6 @@ import {
   initialLaunchContext,
   token
 } from "./remux-runtime";
-import { createTerminalWriteBuffer } from "./terminal-write-buffer";
 import { attachWebSocketKeepAlive } from "./websocket-keepalive";
 import type {
   SessionState,
@@ -69,6 +68,15 @@ declare global {
 const LazyBandwidthStatsModal = lazy(() => import("./components/BandwidthStatsModal"));
 const LazyPasswordOverlay = lazy(() => import("./components/PasswordOverlay"));
 const LazyUploadToast = lazy(() => import("./components/UploadToast"));
+const terminalTextEncoder = new TextEncoder();
+
+const encodeTerminalChunk = (chunk: string): Uint8Array => terminalTextEncoder.encode(chunk);
+
+const getTerminalChunkLength = (chunk: string | Uint8Array): number =>
+  typeof chunk === "string" ? chunk.length : chunk.byteLength;
+
+const terminalChunkHasBell = (chunk: string | Uint8Array): boolean =>
+  typeof chunk === "string" ? chunk.includes("\x07") : chunk.includes(0x07);
 
 export const App = () => {
   const terminalSocketRef = useRef<WebSocket | null>(null);
@@ -103,7 +111,6 @@ export const App = () => {
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectErrorMessage, setInspectErrorMessage] = useState("");
   const { mobileLandscape, mobileLayout, viewportHeight } = useViewportLayout();
-  const terminalInputBufferRef = useRef<ReturnType<typeof createTerminalWriteBuffer> | null>(null);
   const pendingTerminalTransportRef = useRef("");
   const flushPendingTerminalTransport = useCallback((): void => {
     const socket = terminalSocketRef.current;
@@ -113,10 +120,15 @@ export const App = () => {
 
     const chunk = pendingTerminalTransportRef.current;
     pendingTerminalTransportRef.current = "";
-    debugLog("send_terminal.flush_queued", { bytes: chunk.length });
-    socket.send(chunk);
+    const payload = encodeTerminalChunk(chunk);
+    debugLog("send_terminal.flush_queued", { bytes: payload.byteLength });
+    socket.send(payload);
   }, []);
   const sendRawDirectToSocket = useCallback((data: string): void => {
+    if (!data) {
+      return;
+    }
+
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       pendingTerminalTransportRef.current += data;
@@ -132,17 +144,13 @@ export const App = () => {
       ? `${pendingTerminalTransportRef.current}${data}`
       : data;
     pendingTerminalTransportRef.current = "";
-    debugLog("send_terminal", { bytes: chunk.length });
-    socket.send(chunk);
+    const payload = encodeTerminalChunk(chunk);
+    debugLog("send_terminal", { bytes: payload.byteLength });
+    socket.send(payload);
   }, []);
-  if (!terminalInputBufferRef.current) {
-    terminalInputBufferRef.current = createTerminalWriteBuffer((chunk) => {
-      sendRawDirectToSocket(chunk);
-    });
-  }
   const sendRawToSocket = useCallback((data: string): void => {
-    terminalInputBufferRef.current?.enqueue(data);
-  }, []);
+    sendRawDirectToSocket(data);
+  }, [sendRawDirectToSocket]);
 
   // ── Connection hook ──
   // Ref to hold connection actions for use inside callbacks before `connection` is assigned.
@@ -159,8 +167,6 @@ export const App = () => {
     onControlMessage: (message) => {
       switch (message.type) {
         case "attached": {
-          terminalInputBufferRef.current?.clear();
-          terminalWriteBufferRef.current?.clear();
           workspace.onAttached(message.session);
           attachedSessionRef.current = message.session;
           launchContextRef.current = null;
@@ -180,8 +186,6 @@ export const App = () => {
         }
         case "session_picker": {
           launchContextRef.current = null;
-          terminalInputBufferRef.current?.clear();
-          terminalWriteBufferRef.current?.clear();
           resetTerminalBufferRef.current();
           attachedSessionRef.current = "";
           awaitingTerminalReplayRef.current = false;
@@ -239,8 +243,6 @@ export const App = () => {
       if (viewModeRef.current === "inspect") {
         setInspectErrorMessage("Inspect disconnected. Reconnecting…");
       }
-      terminalInputBufferRef.current?.clear();
-      terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
       terminalSocketRef.current = null;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
@@ -286,12 +288,6 @@ export const App = () => {
     theme,
     toolbarRef
   });
-  const terminalWriteBufferRef = useRef<ReturnType<typeof createTerminalWriteBuffer> | null>(null);
-  if (!terminalWriteBufferRef.current) {
-    terminalWriteBufferRef.current = createTerminalWriteBuffer((chunk) => {
-      terminalRef.current?.write(chunk);
-    });
-  }
 
   // Keep forwarded refs in sync
   useEffect(() => {
@@ -307,7 +303,6 @@ export const App = () => {
   // ── Terminal socket management ──
   const openTerminalSocket = useCallback((passwordValue: string, clientId: string): void => {
     debugLog("terminal_socket.open.begin", { hasPassword: Boolean(passwordValue) });
-    terminalInputBufferRef.current?.clear();
     pendingTerminalTransportRef.current = "";
     awaitingTerminalReplayRef.current = true;
     setTerminalViewState(terminalHasReplayRef.current ? "restoring" : "connecting");
@@ -322,6 +317,7 @@ export const App = () => {
     }
 
     const socket = new WebSocket(`${resolvedSocketOrigin}/ws/terminal`);
+    socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       debugLog("terminal_socket.onopen");
       const terminalGeometry = readTerminalGeometry();
@@ -340,13 +336,8 @@ export const App = () => {
       flushPendingTerminalTransport();
       requestTerminalFit({ notify: true, retryUntilVisible: true });
     };
-    socket.onmessage = (event) => {
-      debugLog("terminal_socket.onmessage", {
-        type: typeof event.data,
-        bytes: typeof event.data === "string" ? event.data.length : 0
-      });
-      const data = typeof event.data === "string" ? event.data : "";
-      if (awaitingTerminalReplayRef.current && data.length > 0) {
+    const applyTerminalChunk = (chunk: string | Uint8Array): void => {
+      if (awaitingTerminalReplayRef.current && getTerminalChunkLength(chunk) > 0) {
         awaitingTerminalReplayRef.current = false;
         terminalHasReplayRef.current = true;
         setTerminalViewState("live");
@@ -354,16 +345,38 @@ export const App = () => {
           attachedSessionRef.current ? `attached: ${attachedSessionRef.current}` : "terminal connected"
         );
       }
-      terminalWriteBufferRef.current?.enqueue(data);
-      if (data.includes("\x07") && attachedSessionRef.current) {
+      terminalRef.current?.write(chunk);
+      if (terminalChunkHasBell(chunk) && attachedSessionRef.current) {
         setBellSessions((current) => new Set(current).add(attachedSessionRef.current));
+      }
+    };
+    socket.onmessage = (event) => {
+      debugLog("terminal_socket.onmessage", {
+        type: typeof event.data,
+        bytes: typeof event.data === "string"
+          ? event.data.length
+          : event.data instanceof ArrayBuffer
+            ? event.data.byteLength
+            : 0
+      });
+      if (typeof event.data === "string") {
+        applyTerminalChunk(event.data);
+        return;
+      }
+      if (event.data instanceof ArrayBuffer) {
+        applyTerminalChunk(new Uint8Array(event.data));
+        return;
+      }
+      if (event.data instanceof Blob) {
+        void event.data.arrayBuffer().then((buffer) => {
+          applyTerminalChunk(new Uint8Array(buffer));
+        });
       }
     };
     socket.onclose = (event) => {
       debugLog("terminal_socket.onclose", { code: event.code, reason: event.reason });
       stopTerminalKeepAliveRef.current?.();
       stopTerminalKeepAliveRef.current = null;
-      terminalInputBufferRef.current?.clear();
       pendingTerminalTransportRef.current = "";
       awaitingTerminalReplayRef.current = false;
       setTerminalViewState(terminalHasReplayRef.current ? "stale" : "connecting");
@@ -617,8 +630,6 @@ export const App = () => {
       if (inspectRequestTimerRef.current) {
         clearTimeout(inspectRequestTimerRef.current);
       }
-      terminalInputBufferRef.current?.clear();
-      terminalWriteBufferRef.current?.clear();
       terminalSocketRef.current?.close();
     };
   }, []);

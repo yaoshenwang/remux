@@ -24,16 +24,25 @@ const buildConfig = (token: string): RuntimeConfig => ({
   frontendDir: process.cwd(),
 });
 
-const waitForRawMessage = (socket: WebSocket, timeoutMs = 3_000): Promise<string> =>
+const waitForTerminalFrame = (
+  socket: WebSocket,
+  timeoutMs = 3_000
+): Promise<{ isBinary: boolean; text: string }> =>
   new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for raw ws message")), timeoutMs);
-    const handler = (raw: RawData) => {
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for terminal frame")), timeoutMs);
+    const handler = (raw: RawData, isBinary: boolean) => {
       clearTimeout(timeout);
       socket.off("message", handler);
-      resolve(raw.toString("utf8"));
+      resolve({
+        isBinary,
+        text: raw.toString("utf8"),
+      });
     };
     socket.on("message", handler);
   });
+
+const waitForRawMessage = async (socket: WebSocket, timeoutMs = 3_000): Promise<string> =>
+  (await waitForTerminalFrame(socket, timeoutMs)).text;
 
 const authControlClient = async (
   baseWsUrl: string,
@@ -201,6 +210,48 @@ describe("runtime v2 gateway server", () => {
       terminalB?.close();
       first.control.close();
       second.control.close();
+    }
+  });
+
+  test("bridges terminal live data as binary frames and writes raw binary upstream", async () => {
+    upstream.setTerminalStreamTransport("binary");
+
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+
+    try {
+      ({ terminal } = await authTerminalClient(baseWsUrl, clientId, { cols: 120, rows: 40 }));
+
+      const echoedFramePromise = waitForTerminalFrame(terminal);
+      terminal.send(Buffer.from("echo binary\r", "utf8"));
+
+      const echoedFrame = await echoedFramePromise;
+      expect(echoedFrame.isBinary).toBe(true);
+      expect(echoedFrame.text).toContain("echo binary\r");
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.inputFrameTypes.at(-1)).toBe("binary");
+      expect(upstream.latestTerminal("pane-1")?.writes.at(-1)).toBe("echo binary\r");
+    } finally {
+      terminal?.close();
+      control.close();
+    }
+  });
+
+  test("debounces repeated resize bursts down to one upstream snapshot request", async () => {
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+
+    try {
+      ({ terminal } = await authTerminalClient(baseWsUrl, clientId, { cols: 120, rows: 40 }));
+
+      terminal.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+      terminal.send(JSON.stringify({ type: "resize", cols: 110, rows: 30 }));
+      terminal.send(JSON.stringify({ type: "resize", cols: 132, rows: 30 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.sizes.at(-1)).toEqual({ cols: 132, rows: 30 });
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.requestSnapshotCount ?? 0).toBe(1);
+    } finally {
+      terminal?.close();
+      control.close();
     }
   });
 

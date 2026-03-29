@@ -73,7 +73,7 @@ struct AppState {
 
 #[derive(Debug, Clone)]
 enum RuntimeUpdate {
-    Output { sequence: u64, chunk_base64: String },
+    Output { sequence: u64, chunk: Vec<u8> },
     Exit { exit_code: Option<i32> },
 }
 
@@ -159,10 +159,7 @@ impl PaneRuntime {
                     .expect("runtime terminal lock poisoned")
                     .ingest(&chunk);
                 let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = self.updates.send(RuntimeUpdate::Output {
-                    sequence,
-                    chunk_base64: BASE64.encode(chunk),
-                });
+                let _ = self.updates.send(RuntimeUpdate::Output { sequence, chunk });
             }
             PtyEvent::Exited { exit_code, .. } => {
                 *self.exit_code.lock().expect("runtime exit lock poisoned") =
@@ -677,6 +674,16 @@ impl WorkspaceRuntime {
         data_base64: &str,
         client_id: Option<&str>,
     ) -> Result<(), RuntimeError> {
+        let bytes = BASE64.decode(data_base64).map_err(RuntimeError::Decode)?;
+        self.write_input_bytes(pane_id, &bytes, client_id)
+    }
+
+    fn write_input_bytes(
+        &self,
+        pane_id: &PaneId,
+        bytes: &[u8],
+        client_id: Option<&str>,
+    ) -> Result<(), RuntimeError> {
         if let Some(client_id) = client_id {
             let lease_changed = {
                 let mut workspace = self
@@ -692,9 +699,8 @@ impl WorkspaceRuntime {
         }
 
         self.ensure_write_lease(pane_id, client_id)?;
-        let bytes = BASE64.decode(data_base64).map_err(RuntimeError::Decode)?;
         self.pane_runtime(pane_id)?
-            .write_all(&bytes)
+            .write_all(bytes)
             .map_err(RuntimeError::Write)
     }
 
@@ -1245,6 +1251,11 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
         tokio::select! {
             update = recv_runtime_update(runtime_updates.as_mut()), if runtime_updates.is_some() => {
                 match update {
+                    Some(RuntimeStreamMessage::Binary(chunk)) => {
+                        if socket.send(Message::Binary(chunk.into())).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(RuntimeStreamMessage::Event(event)) => {
                         if send_json_message(&mut socket, &event).await.is_err() {
                             break;
@@ -1266,6 +1277,23 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
             }
             message = socket.next() => {
                 match message {
+                    Some(Ok(Message::Binary(bytes))) => {
+                        let Some(pane_id) = attached_pane_id.as_ref() else {
+                            continue;
+                        };
+                        match runtime.write_input_bytes(pane_id, &bytes, attached_client_id.as_deref()) {
+                            Ok(()) => {}
+                            Err(RuntimeError::WriteLeaseUnavailable { current_client_id, .. }) => {
+                                let lease_state = terminal::ServerMessage::LeaseState {
+                                    client_id: current_client_id,
+                                };
+                                if send_json_message(&mut socket, &lease_state).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
                     Some(Ok(Message::Text(text))) if text.trim() == "ping" => {
                         if socket.send(Message::Text("pong".into())).await.is_err() {
                             break;
@@ -1361,6 +1389,7 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
 }
 
 enum RuntimeStreamMessage {
+    Binary(Vec<u8>),
     Event(terminal::ServerMessage),
     Resync,
 }
@@ -1374,15 +1403,10 @@ async fn recv_runtime_update(
     };
 
     match receiver.recv().await {
-        Ok(RuntimeUpdate::Output {
-            sequence,
-            chunk_base64,
-        }) => Some(RuntimeStreamMessage::Event(
-            terminal::ServerMessage::Stream {
-                sequence,
-                chunk_base64,
-            },
-        )),
+        Ok(RuntimeUpdate::Output { sequence, chunk }) => {
+            let _ = sequence;
+            Some(RuntimeStreamMessage::Binary(chunk))
+        }
         Ok(RuntimeUpdate::Exit { exit_code }) => {
             Some(RuntimeStreamMessage::Event(terminal::ServerMessage::Exit {
                 exit_code,

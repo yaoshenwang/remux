@@ -78,6 +78,25 @@ test.describe("runtime-v2 browser behavior", () => {
     await expect(page.getByTestId(`inspect-pane-${newPaneId}`)).toContainText("tests passed");
   });
 
+  test("renders binary live terminal frames in the browser xterm client", async ({ page }) => {
+    const paneId = server.upstream.activePaneId();
+    server.upstream.setPaneScrollback(paneId, []);
+    server.upstream.setPaneContent(paneId, "binary ready\r\n");
+    server.upstream.setTerminalStreamTransport("binary");
+
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expect.poll(() => readTerminalText(page)).toContain("binary ready");
+
+    await page.getByTestId("compose-input").fill("echo browser-binary");
+    await page.getByTestId("compose-input").press("Enter");
+
+    await expect
+      .poll(() => server.upstream.latestTerminal()?.inputFrameTypes.at(-1) ?? "")
+      .toBe("binary");
+    await expect.poll(() => readTerminalText(page)).toContain("echo browser-binary");
+  });
+
   test("inspect history survives a browser reconnect with server-backed scrollback", async ({ page }) => {
     server.upstream.setPaneScrollback("pane-1", [
       "compile started",
