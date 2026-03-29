@@ -41,7 +41,9 @@ export { PROTOCOL_VERSION } from "./contracts/core.js";
 export type {
   TerminalOpenPayload,
   TerminalResizePayload,
-  TerminalClosedPayload
+  TerminalClosedPayload,
+  TerminalPatchMessage,
+  TerminalTransportMode,
 } from "./contracts/terminal.js";
 
 export type {
@@ -78,6 +80,7 @@ export type ControlClientMessage =
       token?: string;
       password?: string;
       clientId?: string;
+      transportMode?: "raw" | "patch";
       viewRevision?: number;
       session?: string;
       tabIndex?: number;

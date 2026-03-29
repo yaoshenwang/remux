@@ -50,6 +50,11 @@ import {
 } from "./remux-runtime";
 import { attachWebSocketKeepAlive } from "./websocket-keepalive";
 import { resolveReconnectDelay, shouldPauseReconnect } from "./reconnect-policy";
+import {
+  decodeTerminalPatchData,
+  parseTerminalPatchMessage,
+  shouldApplyTerminalPatch,
+} from "./terminal-transport";
 import type {
   ClientDiagnosticDetails,
   SessionState,
@@ -398,6 +403,7 @@ export const App = () => {
         token,
         password: passwordValue || undefined,
         clientId,
+        transportMode: "patch",
         ...(typeof viewRevision === "number" ? { viewRevision } : {}),
         ...(terminalGeometry ?? {})
       }));
@@ -435,6 +441,24 @@ export const App = () => {
             : 0
       });
       if (typeof event.data === "string") {
+        const patchMessage = parseTerminalPatchMessage(event.data);
+        if (patchMessage) {
+          if (!shouldApplyTerminalPatch(patchMessage, terminalViewRevisionRef.current)) {
+            debugLog("terminal_patch.drop.stale", {
+              paneId: patchMessage.paneId,
+              revision: patchMessage.revision,
+              patchViewRevision: patchMessage.viewRevision,
+              activeViewRevision: terminalViewRevisionRef.current,
+            });
+            return;
+          }
+          if (patchMessage.reset) {
+            localEchoRef.current?.reset();
+            resetTerminalBufferRef.current();
+          }
+          applyTerminalChunk(decodeTerminalPatchData(patchMessage));
+          return;
+        }
         applyTerminalChunk(event.data);
         return;
       }

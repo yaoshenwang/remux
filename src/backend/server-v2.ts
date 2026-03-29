@@ -13,6 +13,8 @@ import type {
   ClientView,
   ControlClientMessage,
   ControlServerMessage,
+  TerminalPatchMessage,
+  TerminalTransportMode,
 } from "../shared/protocol.js";
 import type { RuntimeConfig } from "./config.js";
 import { AuthService } from "./auth/auth-service.js";
@@ -110,7 +112,25 @@ interface DataContext {
   controlContext?: ControlContext;
   paneBridge?: SharedRuntimeV2PaneBridge;
   terminalSize?: RuntimeV2TerminalSize;
+  transportMode: TerminalTransportMode;
   viewerId: string;
+}
+
+interface PaneBridgeSubscriber {
+  socket: WebSocket;
+  transportMode: TerminalTransportMode;
+  getViewRevision: () => number;
+}
+
+interface PaneBridgeSubscribeOptions {
+  transportMode?: TerminalTransportMode;
+  getViewRevision?: () => number;
+}
+
+interface BufferedTerminalChunk {
+  payload: Buffer;
+  sequence: number | null;
+  revision: number;
 }
 
 const RUNTIME_V2_BACKEND_KIND = "runtime-v2";
@@ -562,14 +582,17 @@ export class SharedRuntimeV2PaneBridge {
   private activityVersion = 0;
   private currentSize: RuntimeV2TerminalSize = DEFAULT_TERMINAL_SIZE;
   private latestSnapshotPayload: Buffer | null = null;
+  private latestSnapshotContent: Buffer | null = null;
   private latestSnapshotSequence: number | null = null;
+  private latestSnapshotRevision: number | null = null;
+  private latestTransportRevision = 0;
   private awaitingFreshSnapshotReplay = false;
   private snapshotRequestPending = false;
   private latestViewerId: string | null = null;
   private resizeOwnerViewerId: string | null = null;
-  private readonly subscribers = new Map<string, WebSocket>();
+  private readonly subscribers = new Map<string, PaneBridgeSubscriber>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
-  private readonly bufferedChunks: Array<{ payload: Buffer; sequence: number | null }> = [];
+  private readonly bufferedChunks: BufferedTerminalChunk[] = [];
   private bufferedChunkBytes = 0;
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
@@ -595,14 +618,23 @@ export class SharedRuntimeV2PaneBridge {
     });
   }
 
-  async subscribe(viewerId: string, browserSocket: WebSocket, size: RuntimeV2TerminalSize): Promise<void> {
+  async subscribe(
+    viewerId: string,
+    browserSocket: WebSocket,
+    size: RuntimeV2TerminalSize,
+    options: PaneBridgeSubscribeOptions = {},
+  ): Promise<void> {
     this.activityVersion += 1;
     await this.enqueue(async () => {
       this.clearIdleCloseTimer();
       this.clearUpstreamReconnectTimer();
       const wasEmpty = this.subscribers.size === 0;
       const hadOpenSocket = this.socket?.readyState === WebSocket.OPEN;
-      this.subscribers.set(viewerId, browserSocket);
+      this.subscribers.set(viewerId, {
+        socket: browserSocket,
+        transportMode: options.transportMode ?? "raw",
+        getViewRevision: options.getViewRevision ?? (() => 1),
+      });
       this.recordViewerSize(viewerId, size);
       if (wasEmpty) {
         this.awaitingFreshSnapshotReplay = true;
@@ -616,10 +648,11 @@ export class SharedRuntimeV2PaneBridge {
       if (this.awaitingFreshSnapshotReplay) {
         return;
       }
-      if (this.latestSnapshotPayload) {
-        sendRaw(browserSocket, this.latestSnapshotPayload);
+      const subscriber = this.subscribers.get(viewerId);
+      if (subscriber && this.latestSnapshotPayload) {
+        this.sendSnapshotToSubscriber(subscriber);
         for (const chunk of this.bufferedChunks) {
-          sendRaw(browserSocket, chunk.payload);
+          this.sendChunkToSubscriber(subscriber, chunk);
         }
       }
     });
@@ -693,6 +726,69 @@ export class SharedRuntimeV2PaneBridge {
     const next = this.mutationQueue.then(run, run);
     this.mutationQueue = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  private nextTransportRevision(): number {
+    this.latestTransportRevision += 1;
+    return this.latestTransportRevision;
+  }
+
+  private buildTerminalPatchFrame(
+    payload: Buffer,
+    options: {
+      revision: number;
+      baseRevision: number | null;
+      reset: boolean;
+      source: "snapshot" | "stream";
+      viewRevision: number;
+      size?: RuntimeV2TerminalSize;
+    },
+  ): string {
+    const frame: TerminalPatchMessage = {
+      type: "terminal_patch",
+      paneId: this.paneId,
+      viewRevision: options.viewRevision,
+      revision: options.revision,
+      baseRevision: options.baseRevision,
+      reset: options.reset,
+      source: options.source,
+      dataBase64: payload.toString("base64"),
+      ...(options.size ? { cols: options.size.cols, rows: options.size.rows } : {}),
+    };
+    return JSON.stringify(frame);
+  }
+
+  private sendSnapshotToSubscriber(subscriber: PaneBridgeSubscriber): void {
+    if (!this.latestSnapshotPayload || !this.latestSnapshotContent || this.latestSnapshotRevision === null) {
+      return;
+    }
+    if (subscriber.transportMode === "patch") {
+      sendRaw(subscriber.socket, this.buildTerminalPatchFrame(this.latestSnapshotContent, {
+        revision: this.latestSnapshotRevision,
+        baseRevision: null,
+        reset: true,
+        source: "snapshot",
+        viewRevision: subscriber.getViewRevision(),
+        size: this.currentSize,
+      }));
+      return;
+    }
+    sendRaw(subscriber.socket, this.latestSnapshotPayload);
+  }
+
+  private sendChunkToSubscriber(subscriber: PaneBridgeSubscriber, chunk: BufferedTerminalChunk): void {
+    if (subscriber.transportMode === "patch") {
+      sendRaw(subscriber.socket, this.buildTerminalPatchFrame(chunk.payload, {
+        revision: chunk.revision,
+        baseRevision: chunk.revision > 1 ? chunk.revision - 1 : null,
+        reset: false,
+        source: "stream",
+        viewRevision: subscriber.getViewRevision(),
+        size: this.currentSize,
+      }));
+      return;
+    }
+    sendRaw(subscriber.socket, chunk.payload);
   }
 
   private recordViewerSize(viewerId: string, size: RuntimeV2TerminalSize): void {
@@ -906,7 +1002,10 @@ export class SharedRuntimeV2PaneBridge {
     this.awaitingFreshSnapshotReplay = false;
     this.snapshotRequestPending = false;
     this.latestSnapshotPayload = null;
+    this.latestSnapshotContent = null;
     this.latestSnapshotSequence = null;
+    this.latestSnapshotRevision = null;
+    this.latestTransportRevision = 0;
     this.bufferedChunks.length = 0;
     this.bufferedChunkBytes = 0;
     this.resizeOwnerViewerId = null;
@@ -923,11 +1022,11 @@ export class SharedRuntimeV2PaneBridge {
     });
   }
 
-  private rememberBufferedChunk(chunk: Buffer, sequence: number | null): void {
+  private rememberBufferedChunk(chunk: Buffer, sequence: number | null, revision: number): void {
     if (!this.latestSnapshotPayload) {
       return;
     }
-    this.bufferedChunks.push({ payload: chunk, sequence });
+    this.bufferedChunks.push({ payload: chunk, sequence, revision });
     this.bufferedChunkBytes += chunk.byteLength;
     while (this.bufferedChunkBytes > MAX_BUFFERED_TERMINAL_BYTES && this.bufferedChunks.length > 0) {
       const removed = this.bufferedChunks.shift();
@@ -971,9 +1070,10 @@ export class SharedRuntimeV2PaneBridge {
         }
       }
 
-      this.rememberBufferedChunk(chunk, sequence);
+      const revision = this.nextTransportRevision();
+      this.rememberBufferedChunk(chunk, sequence, revision);
       if (!this.awaitingFreshSnapshotReplay) {
-        this.broadcast(chunk);
+        this.broadcastChunk({ payload: chunk, sequence, revision });
       }
       return;
     }
@@ -994,31 +1094,39 @@ export class SharedRuntimeV2PaneBridge {
         : this.bufferedChunks.filter((chunk) => (
             chunk.sequence !== null && chunk.sequence > message.sequence
           ));
+      const snapshotContent = Buffer.from(message.replayBase64 ?? message.contentBase64, "base64");
+      const snapshotRevision = this.nextTransportRevision();
+      let nextRetainedRevision = snapshotRevision;
+      const reassignedRetainedChunks = retainedChunks.map((chunk) => ({
+        ...chunk,
+        revision: ++nextRetainedRevision,
+      }));
       this.latestSnapshotPayload = Buffer.concat([
         TERMINAL_RESET_BYTES,
-        Buffer.from(message.replayBase64 ?? message.contentBase64, "base64"),
+        snapshotContent,
       ]);
+      this.latestSnapshotContent = snapshotContent;
       this.latestSnapshotSequence = message.sequence;
+      this.latestSnapshotRevision = snapshotRevision;
+      this.latestTransportRevision = nextRetainedRevision;
       this.awaitingFreshSnapshotReplay = false;
       this.bufferedChunks.length = 0;
-      this.bufferedChunks.push(...retainedChunks);
-      this.bufferedChunkBytes = retainedChunks.reduce(
+      this.bufferedChunks.push(...reassignedRetainedChunks);
+      this.bufferedChunkBytes = reassignedRetainedChunks.reduce(
         (total, chunk) => total + chunk.payload.byteLength,
         0,
       );
 
       // Reset cursor tracker and replay snapshot content so cursor position stays in sync.
       this.cursorTracker.write("\x1bc");
-      this.cursorTracker.write(
-        Buffer.from(message.replayBase64 ?? message.contentBase64, "base64").toString("utf8"),
-      );
-      for (const retained of retainedChunks) {
+      this.cursorTracker.write(snapshotContent.toString("utf8"));
+      for (const retained of reassignedRetainedChunks) {
         this.cursorTracker.write(retained.payload.toString("utf8"));
       }
 
-      this.broadcast(this.latestSnapshotPayload);
+      this.broadcastSnapshot();
       for (const chunk of this.bufferedChunks) {
-        this.broadcast(chunk.payload);
+        this.broadcastChunk(chunk);
       }
       return;
     }
@@ -1038,32 +1146,47 @@ export class SharedRuntimeV2PaneBridge {
         this.write(cpr);
         const cleaned = Buffer.from(dsr.cleaned, "utf8");
         if (cleaned.byteLength > 0) {
-          this.rememberBufferedChunk(cleaned, message.sequence);
+          const revision = this.nextTransportRevision();
+          this.rememberBufferedChunk(cleaned, message.sequence, revision);
           if (!this.awaitingFreshSnapshotReplay) {
-            this.broadcast(cleaned);
+            this.broadcastChunk({ payload: cleaned, sequence: message.sequence, revision });
           }
         }
         return;
       }
 
-      this.rememberBufferedChunk(chunk, message.sequence);
+      const revision = this.nextTransportRevision();
+      this.rememberBufferedChunk(chunk, message.sequence, revision);
       if (!this.awaitingFreshSnapshotReplay) {
-        this.broadcast(chunk);
+        this.broadcastChunk({ payload: chunk, sequence: message.sequence, revision });
       }
     }
   }
 
-  private broadcast(payload: Buffer): void {
-    // Detect bell character (0x07) in terminal output.
+  private broadcastSnapshot(): void {
+    if (!this.latestSnapshotPayload) {
+      return;
+    }
+    this.emitBellIfNeeded(this.latestSnapshotPayload);
+    for (const subscriber of this.subscribers.values()) {
+      this.sendSnapshotToSubscriber(subscriber);
+    }
+  }
+
+  private broadcastChunk(chunk: BufferedTerminalChunk): void {
+    this.emitBellIfNeeded(chunk.payload);
+    for (const subscriber of this.subscribers.values()) {
+      this.sendChunkToSubscriber(subscriber, chunk);
+    }
+  }
+
+  private emitBellIfNeeded(payload: Buffer): void {
     if (this.onBell && !this.bellCooldown && payload.includes(0x07)) {
       this.bellCooldown = true;
       this.onBell(this.paneId);
       setTimeout(() => {
         this.bellCooldown = false;
       }, 5000);
-    }
-    for (const subscriber of this.subscribers.values()) {
-      sendRaw(subscriber, payload);
     }
   }
 }
@@ -1524,7 +1647,10 @@ export const createRemuxV2GatewayServer = (
     await detachTerminalClient(context);
     const bridge = getOrCreatePaneBridge(paneId);
     context.paneBridge = bridge;
-    await bridge.subscribe(context.viewerId, context.socket, size);
+    await bridge.subscribe(context.viewerId, context.socket, size, {
+      transportMode: context.transportMode,
+      getViewRevision: () => context.controlContext?.viewRevision ?? 1,
+    });
   };
 
   const sendAttached = (context: ControlContext): void => {
@@ -1981,6 +2107,7 @@ export const createRemuxV2GatewayServer = (
     const context: DataContext = {
       socket,
       authed: false,
+      transportMode: "raw",
       viewerId: randomToken(12),
     };
     terminalClients.add(context);
@@ -2014,6 +2141,7 @@ export const createRemuxV2GatewayServer = (
 
         context.authed = true;
         context.controlContext = controlContext;
+        context.transportMode = authMessage.transportMode === "patch" ? "patch" : "raw";
         context.terminalSize = toRuntimeTerminalSize(extractTerminalDimensions(authMessage));
         if (
           typeof authMessage.viewRevision === "number"

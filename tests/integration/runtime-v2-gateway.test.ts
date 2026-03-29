@@ -63,6 +63,7 @@ const authTerminalClient = async (
   baseWsUrl: string,
   clientId: string,
   size: { cols: number; rows: number },
+  options?: { transportMode?: "raw" | "patch" },
 ): Promise<{ terminal: WebSocket; initialSnapshot: string }> => {
   const terminal = await openSocket(`${baseWsUrl}/ws/terminal`);
   const initialSnapshotPromise = waitForRawMessage(terminal);
@@ -70,6 +71,7 @@ const authTerminalClient = async (
     type: "auth",
     token: "test-token",
     clientId,
+    ...(options?.transportMode ? { transportMode: options.transportMode } : {}),
     cols: size.cols,
     rows: size.rows,
   }));
@@ -449,6 +451,88 @@ describe("runtime v2 gateway server", () => {
       expect(nextWorkspaceState.viewRevision).toBe(2);
       expect(nextWorkspaceState.clientView.paneId).toBe("pane-2");
     } finally {
+      control.close();
+    }
+  });
+
+  test("negotiates terminal_patch transport and tags patches with the current view revision", async () => {
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+
+    try {
+      const authResult = await authTerminalClient(
+        baseWsUrl,
+        clientId,
+        { cols: 120, rows: 40 },
+        { transportMode: "patch" },
+      );
+      terminal = authResult.terminal;
+
+      const snapshotFrame = JSON.parse(authResult.initialSnapshot) as {
+        type: string;
+        paneId: string;
+        viewRevision: number;
+        revision: number;
+        baseRevision: number | null;
+        reset: boolean;
+        source: string;
+        dataBase64: string;
+      };
+      expect(snapshotFrame).toMatchObject({
+        type: "terminal_patch",
+        paneId: "pane-1",
+        viewRevision: 1,
+        revision: 1,
+        baseRevision: null,
+        reset: true,
+        source: "snapshot",
+      });
+      expect(Buffer.from(snapshotFrame.dataBase64, "base64").toString("utf8")).toContain("PANE_ONE_READY");
+
+      upstream.pushTerminalOutput("pane-1", "PATCH_FLOW\r\n");
+      const streamFrame = JSON.parse(await waitForRawMessage(terminal)) as {
+        type: string;
+        viewRevision: number;
+        revision: number;
+        baseRevision: number | null;
+        reset: boolean;
+        source: string;
+        dataBase64: string;
+      };
+      expect(streamFrame).toMatchObject({
+        type: "terminal_patch",
+        viewRevision: 1,
+        revision: 2,
+        baseRevision: 1,
+        reset: false,
+        source: "stream",
+      });
+      expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("PATCH_FLOW\r\n");
+
+      const switchedSnapshotPromise = waitForRawMessage(terminal);
+      control.send(JSON.stringify({
+        type: "split_pane",
+        paneId: "pane-1",
+        direction: "right",
+      }));
+
+      const switchedFrame = JSON.parse(await switchedSnapshotPromise) as {
+        type: string;
+        paneId: string;
+        viewRevision: number;
+        revision: number;
+        reset: boolean;
+        source: string;
+      };
+      expect(switchedFrame).toMatchObject({
+        type: "terminal_patch",
+        paneId: "pane-2",
+        viewRevision: 2,
+        reset: true,
+        source: "snapshot",
+      });
+    } finally {
+      terminal?.close();
       control.close();
     }
   });
