@@ -530,6 +530,7 @@ export class SharedRuntimeV2PaneBridge {
   private latestSnapshotPayload: Buffer | null = null;
   private latestSnapshotSequence: number | null = null;
   private awaitingFreshSnapshotReplay = false;
+  private snapshotRequestPending = false;
   private latestViewerId: string | null = null;
   private readonly subscribers = new Map<string, WebSocket>();
   private readonly viewerSizes = new Map<string, RuntimeV2TerminalSize>();
@@ -721,6 +722,10 @@ export class SharedRuntimeV2PaneBridge {
     if (!this.socket) {
       return;
     }
+    if (this.snapshotRequestPending) {
+      return;
+    }
+    this.snapshotRequestPending = true;
     this.socket.send(serializeRuntimeV2TerminalMessage({ type: "request_snapshot" }));
   }
 
@@ -780,6 +785,7 @@ export class SharedRuntimeV2PaneBridge {
     this.clearPendingSnapshotRequest();
     this.clearIdleCloseTimer();
     this.awaitingFreshSnapshotReplay = false;
+    this.snapshotRequestPending = false;
     this.latestSnapshotPayload = null;
     this.latestSnapshotSequence = null;
     this.bufferedChunks.length = 0;
@@ -833,6 +839,7 @@ export class SharedRuntimeV2PaneBridge {
 
     if (message.type === "snapshot") {
       this.clearPendingSnapshotRequest();
+      this.snapshotRequestPending = false;
       const retainedChunks = this.latestSnapshotSequence === null
         ? []
         : this.bufferedChunks.filter((chunk) => (

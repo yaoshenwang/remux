@@ -111,7 +111,13 @@ export const App = () => {
   const [inspectSnapshot, setInspectSnapshot] = useState<TabInspectSnapshot | null>(null);
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectErrorMessage, setInspectErrorMessage] = useState("");
-  const { mobileLandscape, mobileLayout, viewportHeight } = useViewportLayout();
+  const {
+    mobileLandscape,
+    mobileLayout,
+    viewportHeight,
+    viewportOffsetLeft,
+    viewportOffsetTop,
+  } = useViewportLayout();
   const terminalInputBatcherRef = useRef(createTerminalInputBatcher((payload) => {
     const socket = terminalSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -952,6 +958,8 @@ export const App = () => {
       onCloseDrawer={() => setDrawerOpen(false)}
       sidebarCollapsed={sidebarCollapsed}
       viewportHeight={viewportHeight}
+      viewportOffsetLeft={viewportOffsetLeft}
+      viewportOffsetTop={viewportOffsetTop}
       sidebar={(
         <aside className={`sidebar drawer${drawerOpen ? " open" : ""}`}>
           <div className="sidebar-header">

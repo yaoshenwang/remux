@@ -8,6 +8,12 @@ const readViewportWidth = (): number =>
 const readViewportHeight = (): number =>
   Math.round(window.visualViewport?.height ?? window.innerHeight);
 
+const readViewportOffsetTop = (): number =>
+  Math.round(window.visualViewport?.offsetTop ?? 0);
+
+const readViewportOffsetLeft = (): number =>
+  Math.round(window.visualViewport?.offsetLeft ?? 0);
+
 export const matchesMobileLayout = (): boolean =>
   window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
 
@@ -15,18 +21,24 @@ interface ViewportLayoutState {
   mobileLandscape: boolean;
   mobileLayout: boolean;
   viewportHeight: number;
+  viewportOffsetLeft: number;
+  viewportOffsetTop: number;
   viewportWidth: number;
 }
 
 const readViewportLayout = (): ViewportLayoutState => {
   const viewportWidth = readViewportWidth();
   const viewportHeight = readViewportHeight();
+  const viewportOffsetTop = readViewportOffsetTop();
+  const viewportOffsetLeft = readViewportOffsetLeft();
   const mobileLayout = matchesMobileLayout();
 
   return {
     mobileLandscape: mobileLayout && viewportWidth > viewportHeight,
     mobileLayout,
     viewportHeight,
+    viewportOffsetLeft,
+    viewportOffsetTop,
     viewportWidth
   };
 };
@@ -53,11 +65,13 @@ export const useViewportLayout = (): ViewportLayoutState => {
 
     window.addEventListener("resize", syncLayout);
     visualViewport?.addEventListener("resize", syncLayout);
+    visualViewport?.addEventListener("scroll", syncLayout);
 
     return () => {
       removeMediaListener();
       window.removeEventListener("resize", syncLayout);
       visualViewport?.removeEventListener("resize", syncLayout);
+      visualViewport?.removeEventListener("scroll", syncLayout);
     };
   }, []);
 

@@ -1286,8 +1286,8 @@ button, input {
   touch-action: pan-y;
 }
 
+.terminal-host .xterm-scrollable-element,
 .terminal-host .xterm-screen {
-  height: 100% !important;
   touch-action: pan-y;
 }
 
@@ -2225,6 +2225,11 @@ button.danger {
 
 /* --- Responsive: Mobile Layout --- */
 .app-shell.mobile-layout {
+  position: fixed;
+  top: var(--app-offset-top, 0px);
+  left: var(--app-offset-left, 0px);
+  width: 100%;
+  max-width: 100%;
   grid-template-columns: minmax(0, 1fr);
 }
 

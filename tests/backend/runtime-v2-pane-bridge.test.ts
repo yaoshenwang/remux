@@ -310,4 +310,40 @@ describe("SharedRuntimeV2PaneBridge", () => {
     const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
     expect(restored).not.toContain("BASELINE-HISTORY");
   });
+
+  test("deduplicates fresh snapshot requests when the first viewer returns before the leave-time refresh completes", async () => {
+    delaySnapshotResponses = true;
+    replayText = "FRESH-SNAPSHOT\r\n";
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-1", firstBrowser.socket, { cols: 120, rows: 40 });
+
+    await expect.poll(() => attachCount).toBe(1);
+
+    await bridge.unsubscribe("viewer-1");
+    await expect.poll(() => snapshotRequestCount).toBe(1);
+
+    const secondBrowser = createBrowserSocket();
+    await bridge.subscribe("viewer-2", secondBrowser.socket, { cols: 120, rows: 40 });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(snapshotRequestCount).toBe(1);
+
+    pendingSnapshotSend?.();
+    pendingSnapshotSend = null;
+
+    await expect
+      .poll(() => Buffer.concat(secondBrowser.sent).toString("utf8"))
+      .toContain("FRESH-SNAPSHOT");
+
+    const restored = Buffer.concat(secondBrowser.sent).toString("utf8");
+    expect(restored.match(/\u001bc/g)?.length ?? 0).toBe(1);
+  });
 });
