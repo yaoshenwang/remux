@@ -372,6 +372,8 @@ test.describe("runtime-v2 browser behavior", () => {
   });
 
   test("shares one upstream pane across desktop and mobile viewers without shrinking to the mobile viewport", async ({ browser }) => {
+    await server.stop();
+    server = await startRuntimeV2E2EServer({ terminalSizePolicy: "largest" });
     const desktop = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const mobile = await browser.newContext({
       hasTouch: true,
