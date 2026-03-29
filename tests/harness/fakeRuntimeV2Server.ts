@@ -309,10 +309,14 @@ export class FakeRuntimeV2Server {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         service: "remuxd",
+        version: "test",
         protocolVersion: "2",
         controlWebsocketPath: "/v2/control",
         terminalWebsocketPath: "/v2/terminal",
         publicBaseUrl: null,
+        gitBranch: "dev",
+        gitCommitSha: "fake-runtime-sha",
+        gitDirty: false,
       }));
       return;
     }

@@ -1,9 +1,13 @@
 export interface RuntimeV2Metadata {
   service: string;
+  version?: string;
   protocolVersion: string;
   controlWebsocketPath: string;
   terminalWebsocketPath: string;
   publicBaseUrl?: string | null;
+  gitBranch?: string;
+  gitCommitSha?: string;
+  gitDirty?: boolean;
 }
 
 export type RuntimeV2SessionState =

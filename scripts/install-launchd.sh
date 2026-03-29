@@ -118,6 +118,8 @@ write_shared_runtime_plist() {
       <string>$runtime_path</string>
       <key>HOME</key>
       <string>$HOME</string>
+      <key>REMUX_RUNTIME_BRANCH</key>
+      <string>dev</string>
       <key>LANG</key>
       <string>en_US.UTF-8</string>
       <key>TERM</key>

@@ -21,17 +21,22 @@ esac
 git -C "$PROJECT_DIR" fetch origin --prune >/dev/null 2>&1 || true
 
 print_shared_runtime_status() {
-  local json protocol
+  local json protocol version branch sha dirty
 
   echo "shared-runtime-v2"
-  if ! json="$(fetch_json "$(runtime_shared_meta_url)" 2>/dev/null)"; then
+  if ! json="$(shared_runtime_meta_json 2>/dev/null)"; then
     printf '  %-8s unreachable (%s)\n' "local" "$(runtime_shared_meta_url)"
     echo ""
     return 0
   fi
 
   protocol="$(json_field_or_empty "$json" protocolVersion 2>/dev/null || true)"
-  printf '  %-8s baseUrl=%s protocol=%s\n' "local" "$(runtime_shared_base_url)" "${protocol:-?}"
+  version="$(json_field_or_empty "$json" version 2>/dev/null || true)"
+  branch="$(json_field_or_empty "$json" gitBranch 2>/dev/null || true)"
+  sha="$(json_field_or_empty "$json" gitCommitSha 2>/dev/null || true)"
+  dirty="$(json_field_or_empty "$json" gitDirty 2>/dev/null || true)"
+  printf '  %-8s baseUrl=%s protocol=%s version=%s branch=%s sha=%s dirty=%s\n' \
+    "local" "$(runtime_shared_base_url)" "${protocol:-?}" "${version:-?}" "${branch:-?}" "${sha:-?}" "${dirty:-?}"
   echo ""
 }
 

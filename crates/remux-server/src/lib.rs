@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::env;
+use std::fs;
 use std::future::pending;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -59,10 +62,22 @@ pub enum ConfigError {
 #[serde(rename_all = "camelCase")]
 pub struct ServerMetadata {
     pub service: String,
+    pub version: String,
     pub protocol_version: String,
     pub control_websocket_path: String,
     pub terminal_websocket_path: String,
     pub public_base_url: Option<String>,
+    pub git_branch: Option<String>,
+    pub git_commit_sha: Option<String>,
+    pub git_dirty: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeIdentity {
+    version: String,
+    git_branch: Option<String>,
+    git_commit_sha: Option<String>,
+    git_dirty: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -820,14 +835,93 @@ impl ServerConfig {
 
     #[must_use]
     pub fn metadata(&self) -> ServerMetadata {
+        let identity = discover_runtime_identity();
         ServerMetadata {
             service: "remuxd".to_owned(),
+            version: identity.version,
             protocol_version: RUNTIME_V2_PROTOCOL_VERSION.to_owned(),
             control_websocket_path: "/v2/control".to_owned(),
             terminal_websocket_path: "/v2/terminal".to_owned(),
             public_base_url: self.public_base_url.clone(),
+            git_branch: identity.git_branch,
+            git_commit_sha: identity.git_commit_sha,
+            git_dirty: identity.git_dirty,
         }
     }
+}
+
+fn discover_runtime_identity() -> RuntimeIdentity {
+    let cwd = env::current_dir().ok();
+    let version = cwd
+        .as_deref()
+        .and_then(package_version_from_dir)
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
+    let git_branch = env::var("REMUX_RUNTIME_BRANCH")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .or_else(|| cwd.as_deref().and_then(|dir| run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])))
+        .filter(|value| value != "HEAD");
+    let git_commit_sha = cwd
+        .as_deref()
+        .and_then(|dir| run_git(dir, &["rev-parse", "HEAD"]));
+    let git_dirty = cwd.as_deref().and_then(git_dirty_state);
+
+    RuntimeIdentity {
+        version,
+        git_branch,
+        git_commit_sha,
+        git_dirty,
+    }
+}
+
+fn package_version_from_dir(dir: &Path) -> Option<String> {
+    let package_path = find_repo_package_json(dir)?;
+    let raw = fs::read_to_string(package_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    json.get("version")?.as_str().map(ToOwned::to_owned)
+}
+
+fn find_repo_package_json(dir: &Path) -> Option<PathBuf> {
+    for ancestor in dir.ancestors() {
+        let candidate = ancestor.join("package.json");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn run_git(dir: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn git_dirty_state(dir: &Path) -> Option<bool> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(!output.stdout.is_empty())
 }
 
 #[must_use]
@@ -1532,6 +1626,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let payload = response.into_body().collect().await.unwrap().to_bytes();
         let metadata: ServerMetadata = serde_json::from_slice(&payload).expect("json metadata");
+        assert!(!metadata.version.is_empty());
         assert_eq!(metadata.protocol_version, RUNTIME_V2_PROTOCOL_VERSION);
         assert_eq!(metadata.control_websocket_path, "/v2/control");
         assert_eq!(metadata.terminal_websocket_path, "/v2/terminal");
