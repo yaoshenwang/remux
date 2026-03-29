@@ -429,6 +429,9 @@ sync_instance() {
       install_runtime_dependencies "$dir"
     fi
 
+    echo "[sync] postinstall hooks in $dir"
+    run_runtime_npm "$dir" run --if-present postinstall
+
     echo "[sync] quality gate for $name"
     run_runtime_npm "$dir" run typecheck
     run_runtime_npm "$dir" test
