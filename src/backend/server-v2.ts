@@ -10,6 +10,7 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { RequestHandler } from "express";
 import type {
   BackendCapabilities,
+  BandwidthStats,
   ClientView,
   ControlClientMessage,
   ControlServerMessage,
@@ -95,6 +96,7 @@ interface ControlContext {
   socket: WebSocket;
   authed: boolean;
   clientId: string;
+  bandwidthTracker: BandwidthTracker;
   viewRevision: number;
   viewKey: string | null;
   followBackendFocus: boolean;
@@ -122,6 +124,7 @@ interface PaneBridgeSubscriber {
   socket: WebSocket;
   transportMode: TerminalTransportMode;
   getViewRevision: () => number;
+  bandwidthTracker?: BandwidthTracker;
   queue: PaneBridgeSubscriberQueue;
 }
 
@@ -129,6 +132,7 @@ interface PaneBridgeSubscribeOptions {
   transportMode?: TerminalTransportMode;
   getViewRevision?: () => number;
   baseRevision?: number;
+  bandwidthTracker?: BandwidthTracker;
 }
 
 interface QueuedTerminalFrame {
@@ -651,7 +655,6 @@ export class SharedRuntimeV2PaneBridge {
   private readonly viewerQueueLowWatermarkBytes = resolveTerminalViewerQueueLowWatermarkBytes(
     this.viewerQueueHighWatermarkBytes,
   );
-  private readonly bandwidthTracker: BandwidthTracker | null;
   private mutationQueue = Promise.resolve();
   private resizeSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -667,9 +670,7 @@ export class SharedRuntimeV2PaneBridge {
     private readonly sizePolicy: TerminalSizePolicy,
     private readonly onIdle: (paneId: string) => void,
     private readonly onBell?: (paneId: string) => void,
-    bandwidthTracker?: BandwidthTracker,
   ) {
-    this.bandwidthTracker = bandwidthTracker ?? null;
     this.cursorTracker = new HeadlessTerminal({
       cols: DEFAULT_TERMINAL_SIZE.cols,
       rows: DEFAULT_TERMINAL_SIZE.rows,
@@ -748,6 +749,7 @@ export class SharedRuntimeV2PaneBridge {
         socket: browserSocket,
         transportMode: options.transportMode ?? "raw",
         getViewRevision: options.getViewRevision ?? (() => 1),
+        bandwidthTracker: options.bandwidthTracker,
         queue: this.createSubscriberQueue(),
       });
       this.recordViewerSize(viewerId, size);
@@ -914,9 +916,7 @@ export class SharedRuntimeV2PaneBridge {
       : this.latestSnapshotPayload;
     this.enqueueFrameForSubscriber(subscriber, {
       payload,
-      rawBytes: subscriber.transportMode === "patch"
-        ? this.latestSnapshotContent.byteLength
-        : this.latestSnapshotPayload.byteLength,
+      rawBytes: this.latestSnapshotContent.byteLength,
       wireBytes: this.measureQueuedFrameBytes(payload),
       revision: this.latestSnapshotRevision,
       source: "snapshot",
@@ -978,9 +978,7 @@ export class SharedRuntimeV2PaneBridge {
       : Buffer.concat([TERMINAL_RESET_BYTES, currentContent]);
     return {
       payload,
-      rawBytes: subscriber.transportMode === "patch"
-        ? currentContent.byteLength
-        : (typeof payload === "string" ? Buffer.byteLength(payload, "utf8") : payload.byteLength),
+      rawBytes: currentContent.byteLength,
       wireBytes: this.measureQueuedFrameBytes(payload),
       revision,
       source: "snapshot",
@@ -995,8 +993,8 @@ export class SharedRuntimeV2PaneBridge {
     subscriber.queue.pressureHigh = true;
     subscriber.queue.highWatermarkHits += 1;
     const droppedBacklogFrames = subscriber.queue.pending.length;
-    this.bandwidthTracker?.recordQueueHighWatermarkHit();
-    this.bandwidthTracker?.recordDroppedBacklogFrames(droppedBacklogFrames);
+    subscriber.bandwidthTracker?.recordQueueHighWatermarkHit();
+    subscriber.bandwidthTracker?.recordDroppedBacklogFrames(droppedBacklogFrames);
     this.clearPendingSubscriberQueue(subscriber);
     this.logger.log("[runtime-v2] terminal viewer queue hit high watermark; downgrading to fresh snapshot", {
       paneId: this.paneId,
@@ -1071,12 +1069,12 @@ export class SharedRuntimeV2PaneBridge {
         return;
       }
       if (frame.source === "snapshot") {
-        this.bandwidthTracker?.recordFullSnapshot();
-      } else {
-        this.bandwidthTracker?.recordDiffUpdate(frame.rawBytes);
+        subscriber.bandwidthTracker?.recordFullSnapshot();
+      } else if (subscriber.transportMode === "patch") {
+        subscriber.bandwidthTracker?.recordDiffUpdate(frame.rawBytes);
       }
-      this.bandwidthTracker?.recordRawBytes(frame.rawBytes);
-      this.bandwidthTracker?.recordCompressedBytes(frame.wireBytes);
+      subscriber.bandwidthTracker?.recordRawBytes(frame.rawBytes);
+      subscriber.bandwidthTracker?.recordCompressedBytes(frame.wireBytes);
       if (frame.revision !== null) {
         subscriber.queue.lastSentRevision = frame.revision;
         subscriber.queue.lastAckedRevision = frame.revision;
@@ -1701,7 +1699,6 @@ export const createRemuxV2GatewayServer = (
   const terminalClients = new Set<DataContext>();
   const paneBridges = new Map<string, SharedRuntimeV2PaneBridge>();
   const tabHistoryStore = new TabHistoryStore();
-  const bandwidthTracker = new BandwidthTracker();
 
   const notificationManager = new NotificationManager(logger);
 
@@ -1711,7 +1708,6 @@ export const createRemuxV2GatewayServer = (
   let stopPromise: Promise<void> | null = null;
   let telemetryHandle: { close(): void } | null = null;
   let bandwidthStatsTimer: ReturnType<typeof setInterval> | null = null;
-  const lastBandwidthStatsPayloadByClient = new Map<string, string>();
 
   server.on("connection", (socket) => {
     socket.setNoDelay(true);
@@ -1925,21 +1921,20 @@ export const createRemuxV2GatewayServer = (
     }
   };
 
+  const sendBandwidthStats = (context: ControlContext): void => {
+    if (!context.authed || context.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const stats: BandwidthStats = context.bandwidthTracker.getStats();
+    sendJson(context.socket, {
+      type: "bandwidth_stats",
+      stats,
+    });
+  };
+
   const broadcastBandwidthStats = (): void => {
-    const stats = bandwidthTracker.getStats();
-    const payload = JSON.stringify(stats);
     for (const client of controlClients) {
-      if (!client.authed || client.socket.readyState !== WebSocket.OPEN) {
-        continue;
-      }
-      if (lastBandwidthStatsPayloadByClient.get(client.clientId) === payload) {
-        continue;
-      }
-      lastBandwidthStatsPayloadByClient.set(client.clientId, payload);
-      sendJson(client.socket, {
-        type: "bandwidth_stats",
-        stats,
-      } as unknown as ControlServerMessage);
+      sendBandwidthStats(client);
     }
   };
 
@@ -1993,7 +1988,6 @@ export const createRemuxV2GatewayServer = (
           paneBridges.delete(idlePaneId);
         },
         broadcastBell,
-        bandwidthTracker,
       );
       paneBridges.set(paneId, bridge);
     }
@@ -2027,6 +2021,7 @@ export const createRemuxV2GatewayServer = (
       transportMode: context.transportMode,
       getViewRevision: () => context.controlContext?.viewRevision ?? 1,
       baseRevision: options.baseRevision,
+      bandwidthTracker: context.controlContext?.bandwidthTracker,
     });
   };
 
@@ -2389,6 +2384,7 @@ export const createRemuxV2GatewayServer = (
       socket,
       authed: false,
       clientId: randomToken(12),
+      bandwidthTracker: new BandwidthTracker(),
       viewRevision: 1,
       viewKey: null,
       followBackendFocus: false,
@@ -2455,7 +2451,7 @@ export const createRemuxV2GatewayServer = (
           });
           sendAttached(context);
           sendWorkspaceState(context);
-          broadcastBandwidthStats();
+          sendBandwidthStats(context);
           return;
         }
 
@@ -2477,7 +2473,6 @@ export const createRemuxV2GatewayServer = (
 
     socket.on("close", () => {
       controlClients.delete(context);
-      lastBandwidthStatsPayloadByClient.delete(context.clientId);
       void shutdownControlContext(context);
     });
   });
@@ -2613,7 +2608,6 @@ export const createRemuxV2GatewayServer = (
       }
 
       telemetryHandle = await registerTelemetryRoutes(app, requireApiAuth, logger);
-      lastBandwidthStatsPayloadByClient.clear();
       bandwidthStatsTimer = setInterval(() => {
         broadcastBandwidthStats();
       }, config.pollIntervalMs);
@@ -2683,7 +2677,6 @@ export const createRemuxV2GatewayServer = (
           clearInterval(bandwidthStatsTimer);
           bandwidthStatsTimer = null;
         }
-        lastBandwidthStatsPayloadByClient.clear();
         telemetryHandle?.close();
         await Promise.all(Array.from(controlClients).map((context) => shutdownControlContext(context)));
         controlWss.close();

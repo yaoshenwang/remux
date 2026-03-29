@@ -1,1 +1,2 @@
-export { BandwidthTracker, type BandwidthStats } from "./bandwidth-tracker.js";
+export { BandwidthTracker } from "./bandwidth-tracker.js";
+export type { BandwidthStats } from "../../shared/protocol.js";

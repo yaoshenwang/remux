@@ -1,3 +1,4 @@
+import type { BandwidthStats } from "../shared/protocol";
 import type { SnippetRecord as Snippet } from "./snippets";
 
 export interface ServerConfig {
@@ -29,19 +30,4 @@ export interface PendingSnippetExecution {
   values: Record<string, string>;
 }
 
-export interface BandwidthStats {
-  rawBytesPerSec: number;
-  compressedBytesPerSec: number;
-  savedPercent: number;
-  fullSnapshotsSent: number;
-  diffUpdatesSent: number;
-  avgChangedRowsPerDiff: number;
-  avgDiffBytesPerUpdate: number;
-  viewerQueueHighWatermarkHits: number;
-  droppedBacklogFrames: number;
-  totalRawBytes: number;
-  totalCompressedBytes: number;
-  totalSavedBytes: number;
-  rttMs: number | null;
-  protocol: string;
-}
+export type { BandwidthStats };

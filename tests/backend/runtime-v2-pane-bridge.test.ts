@@ -997,7 +997,6 @@ describe("SharedRuntimeV2PaneBridge", () => {
       "largest",
       () => undefined,
       undefined,
-      bandwidthTracker,
     );
 
     const fastBrowser = createBrowserSocket();
@@ -1008,6 +1007,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
       {
         transportMode: "patch",
         getViewRevision: () => 1,
+        bandwidthTracker,
       },
     );
     await expect.poll(() => attachCount).toBe(1);
@@ -1020,6 +1020,7 @@ describe("SharedRuntimeV2PaneBridge", () => {
       {
         transportMode: "patch",
         getViewRevision: () => 1,
+        bandwidthTracker,
       },
     );
     slowBrowser.flushAll();

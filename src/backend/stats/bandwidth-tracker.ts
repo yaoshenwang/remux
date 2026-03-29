@@ -5,30 +5,7 @@
  * connections and state diff statistics from TerminalStateTracker.
  * Broadcasts stats to clients every few seconds.
  */
-
-export interface BandwidthStats {
-  // Per-second rates (rolling window)
-  rawBytesPerSec: number;
-  compressedBytesPerSec: number;
-  savedPercent: number;
-
-  // State diff stats
-  fullSnapshotsSent: number;
-  diffUpdatesSent: number;
-  avgChangedRowsPerDiff: number;
-  avgDiffBytesPerUpdate: number;
-  viewerQueueHighWatermarkHits: number;
-  droppedBacklogFrames: number;
-
-  // Cumulative totals
-  totalRawBytes: number;
-  totalCompressedBytes: number;
-  totalSavedBytes: number;
-
-  // Connection
-  rttMs: number | null;
-  protocol: string;
-}
+import type { BandwidthStats } from "../../shared/protocol.js";
 
 interface Sample {
   rawBytes: number;

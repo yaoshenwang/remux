@@ -59,6 +59,24 @@ export type {
   SemanticEvent
 } from "./contracts/semantic.js";
 
+export interface BandwidthStats {
+  rawBytesPerSec: number;
+  compressedBytesPerSec: number;
+  savedPercent: number;
+  fullSnapshotsSent: number;
+  diffUpdatesSent: number;
+  /** @deprecated Compatibility alias for older UI/tests. */
+  avgChangedRowsPerDiff: number;
+  avgDiffBytesPerUpdate: number;
+  viewerQueueHighWatermarkHits: number;
+  droppedBacklogFrames: number;
+  totalRawBytes: number;
+  totalCompressedBytes: number;
+  totalSavedBytes: number;
+  rttMs: number | null;
+  protocol: string;
+}
+
 // ── Protocol messages (remain here until full domain migration) ──
 
 import type {
@@ -128,6 +146,7 @@ export type ControlServerMessage =
     }
   | { type: "auth_error"; reason: string }
   | { type: "attached"; session: string; viewRevision: number }
+  | { type: "bandwidth_stats"; stats: BandwidthStats }
   | { type: "session_picker"; sessions: SessionSummary[] }
   | { type: "workspace_state"; workspace: RuntimeSnapshot; clientView: ClientView; viewRevision: number; streamMode?: string; runtimeState?: WorkspaceRuntimeState }
   | { type: "scrollback"; paneId: string; text: string; lines: number; paneWidth: number; isApproximate?: boolean }
