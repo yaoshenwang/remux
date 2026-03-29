@@ -213,6 +213,86 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
+  test("keeps each viewer pinned to its own session when another client switches the backend focus", async () => {
+    const first = await authControlClient(baseWsUrl);
+    const second = await authControlClient(baseWsUrl);
+    let terminalA: WebSocket | null = null;
+
+    try {
+      ({ terminal: terminalA } = await authTerminalClient(baseWsUrl, first.clientId, { cols: 120, rows: 40 }));
+
+      const firstWorkspaceUpdate = waitForMessage<{
+        type: "workspace_state";
+        workspace: { sessions: Array<{ name: string }> };
+        clientView: { sessionName: string };
+      }>(
+        first.control,
+        (message) => message.type === "workspace_state" && message.workspace.sessions.some((session) => session.name === "other"),
+      );
+      const secondWorkspaceUpdate = waitForMessage<{
+        type: "workspace_state";
+        clientView: { sessionName: string };
+      }>(
+        second.control,
+        (message) => message.type === "workspace_state" && message.clientView.sessionName === "other",
+      );
+
+      second.control.send(JSON.stringify({ type: "new_session", name: "other" }));
+
+      const [firstWorkspace, secondWorkspace] = await Promise.all([
+        firstWorkspaceUpdate,
+        secondWorkspaceUpdate,
+      ]);
+
+      expect(secondWorkspace.clientView.sessionName).toBe("other");
+      expect(firstWorkspace.clientView.sessionName).toBe("main");
+      expect(upstream.latestTerminal("pane-2")?.attachCount ?? 0).toBe(0);
+      expect(upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
+    } finally {
+      terminalA?.close();
+      first.control.close();
+      second.control.close();
+    }
+  });
+
+  test("moves only the initiating viewer terminal bridge when switching to a new session", async () => {
+    const first = await authControlClient(baseWsUrl);
+    const second = await authControlClient(baseWsUrl);
+    let terminalA: WebSocket | null = null;
+    let terminalB: WebSocket | null = null;
+
+    try {
+      ({ terminal: terminalA } = await authTerminalClient(baseWsUrl, first.clientId, { cols: 120, rows: 40 }));
+      ({ terminal: terminalB } = await authTerminalClient(baseWsUrl, second.clientId, { cols: 80, rows: 24 }));
+
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.attachCount ?? 0).toBe(1);
+
+      const secondWorkspaceUpdate = waitForMessage<{
+        type: "workspace_state";
+        clientView: { sessionName: string };
+      }>(
+        second.control,
+        (message) => message.type === "workspace_state" && message.clientView.sessionName === "other",
+      );
+
+      second.control.send(JSON.stringify({ type: "new_session", name: "other" }));
+
+      await secondWorkspaceUpdate;
+      await expect.poll(() => upstream.latestTerminal("pane-2")?.attachCount ?? 0).toBe(1);
+
+      terminalA.send("echo first-viewer\r");
+      await expect.poll(() => upstream.latestTerminal("pane-1")?.writes.at(-1)).toBe("echo first-viewer\r");
+
+      terminalB.send("echo second-viewer\r");
+      await expect.poll(() => upstream.latestTerminal("pane-2")?.writes.at(-1)).toBe("echo second-viewer\r");
+    } finally {
+      terminalA?.close();
+      terminalB?.close();
+      first.control.close();
+      second.control.close();
+    }
+  });
+
   test("bridges terminal live data as binary frames and writes raw binary upstream", async () => {
     upstream.setTerminalStreamTransport("binary");
 
