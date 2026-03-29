@@ -11,6 +11,8 @@ declare global {
     __remuxTestTerminal?: {
       focus: () => boolean;
       readBuffer: () => string;
+      readGeometry: () => { cols: number; rows: number; viewportY: number } | null;
+      readViewport: () => string;
       scrollToLine: (line: number) => boolean;
     };
   }
@@ -175,6 +177,41 @@ export const useTerminalRuntime = ({
     const addon = serializeAddonRef.current;
     if (!addon) return "";
     return addon.serialize({ scrollback: 10000 });
+  }, []);
+
+  const readTerminalViewport = useCallback((): string => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return "";
+    }
+
+    const buffer = terminal.buffer.active;
+    const start = buffer.viewportY;
+    const end = Math.min(buffer.length, start + terminal.rows);
+    const lines: string[] = [];
+
+    for (let index = start; index < end; index += 1) {
+      lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+    }
+
+    return lines.join("\n");
+  }, []);
+
+  const readTerminalViewportGeometry = useCallback((): {
+    cols: number;
+    rows: number;
+    viewportY: number;
+  } | null => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return null;
+    }
+
+    return {
+      cols: terminal.cols,
+      rows: terminal.rows,
+      viewportY: terminal.buffer.active.viewportY
+    };
   }, []);
 
   const readTerminalGeometry = useCallback((): { cols: number; rows: number } | null => {
@@ -358,6 +395,8 @@ export const useTerminalRuntime = ({
         return Boolean(terminalRef.current);
       },
       readBuffer: () => readTerminalBuffer(),
+      readGeometry: () => readTerminalViewportGeometry(),
+      readViewport: () => readTerminalViewport(),
       scrollToLine: (line: number) => {
         if (!terminalRef.current) {
           return false;
@@ -370,7 +409,7 @@ export const useTerminalRuntime = ({
     return () => {
       delete window.__remuxTestTerminal;
     };
-  }, [focusTerminal, readTerminalBuffer]);
+  }, [focusTerminal, readTerminalBuffer, readTerminalViewport, readTerminalViewportGeometry]);
 
   return {
     copySelection,

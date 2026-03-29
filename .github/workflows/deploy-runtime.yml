@@ -15,6 +15,11 @@ on:
           - main
           - dev
           - all
+      promote_shared_runtime:
+        description: Promote the shared runtime-v2 core after syncing dev
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   deploy-main:
@@ -73,7 +78,12 @@ jobs:
         run: bash scripts/install-launchd.sh
 
       - name: Sync development runtime
-        run: bash scripts/sync-runtime.sh dev --verify-public
+        run: |
+          args=(dev --verify-public)
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.promote_shared_runtime }}" == "true" ]]; then
+            args+=(--promote-shared-runtime)
+          fi
+          bash scripts/sync-runtime.sh "${args[@]}"
 
       - name: Show development runtime status
         if: always()

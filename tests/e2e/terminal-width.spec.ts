@@ -3,17 +3,37 @@ import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harne
 
 interface TerminalWidthSnapshot {
   appClassName: string;
-  approxCols: number;
-  approxRows: number;
-  cellHeight: number;
-  cellWidth: number;
+  frontendCols: number;
+  frontendRows: number;
   hostWidth: number;
   hostHeight: number;
-  pixelWidthDelta: number;
-  pixelHeightDelta: number;
-  screenWidth: number;
-  screenHeight: number;
+  pxPerCol: number;
+  pxPerRow: number;
 }
+
+const MIN_REASONABLE_CELL_WIDTH_PX = 4;
+const MAX_REASONABLE_CELL_WIDTH_PX = 14;
+const MIN_REASONABLE_CELL_HEIGHT_PX = 8;
+const MAX_REASONABLE_CELL_HEIGHT_PX = 24;
+const expectAttachedStatus = async (page: Page): Promise<void> => {
+  await expect.poll(() => page.evaluate(() => {
+    const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
+    if (!indicator) {
+      return "";
+    }
+    return `${indicator.className}|${indicator.getAttribute("aria-label") ?? ""}`;
+  })).toContain("attached:");
+
+  await expect.poll(() => page.evaluate(() => {
+    const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
+    return indicator?.className ?? "";
+  })).toContain("ok");
+};
+
+const readTerminalHostWidth = async (page: Page): Promise<number> => page.evaluate(() => {
+  const host = document.querySelector("[data-testid='terminal-host']") as HTMLElement | null;
+  return host?.getBoundingClientRect().width ?? 0;
+});
 
 const readTerminalWidthSnapshot = async (
   page: Page,
@@ -25,33 +45,20 @@ const readTerminalWidthSnapshot = async (
 }> => {
   const geometry = await page.evaluate(() => {
     const host = document.querySelector("[data-testid='terminal-host']") as HTMLElement | null;
-    const screen = document.querySelector(".terminal-host .xterm-screen") as HTMLElement | null;
-    const rows = document.querySelector(".terminal-host .xterm-rows") as HTMLElement | null;
-    const measure = document.querySelector(".terminal-host .xterm-char-measure-element") as HTMLElement | null;
-    const row = rows?.firstElementChild as HTMLElement | null;
-    const rowStyle = rows ? window.getComputedStyle(rows) : null;
+    const terminalGeometry = window.__remuxTestTerminal?.readGeometry() ?? null;
     const hostWidth = host?.getBoundingClientRect().width ?? 0;
     const hostHeight = host?.getBoundingClientRect().height ?? 0;
-    const screenWidth = screen?.getBoundingClientRect().width ?? 0;
-    const screenHeight = screen?.getBoundingClientRect().height ?? 0;
-    const measureWidth = measure?.getBoundingClientRect().width ?? 0;
-    const rowHeight = row?.getBoundingClientRect().height ?? 0;
-    const letterSpacing = rowStyle ? Number.parseFloat(rowStyle.letterSpacing || "0") : 0;
-    const cellWidth = (measureWidth / 32) + (Number.isFinite(letterSpacing) ? letterSpacing : 0);
-    const cellHeight = rowHeight;
-    const approxCols = cellWidth > 0 ? Math.round(screenWidth / cellWidth) : 0;
-    const approxRows = cellHeight > 0 ? Math.round(screenHeight / cellHeight) : 0;
+    const frontendCols = terminalGeometry?.cols ?? 0;
+    const frontendRows = terminalGeometry?.rows ?? 0;
 
     return {
       appClassName: document.querySelector(".app-shell")?.className ?? "",
-      approxCols,
-      approxRows,
-      cellHeight,
-      cellWidth,
+      frontendCols,
+      frontendRows,
       hostWidth,
       hostHeight,
-      screenWidth,
-      screenHeight
+      pxPerCol: frontendCols > 0 ? hostWidth / frontendCols : 0,
+      pxPerRow: frontendRows > 0 ? hostHeight / frontendRows : 0
     };
   });
 
@@ -64,8 +71,6 @@ const readTerminalWidthSnapshot = async (
     ...geometry,
     backendCols,
     backendRows,
-    pixelHeightDelta: Math.abs(geometry.screenHeight - (backendRows * geometry.cellHeight)),
-    pixelWidthDelta: Math.abs(geometry.screenWidth - (backendCols * geometry.cellWidth)),
     resizeCount
   };
 };
@@ -73,27 +78,40 @@ const readTerminalWidthSnapshot = async (
 const waitForTerminalWidthInvariant = async (
   page: Page,
   server: StartedRuntimeV2E2EServer,
-  label: string
-): Promise<void> => {
+  label: string,
+  options: {
+    expectedPxPerCol?: number;
+    pxPerColTolerance?: number;
+  } = {}
+): Promise<TerminalWidthSnapshot & {
+  backendCols: number;
+  backendRows: number;
+  resizeCount: number;
+}> => {
+  const { expectedPxPerCol, pxPerColTolerance = 2 } = options;
   const deadline = Date.now() + 7_000;
   let settled = await readTerminalWidthSnapshot(page, server);
 
   while (Date.now() < deadline) {
-    const colsMismatch = Math.abs(settled.backendCols - settled.approxCols);
-    const rowsMismatch = Math.abs(settled.backendRows - settled.approxRows);
-    const widthOk = settled.pixelWidthDelta <= Math.max(settled.cellWidth * 1.5, 3);
-    const heightOk = settled.pixelHeightDelta <= Math.max(settled.cellHeight * 1.5, 3);
+    const backendColsMismatch = Math.abs(settled.backendCols - settled.frontendCols);
+    const backendRowsMismatch = Math.abs(settled.backendRows - settled.frontendRows);
+    const pxPerColMismatch = expectedPxPerCol === undefined
+      ? 0
+      : Math.abs(settled.pxPerCol - expectedPxPerCol);
     const ready =
       settled.hostWidth > 0 &&
       settled.hostHeight > 0 &&
-      settled.screenWidth > 0 &&
-      settled.screenHeight > 0 &&
       settled.backendCols > 1 &&
       settled.backendRows > 1 &&
-      colsMismatch <= 1 &&
-      rowsMismatch <= 1 &&
-      widthOk &&
-      heightOk;
+      settled.frontendCols > 1 &&
+      settled.frontendRows > 1 &&
+      backendColsMismatch <= 1 &&
+      backendRowsMismatch <= 1 &&
+      settled.pxPerCol >= MIN_REASONABLE_CELL_WIDTH_PX &&
+      settled.pxPerCol <= MAX_REASONABLE_CELL_WIDTH_PX &&
+      settled.pxPerRow >= MIN_REASONABLE_CELL_HEIGHT_PX &&
+      settled.pxPerRow <= MAX_REASONABLE_CELL_HEIGHT_PX &&
+      pxPerColMismatch <= pxPerColTolerance;
 
     if (ready) {
       break;
@@ -105,14 +123,21 @@ const waitForTerminalWidthInvariant = async (
 
   expect(settled.hostWidth).toBeGreaterThan(0);
   expect(settled.hostHeight).toBeGreaterThan(0);
-  expect(settled.screenWidth).toBeGreaterThan(0);
-  expect(settled.screenHeight).toBeGreaterThan(0);
   expect(settled.backendCols).toBeGreaterThan(1);
   expect(settled.backendRows).toBeGreaterThan(1);
-  expect(Math.abs(settled.backendCols - settled.approxCols), label).toBeLessThanOrEqual(1);
-  expect(Math.abs(settled.backendRows - settled.approxRows), label).toBeLessThanOrEqual(1);
-  expect(settled.pixelWidthDelta, label).toBeLessThanOrEqual(Math.max(settled.cellWidth * 1.5, 3));
-  expect(settled.pixelHeightDelta, label).toBeLessThanOrEqual(Math.max(settled.cellHeight * 1.5, 3));
+  expect(settled.frontendCols, label).toBeGreaterThan(1);
+  expect(settled.frontendRows, label).toBeGreaterThan(1);
+  expect(Math.abs(settled.backendCols - settled.frontendCols), label).toBeLessThanOrEqual(1);
+  expect(Math.abs(settled.backendRows - settled.frontendRows), label).toBeLessThanOrEqual(1);
+  expect(settled.pxPerCol, label).toBeGreaterThanOrEqual(MIN_REASONABLE_CELL_WIDTH_PX);
+  expect(settled.pxPerCol, label).toBeLessThanOrEqual(MAX_REASONABLE_CELL_WIDTH_PX);
+  expect(settled.pxPerRow, label).toBeGreaterThanOrEqual(MIN_REASONABLE_CELL_HEIGHT_PX);
+  expect(settled.pxPerRow, label).toBeLessThanOrEqual(MAX_REASONABLE_CELL_HEIGHT_PX);
+  if (expectedPxPerCol !== undefined) {
+    expect(Math.abs(settled.pxPerCol - expectedPxPerCol), label).toBeLessThanOrEqual(pxPerColTolerance);
+  }
+
+  return settled;
 };
 
 test.describe("terminal width invariants", () => {
@@ -129,10 +154,11 @@ test.describe("terminal width invariants", () => {
   test("does not fake a wide terminal on very narrow viewports", async ({ page }) => {
     await page.setViewportSize({ width: 150, height: 600 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
     await page.waitForTimeout(1_800);
 
-    await waitForTerminalWidthInvariant(page, server, "narrow viewport");
+    const settled = await waitForTerminalWidthInvariant(page, server, "narrow viewport");
+    expect(settled.frontendCols).toBeLessThan(40);
     const resizes = server.upstream.latestTerminal()?.sizes ?? [];
     const firstNonDefaultResizeIndex = resizes.findIndex((entry) => entry.cols !== 80 || entry.rows !== 24);
     expect(firstNonDefaultResizeIndex).toBeGreaterThanOrEqual(0);
@@ -142,25 +168,53 @@ test.describe("terminal width invariants", () => {
   test("keeps backend cols aligned with visible terminal width across layout changes", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
-    await waitForTerminalWidthInvariant(page, server, "initial desktop");
+    const initial = await waitForTerminalWidthInvariant(page, server, "initial desktop");
 
     await page.getByTitle("Collapse sidebar").click();
-    await waitForTerminalWidthInvariant(page, server, "sidebar collapsed");
+    await expect.poll(() => readTerminalHostWidth(page)).toBeGreaterThan(initial.hostWidth + 100);
+    const collapsed = await waitForTerminalWidthInvariant(page, server, "sidebar collapsed", {
+      expectedPxPerCol: initial.pxPerCol
+    });
+    expect(collapsed.hostWidth).toBeGreaterThan(initial.hostWidth);
+    expect(collapsed.frontendCols).toBeGreaterThan(initial.frontendCols + 8);
 
     await page.getByTitle("Expand sidebar").click();
-    await waitForTerminalWidthInvariant(page, server, "sidebar expanded");
+    await expect.poll(() => readTerminalHostWidth(page)).toBeLessThan(collapsed.hostWidth - 100);
+    const expanded = await waitForTerminalWidthInvariant(page, server, "sidebar expanded", {
+      expectedPxPerCol: initial.pxPerCol
+    });
+    expect(expanded.hostWidth).toBeLessThan(collapsed.hostWidth);
+    expect(Math.abs(expanded.frontendCols - initial.frontendCols)).toBeLessThanOrEqual(2);
 
     await page.getByRole("button", { name: "Inspect" }).click();
     await expect(page.getByRole("heading", { name: "Inspect" })).toBeVisible();
     await page.getByRole("button", { name: "Live" }).click();
-    await waitForTerminalWidthInvariant(page, server, "return from inspect");
+    const returned = await waitForTerminalWidthInvariant(page, server, "return from inspect", {
+      expectedPxPerCol: initial.pxPerCol
+    });
+    expect(Math.abs(returned.frontendCols - expanded.frontendCols)).toBeLessThanOrEqual(2);
 
     await page.setViewportSize({ width: 900, height: 700 });
-    await waitForTerminalWidthInvariant(page, server, "narrow desktop");
+    await expect.poll(() => readTerminalHostWidth(page)).toBeLessThan(expanded.hostWidth - 100);
+    const narrowDesktop = await waitForTerminalWidthInvariant(page, server, "narrow desktop", {
+      expectedPxPerCol: initial.pxPerCol
+    });
+    expect(narrowDesktop.hostWidth).toBeLessThan(expanded.hostWidth);
+    expect(narrowDesktop.frontendCols).toBeLessThan(expanded.frontendCols - 8);
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await waitForTerminalWidthInvariant(page, server, "mobile portrait");
+    await expect.poll(() => page.evaluate(() => {
+      return document.querySelector(".app-shell")?.className ?? "";
+    })).toContain("mobile-layout");
+    await expect.poll(() => readTerminalHostWidth(page)).toBeLessThan(narrowDesktop.hostWidth - 100);
+    const mobilePortrait = await waitForTerminalWidthInvariant(page, server, "mobile portrait", {
+      expectedPxPerCol: initial.pxPerCol,
+      pxPerColTolerance: 2.5
+    });
+    expect(mobilePortrait.appClassName).toContain("mobile-layout");
+    expect(mobilePortrait.hostWidth).toBeLessThan(narrowDesktop.hostWidth);
+    expect(mobilePortrait.frontendCols).toBeLessThan(narrowDesktop.frontendCols - 8);
   });
 });

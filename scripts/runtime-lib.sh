@@ -139,12 +139,20 @@ runtime_branch() {
   echo "$1"
 }
 
+runtime_shared_branch() {
+  echo "${REMUX_SHARED_RUNTIME_BRANCH:-dev}"
+}
+
 runtime_dir() {
   ensure_instance_name "$1"
   case "$1" in
     main) echo "$RUNTIME_WORKTREE_ROOT/runtime-main" ;;
     dev) echo "$RUNTIME_WORKTREE_ROOT/runtime-dev" ;;
   esac
+}
+
+runtime_shared_dir() {
+  echo "$RUNTIME_WORKTREE_ROOT/runtime-shared"
 }
 
 runtime_service() {
@@ -234,7 +242,7 @@ runtime_shared_plist_path() {
 }
 
 runtime_shared_workdir() {
-  echo "$(runtime_dir dev)"
+  echo "$(runtime_shared_dir)"
 }
 
 runtime_service_domain() {
@@ -282,6 +290,148 @@ fetch_json() {
   curl -fsS --max-time 5 "$url"
 }
 
+source_runtime_contract_json() {
+  local dir="$1"
+
+  "$(resolve_runtime_node_bin)" - "$dir" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const childProcess = require("child_process");
+
+const dir = process.argv[2];
+const packageJsonPath = path.join(dir, "package.json");
+const corePath = path.join(dir, "crates", "remux-core", "src", "lib.rs");
+const serverPath = path.join(dir, "crates", "remux-server", "src", "lib.rs");
+
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const coreSource = fs.readFileSync(corePath, "utf8");
+const serverSource = fs.readFileSync(serverPath, "utf8");
+const protocolVersion = coreSource.match(/RUNTIME_V2_PROTOCOL_VERSION:\s*&str\s*=\s*"([^"]+)"/)?.[1];
+const controlWebsocketPath = serverSource.match(/\.route\("([^"]+)",\s*get\(control_socket\)\)/)?.[1];
+const terminalWebsocketPath = serverSource.match(/\.route\("([^"]+)",\s*get\(terminal_socket\)\)/)?.[1];
+
+if (!protocolVersion || !controlWebsocketPath || !terminalWebsocketPath) {
+  throw new Error(`unable to resolve runtime-v2 contract from ${dir}`);
+}
+
+let gitCommitSha;
+try {
+  gitCommitSha = childProcess.execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+} catch {}
+
+process.stdout.write(JSON.stringify({
+  version: packageJson.version,
+  ...(gitCommitSha ? { gitCommitSha } : {}),
+  protocolVersion,
+  controlWebsocketPath,
+  terminalWebsocketPath,
+}));
+NODE
+}
+
+source_runtime_contract_json_for_ref() {
+  local dir="$1"
+  local ref="$2"
+
+  "$(resolve_runtime_node_bin)" - "$dir" "$ref" <<'NODE'
+const childProcess = require("child_process");
+
+const dir = process.argv[2];
+const ref = process.argv[3];
+const show = (filePath) =>
+  childProcess.execFileSync("git", ["-C", dir, "show", `${ref}:${filePath}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+const packageJson = JSON.parse(show("package.json"));
+const coreSource = show("crates/remux-core/src/lib.rs");
+const serverSource = show("crates/remux-server/src/lib.rs");
+const protocolVersion = coreSource.match(/RUNTIME_V2_PROTOCOL_VERSION:\s*&str\s*=\s*"([^"]+)"/)?.[1];
+const controlWebsocketPath = serverSource.match(/\.route\("([^"]+)",\s*get\(control_socket\)\)/)?.[1];
+const terminalWebsocketPath = serverSource.match(/\.route\("([^"]+)",\s*get\(terminal_socket\)\)/)?.[1];
+
+if (!protocolVersion || !controlWebsocketPath || !terminalWebsocketPath) {
+  throw new Error(`unable to resolve runtime-v2 contract from ${dir} at ${ref}`);
+}
+
+process.stdout.write(JSON.stringify({
+  version: packageJson.version,
+  gitCommitSha: ref,
+  protocolVersion,
+  controlWebsocketPath,
+  terminalWebsocketPath,
+}));
+NODE
+}
+
+runtime_contract_summary() {
+  local json="$1"
+  local version sha protocol control terminal
+
+  version="$(json_field_or_empty "$json" version 2>/dev/null || true)"
+  sha="$(json_field_or_empty "$json" gitCommitSha 2>/dev/null || true)"
+  protocol="$(json_field_or_empty "$json" protocolVersion 2>/dev/null || true)"
+  control="$(json_field_or_empty "$json" controlWebsocketPath 2>/dev/null || true)"
+  terminal="$(json_field_or_empty "$json" terminalWebsocketPath 2>/dev/null || true)"
+
+  printf 'version=%s sha=%s protocol=%s control=%s terminal=%s' \
+    "${version:-?}" "${sha:-?}" "${protocol:-?}" "${control:-?}" "${terminal:-?}"
+}
+
+runtime_contract_matches() {
+  local candidate_json="$1"
+  local expected_json="$2"
+  local field candidate_value expected_value
+
+  for field in protocolVersion controlWebsocketPath terminalWebsocketPath; do
+    candidate_value="$(json_field_or_empty "$candidate_json" "$field" 2>/dev/null || true)"
+    expected_value="$(json_field_or_empty "$expected_json" "$field" 2>/dev/null || true)"
+    if [[ "$candidate_value" != "$expected_value" ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+runtime_contract_diff_summary() {
+  local candidate_json="$1"
+  local expected_json="$2"
+  local field candidate_value expected_value
+  local -a diffs=()
+
+  for field in protocolVersion controlWebsocketPath terminalWebsocketPath; do
+    candidate_value="$(json_field_or_empty "$candidate_json" "$field" 2>/dev/null || true)"
+    expected_value="$(json_field_or_empty "$expected_json" "$field" 2>/dev/null || true)"
+    if [[ "$candidate_value" != "$expected_value" ]]; then
+      diffs+=("$field expected=${expected_value:-?} actual=${candidate_value:-?}")
+    fi
+  done
+
+  if [[ ${#diffs[@]} -eq 0 ]]; then
+    echo "none"
+    return 0
+  fi
+
+  local IFS='; '
+  echo "${diffs[*]}"
+}
+
+runtime_contract_compat_label() {
+  local candidate_json="$1"
+  local expected_json="$2"
+
+  if runtime_contract_matches "$candidate_json" "$expected_json"; then
+    echo "ok"
+  else
+    echo "blocked"
+  fi
+}
+
 origin_sha_for() {
   ensure_instance_name "$1"
   git -C "$PROJECT_DIR" rev-parse "origin/$(runtime_branch "$1")"
@@ -317,6 +467,19 @@ ensure_runtime_worktree() {
   local branch dir
   branch="$(runtime_branch "$1")"
   dir="$(runtime_dir "$1")"
+
+  mkdir -p "$RUNTIME_WORKTREE_ROOT"
+  if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  git -C "$PROJECT_DIR" worktree add --detach "$dir" "origin/$branch"
+}
+
+ensure_shared_runtime_worktree() {
+  local branch dir
+  branch="$(runtime_shared_branch)"
+  dir="$(runtime_shared_dir)"
 
   mkdir -p "$RUNTIME_WORKTREE_ROOT"
   if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -421,8 +584,8 @@ verify_shared_runtime_plist() {
     return 1
   fi
 
-  if ! grep -Fq "<key>REMUX_RUNTIME_BRANCH</key>" "$plist" || ! grep -Fq "<string>dev</string>" "$plist"; then
-    echo "[runtime] $plist does not pin the shared runtime branch to dev" >&2
+  if ! grep -Fq "<key>REMUX_RUNTIME_BRANCH</key>" "$plist" || ! grep -Fq "<string>$(runtime_shared_branch)</string>" "$plist"; then
+    echo "[runtime] $plist does not pin the shared runtime branch to $(runtime_shared_branch)" >&2
     echo "[runtime] rerun: npm run runtime:install-launchd" >&2
     return 1
   fi
@@ -455,7 +618,7 @@ loaded_shared_runtime_service_matches_expected() {
 
   [[ -n "$service_description" ]] || return 1
   grep -Fq "working directory = $(runtime_shared_workdir)" <<<"$service_description" || return 1
-  grep -Fq "REMUX_RUNTIME_BRANCH => dev" <<<"$service_description" || return 1
+  grep -Fq "REMUX_RUNTIME_BRANCH => $(runtime_shared_branch)" <<<"$service_description" || return 1
 
   return 0
 }
@@ -580,7 +743,7 @@ load_sync_launchd() {
 }
 
 ensure_shared_runtime_running() {
-  if shared_runtime_meta_json >/dev/null 2>&1; then
+  if shared_runtime_meta_json >/dev/null 2>&1 && loaded_shared_runtime_service_matches_expected; then
     return 0
   fi
 
@@ -721,4 +884,13 @@ acquire_sync_lock() {
 
 release_sync_lock() {
   rm -rf "$SYNC_LOCK_DIR"
+}
+current_shared_worktree_sha() {
+  git -C "$(runtime_shared_dir)" rev-parse HEAD
+}
+
+shared_worktree_is_clean() {
+  local dir
+  dir="$(runtime_shared_dir)"
+  [[ -z "$(git -C "$dir" status --porcelain --untracked-files=no)" ]]
 }

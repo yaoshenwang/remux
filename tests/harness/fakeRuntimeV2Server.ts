@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type {
   RuntimeV2InspectSnapshot,
+  RuntimeV2Metadata,
   RuntimeV2SplitDirection,
   RuntimeV2TerminalSize,
   RuntimeV2WorkspaceSummary,
@@ -53,6 +54,7 @@ export interface TerminalObservation {
 
 export interface FakeRuntimeV2ServerOptions {
   initialPaneContent?: Record<string, string>;
+  metadata?: Partial<RuntimeV2Metadata>;
   sessionName?: string;
   tabTitle?: string;
 }
@@ -68,15 +70,29 @@ export class FakeRuntimeV2Server {
   private readonly paneContent = new Map<string, string>();
   private readonly paneScrollback = new Map<string, string[]>();
   private readonly paneStreamSequence = new Map<string, number>();
+  private readonly metadata: RuntimeV2Metadata;
   private sessionSequence = 1;
   private tabSequence = 1;
   private terminalClientSequence = 0;
   private terminalStreamTransport: "text" | "binary" = "text";
   private paneSequence = 1;
   private nextTerminalSnapshotDelayMs = 0;
+  private terminateTerminalSocketAfterSnapshot = false;
   private workspace: RuntimeV2WorkspaceSummary;
 
   constructor(options: FakeRuntimeV2ServerOptions = {}) {
+    this.metadata = {
+      service: "remuxd",
+      version: "test",
+      protocolVersion: "2026-03-27-draft",
+      controlWebsocketPath: "/v2/control",
+      terminalWebsocketPath: "/v2/terminal",
+      publicBaseUrl: null,
+      gitBranch: "dev",
+      gitCommitSha: "fake-runtime-sha",
+      gitDirty: false,
+      ...options.metadata,
+    };
     const sessionName = options.sessionName ?? "main";
     const tabTitle = options.tabTitle ?? "Shell";
     this.workspace = {
@@ -224,6 +240,10 @@ export class FakeRuntimeV2Server {
 
   delayNextTerminalSnapshot(delayMs: number): void {
     this.nextTerminalSnapshotDelayMs = Math.max(0, delayMs);
+  }
+
+  terminateNextTerminalSocketAfterSnapshot(): void {
+    this.terminateTerminalSocketAfterSnapshot = true;
   }
 
   pushTerminalOutput(paneId: string, chunk: string): void {
@@ -428,17 +448,7 @@ export class FakeRuntimeV2Server {
 
     if (request.method === "GET" && url.pathname === "/v2/meta") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        service: "remuxd",
-        version: "test",
-        protocolVersion: "2",
-        controlWebsocketPath: "/v2/control",
-        terminalWebsocketPath: "/v2/terminal",
-        publicBaseUrl: null,
-        gitBranch: "dev",
-        gitCommitSha: "fake-runtime-sha",
-        gitDirty: false,
-      }));
+      response.end(JSON.stringify(this.metadata));
       return;
     }
 
@@ -665,6 +675,13 @@ export class FakeRuntimeV2Server {
         content_base64: encodeBase64(this.getPaneContent(paneId)),
         replay_base64: encodeBase64(this.buildPaneReplay(paneId)),
       }));
+      if (this.terminateTerminalSocketAfterSnapshot) {
+        this.terminateTerminalSocketAfterSnapshot = false;
+        setTimeout(() => {
+          const rawSocket = (socket as WebSocket & { _socket?: { destroy: () => void } })._socket;
+          rawSocket?.destroy();
+        }, 0);
+      }
     };
     if (delayMs > 0) {
       setTimeout(send, delayMs);

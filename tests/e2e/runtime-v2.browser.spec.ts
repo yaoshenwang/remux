@@ -2,7 +2,22 @@ import { expect, test, type Page } from "@playwright/test";
 import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harness/runtime-v2-server.js";
 
 const readTerminalText = async (page: Page): Promise<string> =>
-  (await page.locator(".terminal-host .xterm-rows").textContent()) ?? "";
+  await page.evaluate(() => window.__remuxTestTerminal?.readViewport() ?? "");
+
+const expectAttachedStatus = async (page: Page): Promise<void> => {
+  await expect.poll(() => page.evaluate(() => {
+    const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
+    if (!indicator) {
+      return "";
+    }
+    return `${indicator.className}|${indicator.getAttribute("aria-label") ?? ""}`;
+  })).toContain("attached:");
+
+  await expect.poll(() => page.evaluate(() => {
+    const indicator = document.querySelector("[aria-label^='Status: ']") as HTMLElement | null;
+    return indicator?.className ?? "";
+  })).toContain("ok");
+};
 
 const focusLiveTerminal = async (page: Page): Promise<void> => {
   await page.getByTestId("terminal-host").click({ position: { x: 48, y: 48 } });
@@ -56,7 +71,7 @@ test.describe("runtime-v2 browser behavior", () => {
     });
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
     await expect(page.getByTestId("terminal-host")).toBeVisible();
     await expect(page.locator(".drawer-backend-switcher")).toHaveCount(0);
     await expect
@@ -76,7 +91,7 @@ test.describe("runtime-v2 browser behavior", () => {
     });
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     expect(stateRequests).toEqual([]);
   });
@@ -87,7 +102,7 @@ test.describe("runtime-v2 browser behavior", () => {
     server.upstream.setPaneContent(newPaneId, "tests passed");
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await page.getByTestId("compose-input").fill("echo hi");
     await page.getByTestId("compose-input").press("Enter");
@@ -111,7 +126,7 @@ test.describe("runtime-v2 browser behavior", () => {
     server.upstream.setTerminalStreamTransport("binary");
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
     await expect.poll(() => readTerminalText(page)).toContain("binary ready");
 
     await page.getByTestId("compose-input").fill("echo browser-binary");
@@ -125,7 +140,7 @@ test.describe("runtime-v2 browser behavior", () => {
 
   test("sends direct keyboard input from the live xterm surface", async ({ page }) => {
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await focusLiveTerminal(page);
     await page.keyboard.type("echo direct-terminal-input");
@@ -140,6 +155,16 @@ test.describe("runtime-v2 browser behavior", () => {
     await expect.poll(() => readTerminalText(page)).toContain("echo direct-terminal-input");
   });
 
+  test("restores xterm focus after interacting with other controls", async ({ page }) => {
+    await page.goto(`${server.baseUrl}/?token=${server.token}`);
+    await expectAttachedStatus(page);
+
+    await page.getByTestId("compose-input").click();
+    await expect(page.getByTestId("compose-input")).toBeFocused();
+
+    await focusLiveTerminal(page);
+  });
+
   test("keeps large live output scrollable and intact across the terminal buffer", async ({ page }) => {
     const paneId = server.upstream.activePaneId();
     const lines = Array.from(
@@ -148,7 +173,7 @@ test.describe("runtime-v2 browser behavior", () => {
     );
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     server.upstream.pushTerminalOutput(paneId, `${lines.join("\r\n")}\r\n`);
 
@@ -180,11 +205,11 @@ test.describe("runtime-v2 browser behavior", () => {
     server.upstream.setPaneContent(paneId, `${lines.join("\r\n")}\r\n`);
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
     await expect.poll(() => readTerminalBufferLines(page, "RESTORE-LINE-")).toEqual(lines);
 
     await page.reload();
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
     await expect.poll(() => readTerminalBufferLines(page, "RESTORE-LINE-")).toEqual(lines);
   });
 
@@ -197,10 +222,10 @@ test.describe("runtime-v2 browser behavior", () => {
     server.upstream.setPaneContent("pane-1", "live tail line");
 
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await page.reload();
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await page.getByRole("button", { name: "Inspect" }).click();
     await expect(page.getByTestId("inspect-pane-pane-1")).toContainText("compile started");
@@ -210,7 +235,7 @@ test.describe("runtime-v2 browser behavior", () => {
 
   test("keeps the live terminal stage measurable while inspect is open", async ({ page }) => {
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     const readStageMetrics = async () => page.evaluate(() => {
       const host = document.querySelector("[data-testid='terminal-host']") as HTMLElement | null;
@@ -288,8 +313,8 @@ test.describe("runtime-v2 browser behavior", () => {
       await desktopPage.goto(`${server.baseUrl}/?token=${server.token}`);
       await mobilePage.goto(`${server.baseUrl}/?token=${server.token}`);
 
-      await expect(desktopPage.getByTestId("top-status-indicator")).toHaveClass(/ok/);
-      await expect(mobilePage.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+      await expectAttachedStatus(desktopPage);
+      await expectAttachedStatus(mobilePage);
       await expect.poll(() => (server.upstream.latestTerminal()?.attachCount ?? 0) - baselineAttachCount).toBe(1);
       await expect.poll(() => server.upstream.latestTerminal()?.sizes.at(-1)?.cols ?? 0).toBeGreaterThan(100);
 
@@ -310,7 +335,7 @@ test.describe("runtime-v2 browser behavior", () => {
   test("mobile keeps compose available in live but removes it from inspect mode", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await expect(page.getByTestId("compose-input")).toBeVisible();
     await page.getByTestId("compose-input").fill("echo mobile");
@@ -335,7 +360,7 @@ test.describe("runtime-v2 browser behavior", () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     server.upstream.pushTerminalOutput(paneId, `${lines.join("\r\n")}\r\n`);
 
@@ -363,7 +388,7 @@ test.describe("runtime-v2 browser behavior", () => {
   test("mobile inspect hides nonessential controls until expanded", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${server.baseUrl}/?token=${server.token}`);
-    await expect(page.getByTestId("top-status-indicator")).toHaveClass(/ok/);
+    await expectAttachedStatus(page);
 
     await page.getByRole("button", { name: "Inspect" }).click();
     await expect(page.getByTestId("inspect-controls-toggle")).toBeVisible();

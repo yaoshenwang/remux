@@ -58,7 +58,7 @@ export const TerminalStage = ({
           className="terminal-host"
           ref={terminalContainerRef}
           data-testid="terminal-host"
-          onPointerDown={onFocusTerminal}
+          onPointerDownCapture={onFocusTerminal}
           onContextMenu={(event) => event.preventDefault()}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}

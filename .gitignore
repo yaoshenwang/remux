@@ -10,6 +10,9 @@ screenshots
 .playwright-mcp/
 .worktrees/
 
+# AI agent local instruction files (CLAUDE.md is tracked as project config)
+AGENTS.md
+
 # Temp uploads from Claude Code / CleanShot
 /upload-*
 /CleanShot*

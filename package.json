@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.24",
+  "version": "0.2.31",
   "description": "Remote workspace cockpit for terminal-first work, powered by the unified runtime-v2 backend",
   "license": "MIT",
   "repository": {
@@ -46,6 +46,7 @@
     "runtime:load-launchd": "scripts/load-launchd.sh all",
     "runtime:status": "scripts/check-runtime-status.sh all",
     "runtime:sync": "scripts/sync-runtime.sh all --verify-public",
+    "runtime:promote-shared": "scripts/sync-runtime.sh dev --verify-public --promote-shared-runtime",
     "native:v2:check": "cargo check --workspace --manifest-path Cargo.toml",
     "native:v2:test": "cargo test --workspace --manifest-path Cargo.toml",
     "native:v2:run": "cargo run --manifest-path Cargo.toml -p remuxd --",
