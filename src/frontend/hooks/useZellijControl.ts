@@ -31,6 +31,20 @@ export interface WorkspaceState {
   activeTabIndex: number;
 }
 
+export interface BandwidthStats {
+  rawBytesPerSec: number;
+  compressedBytesPerSec: number;
+  savedPercent: number;
+  fullSnapshotsSent: number;
+  diffUpdatesSent: number;
+  avgChangedRowsPerDiff: number;
+  totalRawBytes: number;
+  totalCompressedBytes: number;
+  totalSavedBytes: number;
+  rttMs: number | null;
+  protocol: string;
+}
+
 export interface UseZellijControlResult {
   // Connection state
   connected: boolean;
@@ -45,6 +59,9 @@ export interface UseZellijControlResult {
 
   // Inspect
   inspectContent: string | null;
+
+  // Bandwidth stats
+  bandwidthStats: BandwidthStats | null;
 
   // Actions
   refreshWorkspace: () => void;
@@ -69,6 +86,8 @@ export const useZellijControl = (): UseZellijControlResult => {
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
   const [inspectContent, setInspectContent] = useState<string | null>(null);
+  const [bandwidthStats, setBandwidthStats] = useState<BandwidthStats | null>(null);
+  const rttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const passwordRef = useRef(password);
   passwordRef.current = password;
@@ -103,12 +122,30 @@ export const useZellijControl = (): UseZellijControlResult => {
       try {
         const msg = JSON.parse(event.data as string);
 
+        // Handle bandwidth_stats and pong (extension messages).
+        if (msg.type === "bandwidth_stats" && msg.stats) {
+          setBandwidthStats(msg.stats as BandwidthStats);
+          return;
+        }
+        if (msg.type === "pong" && typeof msg.timestamp === "number") {
+          const rtt = Math.round(performance.now() - msg.timestamp);
+          setBandwidthStats((prev) => prev ? { ...prev, rttMs: rtt } : null);
+          return;
+        }
+
         if (msg.type === "auth_ok") {
           setConnected(true);
           setNeedsPassword(false);
           setPasswordErrorMessage("");
           // Request initial workspace state.
           ws.send(JSON.stringify({ type: "subscribe_workspace" }));
+          // Start RTT measurement pings.
+          if (rttTimerRef.current) clearInterval(rttTimerRef.current);
+          rttTimerRef.current = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "ping", timestamp: performance.now() }));
+            }
+          }, 10_000);
           return;
         }
 
@@ -139,6 +176,10 @@ export const useZellijControl = (): UseZellijControlResult => {
 
     ws.onclose = () => {
       stopKeepAliveRef.current?.();
+      if (rttTimerRef.current) {
+        clearInterval(rttTimerRef.current);
+        rttTimerRef.current = null;
+      }
       setConnected(false);
       // Auto-reconnect after 2s.
       setTimeout(() => connect(), 2000);
@@ -166,6 +207,7 @@ export const useZellijControl = (): UseZellijControlResult => {
 
     return () => {
       stopKeepAliveRef.current?.();
+      if (rttTimerRef.current) clearInterval(rttTimerRef.current);
       socketRef.current?.close();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -184,6 +226,7 @@ export const useZellijControl = (): UseZellijControlResult => {
     submitPassword,
     workspace,
     inspectContent,
+    bandwidthStats,
     refreshWorkspace: useCallback(() => send({ type: "subscribe_workspace" }), [send]),
     newTab: useCallback((name?: string) => send({ type: "new_tab", name }), [send]),
     closeTab: useCallback((tabIndex: number) => send({ type: "close_tab", tabIndex }), [send]),
