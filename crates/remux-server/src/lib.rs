@@ -28,7 +28,11 @@ use remux_session::{
     SessionSnapshot as RuntimeSessionSnapshot, SinglePaneWorkspace,
     TabSnapshot as RuntimeTabSnapshot, WorkspaceError,
 };
-use remux_terminal::{TerminalSnapshot, TerminalState};
+use remux_terminal::{
+    TerminalPatch as RuntimeTerminalPatch, TerminalPatchChunk as RuntimeTerminalPatchChunk,
+    TerminalPatchLine as RuntimeTerminalPatchLine, TerminalPatchSource as RuntimeTerminalPatchSource,
+    TerminalSnapshot, TerminalState,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -90,7 +94,11 @@ struct AppState {
 
 #[derive(Debug, Clone)]
 enum RuntimeUpdate {
-    Output { sequence: u64, chunk: Vec<u8> },
+    Output {
+        sequence: u64,
+        chunk: Vec<u8>,
+        patch: RuntimeTerminalPatch,
+    },
     Exit { exit_code: Option<i32> },
 }
 
@@ -192,9 +200,17 @@ impl PaneRuntime {
     fn handle_process_event(&self, event: PtyEvent) {
         match event {
             PtyEvent::Output(chunk) => {
-                self.lock_terminal().ingest(&chunk);
+                let patch = {
+                    let mut terminal = self.lock_terminal();
+                    terminal.ingest(&chunk);
+                    terminal.build_patch(RuntimeTerminalPatchSource::Stream)
+                };
                 let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = self.updates.send(RuntimeUpdate::Output { sequence, chunk });
+                let _ = self.updates.send(RuntimeUpdate::Output {
+                    sequence,
+                    chunk,
+                    patch,
+                });
             }
             PtyEvent::Exited { exit_code, .. } => {
                 *self.exit_code.lock().expect("runtime exit lock poisoned") =
@@ -912,6 +928,52 @@ fn build_terminal_snapshot_message(
     }
 }
 
+fn build_terminal_patch_message(
+    pane_id: &PaneId,
+    patch: &RuntimeTerminalPatch,
+    view_revision: u64,
+    epoch: u64,
+    data_base64: String,
+) -> terminal::ServerMessage {
+    terminal::ServerMessage::TerminalPatch {
+        pane_id: pane_id.clone(),
+        epoch,
+        view_revision,
+        revision: patch.revision,
+        base_revision: patch.base_revision,
+        reset: patch.reset,
+        source: match patch.source {
+            RuntimeTerminalPatchSource::Snapshot => terminal::TerminalPatchSource::Snapshot,
+            RuntimeTerminalPatchSource::Stream => terminal::TerminalPatchSource::Stream,
+        },
+        cols: patch.cols,
+        rows: patch.rows,
+        data_base64,
+        payload: Some(terminal::TerminalPatchPayload {
+            visible_row_base: patch.visible_row_base,
+            chunks: patch
+                .chunks
+                .iter()
+                .map(map_runtime_patch_chunk)
+                .collect(),
+        }),
+    }
+}
+
+fn map_runtime_patch_chunk(chunk: &RuntimeTerminalPatchChunk) -> terminal::TerminalPatchChunk {
+    terminal::TerminalPatchChunk {
+        start_row: chunk.start_row,
+        lines: chunk.lines.iter().map(map_runtime_patch_line).collect(),
+    }
+}
+
+fn map_runtime_patch_line(line: &RuntimeTerminalPatchLine) -> terminal::TerminalPatchLine {
+    terminal::TerminalPatchLine {
+        text: line.text.clone(),
+        wrapped: line.wrapped,
+    }
+}
+
 fn find_repo_package_json(dir: &Path) -> Option<PathBuf> {
     for ancestor in dir.ancestors() {
         let candidate = ancestor.join("package.json");
@@ -1364,18 +1426,36 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
     let mut attached_pane_id: Option<PaneId> = None;
     let mut attached_client_id: Option<String> = None;
     let mut runtime_updates: Option<broadcast::Receiver<RuntimeUpdate>> = None;
+    let terminal_epoch: u64 = 0;
+    let terminal_view_revision: u64 = 0;
 
     loop {
         tokio::select! {
             update = recv_runtime_update(runtime_updates.as_mut()), if runtime_updates.is_some() => {
                 match update {
-                    Some(RuntimeStreamMessage::Stream { sequence, chunk }) => {
+                    Some(RuntimeStreamMessage::Stream {
+                        sequence,
+                        chunk,
+                        patch,
+                    }) => {
                         // Binary stream frame: [8-byte BE u64 sequence][raw PTY data]
                         let mut frame = Vec::with_capacity(8 + chunk.len());
                         frame.extend_from_slice(&sequence.to_be_bytes());
                         frame.extend_from_slice(&chunk);
                         if socket.send(Message::Binary(frame.into())).await.is_err() {
                             break;
+                        }
+                        if let Some(pane_id) = attached_pane_id.as_ref() {
+                            let patch_message = build_terminal_patch_message(
+                                pane_id,
+                                &patch,
+                                terminal_view_revision,
+                                terminal_epoch,
+                                BASE64.encode(&chunk),
+                            );
+                            if send_json_message(&mut socket, &patch_message).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     Some(RuntimeStreamMessage::Event(event)) => {
@@ -1511,7 +1591,11 @@ async fn handle_terminal_socket(mut socket: WebSocket, state: AppState) {
 }
 
 enum RuntimeStreamMessage {
-    Stream { sequence: u64, chunk: Vec<u8> },
+    Stream {
+        sequence: u64,
+        chunk: Vec<u8>,
+        patch: RuntimeTerminalPatch,
+    },
     Event(terminal::ServerMessage),
     Resync,
 }
@@ -1525,9 +1609,15 @@ async fn recv_runtime_update(
     };
 
     match receiver.recv().await {
-        Ok(RuntimeUpdate::Output { sequence, chunk }) => {
-            Some(RuntimeStreamMessage::Stream { sequence, chunk })
-        }
+        Ok(RuntimeUpdate::Output {
+            sequence,
+            chunk,
+            patch,
+        }) => Some(RuntimeStreamMessage::Stream {
+            sequence,
+            chunk,
+            patch,
+        }),
         Ok(RuntimeUpdate::Exit { exit_code }) => {
             Some(RuntimeStreamMessage::Event(terminal::ServerMessage::Exit {
                 exit_code,
@@ -1790,6 +1880,52 @@ mod tests {
             json["replay_base64"],
             serde_json::json!(BASE64.encode("replay-state"))
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_patch_message_includes_payload_and_legacy_data_base64() {
+        let patch = RuntimeTerminalPatch {
+            revision: 8,
+            base_revision: Some(7),
+            reset: false,
+            source: RuntimeTerminalPatchSource::Stream,
+            cols: 12,
+            rows: 4,
+            source_size: TerminalSize::new(12, 4),
+            cursor: remux_terminal::TerminalCursor { row: 2, col: 5 },
+            visible_row_base: 10,
+            chunks: vec![RuntimeTerminalPatchChunk {
+                start_row: 1,
+                lines: vec![RuntimeTerminalPatchLine {
+                    text: "patched-line".to_owned(),
+                    wrapped: false,
+                }],
+            }],
+        };
+
+        let message = build_terminal_patch_message(
+            &PaneId("pane_test".to_owned()),
+            &patch,
+            15,
+            2,
+            BASE64.encode("legacy-stream"),
+        );
+        let json = serde_json::to_value(&message).expect("terminal patch should serialize");
+
+        assert_eq!(json["type"], "terminal_patch");
+        assert_eq!(json["paneId"], "pane_test");
+        assert_eq!(json["epoch"], 2);
+        assert_eq!(json["viewRevision"], 15);
+        assert_eq!(json["revision"], 8);
+        assert_eq!(json["baseRevision"], 7);
+        assert_eq!(json["reset"], false);
+        assert_eq!(json["source"], "stream");
+        assert_eq!(json["cols"], 12);
+        assert_eq!(json["rows"], 4);
+        assert_eq!(json["dataBase64"], BASE64.encode("legacy-stream"));
+        assert_eq!(json["payload"]["visibleRowBase"], 10);
+        assert_eq!(json["payload"]["chunks"][0]["startRow"], 1);
+        assert_eq!(json["payload"]["chunks"][0]["lines"][0]["text"], "patched-line");
     }
 
     #[tokio::test]

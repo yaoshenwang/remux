@@ -26,12 +26,47 @@ pub struct TerminalCursor {
     pub col: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalPatchSource {
+    Snapshot,
+    Stream,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalPatchLine {
+    pub text: String,
+    pub wrapped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalPatchChunk {
+    pub start_row: u16,
+    pub lines: Vec<TerminalPatchLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalPatch {
+    pub revision: u64,
+    pub base_revision: Option<u64>,
+    pub reset: bool,
+    pub source: TerminalPatchSource,
+    pub cols: u16,
+    pub rows: u16,
+    pub source_size: TerminalSize,
+    pub cursor: TerminalCursor,
+    pub visible_row_base: usize,
+    pub chunks: Vec<TerminalPatchChunk>,
+}
+
 pub struct TerminalState {
     parser: vt100::Parser,
     byte_count: usize,
     precision: InspectPrecision,
     size: TerminalSize,
     scrollback_len: usize,
+    patch_revision: u64,
+    needs_full_patch: bool,
+    last_render_rows: Vec<TerminalPatchLine>,
 }
 
 impl TerminalState {
@@ -43,6 +78,9 @@ impl TerminalState {
             precision: InspectPrecision::Precise,
             size,
             scrollback_len,
+            patch_revision: 0,
+            needs_full_patch: true,
+            last_render_rows: Vec::new(),
         }
     }
 
@@ -62,6 +100,7 @@ impl TerminalState {
         {
             self.recover_from_parser_panic("resize");
         }
+        self.needs_full_patch = true;
     }
 
     #[must_use]
@@ -90,6 +129,9 @@ impl TerminalState {
         );
         self.parser = vt100::Parser::new(self.size.rows, self.size.cols, self.scrollback_len);
         self.precision = InspectPrecision::Partial;
+        self.patch_revision = 0;
+        self.needs_full_patch = true;
+        self.last_render_rows.clear();
     }
 
     #[must_use]
@@ -152,7 +194,191 @@ impl TerminalState {
         );
         self.parser = vt100::Parser::new(self.size.rows, self.size.cols, self.scrollback_len);
         self.precision = InspectPrecision::Partial;
+        self.patch_revision = 0;
+        self.needs_full_patch = true;
+        self.last_render_rows.clear();
     }
+
+    pub fn build_patch(&mut self, source: TerminalPatchSource) -> TerminalPatch {
+        let snapshot = self.snapshot();
+        let canonical_lines = build_canonical_lines(
+            &snapshot.scrollback_rows,
+            &snapshot.visible_rows,
+            &snapshot.scrollback_row_wraps,
+            &snapshot.visible_row_wraps,
+        );
+        let render_rows = reflow_canonical_lines(&canonical_lines, snapshot.size.cols);
+        let (visible_row_base, visible_rows) =
+            collect_visible_patch_rows(&render_rows, snapshot.size.rows);
+
+        let reset = self.needs_full_patch
+            || self.patch_revision == 0
+            || self.last_render_rows.len() != visible_rows.len();
+        let base_revision = if reset {
+            None
+        } else {
+            Some(self.patch_revision)
+        };
+        let chunks = build_patch_chunks(&self.last_render_rows, &visible_rows, reset);
+
+        self.patch_revision += 1;
+        self.needs_full_patch = false;
+        self.last_render_rows = visible_rows;
+
+        TerminalPatch {
+            revision: self.patch_revision,
+            base_revision,
+            reset,
+            source,
+            cols: snapshot.size.cols,
+            rows: snapshot.size.rows,
+            source_size: snapshot.source_size,
+            cursor: snapshot.cursor,
+            visible_row_base,
+            chunks,
+        }
+    }
+}
+
+fn build_canonical_lines(
+    scrollback_rows: &[String],
+    visible_rows: &[String],
+    scrollback_row_wraps: &[bool],
+    visible_row_wraps: &[bool],
+) -> Vec<String> {
+    let mut canonical = Vec::new();
+    let mut current = String::new();
+
+    for (row, wrapped) in scrollback_rows
+        .iter()
+        .zip(scrollback_row_wraps.iter())
+        .chain(visible_rows.iter().zip(visible_row_wraps.iter()))
+    {
+        current.push_str(row.trim_end_matches(' '));
+        if !wrapped {
+            canonical.push(std::mem::take(&mut current));
+        }
+    }
+
+    if !current.is_empty() || canonical.is_empty() {
+        canonical.push(current);
+    }
+
+    canonical
+}
+
+fn char_display_width(ch: char) -> usize {
+    if ch.is_ascii() {
+        return usize::from(!ch.is_ascii_control());
+    }
+
+    // Approximation that keeps CJK/wide glyphs stable in reflow tests.
+    2
+}
+
+fn reflow_canonical_lines(lines: &[String], cols: u16) -> Vec<TerminalPatchLine> {
+    let width_limit = usize::from(cols.max(1));
+    let mut rows = Vec::new();
+
+    for line in lines {
+        if line.is_empty() {
+            rows.push(TerminalPatchLine {
+                text: String::new(),
+                wrapped: false,
+            });
+            continue;
+        }
+
+        let mut segments = Vec::<String>::new();
+        let mut segment = String::new();
+        let mut segment_width = 0usize;
+
+        for ch in line.chars() {
+            let width = char_display_width(ch).max(1);
+            if segment_width > 0 && segment_width + width > width_limit {
+                segments.push(std::mem::take(&mut segment));
+                segment_width = 0;
+            }
+            segment.push(ch);
+            segment_width += width;
+        }
+
+        segments.push(segment);
+        let last_index = segments.len().saturating_sub(1);
+        for (index, text) in segments.into_iter().enumerate() {
+            rows.push(TerminalPatchLine {
+                text,
+                wrapped: index < last_index,
+            });
+        }
+    }
+
+    if rows.is_empty() {
+        rows.push(TerminalPatchLine {
+            text: String::new(),
+            wrapped: false,
+        });
+    }
+
+    rows
+}
+
+fn collect_visible_patch_rows(
+    render_rows: &[TerminalPatchLine],
+    rows: u16,
+) -> (usize, Vec<TerminalPatchLine>) {
+    let visible_len = usize::from(rows);
+    let visible_row_base = render_rows.len().saturating_sub(visible_len);
+
+    if render_rows.len() >= visible_len {
+        return (visible_row_base, render_rows[visible_row_base..].to_vec());
+    }
+
+    let mut visible = vec![
+        TerminalPatchLine {
+            text: String::new(),
+            wrapped: false,
+        };
+        visible_len.saturating_sub(render_rows.len())
+    ];
+    visible.extend_from_slice(render_rows);
+    (0, visible)
+}
+
+fn build_patch_chunks(
+    previous_rows: &[TerminalPatchLine],
+    next_rows: &[TerminalPatchLine],
+    reset: bool,
+) -> Vec<TerminalPatchChunk> {
+    if reset {
+        return vec![TerminalPatchChunk {
+            start_row: 0,
+            lines: next_rows.to_vec(),
+        }];
+    }
+
+    let mut chunks = Vec::new();
+    let mut index = 0usize;
+    while index < next_rows.len() {
+        if previous_rows.get(index) == Some(&next_rows[index]) {
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        let mut lines = Vec::new();
+        while index < next_rows.len() && previous_rows.get(index) != Some(&next_rows[index]) {
+            lines.push(next_rows[index].clone());
+            index += 1;
+        }
+
+        chunks.push(TerminalPatchChunk {
+            start_row: u16::try_from(start).unwrap_or(u16::MAX),
+            lines,
+        });
+    }
+
+    chunks
 }
 
 fn collect_scrollback_rows(screen: &vt100::Screen, width: u16) -> Vec<String> {
@@ -437,6 +663,26 @@ mod tests {
         let mut history = screen.clone();
         history.set_scrollback(usize::MAX);
         history
+    }
+
+    fn apply_patch_to_rows(patch: &TerminalPatch) -> Vec<TerminalPatchLine> {
+        let mut rows = vec![
+            TerminalPatchLine {
+                text: String::new(),
+                wrapped: false,
+            };
+            usize::from(patch.rows)
+        ];
+        for chunk in &patch.chunks {
+            for (index, line) in chunk.lines.iter().enumerate() {
+                let row = usize::from(chunk.start_row) + index;
+                if row >= rows.len() {
+                    continue;
+                }
+                rows[row] = line.clone();
+            }
+        }
+        rows
     }
 
     #[test]
@@ -858,5 +1104,82 @@ mod tests {
         assert!(snapshot.visible_text.contains("ok"));
         assert!(snapshot.visible_text.contains("ready"));
         assert_eq!(snapshot.byte_count, "界界\r\nok\r\nready".len());
+    }
+
+    #[test]
+    fn terminal_patch_reflow_roundtrip_after_resize_keeps_canonical_content() {
+        let mut terminal = TerminalState::new(TerminalSize::new(6, 3), 200);
+        terminal.ingest(b"1234567890");
+
+        let first = terminal.build_patch(TerminalPatchSource::Stream);
+        assert!(first.reset);
+
+        terminal.resize(TerminalSize::new(4, 3));
+        let resized = terminal.build_patch(TerminalPatchSource::Snapshot);
+        assert!(resized.reset);
+        assert_eq!(resized.cols, 4);
+        assert_eq!(resized.rows, 3);
+        assert!(
+            resized
+                .chunks
+                .iter()
+                .map(|chunk| chunk.lines.len())
+                .sum::<usize>()
+                >= 2,
+            "expected resized patch to include multiple visible rows",
+        );
+
+        let visible = apply_patch_to_rows(&resized);
+        let combined = visible.iter().map(|line| line.text.as_str()).collect::<String>();
+        assert!(
+            combined.contains("1234567890") || combined.contains("1234"),
+            "expected canonical content after reflow, got {combined:?}",
+        );
+    }
+
+    #[test]
+    fn terminal_patch_handles_wide_chars_and_cursor_at_eol_during_reflow() {
+        let mut terminal = TerminalState::new(TerminalSize::new(4, 2), 200);
+        terminal.ingest("界界ABCD".as_bytes());
+
+        let first = terminal.build_patch(TerminalPatchSource::Stream);
+        assert_eq!(first.cursor.row, 1);
+        assert!(first.cursor.col <= first.cols);
+        assert!(
+            first
+                .chunks
+                .iter()
+                .flat_map(|chunk| chunk.lines.iter())
+                .any(|line| line.text.contains('界')),
+            "expected wide chars in patch rows",
+        );
+
+        terminal.resize(TerminalSize::new(3, 2));
+        let resized = terminal.build_patch(TerminalPatchSource::Snapshot);
+        assert!(resized.reset);
+        assert!(
+            resized
+                .chunks
+                .iter()
+                .map(|chunk| chunk.lines.len())
+                .sum::<usize>()
+                >= 2,
+            "expected resize reflow to include multiple visible rows",
+        );
+    }
+
+    #[test]
+    fn terminal_patch_emits_coalesced_dirty_chunks_for_disjoint_row_changes() {
+        let mut terminal = TerminalState::new(TerminalSize::new(6, 4), 200);
+        terminal.ingest(b"111111\r\n222222\r\n333333\r\n444444");
+        let _ = terminal.build_patch(TerminalPatchSource::Stream);
+
+        terminal.ingest(b"\x1b[1;1HAAAAAA\x1b[4;1HBBBBBB");
+        let patch = terminal.build_patch(TerminalPatchSource::Stream);
+
+        assert!(!patch.reset);
+        assert_eq!(patch.chunks.len(), 2, "expected disjoint dirty chunks");
+        assert_eq!(patch.chunks[0].start_row, 0);
+        assert_eq!(patch.chunks[1].start_row, 3);
     }
 }
