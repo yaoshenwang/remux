@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import express, { type Router } from "express";
+import { createWebPushClient } from "./push-sender.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +37,11 @@ export interface NotificationPayload {
   data?: Record<string, unknown>;
 }
 
+export interface NotificationPreferences {
+  bell: boolean;
+  exit: boolean;
+}
+
 interface VapidKeys {
   publicKey: string;
   privateKey: string;
@@ -54,7 +60,10 @@ export interface WebPushClient {
 // ---------------------------------------------------------------------------
 
 export class NotificationManager {
-  private subscriptions = new Map<string, PushSubscription>();
+  private subscriptions = new Map<string, {
+    subscription: PushSubscription;
+    preferences: NotificationPreferences;
+  }>();
   private vapidKeys: VapidKeys;
   private readonly configDir: string;
 
@@ -72,8 +81,12 @@ export class NotificationManager {
   }
 
   /** Register a push subscription from a client. */
-  addSubscription(id: string, subscription: PushSubscription): void {
-    this.subscriptions.set(id, subscription);
+  addSubscription(
+    id: string,
+    subscription: PushSubscription,
+    preferences: NotificationPreferences = { bell: true, exit: true },
+  ): void {
+    this.subscriptions.set(id, { subscription, preferences });
     this.logger?.log(
       `[push] subscription added: ${id} (${this.subscriptions.size} total)`
     );
@@ -88,7 +101,10 @@ export class NotificationManager {
   }
 
   /** Send a notification to all subscribed clients. */
-  async notify(payload: NotificationPayload): Promise<void> {
+  async notify(
+    payload: NotificationPayload,
+    options: { kind?: keyof NotificationPreferences } = {},
+  ): Promise<void> {
     if (this.subscriptions.size === 0) return;
 
     this.logger?.log(
@@ -98,9 +114,12 @@ export class NotificationManager {
     const body = JSON.stringify(payload);
     const failures: string[] = [];
 
-    for (const [id, sub] of this.subscriptions) {
+    for (const [id, entry] of this.subscriptions) {
+      if (options.kind && !entry.preferences[options.kind]) {
+        continue;
+      }
       try {
-        await this.sendPush(sub, body);
+        await this.sendPush(entry.subscription, body);
       } catch (err) {
         this.logger?.error(`[push] failed to send to ${id}: ${err}`);
         failures.push(id);
@@ -119,7 +138,9 @@ export class NotificationManager {
       title: "Terminal Bell",
       body: `Session "${sessionName}" rang the bell`,
       tag: `bell-${sessionName}`,
-      data: { type: "bell", session: sessionName },
+      data: { type: "bell", session: sessionName, url: `/?session=${encodeURIComponent(sessionName)}` },
+    }, {
+      kind: "bell",
     });
   }
 
@@ -128,14 +149,22 @@ export class NotificationManager {
     sessionName: string,
     exitCode: number
   ): Promise<void> {
-    const success = exitCode === 0;
+    if (exitCode === 0) {
+      return;
+    }
+
     await this.notify({
-      title: success ? "Session Completed" : "Session Failed",
-      body: success
-        ? `Session "${sessionName}" completed successfully`
-        : `Session "${sessionName}" exited with code ${exitCode}`,
+      title: "Session Exited",
+      body: `Session "${sessionName}" exited with code ${exitCode}`,
       tag: `exit-${sessionName}`,
-      data: { type: "exit", session: sessionName, exitCode },
+      data: {
+        type: "exit",
+        session: sessionName,
+        exitCode,
+        url: `/?session=${encodeURIComponent(sessionName)}`,
+      },
+    }, {
+      kind: "exit",
     });
   }
 
@@ -150,9 +179,10 @@ export class NotificationManager {
 
     // POST /api/push/subscribe — register a push subscription.
     router.post("/api/push/subscribe", (req, res) => {
-      const { id, subscription } = req.body as {
+      const { id, subscription, preferences } = req.body as {
         id?: string;
         subscription?: PushSubscription;
+        preferences?: Partial<NotificationPreferences>;
       };
 
       if (!id || !subscription?.endpoint || !subscription?.keys) {
@@ -160,7 +190,10 @@ export class NotificationManager {
         return;
       }
 
-      this.addSubscription(id, subscription);
+      this.addSubscription(id, subscription, {
+        bell: preferences?.bell ?? true,
+        exit: preferences?.exit ?? true,
+      });
       res.json({ ok: true });
     });
 
@@ -247,20 +280,10 @@ export class NotificationManager {
       return;
     }
 
-    // Minimal Web Push implementation using fetch.
-    // For production, use the `web-push` npm package.
-    // This is a placeholder that logs the notification.
-    this.logger?.log(
-      `[push] would send to ${subscription.endpoint}: ${body}`
-    );
-
-    // TODO: Implement actual Web Push protocol (RFC 8030 + RFC 8291).
-    // For now, this serves as the wiring — the actual HTTP request to
-    // the push endpoint requires VAPID JWT signing and payload encryption.
-    // Install `web-push` npm package for production use:
-    //
-    //   import webPush from "web-push";
-    //   webPush.setVapidDetails("mailto:you@example.com", publicKey, privateKey);
-    //   await webPush.sendNotification(subscription, body);
+    const sender = createWebPushClient({
+      publicKey: this.vapidKeys.publicKey,
+      privateKey: this.vapidKeys.privateKey,
+    });
+    await sender.sendNotification(subscription, body);
   }
 }
