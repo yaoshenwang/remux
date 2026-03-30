@@ -14,6 +14,11 @@ import {
   SERVER_PROTOCOL_CAPABILITIES,
   type ProtocolCapabilities,
 } from "../protocol/envelope.js";
+import {
+  normalizeClientMode,
+  type ClientMode,
+  type ConnectedClientInfo,
+} from "../protocol/client-state.js";
 import { token, wsOrigin, formatPasswordError } from "../remux-runtime";
 import { attachWebSocketKeepAlive } from "../websocket-keepalive";
 
@@ -71,6 +76,9 @@ export interface UseZellijControlResult {
 
   // Workspace state
   workspace: WorkspaceState | null;
+  selfClientId: string | null;
+  connectedClients: ConnectedClientInfo[];
+  clientMode: ClientMode;
 
   // Inspect
   inspectSnapshot: InspectSnapshot | null;
@@ -95,6 +103,7 @@ export interface UseZellijControlResult {
   ) => void;
   loadMoreInspect: () => void;
   renameSession: (name: string) => void;
+  setClientMode: (mode: ClientMode) => void;
 }
 
 interface PendingInspectRequest {
@@ -115,6 +124,9 @@ export const useZellijControl = (): UseZellijControlResult => {
   const [password, setPassword] = useState("");
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
+  const [selfClientId, setSelfClientId] = useState<string | null>(null);
+  const [connectedClients, setConnectedClients] = useState<ConnectedClientInfo[]>([]);
+  const [clientMode, setClientModeState] = useState<ClientMode>("active");
   const [inspectSnapshot, setInspectSnapshot] = useState<InspectSnapshot | null>(null);
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectError, setInspectError] = useState<string | null>(null);
@@ -154,6 +166,10 @@ export const useZellijControl = (): UseZellijControlResult => {
       : { type: "request_inspect", ...request };
     ws.send(JSON.stringify(payload));
   }, []);
+
+  const setClientMode = useCallback((mode: ClientMode) => {
+    send({ type: "set_client_mode", mode });
+  }, [send]);
 
   const resolveInspectRequest = useCallback((request: Partial<InspectRequest> = {}): InspectRequest | null => {
     const scope = request.scope ?? lastInspectRequestRef.current?.scope ?? "tab";
@@ -251,6 +267,8 @@ export const useZellijControl = (): UseZellijControlResult => {
       const pw = passwordOverride ?? passwordRef.current;
       if (pw) authMsg.password = pw;
       authMsg.capabilities = SERVER_PROTOCOL_CAPABILITIES;
+      authMsg.deviceName = detectDeviceName();
+      authMsg.platform = "web";
       ws.send(JSON.stringify(authMsg));
     };
 
@@ -277,6 +295,7 @@ export const useZellijControl = (): UseZellijControlResult => {
 
         if (messageType === "auth_ok") {
           serverCapabilitiesRef.current = normalizeProtocolCapabilities(msg.capabilities);
+          setSelfClientId(typeof msg.clientId === "string" ? msg.clientId : null);
           setConnected(true);
           setNeedsPassword(false);
           setPasswordErrorMessage("");
@@ -319,6 +338,18 @@ export const useZellijControl = (): UseZellijControlResult => {
             tabs: msg.tabs as WorkspaceTab[],
             activeTabIndex: msg.activeTabIndex as number,
           });
+          return;
+        }
+
+        if (messageType === "clients_changed" && Array.isArray(msg.clients)) {
+          const nextSelfClientId = typeof msg.selfClientId === "string"
+            ? msg.selfClientId
+            : selfClientId;
+          const clients = msg.clients as ConnectedClientInfo[];
+          setSelfClientId(nextSelfClientId);
+          setConnectedClients(clients);
+          const selfClient = clients.find((client) => client.clientId === nextSelfClientId);
+          setClientModeState(selfClient ? normalizeClientMode(selfClient.mode) : "active");
           return;
         }
 
@@ -382,6 +413,9 @@ export const useZellijControl = (): UseZellijControlResult => {
       }
       setConnected(false);
       serverCapabilitiesRef.current = { ...EMPTY_PROTOCOL_CAPABILITIES };
+      setSelfClientId(null);
+      setConnectedClients([]);
+      setClientModeState("active");
       if (inspectSnapshotRef.current) {
         markInspectSnapshot({
           ...inspectSnapshotRef.current,
@@ -454,6 +488,9 @@ export const useZellijControl = (): UseZellijControlResult => {
     setPassword,
     submitPassword,
     workspace,
+    selfClientId,
+    connectedClients,
+    clientMode,
     inspectSnapshot,
     inspectLoading,
     inspectError,
@@ -469,5 +506,16 @@ export const useZellijControl = (): UseZellijControlResult => {
     requestInspect,
     loadMoreInspect,
     renameSession: useCallback((name: string) => send({ type: "rename_session", name }), [send]),
+    setClientMode,
   };
+};
+
+const detectDeviceName = (): string => {
+  const userAgentData = (navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  }).userAgentData;
+  const platform = userAgentData?.platform
+    ?? (typeof navigator.platform === "string" ? navigator.platform : "");
+  const normalized = platform.trim();
+  return normalized ? `This Browser (${normalized})` : "This Browser";
 };

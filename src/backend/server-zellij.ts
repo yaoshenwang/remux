@@ -19,6 +19,13 @@ import {
   type ProtocolCapabilities,
   type RemuxDomain,
 } from "./protocol/envelope.js";
+import {
+  normalizeClientMode,
+  normalizeClientPlatform,
+  normalizeDeviceName,
+  type ClientMode,
+  type ConnectedClientInfo,
+} from "./protocol/client-state.js";
 
 export interface ZellijServerConfig {
   port: number;
@@ -39,6 +46,7 @@ export interface RunningServer {
   start(): Promise<void>;
   stop(): Promise<void>;
   server: http.Server;
+  getConnectedClients?(): ConnectedClientInfo[];
 }
 
 interface TerminalClient {
@@ -52,6 +60,8 @@ interface ControlClient {
   ws: WebSocket;
   authenticated: boolean;
   capabilities: ProtocolCapabilities;
+  clientId: string;
+  connectTime: string;
 }
 
 export const createZellijServer = (
@@ -223,6 +233,8 @@ export const createZellijServer = (
   const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const terminalClients = new Set<TerminalClient>();
   const controlClients = new Set<ControlClient>();
+  const connectedClients = new Map<string, ConnectedClientInfo>();
+  let clientsChangedTimer: ReturnType<typeof setTimeout> | null = null;
   let controller: ZellijControllerApi | null = null;
   let inspectService: InspectService | null = null;
   /** Whether the Zellij session has been bootstrapped (first client created it). */
@@ -371,6 +383,59 @@ export const createZellijServer = (
     sendWireProtocolMessage(client.ws, client.capabilities.envelope, domain, type, payload, options);
   };
 
+  const getConnectedClientsSnapshot = (): ConnectedClientInfo[] => {
+    return [...connectedClients.values()].sort((left, right) => {
+      return left.connectTime.localeCompare(right.connectTime);
+    });
+  };
+
+  const markControlClientActive = (
+    client: ControlClient,
+    overrides: Partial<Pick<ConnectedClientInfo, "deviceName" | "platform" | "mode">> = {},
+  ): ConnectedClientInfo | null => {
+    if (!client.authenticated) {
+      return null;
+    }
+
+    const current = connectedClients.get(client.clientId);
+    if (!current) {
+      return null;
+    }
+
+    const nextInfo: ConnectedClientInfo = {
+      ...current,
+      ...overrides,
+      lastActivityAt: new Date().toISOString(),
+    };
+    connectedClients.set(client.clientId, nextInfo);
+    return nextInfo;
+  };
+
+  const broadcastClientsChanged = (): void => {
+    const clients = getConnectedClientsSnapshot();
+    for (const client of controlClients) {
+      if (!client.authenticated || client.ws.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      sendProtocolMessage(client, "runtime", "clients_changed", {
+        selfClientId: client.clientId,
+        clients,
+      });
+    }
+  };
+
+  const scheduleClientsChangedBroadcast = (): void => {
+    if (clientsChangedTimer) {
+      clearTimeout(clientsChangedTimer);
+    }
+
+    clientsChangedTimer = setTimeout(() => {
+      clientsChangedTimer = null;
+      broadcastClientsChanged();
+    }, 0);
+  };
+
   terminalWss.on("connection", (ws: WebSocket) => {
     const client: TerminalClient = { ws, authenticated: false, pty: null };
     terminalClients.add(client);
@@ -473,6 +538,8 @@ export const createZellijServer = (
       ws,
       authenticated: false,
       capabilities: { ...EMPTY_PROTOCOL_CAPABILITIES },
+      clientId: crypto.randomUUID(),
+      connectTime: new Date().toISOString(),
     };
     controlClients.add(client);
 
@@ -492,6 +559,7 @@ export const createZellijServer = (
 
       // Handle ping/pong for RTT measurement (bypass auth check).
       if (msg.type === "ping" && typeof msg.timestamp === "number") {
+        markControlClientActive(client);
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "pong", timestamp: msg.timestamp }));
         }
@@ -519,10 +587,27 @@ export const createZellijServer = (
         }
         client.authenticated = true;
         client.capabilities = requestedCapabilities;
-        ensureController();
-        sendWireProtocolMessage(ws, client.capabilities.envelope, "core", "auth_ok", {
-          capabilities: SERVER_PROTOCOL_CAPABILITIES,
+        const platform = normalizeClientPlatform(preAuthPayload.platform);
+        const deviceName = normalizeDeviceName(preAuthPayload.deviceName, platform);
+        connectedClients.set(client.clientId, {
+          clientId: client.clientId,
+          connectTime: client.connectTime,
+          deviceName,
+          platform,
+          lastActivityAt: new Date().toISOString(),
+          mode: "active",
         });
+        ensureController();
+        setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            return;
+          }
+          sendWireProtocolMessage(ws, client.capabilities.envelope, "core", "auth_ok", {
+            clientId: client.clientId,
+            capabilities: SERVER_PROTOCOL_CAPABILITIES,
+          });
+          scheduleClientsChangedBroadcast();
+        }, 0);
         return;
       }
 
@@ -533,6 +618,7 @@ export const createZellijServer = (
       }
 
       try {
+        markControlClientActive(client);
         const envelope = parseEnvelope(msg, { allowLegacyFallback: false, source: "client" });
         if (envelope?.domain === "inspect" && envelope.type === "request_inspect") {
           const inspectRequest = envelope.payload as Record<string, unknown>;
@@ -607,6 +693,12 @@ export const createZellijServer = (
             sendProtocolMessage(client, "core", "inspect_content", { content });
             break;
           }
+          case "set_client_mode": {
+            const mode = normalizeClientMode(msg.mode);
+            markControlClientActive(client, { mode });
+            scheduleClientsChangedBroadcast();
+            break;
+          }
           case "request_inspect": {
             const service = ensureInspectService();
             const scope = msg.scope;
@@ -653,16 +745,27 @@ export const createZellijServer = (
 
     ws.on("close", () => {
       controlClients.delete(client);
+      if (client.authenticated) {
+        connectedClients.delete(client.clientId);
+        scheduleClientsChangedBroadcast();
+      }
     });
 
     ws.on("error", (err: Error) => {
       logger.error("Control WebSocket error:", err.message);
       controlClients.delete(client);
+      if (client.authenticated) {
+        connectedClients.delete(client.clientId);
+        scheduleClientsChangedBroadcast();
+      }
     });
   });
 
   return {
     server,
+    getConnectedClients() {
+      return getConnectedClientsSnapshot();
+    },
     async start() {
       return new Promise<void>((resolve, reject) => {
         server.listen(config.port, config.host, () => {
@@ -700,6 +803,11 @@ export const createZellijServer = (
       }
       terminalClients.clear();
       controlClients.clear();
+      connectedClients.clear();
+      if (clientsChangedTimer) {
+        clearTimeout(clientsChangedTimer);
+        clientsChangedTimer = null;
+      }
       terminalWss.close();
       controlWss.close();
       extensions?.dispose();

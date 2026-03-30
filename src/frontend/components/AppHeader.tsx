@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { WorkspaceTab } from "../hooks/useZellijControl";
+import type { ClientMode } from "../protocol/client-state";
 
 interface AppHeaderProps {
   mobileLayout: boolean;
@@ -21,6 +22,9 @@ interface AppHeaderProps {
   // View mode
   viewMode: "terminal" | "inspect";
   onSetViewMode: (mode: "terminal" | "inspect") => void;
+  clientMode: ClientMode;
+  onToggleClientMode: () => void;
+  connectionStateLabel: string;
 }
 
 export const AppHeader = ({
@@ -37,6 +41,9 @@ export const AppHeader = ({
   onRenameTab,
   viewMode,
   onSetViewMode,
+  clientMode,
+  onToggleClientMode,
+  connectionStateLabel,
 }: AppHeaderProps) => {
   const [renamingTab, setRenamingTab] = useState<number | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -109,6 +116,18 @@ export const AppHeader = ({
       </nav>
 
       <div className="app-header-right">
+        {mobileLayout && (
+          <span className="connection-state-badge" data-testid="mobile-connection-state">
+            {connectionStateLabel}
+          </span>
+        )}
+        <button
+          className={`client-mode-toggle ${clientMode === "observer" ? "observer" : "active"}`}
+          onClick={onToggleClientMode}
+          type="button"
+        >
+          {`Mode: ${clientMode === "active" ? "Active" : "Observer"}`}
+        </button>
         {/* View mode toggle */}
         <div className="view-mode-toggle">
           <button

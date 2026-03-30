@@ -197,6 +197,12 @@ export const App = () => {
   const showPassword = connection.needsPassword || control.needsPassword;
   const isConnected = connection.status === "connected";
   const sessionName = ws?.session ?? "remux";
+  const connectionStateLabel =
+    connection.status === "connected" ? "Connected" :
+    connection.status === "disconnected" ? "Reconnecting" :
+    connection.status === "error" ? "Disconnected" :
+    connection.status === "authenticating" ? "Authenticating" :
+    "Connecting";
 
   const terminalStatusMessage =
     connection.status === "connecting" ? "Connecting..." :
@@ -211,6 +217,9 @@ export const App = () => {
       <SessionSection
         sessionName={sessionName}
         onRenameSession={control.renameSession}
+        connectionStateLabel={connectionStateLabel}
+        connectedClients={control.connectedClients}
+        selfClientId={control.selfClientId}
       />
       <AppearanceSection
         followBackendFocus={false}
@@ -253,6 +262,19 @@ export const App = () => {
           onRenameTab={control.renameTab}
           viewMode={viewMode}
           onSetViewMode={setViewMode}
+          clientMode={control.clientMode}
+          onToggleClientMode={() => {
+            const nextMode = control.clientMode === "active" ? "observer" : "active";
+            const confirmed = window.confirm(
+              nextMode === "observer"
+                ? "Switch this client to Observer mode?"
+                : "Switch this client to Active mode?",
+            );
+            if (confirmed) {
+              control.setClientMode(nextMode);
+            }
+          }}
+          connectionStateLabel={connectionStateLabel}
         />
 
         <div className="workspace-body">
