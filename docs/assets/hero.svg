@@ -77,7 +77,7 @@
       <text x="156" y="29" fill="#D6E4F2" font-size="24" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">Navigate with structure</text>
     </g>
 
-    <text x="0" y="620" fill="#94A3B8" font-size="21" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">runtime-v2 unified. inspect readable. live reliable.</text>
+    <text x="0" y="620" fill="#94A3B8" font-size="21" font-weight="500" font-family="'SF Pro Display', 'Segoe UI', sans-serif">zellij-backed. inspect readable. live reliable.</text>
   </g>
 
   <g transform="translate(778 118)">

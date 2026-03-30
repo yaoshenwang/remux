@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Remux 是一个基于 Web 的远程终端工作区控制台，通过 cloudflared 隧道让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
+Remux 是一个基于 Web 的远程 Zellij 工作区控制台，通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
 
 - **GitHub**: github.com/yaoshenwang/remux
 - **许可证**: MIT
@@ -43,11 +43,12 @@ Remux 是一个基于 Web 的远程终端工作区控制台，通过 cloudflared
 - Minor/Major 版本变更需用户明确批准
 - 每次 feature 合并到 `dev` 后 bump patch
 
-### Runtime V2 约束（强制）
+### Zellij Backend 约束（强制）
 
-- `runtime-v2` 是当前公开产品路径，**禁止**为了 session 持久化问题把 public `main` / `dev` 服务回退到任何旧 runtime 或兼容后端
-- 持久化问题必须在 `runtime-v2` 架构内解决，可以借鉴成熟的 server-client、daemon、socket、state store 原理，但不能把公开运行路径切回旧架构
-- 对 `https://remux.yaoshen.wang` 和 `https://remux-dev.yaoshen.wang` 的修复，目标是两者共享同一套机器级 runtime-v2 会话真相，而不是各自维护独立易失 workspace
+- `zellij` 是当前公开产品路径与唯一默认后端，**禁止**把 public `main` / `dev` 服务重新引回 `runtime-v2`、`remuxd` 或任何旧 runtime
+- session 持久化、断线恢复、Inspect、宽度和多端一致性问题，必须在当前 Node.js + node-pty + Zellij 架构内解决
+- 对 `https://remux.yaoshen.wang` 和 `https://remux-dev.yaoshen.wang` 的修复，目标是两者在需要时附着到同一套机器级 Zellij 会话真相，而不是各自维护独立易失 workspace
+- 仓库中的 `runtime-v2` 文档只属于归档资料，不得再把它当成当前实现或产品要求
 
 ## 常用命令
 
@@ -59,7 +60,6 @@ npm run build
 npm run typecheck
 npm test
 npm run test:watch
-npm run test:smoke
 npm run test:e2e
 ```
 
@@ -88,8 +88,8 @@ npm run typecheck && npm test && npm run build
 
 ### 安全要点
 
-- 两个 WebSocket 端点独立认证，修改 `server.ts` 或 `auth-service.ts` 时必须保持此特性
-- runtime 与 shell 相关命令使用参数数组，禁止退化为 shell 拼接字符串
+- 两个 WebSocket 端点独立认证，修改 `server-zellij.ts` 或 `auth-service.ts` 时必须保持此特性
+- zellij 与 shell 相关命令使用参数数组，禁止退化为 shell 拼接字符串
 - PTY 路径中的 session 名称必须继续保持安全转义
 
 ### 交付流程

@@ -2,33 +2,26 @@
 
 ## Overview
 
-Remux is a remote workspace cockpit for terminal-first work. It helps users monitor, inspect, and control live terminal workspaces from another device without pretending the browser is a full desktop terminal.
+Remux is a Zellij-backed remote workspace cockpit for terminal-first work. It helps users inspect, control, and intervene in a shared terminal workspace from another device without pretending the browser is a full desktop shell.
 
-The active product contract is the unified `runtime-v2` backend.
+The current public product path is:
 
-Primary use cases:
+- Node.js CLI and web server
+- Zellij as the session backend
+- xterm.js in the browser for live terminal rendering
+- separate control and terminal WebSocket channels
 
-- understand the current state of an ongoing terminal workspace from another device
-- inspect readable history and catch up after reconnects or late joins
-- intervene quickly through a live terminal when direct input is needed
-- keep remote access session-aware instead of exposing a generic browser shell
-
-Distribution model:
-
-- npm package invoked as `npx remux`
-- local HTTP server plus optional Cloudflare quick tunnel
-- single-page frontend served by the backend
+Legacy `runtime-v2` and `remuxd` material is archived under [docs/archive/README.md](./archive/README.md).
 
 ## Product Shape
 
-The key design choice is that Remux is not just a streamed PTY. It combines:
+Remux exposes three product surfaces:
 
 - `Inspect`: readable history and context for catch-up, copy, and diagnosis
-- `Live`: a real terminal stream for interactive shell I/O when intervention is needed
+- `Live`: a real terminal stream for interactive shell I/O
 - `Control`: structured session, tab, and pane operations
-- a mobile-oriented UI layer that makes navigation and lightweight intervention practical on touch devices
 
-This lets the browser act as a remote workspace cockpit instead of pretending to be a full desktop terminal emulator.
+The product is intentionally awareness-first. Zellij owns runtime truth; Remux makes that truth remotely accessible and easier to understand on mobile and secondary devices.
 
 ## Current Architecture
 
@@ -36,61 +29,32 @@ This lets the browser act as a remote workspace cockpit instead of pretending to
 
 The backend is a Node.js service built around:
 
-- Express for HTTP routes and static frontend serving
-- `ws` for WebSocket transport
-- a runtime-v2 gateway that proxies workspace state, inspect snapshots, and terminal streams
-- a translation layer that maps runtime-v2 data into the browser-facing workspace model
-- optional compatibility adapters kept outside the default contract
-
-Key entry points:
-
-- `src/backend/cli.ts`: CLI bootstrap, auth setup, runtime-v2 startup, tunnel startup
-- `src/backend/server-v2.ts`: runtime-v2 gateway HTTP routes, WebSocket lifecycle, auth gates, upload endpoint
-- `src/backend/v2/translation.ts`: runtime-v2 to browser model translation
-- `src/backend/v2/types.ts`: runtime-v2 protocol-facing workspace contract
+- `src/backend/cli-zellij.ts`: CLI bootstrap, auth setup, tunnel startup, and Zellij-backed server startup
+- `src/backend/server-zellij.ts`: HTTP routes, `/ws/control`, `/ws/terminal`, auth gates, upload handling, and extension APIs
+- `src/backend/zellij-controller.ts`: Zellij JSON queries and structured tab/pane/session actions
+- `src/backend/pty/zellij-pty.ts`: per-client attach PTY wrapper around Zellij
+- `src/backend/extensions.ts`: optional terminal state tracking, notifications, bandwidth stats, file browsing, and Gastown enrichment
 
 ### Frontend
 
-The frontend is a React app centered in `src/frontend/App.tsx` with:
+The frontend is a React app centered around:
 
-- xterm.js for the Live terminal surface
-- a drawer for Control-oriented workspace navigation
-- a toolbar for modifier keys and mobile-friendly shortcuts
-- a compose box for native keyboard input
-- an inspect surface, currently backed by scrollback capture and terminal serialization, for readable copy and selection
-- local preferences for theme, snippets, and view behavior
+- `src/frontend/App.tsx`: shell composition for Inspect, Live, Control, toolbar, and compose input
+- `src/frontend/hooks/useZellijConnection.ts`: terminal WebSocket lifecycle and resize/input flow
+- `src/frontend/hooks/useZellijControl.ts`: control WebSocket lifecycle, workspace state, inspect capture, and structured commands
+- `src/frontend/hooks/useTerminalRuntime.ts`: xterm.js setup, fit behavior, buffering, and theme application
 
-### Shared Model
+## Session Model
 
-The protocol now uses multiplexer-neutral naming:
-
-- `SessionSummary`
-- `SessionState`
-- `TabState`
-- `PaneState`
-- `WorkspaceSnapshot`
-
-The active design vocabulary is `session/tab/pane`.
+- The CLI targets one Zellij session, configured by `--zellij-session`
+- The first terminal client boots or attaches that session through Zellij
+- Each browser client gets its own attach PTY sized to that client's viewport
+- Zellij remains the shared source of truth for session, tab, pane, and fullscreen state
+- The browser control surface queries and mutates that shared state through `zellij action ...` commands
 
 ## Transport Model
 
 Remux intentionally splits traffic into two channels.
-
-### Control Plane
-
-`/ws/control`
-
-Responsibilities:
-
-- authentication handshake
-- session picker flow
-- workspace state broadcasts
-- structured operations such as create, rename, split, select, and close
-- info and error messages
-
-Payload format:
-
-- JSON messages validated at runtime with `zod`
 
 ### Terminal Plane
 
@@ -98,166 +62,93 @@ Payload format:
 
 Responsibilities:
 
-- terminal output streaming
+- terminal auth handshake
+- raw terminal output streaming
 - raw keyboard input
 - resize messages
-
-Rationale:
-
-- terminal traffic stays simple and high-throughput
-- control messages remain typed and inspectable
-- both channels can authenticate independently
-
-## Runtime Contract
-
-The active backend contract is `runtime-v2`.
-
-Required behavior:
-
-- publish workspace summaries for sessions, tabs, panes, and layout
-- expose inspect snapshots with explicit scope and precision
-- stream terminal output through a dedicated terminal channel
-- accept structured control mutations such as create, rename, split, select, and close
-- report capability support explicitly instead of relying on implicit backend assumptions
-
-The frontend still consumes translated `BackendCapabilities`, which it uses to adapt the UI for:
-
-- pane focus behavior
-- precise or approximate inspect history backing
-- floating panes
-- fullscreen support
-- session and tab rename support
-
-## Runtime Flow
-
-### Startup
-
-1. User runs `npx remux`
-2. CLI parses flags and environment variables
-3. Auth token is created, and password is generated unless disabled or supplied
-4. The runtime-v2 gateway starts and connects to `remuxd`
-5. HTTP and WebSocket server start
-6. Optional Cloudflare tunnel starts
-7. CLI prints launch URLs and QR code
-
-### Frontend Connection
-
-1. Browser loads the app and fetches `/api/config`
-2. Browser opens `/ws/control`
-3. First control message must be auth with token and optional password
-4. Server replies with `auth_ok` or `auth_error`
-5. After attach completes, browser opens `/ws/terminal`
-6. Terminal socket authenticates separately using token, password, and `clientId`
-
-### Session Attach
-
-The attach flow depends on runtime-v2 workspace state:
-
-- if no session exists, the gateway creates or requests the default one
-- if one session exists, the server can attach directly
-- if multiple sessions exist, the frontend shows a picker
-- once attached, the terminal plane starts streaming
-
-## UI Responsibilities
-
-### Drawer
-
-The drawer is the structured workspace navigator. It exposes:
-
-- sessions
-- tabs
-- panes
-- create, rename, and close actions
-- split and fullscreen actions when supported
-- theme and snippet management
-- sticky zoom and view behavior controls
-
-### Live View
-
-Live is the direct intervention surface for shell I/O. It is optimized for immediacy, not for long-form reading.
-
-It supports:
-
-- xterm rendering
-- resize propagation
-- reconnect recovery
-- server-backed scrollback replay on attach so reconnects keep meaningful terminal history
-- drag-and-drop upload
-
-### Inspect View
-
-The current Inspect surface renders captured history as HTML instead of relying on native terminal copy mode.
-
-Today it is still grounded in historical `scroll` naming in some APIs and UI labels, but the product semantics are moving toward `Inspect`.
-
-Goals:
-
-- readable long-form output on mobile
-- native text selection
-- configurable font size
-- predictable copy behavior
-- better catch-up than the visible terminal viewport alone
-
-### Compose Input
-
-Compose mode is meant for touch devices using native keyboard UX.
+- ping/pong keepalive
 
 Behavior:
 
-- user types into a native input
-- `send_compose` sends text to the active terminal
-- snippets can optionally auto-submit with Enter
+- the first terminal message must be JSON auth
+- after auth, terminal input is sent as raw bytes or text
+- JSON messages are reserved for resize and ping/pong
 
-## HTTP Endpoints
+### Control Plane
 
-Current server endpoints include:
+`/ws/control`
+
+Responsibilities:
+
+- control auth handshake
+- workspace state subscription
+- structured tab, pane, and session commands
+- inspect capture requests
+- bandwidth stats and keepalive
+
+Current command set includes:
+
+- `subscribe_workspace`
+- `new_tab`
+- `close_tab`
+- `select_tab`
+- `rename_tab`
+- `new_pane`
+- `close_pane`
+- `toggle_fullscreen`
+- `capture_inspect`
+- `rename_session`
+
+Current server messages include:
+
+- `auth_ok`
+- `auth_error`
+- `workspace_state`
+- `inspect_content`
+- `bandwidth_stats`
+- `error`
+- `pong`
+
+## HTTP API
+
+Current HTTP routes include:
 
 - `GET /api/config`
-  - returns version, password requirement, scrollback defaults, upload limit, and runtime mode metadata
+  - returns `passwordRequired` and server version
 - `POST /api/upload`
-  - uploads a file into the active pane working directory after auth
+  - accepts authenticated image uploads and stores them in the temporary upload directory
 
-The frontend bundle is served statically, and all non-API non-WS paths fall back to the app shell.
+When extensions are enabled, the server also exposes:
 
-## State Synchronization
+- `GET /api/state/:session`
+- `GET /api/scrollback/:session`
+- `GET /api/gastown/:session`
+- `GET /api/stats/bandwidth`
+- `GET /api/files`
+- `GET /api/files/*filePath`
 
-The primary state path is a runtime-v2 workspace subscription translated into the browser-facing snapshot model.
+## Inspect and History
 
-Behavior:
+Remux currently exposes inspect data through two paths:
 
-- the gateway subscribes to workspace summaries from the upstream runtime
-- runtime-v2 terminal and inspect state are translated into browser-facing payloads
-- terminal snapshots now carry scrollback replay bytes, while inspect snapshots carry structured scrollback rows for readable history
-- only meaningful workspace changes are rebroadcast
-- `clientView` remains separate so each frontend can preserve its local selection state
+- `capture_inspect` on the control socket, which uses `zellij action dump-screen --ansi`
+- extension-backed state tracking and scrollback APIs, which keep server-side terminal snapshots and derived history
 
-This separation matters because the rendered terminal and the structured workspace snapshot can diverge temporarily during attach, reconnect, or terminal retargeting.
+This lets the browser show a readable Inspect view while keeping Live tied to the raw terminal stream.
 
-## Security-Relevant Constraints
+## Security Constraints
 
-The following are deliberate design constraints and should be preserved:
+The following constraints are deliberate and should be preserved:
 
 - control and terminal sockets authenticate independently
-- structured backend commands must not be built through shell-string interpolation
-- auth credentials are runtime values, not checked into config
-- upload and backend-switch endpoints must remain authenticated
-
-See `docs/SECURITY.md` for the threat model and operating guidance.
-
-## Known Design Pressure
-
-The current implementation still carries some transitional complexity:
-
-- `src/frontend/App.tsx` is a large monolith and should eventually be split
-- protocol types are shared logically but still maintained manually
-- zod is used for inbound control messages, but validation is not yet universal across all boundaries
-- legacy compatibility code still adds complexity that should continue shrinking
+- Zellij and shell-adjacent commands must use argument arrays, not shell-string interpolation
+- session names in PTY paths must stay safely escaped
+- uploads and file-browsing APIs must remain authenticated
 
 ## Non-Goals
 
 Remux is not trying to be:
 
-- a general-purpose web SSH client
-- a hardened multi-tenant remote access broker
-- a desktop replacement for full terminal workflows
-- a feature-complete abstraction over every multiplexer concept
+- a replacement for Zellij
+- a generic browser SSH client
+- a revival of the old `runtime-v2` / `remuxd` architecture

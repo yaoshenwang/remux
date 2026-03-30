@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Remux 是一个基于 Web 的远程 tmux / zellij 客户端，通过 cloudflared 隧道让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
+Remux 是一个基于 Web 的远程 Zellij 工作区控制台，通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
 
 - **GitHub**: github.com/yaoshenwang/remux
 - **许可证**: MIT
@@ -40,6 +40,13 @@ Remux 是一个基于 Web 的远程 tmux / zellij 客户端，通过 cloudflared
 - Minor/Major 版本变更需用户明确批准
 - 每次 feature 合并到 `dev` 后 bump patch
 
+### Zellij Backend 约束（强制）
+
+- `zellij` 是当前公开产品路径与唯一默认后端，**禁止**把 public `main` / `dev` 服务重新引回 `runtime-v2`、`remuxd` 或任何旧 runtime
+- session 持久化、断线恢复、Inspect、宽度和多端一致性问题，必须在当前 Node.js + node-pty + Zellij 架构内解决
+- 对 `https://remux.yaoshen.wang` 和 `https://remux-dev.yaoshen.wang` 的修复，目标是两者在需要时附着到同一套机器级 Zellij 会话真相，而不是各自维护独立易失 workspace
+- 仓库中的 `runtime-v2` 文档只属于归档资料，不得再把它当成当前实现或产品要求
+
 ## 常用命令
 
 ```bash
@@ -50,7 +57,6 @@ npm run build
 npm run typecheck
 npm test
 npm run test:watch
-npm run test:smoke
 npm run test:e2e
 ```
 
@@ -59,17 +65,17 @@ npm run test:e2e
 合并到 `dev` 之前必须通过：
 
 ```bash
-npm run typecheck && npm test && npm run test:e2e && npm run build
+npm run typecheck && npm test && npm run build
 ```
 
 ### 宽度专项验收（强制）
 
-每次 `dev` 分支提交后的实际测试里，必须执行一次真实网页宽度专项检查，且不得用 fake harness 截图代替：
+每次改动合并并推送到远程 `dev` 后的实际测试里，必须执行一次真实网页宽度专项检查，且不得用 fake harness 截图代替：
 
 1. 打开实际可访问的网页环境，进入真实终端视图，至少覆盖一个桌面宽窗口场景。
 2. 检查首屏恢复内容和后续 live output 的展示宽度，确认终端内容宽度与可见 terminal 容器宽度一致。
 3. 禁止出现以下任一情况：终端内容只占一半宽度、长行在半宽处提前折行、首屏恢复内容与当前窗口宽度不一致、xterm/PTY 列数明显小于实际容器宽度。
-4. 发现任何宽度异常时，禁止声称完成、禁止合并到 `dev`、禁止推送远程，必须先修复再复测。
+4. 发现任何宽度异常时，禁止声称完成，必须继续修复并重新执行“合并到 `dev` + push 远程 + 真实网页宽度复测”的完整流程。
 
 ## 开发规范
 
@@ -86,8 +92,8 @@ npm run typecheck && npm test && npm run test:e2e && npm run build
 
 ### 安全要点
 
-- 两个 WebSocket 端点独立认证，修改 `server.ts` 或 `auth-service.ts` 时必须保持此特性
-- tmux/zellij 命令使用参数数组，禁止退化为 shell 拼接字符串
+- 两个 WebSocket 端点独立认证，修改 `server-zellij.ts` 或 `auth-service.ts` 时必须保持此特性
+- zellij 与 shell 相关命令使用参数数组，禁止退化为 shell 拼接字符串
 - PTY 路径中的 session 名称必须继续保持安全转义
 
 ### 浏览器自动化（强制）
@@ -104,7 +110,8 @@ npm run typecheck && npm test && npm run test:e2e && npm run build
 
 ### 交付流程（强制）
 
-1. 在 feature 分支完成开发 + 自测（`npm run typecheck && npm test && npm run test:e2e && npm run build` 全部通过）
-2. 执行真实网页宽度专项检查，确认不存在任何半宽或错宽展示
-3. 合并到 `dev`，push 到远程
-4. 向用户报告完成
+1. 在 feature 分支完成开发 + 自测（`npm run typecheck && npm test && npm run build` 全部通过）
+2. 确认功能开发完全后，立即合并到 `dev`
+3. 立刻 push 到远程 `origin/dev`，禁止只做本地合并
+4. 基于远程 `dev` 对应的真实环境执行实机验证与真实网页宽度专项检查
+5. 验证通过后再向用户报告完成；若验证失败，继续修复并重复上述流程，禁止未合并或未推送就交付

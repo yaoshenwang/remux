@@ -1,14 +1,6 @@
 # Remux Testing Guide
 
-Remux now treats the unified `runtime-v2` path as the only default product contract.
-
-The default test loop should therefore optimize for:
-
-- fast TypeScript and frontend/backend contract feedback
-- runtime-v2 browser behavior
-- explicit terminal width validation
-- minimal high-cost harness coverage
-
+Remux's public product path is the Zellij-backed backend. The default test loop should optimize for fast TypeScript feedback, browser behavior, and a real terminal-width check in a real webpage after `dev` is pushed.
 
 ## Quick Loop
 
@@ -18,59 +10,45 @@ Use the smallest meaningful loop while iterating:
 npm run typecheck
 npm test
 npm run build
-npm run test:e2e:functional
 ```
 
 What each command covers:
 
-- `npm run typecheck`: TypeScript compile safety for backend and frontend
-- `npm test`: runtime-v2 and product-core Vitest coverage only; compatibility suites are excluded by design
-- `npm run build`: produces the frontend bundle used by Playwright harnesses
-- `npm run test:e2e:functional`: narrow runtime-v2 browser contract checks against the fake runtime-v2 upstream, including reconnect history recovery
+- `npm run typecheck`: backend and frontend TypeScript compile safety
+- `npm test`: Vitest coverage for backend and frontend logic, including Zellij control/runtime helpers
+- `npm run build`: produces the backend output and frontend bundle used by the packaged CLI
 
-If you have not changed the frontend bundle since the last successful build, you can usually skip rerunning `npm run build` and execute the targeted Playwright command directly.
+## Browser Check
 
-## Browser Suites
-
-The browser harness is intentionally narrow.
+When a change touches browser transport, terminal rendering, inspect output, upload behavior, auth, or resize handling, also run:
 
 ```bash
-npm run test:e2e:functional
-npm run test:e2e:width
-npm run test:e2e:screenshots
-```
-
-- `test:e2e:functional`: runtime-v2 browser contract tests only, including server-backed scrollback replay and inspect recovery after reconnect
-- `test:e2e:width`: explicit terminal width invariant checks; this is the required width gate before merging to `dev`
-- `test:e2e:screenshots`: PR-only screenshot capture for visual review
-
-## Merge Gate
-
-Before merging to `dev`, run the full runtime-v2 gate:
-
-```bash
-npm run test:gate
-```
-
-That expands to:
-
-```bash
-npm run typecheck
-npm test
-npm run native:v2:check
-npm run build
 npm run test:e2e
 ```
 
-## Release Gate
+Notes:
 
-For a release-ready pass:
+- `npm run test:e2e` is the Playwright smoke pass shipped in this repository
+- some local harness file names still carry legacy naming; treat that as harness internals, not as the current product contract
+- Playwright screenshots are useful for smoke coverage, but they do not replace the real width acceptance described below
+
+## Merge Gate
+
+Before merging to `dev`, the required gate is:
 
 ```bash
-npm run test:release
+npm run typecheck && npm test && npm run build
 ```
 
-This adds:
+Add `npm run test:e2e` when the change affects frontend or transport behavior.
 
-- screenshot capture for PR/release review
-- `npm pack --dry-run` package verification
+## Width Acceptance
+
+After the change is merged into `dev` and pushed to `origin/dev`, run a real webpage width check against the actual accessible environment:
+
+1. Open a real terminal view in a desktop-width browser window.
+2. Verify that restored first-screen content and subsequent live output use the full visible terminal container width.
+3. Confirm there is no half-width rendering, premature wrapping, or mismatch between the browser width and the effective xterm/PTY columns.
+4. If width is wrong, keep fixing and repeat the full `merge to dev -> push origin/dev -> real webpage retest` flow.
+
+Fake harness screenshots are not an acceptable substitute for this check.

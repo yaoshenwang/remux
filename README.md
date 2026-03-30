@@ -7,19 +7,18 @@
 [![GitHub stars](https://img.shields.io/github/stars/yaoshenwang/remux?style=social)](https://github.com/yaoshenwang/remux/stargazers)
 ![GitHub contributors](https://img.shields.io/github/contributors/yaoshenwang/remux)
 
-Remux is a remote workspace cockpit for terminal-first work. It helps you check on long-running coding sessions, AI agents, builds, and shells when you are away from the primary machine. Run `npx remux`, open the generated URL, and move between three complementary surfaces: `Inspect` for readable history and context, `Live` for direct terminal I/O, and `Control` for structured workspace operations.
+Remux is a remote workspace cockpit for terminal-first work. It uses Zellij as the shared session backend and adds Inspect, Live, and Control surfaces for catching up, intervening, and navigating from another device.
 
-Remux is intentionally not a generic browser SSH client and not a thin browser wrapper around a multiplexer. It is designed for awareness first, comprehension second, and lightweight intervention when needed.
+Remux does not try to replace Zellij. Zellij owns session, tab, pane, and attach truth; Remux adds web access, authentication, mobile-friendly controls, inspect views, and optional tunnel exposure on top.
 
 ## Why Remux
 
-- Catch up on the current tab from another device without relying only on the visible terminal viewport
+- Catch up on the current workspace without relying only on the visible terminal viewport
 - Read, copy, and inspect terminal history more comfortably on mobile
 - Jump into Live only when direct intervention is necessary
 - Navigate sessions, tabs, and panes through a structured Control surface
-- Browser-based access with no native app install
-- Password protection enabled by default, plus optional Cloudflare tunnel exposure
-- Separate control and terminal WebSocket channels for structured state sync and terminal streaming
+- Reuse the same shared Zellij session from multiple browsers without rebuilding the runtime stack
+- Protect access with token auth, optional password auth, and HTTPS tunnel exposure
 
 ## Product Surfaces
 
@@ -29,15 +28,13 @@ Remux is intentionally not a generic browser SSH client and not a thin browser w
 - `Live`: direct terminal I/O for quick fixes, command entry, and interactive tools
 - `Control`: structured session, tab, and pane navigation plus workspace operations
 
-## Runtime Model
+## Backend Model
 
-Remux now ships around a unified `runtime-v2` backend.
-
-- `runtime-v2` is now the primary product path, the default browser contract, and the main CI target
-- the UI, docs, and test flow are centered on `runtime-v2` semantics rather than backend-specific behavior
-- legacy compatibility code still exists temporarily, but it is hidden from the normal product surface and release gate
-
-If you are working on current product behavior, assume `runtime-v2` first.
+- The public and default backend is Zellij
+- `/ws/terminal` carries terminal I/O and resize messages
+- `/ws/control` carries workspace state, structured commands, inspect capture, and stats
+- Each browser client gets its own attach PTY, while Zellij remains the shared source of truth
+- Old `runtime-v2` and `remuxd` planning material is preserved under [docs/archive/README.md](./docs/archive/README.md)
 
 ## Quick Start
 
@@ -66,20 +63,20 @@ npm start
 ## Requirements
 
 - Node.js 20+
-- Rust toolchain when running or checking the native `runtime-v2` workspace from source
+- Zellij installed and available in `PATH` or passed via `--zellij-bin`
+- Optional `devtunnel` or `cloudflared` when tunnel mode is enabled
 
 ## Features
 
 - Session, tab, and pane management from the browser control drawer
 - Full terminal streaming through xterm.js for Live interaction
 - Inspect view for readable history and mobile-friendly text selection
-- Server-backed history so Inspect and Live survive browser reconnects with meaningful context intact
+- Per-client PTY attach model for reconnect-friendly shared sessions
 - Compose input for native mobile keyboard entry
-- Custom snippets stored in local browser storage
-- Drag-and-drop or picker-based file upload into the active pane working directory
-- Theme picker with six built-in terminal themes
-- Automatic reconnect with backoff
-- Unified `runtime-v2` gateway model for live state, inspect snapshots, and browser attachment
+- Drag-and-drop or picker-based image upload into the active workspace
+- Theme picker with built-in terminal themes
+- Automatic reconnect with keepalive
+- Optional Gastown metadata enrichment when running inside a Gastown workspace
 
 ## CLI
 
@@ -91,9 +88,10 @@ Options:
   --host <host>                    Bind address (default: 127.0.0.1)
   --password <pass>                Authentication password
   --[no-]require-password          Toggle password protection (default: true)
-  --[no-]tunnel                    Start Cloudflare quick tunnel (default: true)
-  --session <name>                 Default session name (default: main)
-  --scrollback <lines>             Default scrollback capture lines (default: 1000)
+  --[no-]tunnel                    Start a public tunnel (default: true)
+  --tunnel-provider <provider>     Tunnel provider: auto, devtunnel, cloudflare
+  --zellij-session <name>          Zellij session name (default: remux)
+  --zellij-bin <path>              Path to zellij binary
   --debug-log <path>               Write backend debug logs to a file
 ```
 
@@ -102,9 +100,7 @@ Options:
 | Variable | Description |
 |----------|-------------|
 | `REMUX_DEBUG_LOG` | Debug log file path |
-| `REMUXD_BIN` | Path to an explicit `remuxd` binary for the runtime-v2 gateway |
-| `REMUXD_BASE_URL` | Connect the gateway to an already-running runtime-v2 service |
-| `REMUX_VERBOSE_DEBUG=1` | Enable verbose server logging |
+| `REMUX_PASSWORD` | Password used when `--require-password` is enabled |
 | `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
 | `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
 
@@ -114,18 +110,13 @@ Options:
 - Password protection is enabled by default
 - Control and terminal WebSockets authenticate independently
 - The server binds to `127.0.0.1` by default
-- Tunnel mode uses Cloudflare's HTTPS endpoint instead of exposing the local server directly
-
-Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
+- Tunnel mode prefers HTTPS exposure through DevTunnel or Cloudflare instead of exposing the local port directly
 
 ## Documentation
 
-- [docs/TESTING.md](./docs/TESTING.md): current runtime-v2-first test flow and release gate
-- [docs/ZELLIJ_BOOTSTRAP.md](./docs/ZELLIJ_BOOTSTRAP.md): short-term Zellij bootstrap path, stable URLs, and launchd commands
-- [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
-- [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
-- [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance
-- [docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md](./docs/NATIVE_PLATFORM_ROADMAP_2026-03-26.md): native-client and semantic-adapter evolution plan
+- [docs/SPEC.md](./docs/SPEC.md): current Zellij-backed architecture, transport model, and API surface
+- [docs/TESTING.md](./docs/TESTING.md): current test loop and merge gate
+- [docs/archive/README.md](./docs/archive/README.md): archived runtime-v2-era and transition documents
 
 ## Development
 
@@ -133,54 +124,32 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 npm run dev
 ```
 
-Managed runtime sync for long-running `main` / `dev` instances:
+Current validation commands:
 
 ```bash
-npm run runtime:install-launchd
-npm run runtime:sync
-npm run runtime:promote-shared
-npm run runtime:status
-```
-
-Those public `main` / `dev` gateways are intended to share one machine-level `runtime-v2` daemon, so deploys do not create a fresh private workspace per version. The shared runtime core now lives in its own detached worktree and is only updated by an explicit promote step; normal `dev` syncs only roll the `dev` gateway and auto-rollback if attach healthchecks fail. Shared-core promote now has a protocol compatibility gate against the `main` and `dev` gateway sources, and every promote writes a before/after report under `$HOME/.remux/reports/`.
-
-See [docs/RUNTIME_SYNC.md](./docs/RUNTIME_SYNC.md) for the detached runtime worktree layout and launchd setup.
-
-Self-hosted deploy runner:
-
-```bash
-npm run runner:install
-npm run runner:status
-```
-
-See [docs/SELF_HOSTED_RUNNER.md](./docs/SELF_HOSTED_RUNNER.md) for the deploy workflow and security boundary.
-
-Default pre-merge gate:
-
-```bash
-npm run test:gate
-```
-
-Additional test commands:
-
-```bash
+npm run typecheck
+npm test
+npm run build
 npm run test:e2e
-npm run test:e2e:functional
-npm run test:e2e:screenshots
-npm run test:release
+```
+
+The required pre-merge gate is:
+
+```bash
+npm run typecheck && npm test && npm run build
 ```
 
 ## Tech Stack
 
-- Backend gateway: Node.js, Express 5, `ws`, `yargs`, `zod`
-- Native runtime: Rust workspace (`remuxd` and supporting crates)
+- Backend gateway: Node.js, Express 5, `ws`, `node-pty`
+- Session backend: Zellij
 - Frontend: React 19, Vite, xterm.js
 - Testing: Vitest and Playwright
 - Language: TypeScript
 
 ## Acknowledgments
 
-Remux was originally inspired by existing browser-based terminal access tools and then substantially rewritten around a dedicated mobile-first control surface.
+Remux was originally inspired by existing browser-based terminal access tools and then rewritten around a Zellij-backed, mobile-first control surface.
 
 ## Contributors
 
