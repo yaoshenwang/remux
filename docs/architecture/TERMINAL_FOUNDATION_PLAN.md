@@ -112,7 +112,7 @@ snapshot 和 replay 不应消失，但应退化为：
 
 ## Current Status Snapshot
 
-截至 `v0.2.49-dev` 这一轮，基座主线已经从“纯 raw stream + snapshot/replay”往前推进了一段，但还没有到 `tmux` / `zellij` 那种 Rust authoritative diff/render 完整态。
+截至 `v0.2.52-dev` 这一轮，基座主线已经从“纯 raw stream + snapshot/replay”往前推进了一段，但还没有到 `tmux` / `zellij` 那种 Rust authoritative diff/render 完整态。
 
 已经落地的关键项：
 
@@ -124,6 +124,8 @@ snapshot 和 replay 不应消失，但应退化为：
 - frontend terminal write path 已改成 budgeted flush + xterm write callback 串行推进
 - `terminal_patch` 已补 `epoch`，前端现在按 `viewRevision + epoch + revision/baseRevision` 一起判定 patch lineage
 - inspect / `tab_history` / client diagnostic 已显式绑定 `viewRevision`，旧视图响应与旧诊断会被丢弃
+- 新 viewer / stale continuation fallback 已改成“当前组合快照”路径，不再先发旧 snapshot 再补 replay backlog
+- bandwidth stats 已显式暴露 rebuilt snapshot、continuation resume、continuation fallback 计数
 - runtime-v2 的 patch / resize owner / reconnect / slow viewer 已有后端、集成和 browser 回归测试
 
 部分完成但仍未收口的项：

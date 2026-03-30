@@ -774,25 +774,36 @@ export class SharedRuntimeV2PaneBridge {
       if (!subscriber) {
         return;
       }
-      const canContinueFromBaseRevision = this.canContinueFromBaseRevision(options.baseRevision);
-      const canContinue = subscriber.transportMode === "patch" && canContinueFromBaseRevision;
+      const requestedContinuation = subscriber.transportMode === "patch"
+        && typeof options.baseRevision === "number"
+        && Number.isFinite(options.baseRevision);
+      const canContinue = requestedContinuation && this.canContinueFromBaseRevision(options.baseRevision);
       if (this.awaitingFreshSnapshotReplay) {
         if (canContinue && this.snapshotRequestPending) {
+          subscriber.bandwidthTracker?.recordContinuationResume();
           this.awaitingFreshSnapshotReplay = false;
           this.snapshotFanoutMode = "cache_only";
           this.continueFromBaseRevision(subscriber, options.baseRevision!);
+          return;
+        }
+        if (requestedContinuation) {
+          subscriber.bandwidthTracker?.recordContinuationFallbackSnapshot();
         }
         return;
       }
       if (canContinue) {
+        subscriber.bandwidthTracker?.recordContinuationResume();
         this.continueFromBaseRevision(subscriber, options.baseRevision!);
         return;
       }
+      if (requestedContinuation) {
+        subscriber.bandwidthTracker?.recordContinuationFallbackSnapshot();
+      }
       if (this.latestSnapshotPayload) {
-        this.sendSnapshotToSubscriber(subscriber);
-        for (const chunk of this.bufferedChunks) {
-          this.sendChunkToSubscriber(subscriber, chunk);
+        if (this.enqueueCurrentSnapshotForSubscriber(subscriber)) {
+          return;
         }
+        this.sendSnapshotToSubscriber(subscriber);
       }
     });
   }
@@ -927,6 +938,18 @@ export class SharedRuntimeV2PaneBridge {
     });
   }
 
+  private enqueueCurrentSnapshotForSubscriber(subscriber: PaneBridgeSubscriber): boolean {
+    const currentSnapshot = this.buildCurrentSnapshotForSubscriber(subscriber);
+    if (!currentSnapshot) {
+      return false;
+    }
+    if (this.bufferedChunks.length > 0) {
+      subscriber.bandwidthTracker?.recordRebuiltSnapshot();
+    }
+    this.enqueueFrameForSubscriber(subscriber, currentSnapshot);
+    return true;
+  }
+
   private sendChunkToSubscriber(subscriber: PaneBridgeSubscriber, chunk: BufferedTerminalChunk): void {
     const payload = subscriber.transportMode === "patch"
       ? this.buildTerminalPatchFrame(chunk.payload, {
@@ -1012,9 +1035,7 @@ export class SharedRuntimeV2PaneBridge {
       highWatermarkBytes: this.viewerQueueHighWatermarkBytes,
       lowWatermarkBytes: this.viewerQueueLowWatermarkBytes,
     });
-    const currentSnapshot = this.buildCurrentSnapshotForSubscriber(subscriber);
-    if (currentSnapshot) {
-      this.enqueueFrameForSubscriber(subscriber, currentSnapshot);
+    if (this.enqueueCurrentSnapshotForSubscriber(subscriber)) {
       return;
     }
     this.requestSnapshot("degraded_only");

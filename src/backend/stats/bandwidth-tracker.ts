@@ -27,6 +27,9 @@ export class BandwidthTracker {
   private _fullSnapshotsSent = 0;
   private _diffUpdatesSent = 0;
   private totalDiffBytes = 0;
+  private rebuiltSnapshotsSent = 0;
+  private continuationResumes = 0;
+  private continuationFallbackSnapshots = 0;
   private viewerQueueHighWatermarkHits = 0;
   private droppedBacklogFrames = 0;
 
@@ -65,6 +68,18 @@ export class BandwidthTracker {
   recordDiffUpdate(diffBytes: number): void {
     this._diffUpdatesSent++;
     this.totalDiffBytes += diffBytes;
+  }
+
+  recordRebuiltSnapshot(): void {
+    this.rebuiltSnapshotsSent++;
+  }
+
+  recordContinuationResume(): void {
+    this.continuationResumes++;
+  }
+
+  recordContinuationFallbackSnapshot(): void {
+    this.continuationFallbackSnapshots++;
   }
 
   recordQueueHighWatermarkHit(): void {
@@ -115,6 +130,9 @@ export class BandwidthTracker {
       diffUpdatesSent: this._diffUpdatesSent,
       avgChangedRowsPerDiff: avgDiffBytesPerUpdate,
       avgDiffBytesPerUpdate,
+      rebuiltSnapshotsSent: this.rebuiltSnapshotsSent,
+      continuationResumes: this.continuationResumes,
+      continuationFallbackSnapshots: this.continuationFallbackSnapshots,
       viewerQueueHighWatermarkHits: this.viewerQueueHighWatermarkHits,
       droppedBacklogFrames: this.droppedBacklogFrames,
       totalRawBytes: this.totalRaw,

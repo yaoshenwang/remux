@@ -30,6 +30,9 @@ const BandwidthStatsModal = ({ onClose, stats }: BandwidthStatsModalProps) => {
             <div className="stats-row"><span>Full snapshots</span><span>{stats.fullSnapshotsSent}</span></div>
             <div className="stats-row"><span>Diff updates</span><span>{stats.diffUpdatesSent}</span></div>
             <div className="stats-row"><span>Avg diff bytes</span><span>{formatBytes(stats.avgDiffBytesPerUpdate)}</span></div>
+            <div className="stats-row"><span>Rebuilt snapshots</span><span>{stats.rebuiltSnapshotsSent}</span></div>
+            <div className="stats-row"><span>Continuation resumes</span><span>{stats.continuationResumes}</span></div>
+            <div className="stats-row"><span>Continuation fallbacks</span><span>{stats.continuationFallbackSnapshots}</span></div>
             <div className="stats-row"><span>Queue high watermark hits</span><span>{stats.viewerQueueHighWatermarkHits}</span></div>
             <div className="stats-row"><span>Dropped backlog frames</span><span>{stats.droppedBacklogFrames}</span></div>
           </div>

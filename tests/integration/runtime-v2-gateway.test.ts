@@ -646,6 +646,65 @@ describe("runtime v2 gateway server", () => {
     }
   });
 
+  test("rebuilds the latest terminal_patch snapshot for a new viewer when base revision is stale", async () => {
+    const { control, clientId } = await authControlClient(baseWsUrl);
+    let terminal: WebSocket | null = null;
+    let staleTerminal: WebSocket | null = null;
+
+    try {
+      const authResult = await authTerminalClient(
+        baseWsUrl,
+        clientId,
+        { cols: 120, rows: 40 },
+        { transportMode: "patch", viewRevision: 1 },
+      );
+      terminal = authResult.terminal;
+
+      upstream.pushTerminalOutput("pane-1", "REVISION_TWO\r\n");
+      const liveFrame = JSON.parse(await waitForRawMessage(terminal)) as {
+        revision: number;
+        baseRevision: number | null;
+        reset: boolean;
+        source: string;
+      };
+      expect(liveFrame).toMatchObject({
+        revision: 2,
+        baseRevision: 1,
+        reset: false,
+        source: "stream",
+      });
+
+      const stale = await authTerminalClient(
+        baseWsUrl,
+        clientId,
+        { cols: 120, rows: 40 },
+        { transportMode: "patch", viewRevision: 1, baseRevision: 0 },
+      );
+      staleTerminal = stale.terminal;
+
+      const rebuiltFrame = JSON.parse(stale.initialSnapshot) as {
+        revision: number;
+        baseRevision: number | null;
+        reset: boolean;
+        source: string;
+        dataBase64: string;
+      };
+      expect(rebuiltFrame).toMatchObject({
+        revision: 2,
+        baseRevision: null,
+        reset: true,
+        source: "snapshot",
+      });
+      expect(Buffer.from(rebuiltFrame.dataBase64, "base64").toString("utf8")).toContain("REVISION_TWO");
+
+      await expectNoRawMessage(staleTerminal, 300);
+    } finally {
+      staleTerminal?.close();
+      terminal?.close();
+      control.close();
+    }
+  });
+
   test("broadcasts bandwidth stats to control clients after terminal activity", async () => {
     const { control, clientId } = await authControlClient(baseWsUrl);
     let terminal: WebSocket | null = null;
@@ -666,6 +725,9 @@ describe("runtime v2 gateway server", () => {
         stats: {
           fullSnapshotsSent: number;
           diffUpdatesSent: number;
+          rebuiltSnapshotsSent: number;
+          continuationResumes: number;
+          continuationFallbackSnapshots: number;
           rawBytesPerSec: number;
           compressedBytesPerSec: number;
           viewerQueueHighWatermarkHits: number;
@@ -678,6 +740,9 @@ describe("runtime v2 gateway server", () => {
 
       expect(bandwidthStats.stats.fullSnapshotsSent).toBeGreaterThan(0);
       expect(bandwidthStats.stats.diffUpdatesSent).toBeGreaterThan(0);
+      expect(bandwidthStats.stats.rebuiltSnapshotsSent).toBeGreaterThanOrEqual(0);
+      expect(bandwidthStats.stats.continuationResumes).toBeGreaterThanOrEqual(0);
+      expect(bandwidthStats.stats.continuationFallbackSnapshots).toBeGreaterThanOrEqual(0);
       expect(bandwidthStats.stats.rawBytesPerSec).toBeGreaterThan(0);
       expect(bandwidthStats.stats.compressedBytesPerSec).toBeGreaterThan(0);
       expect(bandwidthStats.stats.viewerQueueHighWatermarkHits).toBeGreaterThanOrEqual(0);
