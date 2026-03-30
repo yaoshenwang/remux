@@ -2,12 +2,18 @@
 
 ![Remux hero](./docs/assets/hero.svg)
 
-**Cross-device AI-native workspace cockpit for Zellij sessions.**
+**Runtime Cockpit now, Agentic Workstation next, Collaboration OS later.**
 
 [![GitHub stars](https://img.shields.io/github/stars/yaoshenwang/remux?style=social)](https://github.com/yaoshenwang/remux/stargazers)
 ![GitHub contributors](https://img.shields.io/github/contributors/yaoshenwang/remux)
 
 Remux is a remote workspace cockpit for terminal-first work. It uses Zellij as the shared session backend and adds Inspect, Live, and Control surfaces for catching up, intervening, and navigating from another device.
+
+The product roadmap is deliberately staged:
+
+- `Runtime Cockpit`: today’s shipped path, centered on Zellij-backed Inspect, Live, and Control
+- `Agentic Workstation`: the next layer, where review, worktree, and agent-run workflows become first-class
+- `Collaboration OS`: the longer-horizon shell, where topics, artifacts, approvals, and handoff become durable workspace objects
 
 Remux does not try to replace Zellij. Zellij owns session, tab, pane, and attach truth; Remux adds web access, authentication, mobile-friendly controls, inspect views, and optional tunnel exposure on top.
 
@@ -19,6 +25,14 @@ Remux does not try to replace Zellij. Zellij owns session, tab, pane, and attach
 - Navigate sessions, tabs, and panes through a structured Control surface
 - Reuse the same shared Zellij session from multiple browsers without rebuilding the runtime stack
 - Protect access with token auth, optional password auth, and HTTPS tunnel exposure
+
+## Roadmap Arc
+
+Remux is being built in three explicit phases so the product can ship continuously without blocking on a rewrite:
+
+- `Runtime Cockpit`: harden the current Zellij + Node.js + Web stack and make Inspect the reliable catch-up surface
+- `Agentic Workstation`: add richer review, agent, worktree, and approval flows on top of the current runtime truth
+- `Collaboration OS`: grow from a terminal cockpit into a topic-first collaborative workspace shell
 
 ## Product Surfaces
 
@@ -166,6 +180,8 @@ npm run typecheck && npm test && npm run build
 - Frontend: React 19, Vite, xterm.js
 - Testing: Vitest and Playwright
 - Language: TypeScript
+
+This stack maps to the current `Runtime Cockpit` phase. Future phases extend the same product line rather than replacing the shipped path wholesale.
 
 ## Acknowledgments
 

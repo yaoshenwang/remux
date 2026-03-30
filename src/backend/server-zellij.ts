@@ -127,11 +127,16 @@ export const createZellijServer = (
       }
     });
 
-    app.get("/api/scrollback/:session", (req, res) => {
+    app.get("/api/inspect/:session", (req, res) => {
       const from = parseInt(req.query.from as string) || 0;
       const count = parseInt(req.query.count as string) || 100;
-      const lines = extensions.getScrollback(req.params.session, from, count);
+      const lines = extensions.getInspectLines(req.params.session, from, count);
       res.json({ from, count: lines.length, lines });
+    });
+
+    app.get("/api/scrollback/:session", (req, res) => {
+      const redirectTarget = `/api/inspect/${encodeURIComponent(req.params.session)}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`;
+      res.redirect(301, redirectTarget);
     });
 
     app.get("/api/gastown/:session", (req, res) => {

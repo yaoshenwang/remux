@@ -52,8 +52,8 @@ export interface Extensions {
   /** Get a terminal state diff (for incremental updates). */
   getDiff(sessionName: string): TerminalDiffMessage | null;
 
-  /** Get scrollback lines from the state tracker. */
-  getScrollback(sessionName: string, fromLine: number, count: number): string[];
+  /** Get inspect history lines from the state tracker. */
+  getInspectLines(sessionName: string, fromLine: number, count: number): string[];
 
   /** Get Gastown metadata for a session. */
   getGastownInfo(sessionName: string): GastownSessionInfo;
@@ -172,9 +172,9 @@ export function createExtensions(
       return tracker?.diff() ?? null;
     },
 
-    getScrollback(sessionName: string, fromLine: number, count: number): string[] {
+    getInspectLines(sessionName: string, fromLine: number, count: number): string[] {
       const tracker = stateTrackers.get(sessionName);
-      return tracker?.getScrollback(fromLine, count) ?? [];
+      return tracker?.getInspectLines(fromLine, count) ?? [];
     },
 
     getGastownInfo(sessionName: string): GastownSessionInfo {

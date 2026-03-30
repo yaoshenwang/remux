@@ -121,6 +121,7 @@ Current HTTP routes include:
 When extensions are enabled, the server also exposes:
 
 - `GET /api/state/:session`
+- `GET /api/inspect/:session`
 - `GET /api/scrollback/:session`
 - `GET /api/gastown/:session`
 - `GET /api/stats/bandwidth`
@@ -132,7 +133,16 @@ When extensions are enabled, the server also exposes:
 Remux currently exposes inspect data through two paths:
 
 - `capture_inspect` on the control socket, which uses `zellij action dump-screen --ansi`
-- extension-backed state tracking and scrollback APIs, which keep server-side terminal snapshots and derived history
+- extension-backed state tracking and inspect history APIs, which keep server-side terminal snapshots and derived history backed by the terminal buffer's technical scrollback state
+
+The inspect history HTTP API is:
+
+- `GET /api/inspect/:session`
+  - returns `{ from, count, lines }`
+  - reads inspect history lines from the extension-backed terminal state tracker
+- `GET /api/scrollback/:session`
+  - legacy compatibility route
+  - responds with `301` redirect to the matching `/api/inspect/:session` URL and preserves `from` and `count` query params
 
 This lets the browser show a readable Inspect view while keeping Live tied to the raw terminal stream.
 

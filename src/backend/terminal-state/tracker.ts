@@ -203,6 +203,13 @@ export class TerminalStateTracker {
   }
 
   /**
+   * Product-facing alias for inspect history reads.
+   */
+  getInspectLines(fromLine: number, count: number): string[] {
+    return this.getScrollback(fromLine, count);
+  }
+
+  /**
    * Total lines in the buffer (viewport + scrollback).
    */
   get totalLines(): number {

@@ -9,6 +9,7 @@ Start here:
 - [SPEC.md](./SPEC.md): current transport, API, and surface specification
 - [TESTING.md](./TESTING.md): current validation loop and merge gate
 - [GLOSSARY.md](./GLOSSARY.md): canonical product and runtime terminology
+- [adr/ADR_TERMINOLOGY.md](./adr/ADR_TERMINOLOGY.md): canonical surface vocabulary and banned product terms
 - [decisions/ADR-0001-zellij-era.md](./decisions/ADR-0001-zellij-era.md): why Remux ships on Zellij today
 - [decisions/ADR-0002-desktop-host.md](./decisions/ADR-0002-desktop-host.md): why the desktop host research line starts with Electron
 
@@ -20,6 +21,7 @@ Use these documents as implementation references:
 - `docs/CURRENT_BASELINE.md` for architecture truth
 - `docs/SPEC.md` for the current protocol and API surface
 - `docs/TESTING.md` for the active quality gate
+- `docs/adr/*.md` for active terminology and naming constraints
 - `docs/decisions/*.md` for architecture decisions already made
 
 ## Draft / Planning
@@ -35,3 +37,12 @@ These documents drive upcoming work, but they do not override shipped behavior u
 Archived documents are preserved for context only. They are not current implementation authority.
 
 - [archive/README.md](./archive/README.md)
+
+## Directory Skeleton
+
+- [architecture/README.md](./architecture/README.md)
+- [product/README.md](./product/README.md)
+- [protocols/README.md](./protocols/README.md)
+- [native/README.md](./native/README.md)
+- [epics/README.md](./epics/README.md)
+- [adr/README.md](./adr/README.md)

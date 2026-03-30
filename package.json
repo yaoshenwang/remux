@@ -47,7 +47,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "test:e2e": "npx playwright test",
-    "test:gate": "npm run check:terminology && npm run typecheck && npm test && npm run build",
+    "test:gate": "npm run typecheck && npm run check:terminology && npm test && npm run build",
     "prepack": "npm run build"
   },
   "engines": {

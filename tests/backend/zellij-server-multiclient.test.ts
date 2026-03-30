@@ -245,7 +245,7 @@ describeIfZellij("Zellij server multi-client PTY", () => {
     const ws2 = await connectClient(TEST_PORT, { cols: 80, rows: 24 });
     const data = await waitForData(ws2);
     // The reconnected client should get the Zellij session content
-    // (at minimum, a shell prompt or scrollback).
+    // (at minimum, a shell prompt or recent terminal history).
     expect(data.length).toBeGreaterThan(0);
     await closeClient(ws2);
   }, 20_000);

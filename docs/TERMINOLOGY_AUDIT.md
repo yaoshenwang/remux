@@ -35,3 +35,5 @@ These files still mention archived-runtime terminology because the term itself i
 ## Current Result
 
 Active implementation docs, source files, tests, and workflows should no longer use archived-runtime terminology as if it described the shipping path. New occurrences outside the exception list fail the terminology guard.
+
+Separate from the archived-runtime guard, active files are also expected to avoid `Scroll` as a product-surface name. Technical scroll terminology remains allowed for browser behavior, CSS, and xterm scrollback mechanics.

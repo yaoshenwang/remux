@@ -18,6 +18,7 @@ This index classifies repository documents by authority level so implementation 
 | `docs/SPEC.md` | Active | Current transport, API, and surface spec |
 | `docs/TESTING.md` | Active | Merge gate and test loops |
 | `docs/GLOSSARY.md` | Active | Canonical terms used across product and engineering |
+| `docs/adr/ADR_TERMINOLOGY.md` | Active | Canonical product vocabulary and banned product terms |
 | `docs/ROADMAP_SCOPE.md` | Active | Scope boundaries for v1, v1.5, and research work |
 | `docs/REPO_EVOLUTION_PLAN.md` | Active | Incremental repo evolution path |
 | `docs/decisions/ADR-0001-zellij-era.md` | Active | Runtime substrate decision |
