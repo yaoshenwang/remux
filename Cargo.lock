@@ -847,6 +847,7 @@ dependencies = [
  "remux-protocol",
  "remux-pty",
  "remux-session",
+ "remux-store",
  "remux-terminal",
  "serde",
  "serde_json",
@@ -867,6 +868,14 @@ dependencies = [
 [[package]]
 name = "remux-store"
 version = "0.1.0"
+dependencies = [
+ "remux-core",
+ "remux-session",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
 
 [[package]]
 name = "remux-terminal"
