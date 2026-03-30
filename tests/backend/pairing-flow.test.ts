@@ -38,7 +38,7 @@ describe("device trust pairing flow", () => {
     expect(createResponse.json.payload).toMatchObject({
       url: `${baseUrl}/pair`,
       protocolVersion: 2,
-      serverVersion: "0.2.59",
+      serverVersion: expect.stringMatching(/^0\.\d+\.\d+$/),
     });
     expect(typeof createResponse.json.payload.pairingSessionId).toBe("string");
     expect(typeof createResponse.json.payload.token).toBe("string");
