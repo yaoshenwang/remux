@@ -36,6 +36,14 @@ struct DecodeGoldenPayloads {
         let value = try decodeLegacyAuthError(from: json)
         try check(value.type == "auth_error", "unexpected auth error type")
         decodedTargets.append(target)
+      case "LegacyErrorMessage":
+        let value = try decodeLegacyErrorMessage(from: json)
+        try check(value.type == "error", "unexpected legacy error type")
+        decodedTargets.append(target)
+      case "LegacyPong":
+        let value = try decodeLegacyPong(from: json)
+        try check(value.type == "pong", "unexpected legacy pong type")
+        decodedTargets.append(target)
       case "AuthErrorEnvelope":
         let value = try decodeEnvelope(from: json, payloadDecoder: decodeAuthErrorPayload)
         try check(value.domain == "core", "unexpected auth error domain")
@@ -137,6 +145,23 @@ struct DecodeGoldenPayloads {
   private static func decodeAuthErrorPayload(from value: JSONValue) throws -> AuthErrorPayload {
     let object = try value.asObject()
     return AuthErrorPayload(reason: try object.requireString("reason"))
+  }
+
+  private static func decodeLegacyErrorMessage(from value: JSONValue) throws -> LegacyErrorMessage {
+    let object = try value.asObject()
+    return LegacyErrorMessage(
+      type: try object.requireString("type"),
+      code: object.optionalInt("code"),
+      message: try object.requireString("message")
+    )
+  }
+
+  private static func decodeLegacyPong(from value: JSONValue) throws -> LegacyPong {
+    let object = try value.asObject()
+    return LegacyPong(
+      type: try object.requireString("type"),
+      timestamp: try object.requireDouble("timestamp")
+    )
   }
 
   private static func decodeLegacyInspectContent(from value: JSONValue) throws -> LegacyInspectContent {

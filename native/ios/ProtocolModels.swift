@@ -193,3 +193,8 @@ public struct LegacyBandwidthStats: Codable, Equatable {
   public let type: String
   public let stats: BandwidthStats
 }
+
+public struct LegacyInspectContent: Codable, Equatable {
+  public let type: String
+  public let content: String
+}
