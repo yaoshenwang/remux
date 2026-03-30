@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import http from "node:http";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
@@ -50,6 +52,60 @@ export const createZellijServer = (
   app.use(express.json());
 
   // --- HTTP routes ---
+
+  // --- File upload (clipboard image paste / toolbar upload) ---
+  const UPLOAD_DIR = path.join(os.tmpdir(), "remux-uploads");
+  const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+  const MIME_TO_EXT: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+    "image/svg+xml": "svg",
+  };
+
+  app.post(
+    "/api/upload",
+    express.raw({ limit: "50mb", type: "image/*" }),
+    (req, res) => {
+      const authHeader = req.headers.authorization ?? "";
+      const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      const authResult = authService.verify({ token: bearerToken });
+      if (!authResult.ok) {
+        res.status(401).json({ error: authResult.reason ?? "unauthorized" });
+        return;
+      }
+
+      const contentType = req.headers["content-type"] ?? "";
+      if (!MIME_TO_EXT[contentType]) {
+        res.status(400).json({ error: `unsupported content type: ${contentType}` });
+        return;
+      }
+
+      const body = req.body as Buffer;
+      if (!body || body.length === 0) {
+        res.status(400).json({ error: "empty body" });
+        return;
+      }
+      if (body.length > MAX_UPLOAD_BYTES) {
+        res.status(413).json({ error: "file too large (>50MB)" });
+        return;
+      }
+
+      const ext = MIME_TO_EXT[contentType];
+      const timestamp = Date.now();
+      const rand = crypto.randomBytes(4).toString("hex");
+      const filename = `paste-${timestamp}-${rand}.${ext}`;
+
+      fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+      const filePath = path.join(UPLOAD_DIR, filename);
+      fs.writeFileSync(filePath, body);
+
+      logger.log(`Upload saved: ${filePath} (${body.length} bytes)`);
+      res.json({ path: filePath, size: body.length });
+    },
+  );
 
   app.get("/api/config", (_req, res) => {
     res.json({

@@ -11,6 +11,7 @@ import { useTerminalRuntime } from "./hooks/useTerminalRuntime";
 import { useZellijConnection } from "./hooks/useZellijConnection";
 import { useZellijControl } from "./hooks/useZellijControl";
 import type { TerminalWriteChunk } from "./terminal-write-buffer";
+import { uploadImage } from "./upload";
 
 declare global {
   interface Window {
@@ -111,7 +112,28 @@ export const App = () => {
     }
   }, [sendCompose]);
 
-  const handleComposePaste = useCallback((_event: ReactClipboardEvent<HTMLInputElement>) => {}, []);
+  const handleComposePaste = useCallback((event: ReactClipboardEvent<HTMLInputElement>) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        event.preventDefault();
+        const blob = item.getAsFile();
+        if (!blob) return;
+        setStatusMessage("Uploading image…");
+        void uploadImage(blob, item.type)
+          .then((result) => {
+            connection.sendRaw(result.path);
+            terminal.focusTerminal();
+            setStatusMessage(`Image uploaded (${Math.round(result.size / 1024)}KB)`);
+          })
+          .catch((err) => {
+            setStatusMessage(`Upload failed: ${err instanceof Error ? err.message : "unknown"}`);
+          });
+        return;
+      }
+    }
+  }, [connection, terminal]);
 
   // --- Status message auto-clear ---
   useEffect(() => {
@@ -216,6 +238,29 @@ export const App = () => {
               )}
             </div>
           </main>
+
+          {/* Hidden file input for toolbar Upload button */}
+          <input
+            ref={terminal.fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setStatusMessage("Uploading file…");
+              void uploadImage(file, file.type)
+                .then((result) => {
+                  connection.sendRaw(result.path);
+                  terminal.focusTerminal();
+                  setStatusMessage(`Uploaded (${Math.round(result.size / 1024)}KB)`);
+                })
+                .catch((err) => {
+                  setStatusMessage(`Upload failed: ${err instanceof Error ? err.message : "unknown"}`);
+                });
+              e.target.value = "";
+            }}
+          />
 
           {/* Bottom rail: toolbar + compose */}
           <div className="workspace-bottom-rail">

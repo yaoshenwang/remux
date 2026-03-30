@@ -12,6 +12,7 @@ import {
   type TerminalWriteOptions,
 } from "../terminal-write-buffer";
 import { LocalEchoPrediction } from "../local-echo-prediction";
+import { uploadImage } from "../upload";
 
 /**
  * Regex to match CPR (Cursor Position Report) responses: \x1b[{row};{col}R.
@@ -392,16 +393,49 @@ export const useTerminalRuntime = ({
       }
 
       if (modifierKey && key === "v") {
-        void navigator.clipboard.readText()
-          .then((text) => {
-            if (text) {
-              sendRawToSocketRef.current(text);
-              focusTerminalRef.current();
+        void (async () => {
+          try {
+            if (typeof navigator.clipboard.read === "function") {
+              const items = await navigator.clipboard.read();
+              for (const item of items) {
+                if (item.types.includes("text/plain")) {
+                  const blob = await item.getType("text/plain");
+                  const text = await blob.text();
+                  if (text) {
+                    sendRawToSocketRef.current(text);
+                    focusTerminalRef.current();
+                    return;
+                  }
+                }
+              }
+              for (const item of items) {
+                const imageType = item.types.find((t) => t.startsWith("image/"));
+                if (imageType) {
+                  const blob = await item.getType(imageType);
+                  setStatusMessageRef.current("Uploading image…");
+                  const result = await uploadImage(blob, imageType);
+                  sendRawToSocketRef.current(result.path);
+                  focusTerminalRef.current();
+                  const sizeKB = Math.round(result.size / 1024);
+                  setStatusMessageRef.current(`Image uploaded (${sizeKB}KB)`);
+                  return;
+                }
+              }
+            } else {
+              const text = await navigator.clipboard.readText();
+              if (text) {
+                sendRawToSocketRef.current(text);
+                focusTerminalRef.current();
+              }
             }
-          })
-          .catch(() => {
-            setStatusMessageRef.current("clipboard read failed");
-          });
+          } catch (err) {
+            setStatusMessageRef.current(
+              err instanceof Error && err.message !== "clipboard read failed"
+                ? err.message
+                : "clipboard read failed",
+            );
+          }
+        })();
         event.preventDefault();
         return false;
       }
