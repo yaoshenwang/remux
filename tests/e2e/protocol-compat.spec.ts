@@ -31,7 +31,7 @@ test("frontend negotiates capabilities and renders envelope protocol payloads", 
     capabilities: {
       envelope: true,
       inspectV2: true,
-      deviceTrust: false,
+      deviceTrust: true,
     },
   });
 
@@ -141,7 +141,7 @@ const installEnvelopeMockSockets = async (page: import("@playwright/test").Page)
               capabilities: {
                 envelope: true,
                 inspectV2: true,
-                deviceTrust: false,
+                deviceTrust: true,
               },
             })),
           }));

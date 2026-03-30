@@ -4,6 +4,7 @@ import { AppHeader } from "./components/AppHeader";
 import { InspectView } from "./components/InspectView";
 import { ComposeBar } from "./components/ComposeBar";
 import { SessionSection } from "./components/sidebar/SessionSection";
+import { DeviceSection } from "./components/sidebar/DeviceSection";
 import { AppearanceSection } from "./components/sidebar/AppearanceSection";
 import { AppShell } from "./screens/AppShell";
 import { matchesMobileLayout, useViewportLayout } from "./mobile-layout";
@@ -221,6 +222,7 @@ export const App = () => {
         connectedClients={control.connectedClients}
         selfClientId={control.selfClientId}
       />
+      <DeviceSection />
       <AppearanceSection
         followBackendFocus={false}
         onToggleFollowBackendFocus={() => {}}

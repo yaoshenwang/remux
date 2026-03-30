@@ -161,7 +161,7 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
               capabilities: {
                 envelope: true,
                 inspectV2: true,
-                deviceTrust: false,
+                deviceTrust: true,
               },
             }),
           }));

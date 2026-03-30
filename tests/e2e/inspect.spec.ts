@@ -142,7 +142,7 @@ test("protocol compatibility keeps legacy clients working while the app negotiat
     capabilities: {
       envelope: true,
       inspectV2: true,
-      deviceTrust: false,
+      deviceTrust: true,
     },
   });
   expect(legacyResult.workspace).toMatchObject({
@@ -346,7 +346,7 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
     const serverCapabilities: ProtocolCapabilities = {
       envelope: true,
       inspectV2: true,
-      deviceTrust: false,
+      deviceTrust: true,
     };
 
     const createEnvelope = (domain: string, type: string, payload: Record<string, unknown>, requestId?: string) => ({

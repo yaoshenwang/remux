@@ -42,7 +42,7 @@ export const EMPTY_PROTOCOL_CAPABILITIES: ProtocolCapabilities = {
 export const SERVER_PROTOCOL_CAPABILITIES: ProtocolCapabilities = {
   envelope: true,
   inspectV2: true,
-  deviceTrust: false,
+  deviceTrust: true,
 };
 
 export const createEnvelope = <TPayload>(
