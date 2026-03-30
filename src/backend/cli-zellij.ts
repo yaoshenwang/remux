@@ -9,6 +9,7 @@ import { hideBin } from "yargs/helpers";
 import { AuthService } from "./auth/auth-service.js";
 import { createZellijServer, type RunningServer } from "./server-zellij.js";
 import { createTunnelProvider } from "./tunnels/index.js";
+import { createExtensions } from "./extensions.js";
 import { createLogger } from "./util/file-logger.js";
 import { randomToken } from "./util/random.js";
 import { buildLaunchUrl } from "./launch-context.js";
@@ -143,6 +144,7 @@ const main = async (): Promise<void> => {
   ) ?? candidates[candidates.length - 1];
 
   const tunnelProvider = createTunnelProvider(args.tunnelProvider, logger);
+  const extensions = createExtensions(logger);
 
   const runningServer: RunningServer = createZellijServer(
     {
@@ -152,7 +154,7 @@ const main = async (): Promise<void> => {
       zellijSession: args.zellijSession,
       zellijBin: args.zellijBin,
     },
-    { authService, logger },
+    { authService, logger, extensions },
   );
 
   await runningServer.start();

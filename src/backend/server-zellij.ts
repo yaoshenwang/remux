@@ -1,9 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
 import http from "node:http";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import type { AuthService } from "./auth/auth-service.js";
 import { createZellijPty, type ZellijPty } from "./pty/zellij-pty.js";
 import { ZellijController } from "./zellij-controller.js";
+import type { Extensions } from "./extensions.js";
 
 export interface ZellijServerConfig {
   port: number;
@@ -16,6 +19,7 @@ export interface ZellijServerConfig {
 export interface ZellijServerDeps {
   authService: AuthService;
   logger: Pick<Console, "log" | "error">;
+  extensions?: Extensions;
 }
 
 export interface RunningServer {
@@ -40,9 +44,10 @@ export const createZellijServer = (
   config: ZellijServerConfig,
   deps: ZellijServerDeps,
 ): RunningServer => {
-  const { authService, logger } = deps;
+  const { authService, logger, extensions } = deps;
 
   const app = express();
+  app.use(express.json());
 
   // --- HTTP routes ---
 
@@ -53,6 +58,86 @@ export const createZellijServer = (
     });
   });
 
+  // Extension routes: push notifications + state API.
+  if (extensions) {
+    app.use(extensions.notificationRoutes);
+
+    app.get("/api/state/:session", (req, res) => {
+      const snapshot = extensions.getSnapshot(req.params.session);
+      if (snapshot) {
+        res.json(snapshot);
+      } else {
+        res.status(404).json({ error: "session not found or no state tracked" });
+      }
+    });
+
+    app.get("/api/scrollback/:session", (req, res) => {
+      const from = parseInt(req.query.from as string) || 0;
+      const count = parseInt(req.query.count as string) || 100;
+      const lines = extensions.getScrollback(req.params.session, from, count);
+      res.json({ from, count: lines.length, lines });
+    });
+
+    app.get("/api/gastown/:session", (req, res) => {
+      const info = extensions.getGastownInfo(req.params.session);
+      res.json(info);
+    });
+
+    app.get("/api/stats/bandwidth", (_req, res) => {
+      res.json(extensions.getBandwidthStats());
+    });
+
+    // File browser API: list and read files in the working directory.
+    app.get("/api/files", (_req, res) => {
+      try {
+        const cwd = process.cwd();
+        const entries = fs.readdirSync(cwd, { withFileTypes: true })
+          .filter((e) => !e.name.startsWith("."))
+          .map((e) => ({
+            name: e.name,
+            type: e.isDirectory() ? "directory" : "file",
+          }));
+        res.json({ path: cwd, entries });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get("/api/files/*filePath", (req, res) => {
+      const rawPath = Array.isArray(req.params.filePath)
+        ? req.params.filePath.join("/")
+        : String(req.params.filePath ?? "");
+      const filePath = path.resolve(process.cwd(), rawPath);
+      // Security: ensure the resolved path is within cwd.
+      if (!filePath.startsWith(process.cwd())) {
+        res.status(403).json({ error: "path traversal not allowed" });
+        return;
+      }
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.isDirectory()) {
+          const entries = fs.readdirSync(filePath, { withFileTypes: true })
+            .filter((e) => !e.name.startsWith("."))
+            .map((e) => ({
+              name: e.name,
+              type: e.isDirectory() ? "directory" : "file",
+            }));
+          res.json({ path: filePath, entries });
+        } else {
+          // Limit file reads to 1MB.
+          if (stat.size > 1_048_576) {
+            res.status(413).json({ error: "file too large (>1MB)" });
+            return;
+          }
+          const content = fs.readFileSync(filePath, "utf8");
+          res.json({ path: filePath, content, size: stat.size });
+        }
+      } catch {
+        res.status(404).json({ error: `not found: ${rawPath}` });
+      }
+    });
+  }
+
   app.use(express.static(config.frontendDir));
   app.get("/{*path}", (_req, res) => {
     res.sendFile("index.html", { root: config.frontendDir });
@@ -61,8 +146,8 @@ export const createZellijServer = (
   // --- Server & WebSocket ---
 
   const server = http.createServer(app);
-  const terminalWss = new WebSocketServer({ noServer: true });
-  const controlWss = new WebSocketServer({ noServer: true });
+  const terminalWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
+  const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const terminalClients = new Set<TerminalClient>();
   const controlClients = new Set<ControlClient>();
   let controller: ZellijController | null = null;
@@ -117,10 +202,13 @@ export const createZellijServer = (
       if (client.ws.readyState === WebSocket.OPEN) {
         client.ws.send(data);
       }
+      // Feed into extensions (state tracker + notifications).
+      extensions?.onTerminalData(config.zellijSession, data);
     });
 
     pty.onExit(({ exitCode }) => {
       logger.log(`Client PTY exited (pid=${pty.pid}, code=${exitCode})`);
+      extensions?.onSessionExit(config.zellijSession, exitCode);
       client.pty = null;
       if (client.ws.readyState === WebSocket.OPEN) {
         client.ws.close(1001, "zellij exited");
@@ -129,6 +217,7 @@ export const createZellijServer = (
 
     sessionBootstrapped = true;
     ensureController();
+    extensions?.onSessionCreated(config.zellijSession, cols, rows);
     logger.log(`Client PTY started (pid=${pty.pid}, session=${config.zellijSession}, ${cols}x${rows})`);
     return pty;
   };
@@ -165,6 +254,7 @@ export const createZellijServer = (
             if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
               // Resize THIS client's PTY only — Zellij handles multi-client negotiation.
               client.pty.resize(msg.cols, msg.rows);
+              extensions?.onSessionResize(config.zellijSession, msg.cols, msg.rows);
               return;
             }
             if (msg.type === "ping") {
@@ -254,6 +344,14 @@ export const createZellijServer = (
       try {
         msg = JSON.parse(toNodeBuffer(raw).toString("utf8"));
       } catch {
+        return;
+      }
+
+      // Handle ping/pong for RTT measurement (bypass auth check).
+      if (msg.type === "ping" && typeof msg.timestamp === "number") {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "pong", timestamp: msg.timestamp }));
+        }
         return;
       }
 
@@ -353,6 +451,19 @@ export const createZellijServer = (
           resolve();
         });
         server.once("error", reject);
+      }).then(() => {
+        // Broadcast bandwidth stats every 5 seconds to all authed control clients.
+        if (extensions) {
+          setInterval(() => {
+            const stats = extensions.getBandwidthStats();
+            const msg = JSON.stringify({ type: "bandwidth_stats", stats });
+            for (const client of controlClients) {
+              if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
+                client.ws.send(msg);
+              }
+            }
+          }, 5000);
+        }
       });
     },
     async stop() {
@@ -371,6 +482,7 @@ export const createZellijServer = (
       controlClients.clear();
       terminalWss.close();
       controlWss.close();
+      extensions?.dispose();
       return new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
