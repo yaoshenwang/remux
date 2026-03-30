@@ -8,6 +8,7 @@ test-results
 playwright-report
 screenshots
 .playwright-mcp/
+.playwright-cli/
 .worktrees/
 
 # AI agent local instruction files (CLAUDE.md is tracked as project config)
@@ -23,11 +24,13 @@ AGENTS.md
 /*.jpeg
 /*.gif
 
-# Zellij plugin build artifacts (keep remux-focus.wasm)
+# Snapshot/config artifacts from playwright-cli or debug sessions
+*.yaml
+*.yml
+
+# Build artifacts
 src/backend/zellij/plugin/target/
 native/zellij-bridge/target/
-.playwright-cli/
-*.yaml
 
 # Go TUI binary
 remux-tui
