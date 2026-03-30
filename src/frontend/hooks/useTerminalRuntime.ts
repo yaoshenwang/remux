@@ -97,8 +97,8 @@ export const useTerminalRuntime = ({
   const copySelectionRef = useRef<() => Promise<void>>(async () => undefined);
   const focusTerminalRef = useRef<() => void>(() => undefined);
   const fitFrameRef = useRef<number | null>(null);
-  const fitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fitRetryTimerRef = useRef<number | null>(null);
+  const resizeTimerRef = useRef<number | null>(null);
   const lastResizeSignatureRef = useRef("");
   const lastResizeSocketRef = useRef<WebSocket | null>(null);
   const requestTerminalFitRef = useRef<(options?: TerminalFitOptions) => void>(() => undefined);

@@ -6,6 +6,9 @@ import { createZellijServer, type RunningServer } from "../../src/backend/server
 import { AuthService } from "../../src/backend/auth/auth-service.js";
 
 const TOKEN = "client-state-token";
+type BufferedWebSocket = WebSocket & {
+  __messageQueue: string[];
+};
 
 describe("control client connection state", () => {
   let server: RunningServer;
@@ -89,7 +92,7 @@ describe("control client connection state", () => {
       capabilities: {
         envelope: true,
         inspectV2: true,
-        deviceTrust: false,
+        deviceTrust: true,
       },
     });
     const alphaAuth = await expectMessage(
@@ -173,8 +176,12 @@ describe("control client connection state", () => {
 const connectControlClient = async (
   baseWsUrl: string,
   authMessage: Record<string, unknown>,
-): Promise<WebSocket> => {
-  const ws = new WebSocket(`${baseWsUrl}/ws/control`);
+): Promise<BufferedWebSocket> => {
+  const ws = new WebSocket(`${baseWsUrl}/ws/control`) as BufferedWebSocket;
+  ws.__messageQueue = [];
+  ws.on("message", (raw) => {
+    ws.__messageQueue.push(String(raw));
+  });
   await new Promise<void>((resolve, reject) => {
     ws.once("open", resolve);
     ws.once("error", reject);
@@ -184,9 +191,21 @@ const connectControlClient = async (
 };
 
 const expectMessage = async (
-  ws: WebSocket,
+  ws: BufferedWebSocket,
   matcher: (payload: Record<string, any>) => boolean,
 ): Promise<Record<string, any>> => {
+  const queuedIndex = ws.__messageQueue.findIndex((raw) => {
+    try {
+      return matcher(JSON.parse(raw) as Record<string, any>);
+    } catch {
+      return false;
+    }
+  });
+  if (queuedIndex >= 0) {
+    const [queued] = ws.__messageQueue.splice(queuedIndex, 1);
+    return JSON.parse(queued) as Record<string, any>;
+  }
+
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
@@ -206,9 +225,14 @@ const expectMessage = async (
 
     const onMessage = (raw: WebSocket.RawData) => {
       try {
-        const payload = JSON.parse(String(raw)) as Record<string, any>;
+        const normalized = String(raw);
+        const payload = JSON.parse(normalized) as Record<string, any>;
         if (!matcher(payload)) {
           return;
+        }
+        const queuedMessageIndex = ws.__messageQueue.indexOf(normalized);
+        if (queuedMessageIndex >= 0) {
+          ws.__messageQueue.splice(queuedMessageIndex, 1);
         }
         cleanup();
         resolve(payload);

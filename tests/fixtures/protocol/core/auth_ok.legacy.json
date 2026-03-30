@@ -3,6 +3,6 @@
   "capabilities": {
     "envelope": true,
     "inspectV2": true,
-    "deviceTrust": false
+    "deviceTrust": true
   }
 }

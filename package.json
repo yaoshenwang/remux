@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.58",
+  "version": "0.2.59",
   "description": "Remote workspace cockpit for terminal-first work, powered by Zellij",
   "license": "MIT",
   "repository": {
@@ -59,8 +59,10 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
     "node-pty": "^1.0.0",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -69,8 +71,10 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.51.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
+    "@types/qrcode": "^1.5.6",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

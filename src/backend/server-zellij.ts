@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
-import type { AuthService } from "./auth/auth-service.js";
+import { AuthService, DeviceTrustError } from "./auth/auth-service.js";
 import { createZellijPty, type ZellijPty } from "./pty/zellij-pty.js";
 import { InspectBadRequestError, InspectService } from "./inspect/index.js";
 import { ZellijController, type ZellijControllerApi } from "./zellij-controller.js";
@@ -23,7 +23,6 @@ import {
   normalizeClientMode,
   normalizeClientPlatform,
   normalizeDeviceName,
-  type ClientMode,
   type ConnectedClientInfo,
 } from "./protocol/client-state.js";
 
@@ -86,14 +85,43 @@ export const createZellijServer = (
     "image/bmp": "bmp",
     "image/svg+xml": "svg",
   };
+  let cachedServerVersion: string | null = null;
+
+  const resolveBearerToken = (req: express.Request): string => {
+    const authHeader = req.headers.authorization ?? "";
+    return authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  };
+
+  const verifyApiRequest = (req: express.Request): { ok: boolean; reason?: string } => {
+    return authService.verifyTokenOnly(resolveBearerToken(req));
+  };
+
+  const resolveServerVersion = (): string => {
+    if (cachedServerVersion) {
+      return cachedServerVersion;
+    }
+
+    if (process.env.npm_package_version) {
+      cachedServerVersion = process.env.npm_package_version;
+      return cachedServerVersion;
+    }
+
+    try {
+      const packageJsonPath = path.resolve(process.cwd(), "package.json");
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { version?: string };
+      cachedServerVersion = packageJson.version ?? "0.0.0";
+    } catch {
+      cachedServerVersion = "0.0.0";
+    }
+
+    return cachedServerVersion;
+  };
 
   app.post(
     "/api/upload",
     express.raw({ limit: "50mb", type: "image/*" }),
     (req, res) => {
-      const authHeader = req.headers.authorization ?? "";
-      const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-      const authResult = authService.verify({ token: bearerToken });
+      const authResult = verifyApiRequest(req);
       if (!authResult.ok) {
         res.status(401).json({ error: authResult.reason ?? "unauthorized" });
         return;
@@ -132,8 +160,86 @@ export const createZellijServer = (
   app.get("/api/config", (_req, res) => {
     res.json({
       passwordRequired: authService.requiresPassword(),
-      version: process.env.npm_package_version ?? "0.0.0",
+      version: resolveServerVersion(),
     });
+  });
+
+  app.post("/api/pairing/create", (req, res) => {
+    const authResult = verifyApiRequest(req);
+    if (!authResult.ok) {
+      res.status(401).json({ error: authResult.reason ?? "unauthorized" });
+      return;
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const pairing = authService.createPairingSession({
+      baseUrl,
+      serverVersion: resolveServerVersion(),
+    });
+    res.json({
+      payload: pairing.payload,
+    });
+  });
+
+  app.post("/api/pairing/redeem", (req, res) => {
+    try {
+      const redeemed = authService.redeemPairingSession({
+        pairingSessionId: req.body?.pairingSessionId as string,
+        token: req.body?.token as string,
+        publicKey: req.body?.publicKey as string,
+        displayName: req.body?.displayName as string | undefined,
+        platform: req.body?.platform as string | undefined,
+      });
+      res.json(redeemed);
+    } catch (error) {
+      if (error instanceof DeviceTrustError) {
+        res.status(error.statusCode).json({
+          error: error.message,
+          code: error.code,
+        });
+        return;
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/devices", (req, res) => {
+    const authResult = verifyApiRequest(req);
+    if (!authResult.ok) {
+      res.status(401).json({ error: authResult.reason ?? "unauthorized" });
+      return;
+    }
+
+    res.json({
+      devices: authService.listDevices(),
+    });
+  });
+
+  app.post("/api/devices/:deviceId/revoke", (req, res) => {
+    const authResult = verifyApiRequest(req);
+    if (!authResult.ok) {
+      res.status(401).json({ error: authResult.reason ?? "unauthorized" });
+      return;
+    }
+
+    try {
+      const device = authService.revokeDevice(
+        req.params.deviceId,
+        typeof req.body?.reason === "string" && req.body.reason.trim()
+          ? req.body.reason.trim()
+          : "revoked by user",
+      );
+      res.json({ device });
+    } catch (error) {
+      if (error instanceof DeviceTrustError) {
+        res.status(error.statusCode).json({
+          error: error.message,
+          code: error.code,
+        });
+        return;
+      }
+      res.status(500).json({ error: String(error) });
+    }
   });
 
   // Extension routes: push notifications + state API.
@@ -235,6 +341,7 @@ export const createZellijServer = (
   const controlClients = new Set<ControlClient>();
   const connectedClients = new Map<string, ConnectedClientInfo>();
   let clientsChangedTimer: ReturnType<typeof setTimeout> | null = null;
+  let pairingCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let controller: ZellijControllerApi | null = null;
   let inspectService: InspectService | null = null;
   /** Whether the Zellij session has been bootstrapped (first client created it). */
@@ -487,6 +594,7 @@ export const createZellijServer = (
       const result = authService.verify({
         token: msg.token as string | undefined,
         password: msg.password as string | undefined,
+        resumeToken: msg.resumeToken as string | undefined,
       });
       if (!result.ok) {
         ws.send(JSON.stringify({ type: "auth_error", reason: result.reason }));
@@ -577,6 +685,7 @@ export const createZellijServer = (
         const result = authService.verify({
           token: preAuthPayload.token as string | undefined,
           password: preAuthPayload.password as string | undefined,
+          resumeToken: preAuthPayload.resumeToken as string | undefined,
         });
         if (!result.ok) {
           sendWireProtocolMessage(ws, requestedCapabilities.envelope, "core", "auth_error", {
@@ -587,8 +696,8 @@ export const createZellijServer = (
         }
         client.authenticated = true;
         client.capabilities = requestedCapabilities;
-        const platform = normalizeClientPlatform(preAuthPayload.platform);
-        const deviceName = normalizeDeviceName(preAuthPayload.deviceName, platform);
+        const platform = normalizeClientPlatform(preAuthPayload.platform ?? result.device?.platform);
+        const deviceName = normalizeDeviceName(preAuthPayload.deviceName ?? result.device?.displayName, platform);
         connectedClients.set(client.clientId, {
           clientId: client.clientId,
           connectTime: client.connectTime,
@@ -774,6 +883,11 @@ export const createZellijServer = (
         });
         server.once("error", reject);
       }).then(() => {
+        authService.cleanupExpiredPairingSessions();
+        pairingCleanupTimer = setInterval(() => {
+          authService.cleanupExpiredPairingSessions();
+        }, 60 * 60 * 1000);
+
         // Broadcast bandwidth stats every 5 seconds to all authed control clients.
         if (extensions) {
           setInterval(() => {
@@ -808,9 +922,14 @@ export const createZellijServer = (
         clearTimeout(clientsChangedTimer);
         clientsChangedTimer = null;
       }
+      if (pairingCleanupTimer) {
+        clearInterval(pairingCleanupTimer);
+        pairingCleanupTimer = null;
+      }
       terminalWss.close();
       controlWss.close();
       extensions?.dispose();
+      authService.dispose();
       return new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
