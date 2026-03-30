@@ -1,0 +1,34 @@
+{
+  "domain": "runtime",
+  "type": "workspace_state",
+  "version": 1,
+  "requestId": null,
+  "emittedAt": "2026-03-31T10:00:00.000Z",
+  "source": "server",
+  "payload": {
+    "session": "protocol-fixture",
+    "tabs": [
+      {
+        "index": 0,
+        "name": "main",
+        "active": true,
+        "isFullscreen": false,
+        "hasBell": false,
+        "panes": [
+          {
+            "id": "terminal_1",
+            "focused": true,
+            "title": "api",
+            "command": "npm run dev",
+            "cwd": "/tmp/api",
+            "rows": 24,
+            "cols": 80,
+            "x": 0,
+            "y": 0
+          }
+        ]
+      }
+    ],
+    "activeTabIndex": 0
+  }
+}

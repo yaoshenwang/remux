@@ -10,6 +10,15 @@ import { createZellijPty, type ZellijPty } from "./pty/zellij-pty.js";
 import { InspectBadRequestError, InspectService } from "./inspect/index.js";
 import { ZellijController, type ZellijControllerApi } from "./zellij-controller.js";
 import type { Extensions } from "./extensions.js";
+import {
+  createEnvelope,
+  EMPTY_PROTOCOL_CAPABILITIES,
+  normalizeProtocolCapabilities,
+  parseEnvelope,
+  SERVER_PROTOCOL_CAPABILITIES,
+  type ProtocolCapabilities,
+  type RemuxDomain,
+} from "./protocol/envelope.js";
 
 export interface ZellijServerConfig {
   port: number;
@@ -42,6 +51,7 @@ interface TerminalClient {
 interface ControlClient {
   ws: WebSocket;
   authenticated: boolean;
+  capabilities: ProtocolCapabilities;
 }
 
 export const createZellijServer = (
@@ -313,15 +323,52 @@ export const createZellijServer = (
     if (!controller) return;
     try {
       const state = await controller.queryWorkspaceState();
-      const msg = JSON.stringify({ type: "workspace_state", ...state });
+      const legacyMessage = JSON.stringify({ type: "workspace_state", ...state });
+      const envelopeMessage = JSON.stringify(createEnvelope("runtime", "workspace_state", state));
       for (const client of controlClients) {
         if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
-          client.ws.send(msg);
+          client.ws.send(client.capabilities.envelope ? envelopeMessage : legacyMessage);
         }
       }
     } catch (err) {
       logger.error("Failed to query workspace state:", err);
     }
+  };
+
+  const sendLegacyControlMessage = (
+    ws: WebSocket,
+    type: string,
+    payload: Record<string, unknown> = {},
+  ): void => {
+    ws.send(JSON.stringify({ type, ...payload }));
+  };
+
+  const sendWireProtocolMessage = <TPayload extends object>(
+    ws: WebSocket,
+    useEnvelope: boolean,
+    domain: RemuxDomain,
+    type: string,
+    payload: TPayload,
+    options: { requestId?: string } = {},
+  ): void => {
+    if (useEnvelope) {
+      ws.send(JSON.stringify(createEnvelope(domain, type, payload, {
+        requestId: options.requestId,
+      })));
+      return;
+    }
+
+    sendLegacyControlMessage(ws, type, payload as Record<string, unknown>);
+  };
+
+  const sendProtocolMessage = <TPayload extends object>(
+    client: ControlClient,
+    domain: RemuxDomain,
+    type: string,
+    payload: TPayload,
+    options: { requestId?: string } = {},
+  ): void => {
+    sendWireProtocolMessage(client.ws, client.capabilities.envelope, domain, type, payload, options);
   };
 
   terminalWss.on("connection", (ws: WebSocket) => {
@@ -422,7 +469,11 @@ export const createZellijServer = (
   // --- Control WebSocket (/ws/control) ---
 
   controlWss.on("connection", (ws: WebSocket) => {
-    const client: ControlClient = { ws, authenticated: false };
+    const client: ControlClient = {
+      ws,
+      authenticated: false,
+      capabilities: { ...EMPTY_PROTOCOL_CAPABILITIES },
+    };
     controlClients.add(client);
 
     ws.on("message", async (raw: Buffer | ArrayBuffer | Buffer[]) => {
@@ -432,6 +483,12 @@ export const createZellijServer = (
       } catch {
         return;
       }
+
+      const preAuthEnvelope = parseEnvelope<Record<string, unknown>>(msg, { source: "client" });
+      const preAuthPayload = preAuthEnvelope?.payload && typeof preAuthEnvelope.payload === "object"
+        ? preAuthEnvelope.payload
+        : msg;
+      const preAuthType = preAuthEnvelope?.type ?? msg.type;
 
       // Handle ping/pong for RTT measurement (bypass auth check).
       if (msg.type === "ping" && typeof msg.timestamp === "number") {
@@ -443,23 +500,29 @@ export const createZellijServer = (
 
       // Auth handshake.
       if (!client.authenticated) {
-        if (msg.type !== "auth") {
+        if (preAuthType !== "auth") {
           ws.send(JSON.stringify({ type: "auth_error", reason: "expected auth" }));
           ws.close(4001, "expected auth");
           return;
         }
+        const requestedCapabilities = normalizeProtocolCapabilities(preAuthPayload.capabilities);
         const result = authService.verify({
-          token: msg.token as string | undefined,
-          password: msg.password as string | undefined,
+          token: preAuthPayload.token as string | undefined,
+          password: preAuthPayload.password as string | undefined,
         });
         if (!result.ok) {
-          ws.send(JSON.stringify({ type: "auth_error", reason: result.reason }));
+          sendWireProtocolMessage(ws, requestedCapabilities.envelope, "core", "auth_error", {
+            reason: result.reason ?? "unauthorized",
+          });
           ws.close(4001, "unauthorized");
           return;
         }
         client.authenticated = true;
+        client.capabilities = requestedCapabilities;
         ensureController();
-        ws.send(JSON.stringify({ type: "auth_ok" }));
+        sendWireProtocolMessage(ws, client.capabilities.envelope, "core", "auth_ok", {
+          capabilities: SERVER_PROTOCOL_CAPABILITIES,
+        });
         return;
       }
 
@@ -470,6 +533,43 @@ export const createZellijServer = (
       }
 
       try {
+        const envelope = parseEnvelope(msg, { allowLegacyFallback: false, source: "client" });
+        if (envelope?.domain === "inspect" && envelope.type === "request_inspect") {
+          const inspectRequest = envelope.payload as Record<string, unknown>;
+          const scope = inspectRequest.scope;
+          const cursor = typeof inspectRequest.cursor === "string" ? inspectRequest.cursor : null;
+          const query = typeof inspectRequest.query === "string" ? inspectRequest.query : undefined;
+          const limit = typeof inspectRequest.limit === "number" ? inspectRequest.limit : undefined;
+          const service = ensureInspectService();
+
+          if (scope === "tab") {
+            const tabIndex = typeof inspectRequest.tabIndex === "number"
+              ? inspectRequest.tabIndex
+              : (await controller.queryWorkspaceState()).activeTabIndex;
+            const snapshot = await service.queryTabHistory(tabIndex, { cursor, query, limit });
+            sendProtocolMessage(client, "inspect", "inspect_snapshot", snapshot, {
+              requestId: envelope.requestId,
+            });
+            return;
+          }
+
+          if (scope === "pane") {
+            const paneId = typeof inspectRequest.paneId === "string"
+              ? inspectRequest.paneId
+              : await resolveFocusedPaneId();
+            if (!paneId) {
+              throw new InspectBadRequestError("missing paneId for inspect request");
+            }
+            const snapshot = await service.queryPaneHistory(paneId, { cursor, query, limit });
+            sendProtocolMessage(client, "inspect", "inspect_snapshot", snapshot, {
+              requestId: envelope.requestId,
+            });
+            return;
+          }
+
+          throw new InspectBadRequestError("invalid inspect scope");
+        }
+
         switch (msg.type) {
           case "subscribe_workspace":
             await broadcastWorkspaceState();
@@ -504,7 +604,7 @@ export const createZellijServer = (
             break;
           case "capture_inspect": {
             const content = await controller.dumpScreen(msg.full as boolean ?? true);
-            ws.send(JSON.stringify({ type: "inspect_content", content }));
+            sendProtocolMessage(client, "core", "inspect_content", { content });
             break;
           }
           case "request_inspect": {
@@ -519,7 +619,7 @@ export const createZellijServer = (
                 ? msg.tabIndex
                 : (await controller.queryWorkspaceState()).activeTabIndex;
               const snapshot = await service.queryTabHistory(tabIndex, { cursor, query, limit });
-              ws.send(JSON.stringify({ type: "inspect_snapshot", ...snapshot }));
+              sendProtocolMessage(client, "inspect", "inspect_snapshot", snapshot);
               break;
             }
 
@@ -529,7 +629,7 @@ export const createZellijServer = (
                 throw new InspectBadRequestError("missing paneId for inspect request");
               }
               const snapshot = await service.queryPaneHistory(paneId, { cursor, query, limit });
-              ws.send(JSON.stringify({ type: "inspect_snapshot", ...snapshot }));
+              sendProtocolMessage(client, "inspect", "inspect_snapshot", snapshot);
               break;
             }
 
@@ -575,10 +675,11 @@ export const createZellijServer = (
         if (extensions) {
           setInterval(() => {
             const stats = extensions.getBandwidthStats();
-            const msg = JSON.stringify({ type: "bandwidth_stats", stats });
+            const legacyMessage = JSON.stringify({ type: "bandwidth_stats", stats });
+            const envelopeMessage = JSON.stringify(createEnvelope("admin", "bandwidth_stats", { stats }));
             for (const client of controlClients) {
               if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
-                client.ws.send(msg);
+                client.ws.send(client.capabilities.envelope ? envelopeMessage : legacyMessage);
               }
             }
           }, 5000);

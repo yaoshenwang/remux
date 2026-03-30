@@ -60,16 +60,134 @@ test("inspect marks cached or disconnected data stale and refetches on reconnect
   await expect(page.getByText("Captured: 2026-03-31 18:05:00")).toBeVisible();
 });
 
+test("protocol compatibility keeps legacy clients working while the app negotiates envelope", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installMockSockets(page);
+  await page.goto(`${server!.baseUrl}/?token=${server!.token}`);
+
+  await expect(page.getByTestId("inspect-view")).toBeVisible();
+  await expect(page.getByText("Source: runtime_capture")).toBeVisible();
+
+  const legacyResult = await page.evaluate(async (token) => {
+    const waitForMessage = async (ws: WebSocket, matcher: (payload: Record<string, unknown>) => boolean) => {
+      return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("timed out waiting for protocol message"));
+        }, 2_000);
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          ws.removeEventListener("message", onMessage);
+          ws.removeEventListener("error", onError);
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(new Error("socket error"));
+        };
+
+        const onMessage = (event: MessageEvent<string>) => {
+          const payload = JSON.parse(event.data) as Record<string, unknown>;
+          if (!matcher(payload)) {
+            return;
+          }
+          cleanup();
+          resolve(payload);
+        };
+
+        ws.addEventListener("message", onMessage);
+        ws.addEventListener("error", onError);
+      });
+    };
+
+    const ws = new WebSocket(`${window.location.origin.replace(/^http/, "ws")}/ws/control`);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timed out waiting for open")), 2_000);
+      ws.addEventListener("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+    });
+
+    const authOkPromise = waitForMessage(ws, (payload) => payload.type === "auth_ok");
+    ws.send(JSON.stringify({ type: "auth", token }));
+    const authOk = await authOkPromise;
+
+    const workspacePromise = waitForMessage(ws, (payload) => payload.type === "workspace_state");
+    ws.send(JSON.stringify({ type: "subscribe_workspace" }));
+    const workspace = await workspacePromise;
+
+    const inspectPromise = waitForMessage(ws, (payload) => payload.type === "inspect_snapshot");
+    ws.send(JSON.stringify({
+      type: "request_inspect",
+      scope: "pane",
+      paneId: "terminal_1",
+      limit: 2,
+    }));
+    const inspect = await inspectPromise;
+    ws.close();
+
+    return {
+      authOk,
+      workspace,
+      inspect,
+      authLog: window.__remuxInspectTest?.authLog ?? [],
+      requestLog: window.__remuxInspectTest?.requestLog ?? [],
+    };
+  }, server!.token);
+
+  expect(legacyResult.authOk).toMatchObject({
+    type: "auth_ok",
+    capabilities: {
+      envelope: true,
+      inspectV2: true,
+      deviceTrust: false,
+    },
+  });
+  expect(legacyResult.workspace).toMatchObject({
+    type: "workspace_state",
+    session: "inspect-e2e",
+  });
+  expect(legacyResult.workspace).not.toHaveProperty("domain");
+  expect(legacyResult.inspect).toMatchObject({
+    type: "inspect_snapshot",
+  });
+  expect(legacyResult.inspect).not.toHaveProperty("domain");
+  expect(legacyResult.authLog).toEqual(expect.arrayContaining([
+    expect.objectContaining({ transport: "legacy", supportsEnvelope: false }),
+    expect.objectContaining({ transport: "legacy", supportsEnvelope: true }),
+  ]));
+  expect(legacyResult.requestLog).toEqual(expect.arrayContaining([
+    expect.objectContaining({ transport: "envelope", scope: "tab" }),
+    expect.objectContaining({ transport: "legacy", scope: "pane" }),
+  ]));
+});
+
 const installMockSockets = async (page: import("@playwright/test").Page) => {
   await page.addInitScript(() => {
     type InspectRequest = {
-      type: string;
       scope?: "pane" | "tab";
       paneId?: string;
       tabIndex?: number;
       cursor?: string | null;
       query?: string;
       limit?: number;
+    };
+
+    type ProtocolCapabilities = {
+      envelope: boolean;
+      inspectV2: boolean;
+      deviceTrust: boolean;
+    };
+
+    type WireMessage = {
+      type: string;
+      domain?: string;
+      payload?: Record<string, unknown>;
+      requestId?: string;
+      capabilities?: ProtocolCapabilities;
+      [key: string]: unknown;
     };
 
     type ListenerMap = Map<string, Set<(event: any) => void>>;
@@ -114,6 +232,7 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
 
     const sharedState = {
       requestLog: [] as Array<Record<string, unknown>>,
+      authLog: [] as Array<Record<string, unknown>>,
       controlSocket: null as MockSocket | null,
       reconnectVersion: 0,
       dropControlSocket() {
@@ -224,6 +343,40 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
       };
     };
 
+    const serverCapabilities: ProtocolCapabilities = {
+      envelope: true,
+      inspectV2: true,
+      deviceTrust: false,
+    };
+
+    const createEnvelope = (domain: string, type: string, payload: Record<string, unknown>, requestId?: string) => ({
+      domain,
+      type,
+      version: 1,
+      ...(requestId ? { requestId } : {}),
+      emittedAt: "2026-03-31T10:00:00.000Z",
+      source: "server",
+      payload,
+    });
+
+    const parseMessage = (wire: WireMessage) => {
+      if (wire.domain && wire.payload && typeof wire.payload === "object") {
+        return {
+          transport: "envelope" as const,
+          type: wire.type,
+          payload: wire.payload,
+          requestId: typeof wire.requestId === "string" ? wire.requestId : undefined,
+        };
+      }
+
+      const { type, ...payload } = wire;
+      return {
+        transport: "legacy" as const,
+        type,
+        payload,
+      };
+    };
+
     class MockSocket extends EventTarget {
       static readonly CONNECTING = 0;
       static readonly OPEN = 1;
@@ -244,6 +397,7 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
       binaryType: BinaryType = "blob";
       protocol = "";
       extensions = "";
+      supportsEnvelope = false;
 
       private listeners: ListenerMap = new Map();
 
@@ -262,37 +416,68 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
       }
 
       send(payload: string) {
-        const message = JSON.parse(payload) as InspectRequest;
+        const message = JSON.parse(payload) as WireMessage;
+        const parsed = parseMessage(message);
 
         if (this.url.includes("/ws/terminal")) {
-          if (message.type === "auth") {
+          if (parsed.type === "auth") {
             this.emit("message", new MessageEvent("message", { data: JSON.stringify({ type: "auth_ok" }) }));
           }
           return;
         }
 
-        if (message.type === "auth") {
+        if (parsed.type === "auth") {
+          const authPayload = parsed.payload as Record<string, unknown>;
+          this.supportsEnvelope = authPayload.capabilities !== undefined
+            && typeof authPayload.capabilities === "object"
+            && (authPayload.capabilities as Record<string, unknown>).envelope === true;
+          sharedState.authLog.push({
+            transport: parsed.transport,
+            supportsEnvelope: this.supportsEnvelope,
+          });
           if (sharedState.reconnectVersion > 0) {
             sharedState.reconnectVersion += 1;
           }
-          this.emit("message", new MessageEvent("message", { data: JSON.stringify({ type: "auth_ok" }) }));
+          this.emit("message", new MessageEvent("message", {
+            data: JSON.stringify(
+              this.supportsEnvelope
+                ? createEnvelope("core", "auth_ok", { capabilities: serverCapabilities })
+                : { type: "auth_ok", capabilities: serverCapabilities },
+            ),
+          }));
           return;
         }
 
-        if (message.type === "subscribe_workspace") {
+        if (parsed.type === "subscribe_workspace") {
+          const workspacePayload = { ...workspaceState };
           this.emit(
             "message",
             new MessageEvent("message", {
-              data: JSON.stringify({ type: "workspace_state", ...workspaceState }),
+              data: JSON.stringify(
+                this.supportsEnvelope
+                  ? createEnvelope("runtime", "workspace_state", workspacePayload)
+                  : { type: "workspace_state", ...workspacePayload },
+              ),
             }),
           );
           return;
         }
 
-        if (message.type === "request_inspect") {
-          sharedState.requestLog.push(message);
-          const snapshot = buildSnapshot(message);
-          this.emit("message", new MessageEvent("message", { data: JSON.stringify(snapshot) }));
+        if (parsed.type === "request_inspect") {
+          const request = parsed.payload as InspectRequest;
+          sharedState.requestLog.push({
+            transport: parsed.transport,
+            ...request,
+          });
+          const snapshot = buildSnapshot(request);
+          const { type, ...snapshotPayload } = snapshot;
+          this.emit("message", new MessageEvent("message", {
+            data: JSON.stringify(
+              this.supportsEnvelope
+                ? createEnvelope("inspect", type, snapshotPayload)
+                : snapshot,
+            ),
+          }));
         }
       }
 
@@ -374,6 +559,7 @@ const installMockSockets = async (page: import("@playwright/test").Page) => {
 declare global {
   interface Window {
     __remuxInspectTest?: {
+      authLog: Array<Record<string, unknown>>;
       requestLog: Array<Record<string, unknown>>;
       dropControlSocket: () => void;
     };

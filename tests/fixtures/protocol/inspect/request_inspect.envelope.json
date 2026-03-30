@@ -1,0 +1,15 @@
+{
+  "domain": "inspect",
+  "type": "request_inspect",
+  "version": 1,
+  "requestId": "req-inspect-1",
+  "emittedAt": "2026-03-31T10:00:00.000Z",
+  "source": "client",
+  "payload": {
+    "scope": "pane",
+    "paneId": "terminal_1",
+    "cursor": null,
+    "query": "error",
+    "limit": 50
+  }
+}

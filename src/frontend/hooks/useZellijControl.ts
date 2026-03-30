@@ -6,6 +6,14 @@ import {
   writeInspectCache,
 } from "../inspect/cache.js";
 import type { InspectRequest, InspectSnapshot } from "../inspect/types.js";
+import {
+  createEnvelope,
+  EMPTY_PROTOCOL_CAPABILITIES,
+  normalizeProtocolCapabilities,
+  parseEnvelope,
+  SERVER_PROTOCOL_CAPABILITIES,
+  type ProtocolCapabilities,
+} from "../protocol/envelope.js";
 import { token, wsOrigin, formatPasswordError } from "../remux-runtime";
 import { attachWebSocketKeepAlive } from "../websocket-keepalive";
 
@@ -100,6 +108,7 @@ export const useZellijControl = (): UseZellijControlResult => {
   const stopKeepAliveRef = useRef<(() => void) | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectRef = useRef<(passwordOverride?: string) => void>(() => undefined);
+  const serverCapabilitiesRef = useRef<ProtocolCapabilities>({ ...EMPTY_PROTOCOL_CAPABILITIES });
 
   const [connected, setConnected] = useState(false);
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -130,6 +139,20 @@ export const useZellijControl = (): UseZellijControlResult => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
+  }, []);
+
+  const sendInspectRequestMessage = useCallback((request: InspectRequest) => {
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const payload = serverCapabilitiesRef.current.envelope
+      ? createEnvelope("inspect", "request_inspect", request, {
+        source: "client",
+      })
+      : { type: "request_inspect", ...request };
+    ws.send(JSON.stringify(payload));
   }, []);
 
   const resolveInspectRequest = useCallback((request: Partial<InspectRequest> = {}): InspectRequest | null => {
@@ -204,11 +227,8 @@ export const useZellijControl = (): UseZellijControlResult => {
     };
     setInspectLoading(true);
     setInspectError(null);
-    send({
-      type: "request_inspect",
-      ...resolved,
-    });
-  }, [markInspectSnapshot, resolveInspectRequest, send, workspace?.session]);
+    sendInspectRequestMessage(resolved);
+  }, [markInspectSnapshot, resolveInspectRequest, sendInspectRequestMessage, workspace?.session]);
 
   const connect = useCallback((passwordOverride?: string) => {
     stopKeepAliveRef.current?.();
@@ -230,25 +250,33 @@ export const useZellijControl = (): UseZellijControlResult => {
       const authMsg: Record<string, unknown> = { type: "auth", token };
       const pw = passwordOverride ?? passwordRef.current;
       if (pw) authMsg.password = pw;
+      authMsg.capabilities = SERVER_PROTOCOL_CAPABILITIES;
       ws.send(JSON.stringify(authMsg));
     };
 
     ws.onmessage = (event: MessageEvent) => {
       try {
-        const msg = JSON.parse(event.data as string);
+        const raw = JSON.parse(event.data as string);
+        const envelope = parseEnvelope<Record<string, unknown>>(raw);
+        if (!envelope || typeof envelope.payload !== "object" || envelope.payload === null) {
+          return;
+        }
+        const msg = envelope.payload as Record<string, unknown>;
+        const messageType = envelope.type;
 
         // Handle bandwidth_stats and pong (extension messages).
-        if (msg.type === "bandwidth_stats" && msg.stats) {
+        if (messageType === "bandwidth_stats" && msg.stats) {
           setBandwidthStats(msg.stats as BandwidthStats);
           return;
         }
-        if (msg.type === "pong" && typeof msg.timestamp === "number") {
+        if (messageType === "pong" && typeof msg.timestamp === "number") {
           const rtt = Math.round(performance.now() - msg.timestamp);
           setBandwidthStats((prev) => prev ? { ...prev, rttMs: rtt } : null);
           return;
         }
 
-        if (msg.type === "auth_ok") {
+        if (messageType === "auth_ok") {
+          serverCapabilitiesRef.current = normalizeProtocolCapabilities(msg.capabilities);
           setConnected(true);
           setNeedsPassword(false);
           setPasswordErrorMessage("");
@@ -264,7 +292,7 @@ export const useZellijControl = (): UseZellijControlResult => {
                 : buildInspectCacheBucketKey(workspaceSessionRef.current, lastInspectRequestRef.current),
             };
             setInspectLoading(true);
-            ws.send(JSON.stringify({ type: "request_inspect", ...lastInspectRequestRef.current }));
+            sendInspectRequestMessage(lastInspectRequestRef.current);
           }
           // Start RTT measurement pings.
           if (rttTimerRef.current) clearInterval(rttTimerRef.current);
@@ -276,27 +304,29 @@ export const useZellijControl = (): UseZellijControlResult => {
           return;
         }
 
-        if (msg.type === "auth_error") {
-          setPasswordErrorMessage(formatPasswordError(msg.reason ?? "authentication failed"));
+        if (messageType === "auth_error") {
+          setPasswordErrorMessage(formatPasswordError(
+            typeof msg.reason === "string" ? msg.reason : "authentication failed",
+          ));
           setNeedsPassword(true);
           setConnected(false);
           return;
         }
 
-        if (msg.type === "workspace_state") {
+        if (messageType === "workspace_state") {
           setWorkspace({
-            session: msg.session,
-            tabs: msg.tabs,
-            activeTabIndex: msg.activeTabIndex,
+            session: msg.session as string,
+            tabs: msg.tabs as WorkspaceTab[],
+            activeTabIndex: msg.activeTabIndex as number,
           });
           return;
         }
 
-        if (msg.type === "inspect_snapshot" && msg.descriptor && Array.isArray(msg.items)) {
+        if (messageType === "inspect_snapshot" && msg.descriptor && Array.isArray(msg.items)) {
           const nextSnapshot = {
-            descriptor: msg.descriptor,
-            items: msg.items,
-            cursor: msg.cursor ?? null,
+            descriptor: msg.descriptor as InspectSnapshot["descriptor"],
+            items: msg.items as InspectSnapshot["items"],
+            cursor: (typeof msg.cursor === "string" ? msg.cursor : null),
             truncated: Boolean(msg.truncated),
           } satisfies InspectSnapshot;
           const pendingRequest = pendingInspectRequestRef.current;
@@ -324,18 +354,18 @@ export const useZellijControl = (): UseZellijControlResult => {
           return;
         }
 
-        if (msg.type === "inspect_content") {
+        if (messageType === "inspect_content") {
           markInspectSnapshot(null);
           setInspectLoading(false);
-          setInspectError(msg.content ? null : "legacy inspect content unavailable");
+          setInspectError(typeof msg.content === "string" ? null : "legacy inspect content unavailable");
           return;
         }
 
-        if (msg.type === "error") {
+        if (messageType === "error") {
           if (pendingInspectRequestRef.current) {
             pendingInspectRequestRef.current = null;
             setInspectLoading(false);
-            setInspectError(msg.message ?? "inspect request failed");
+            setInspectError(typeof msg.message === "string" ? msg.message : "inspect request failed");
           }
           return;
         }
@@ -351,6 +381,7 @@ export const useZellijControl = (): UseZellijControlResult => {
         rttTimerRef.current = null;
       }
       setConnected(false);
+      serverCapabilitiesRef.current = { ...EMPTY_PROTOCOL_CAPABILITIES };
       if (inspectSnapshotRef.current) {
         markInspectSnapshot({
           ...inspectSnapshotRef.current,
@@ -365,7 +396,7 @@ export const useZellijControl = (): UseZellijControlResult => {
     };
 
     ws.onerror = () => {};
-  }, [markInspectSnapshot]);
+  }, [markInspectSnapshot, sendInspectRequestMessage]);
   connectRef.current = connect;
 
   useEffect(() => {

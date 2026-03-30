@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remux.yaoshen.wang/protocols/runtime.schema.json",
+  "title": "Remux Runtime Protocol",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/workspaceStateLegacy" },
+    { "$ref": "#/$defs/workspaceStateEnvelope" }
+  ],
+  "$defs": {
+    "workspacePane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "focused", "title", "command", "cwd", "rows", "cols", "x", "y"],
+      "properties": {
+        "id": { "type": "string" },
+        "focused": { "type": "boolean" },
+        "title": { "type": "string" },
+        "command": { "type": ["string", "null"] },
+        "cwd": { "type": ["string", "null"] },
+        "rows": { "type": "number" },
+        "cols": { "type": "number" },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "workspaceTab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "name", "active", "isFullscreen", "hasBell", "panes"],
+      "properties": {
+        "index": { "type": "number" },
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "isFullscreen": { "type": "boolean" },
+        "hasBell": { "type": "boolean" },
+        "panes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workspacePane" }
+        }
+      }
+    },
+    "workspaceStateShape": {
+      "required": ["session", "tabs", "activeTabIndex"],
+      "properties": {
+        "session": { "type": "string" },
+        "tabs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workspaceTab" }
+        },
+        "activeTabIndex": { "type": "number" }
+      }
+    },
+    "workspaceStatePayload": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/workspaceStateShape" }
+      ]
+    },
+    "workspaceStateLegacy": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/workspaceStateShape" },
+        {
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "workspace_state" }
+          }
+        }
+      ]
+    },
+    "workspaceStateEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "runtime" },
+        "type": { "const": "workspace_state" },
+        "version": { "const": 1 },
+        "requestId": { "type": ["string", "null"] },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["server", "client"] },
+        "payload": { "$ref": "#/$defs/workspaceStatePayload" }
+      }
+    }
+  }
+}

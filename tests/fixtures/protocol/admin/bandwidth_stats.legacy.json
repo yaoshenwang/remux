@@ -1,0 +1,16 @@
+{
+  "type": "bandwidth_stats",
+  "stats": {
+    "rawBytesPerSec": 100,
+    "compressedBytesPerSec": 80,
+    "savedPercent": 20,
+    "fullSnapshotsSent": 1,
+    "diffUpdatesSent": 2,
+    "avgChangedRowsPerDiff": 3,
+    "totalRawBytes": 1000,
+    "totalCompressedBytes": 800,
+    "totalSavedBytes": 200,
+    "rttMs": 42,
+    "protocol": "ws"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "type": "request_inspect",
+  "scope": "pane",
+  "paneId": "terminal_1",
+  "cursor": null,
+  "query": "error",
+  "limit": 50
+}

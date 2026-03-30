@@ -1,0 +1,43 @@
+{
+  "domain": "inspect",
+  "type": "inspect_snapshot",
+  "version": 1,
+  "requestId": "req-inspect-1",
+  "emittedAt": "2026-03-31T10:00:00.000Z",
+  "source": "server",
+  "payload": {
+    "descriptor": {
+      "scope": "pane",
+      "source": "runtime_capture",
+      "precision": "precise",
+      "staleness": "fresh",
+      "capturedAt": "2026-03-31T10:00:00.000Z",
+      "paneId": "terminal_1",
+      "totalItems": 2
+    },
+    "items": [
+      {
+        "type": "output",
+        "content": "boot ok",
+        "lineNumber": 1,
+        "timestamp": "2026-03-31T10:00:00.000Z",
+        "paneId": "terminal_1"
+      },
+      {
+        "type": "output",
+        "content": "fatal error connecting upstream",
+        "lineNumber": 2,
+        "timestamp": "2026-03-31T10:00:00.000Z",
+        "paneId": "terminal_1",
+        "highlights": [
+          {
+            "start": 6,
+            "end": 11
+          }
+        ]
+      }
+    ],
+    "cursor": null,
+    "truncated": false
+  }
+}

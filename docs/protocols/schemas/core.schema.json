@@ -1,0 +1,438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remux.local/protocol/schemas/core.schema.json",
+  "title": "Remux core protocol messages",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["type", "capabilities"],
+      "properties": {
+        "type": { "const": "auth_ok" },
+        "capabilities": {
+          "type": "object",
+          "required": ["envelope", "inspectV2", "deviceTrust"],
+          "properties": {
+            "envelope": { "type": "boolean" },
+            "inspectV2": { "type": "boolean" },
+            "deviceTrust": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "const": "auth_error" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "message"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "number" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "timestamp"],
+      "properties": {
+        "type": { "const": "pong" },
+        "timestamp": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "error" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "message": { "type": "string" },
+            "code": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "pong" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["server", "client"] },
+        "payload": {
+          "type": "object",
+          "required": ["timestamp"],
+          "properties": {
+            "timestamp": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "auth" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "client" },
+        "payload": {
+          "type": "object",
+          "required": ["token"],
+          "properties": {
+            "token": { "type": "string" },
+            "password": { "type": "string" },
+            "cols": { "type": "number" },
+            "rows": { "type": "number" },
+            "capabilities": {
+              "type": "object",
+              "required": ["envelope", "inspectV2", "deviceTrust"],
+              "properties": {
+                "envelope": { "type": "boolean" },
+                "inspectV2": { "type": "boolean" },
+                "deviceTrust": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "auth_ok" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["capabilities"],
+          "properties": {
+            "capabilities": {
+              "type": "object",
+              "required": ["envelope", "inspectV2", "deviceTrust"],
+              "properties": {
+                "envelope": { "type": "boolean" },
+                "inspectV2": { "type": "boolean" },
+                "deviceTrust": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "auth_error" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["reason"],
+          "properties": {
+            "reason": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "subscribe_workspace" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["client", "server"] },
+        "payload": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "ping" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["client", "server"] },
+        "payload": {
+          "type": "object",
+          "required": ["timestamp"],
+          "properties": {
+            "timestamp": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "inspect_content" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["content"],
+          "properties": {
+            "content": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "workspace_state" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["session", "tabs", "activeTabIndex"],
+          "properties": {
+            "session": { "type": "string" },
+            "tabs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["index", "name", "active", "isFullscreen", "hasBell", "panes"],
+                "properties": {
+                  "index": { "type": "number" },
+                  "name": { "type": "string" },
+                  "active": { "type": "boolean" },
+                  "isFullscreen": { "type": "boolean" },
+                  "hasBell": { "type": "boolean" },
+                  "panes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["id", "focused", "title", "command", "cwd", "rows", "cols", "x", "y"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "focused": { "type": "boolean" },
+                        "title": { "type": "string" },
+                        "command": { "type": ["string", "null"] },
+                        "cwd": { "type": ["string", "null"] },
+                        "rows": { "type": "number" },
+                        "cols": { "type": "number" },
+                        "x": { "type": "number" },
+                        "y": { "type": "number" }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "activeTabIndex": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "bandwidth_stats" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["stats"],
+          "properties": {
+            "stats": {
+              "type": "object",
+              "required": [
+                "rawBytesPerSec",
+                "compressedBytesPerSec",
+                "savedPercent",
+                "fullSnapshotsSent",
+                "diffUpdatesSent",
+                "avgChangedRowsPerDiff",
+                "totalRawBytes",
+                "totalCompressedBytes",
+                "totalSavedBytes",
+                "rttMs",
+                "protocol"
+              ],
+              "properties": {
+                "rawBytesPerSec": { "type": "number" },
+                "compressedBytesPerSec": { "type": "number" },
+                "savedPercent": { "type": "number" },
+                "fullSnapshotsSent": { "type": "number" },
+                "diffUpdatesSent": { "type": "number" },
+                "avgChangedRowsPerDiff": { "type": "number" },
+                "totalRawBytes": { "type": "number" },
+                "totalCompressedBytes": { "type": "number" },
+                "totalSavedBytes": { "type": "number" },
+                "rttMs": { "type": ["number", "null"] },
+                "protocol": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "request_inspect" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "client" },
+        "payload": {
+          "type": "object",
+          "required": ["scope"],
+          "properties": {
+            "scope": { "enum": ["pane", "tab"] },
+            "paneId": { "type": "string" },
+            "tabIndex": { "type": "number" },
+            "cursor": { "type": ["string", "null"] },
+            "query": { "type": "string" },
+            "limit": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "core" },
+        "type": { "const": "inspect_snapshot" },
+        "version": { "const": 1 },
+        "requestId": { "type": "string" },
+        "emittedAt": { "type": "string" },
+        "source": { "const": "server" },
+        "payload": {
+          "type": "object",
+          "required": ["descriptor", "items", "cursor", "truncated"],
+          "properties": {
+            "descriptor": {
+              "type": "object",
+              "required": ["scope", "source", "precision", "staleness", "capturedAt"],
+              "properties": {
+                "scope": { "enum": ["pane", "tab", "session"] },
+                "source": { "enum": ["runtime_capture", "state_tracker", "local_cache"] },
+                "precision": { "enum": ["precise", "approximate", "partial"] },
+                "staleness": { "enum": ["fresh", "stale", "unknown"] },
+                "capturedAt": { "type": "string" },
+                "paneId": { "type": "string" },
+                "tabIndex": { "type": "number" },
+                "totalItems": { "type": "number" }
+              },
+              "additionalProperties": false
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["type", "content", "lineNumber", "timestamp"],
+                "properties": {
+                  "type": { "enum": ["output", "event", "marker"] },
+                  "content": { "type": "string" },
+                  "lineNumber": { "type": ["number", "null"] },
+                  "timestamp": { "type": "string" },
+                  "paneId": { "type": "string" },
+                  "highlights": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["start", "end"],
+                      "properties": {
+                        "start": { "type": "number" },
+                        "end": { "type": "number" }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "cursor": { "type": ["string", "null"] },
+            "truncated": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

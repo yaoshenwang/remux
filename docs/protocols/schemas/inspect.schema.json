@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remux.yaoshen.wang/protocols/inspect.schema.json",
+  "title": "Remux Inspect Protocol",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/requestInspectLegacy" },
+    { "$ref": "#/$defs/requestInspectEnvelope" },
+    { "$ref": "#/$defs/inspectSnapshotLegacy" },
+    { "$ref": "#/$defs/inspectSnapshotEnvelope" }
+  ],
+  "$defs": {
+    "inspectRequestShape": {
+      "required": ["scope"],
+      "properties": {
+        "scope": { "enum": ["pane", "tab"] },
+        "paneId": { "type": "string" },
+        "tabIndex": { "type": "number" },
+        "cursor": { "type": ["string", "null"] },
+        "query": { "type": "string" },
+        "limit": { "type": "number" }
+      }
+    },
+    "inspectRequestPayload": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/inspectRequestShape" }
+      ]
+    },
+    "inspectHighlight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" }
+      }
+    },
+    "inspectDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "source", "precision", "staleness", "capturedAt"],
+      "properties": {
+        "scope": { "enum": ["pane", "tab", "session"] },
+        "source": { "enum": ["runtime_capture", "state_tracker", "local_cache"] },
+        "precision": { "enum": ["precise", "approximate", "partial"] },
+        "staleness": { "enum": ["fresh", "stale", "unknown"] },
+        "capturedAt": { "type": "string" },
+        "paneId": { "type": "string" },
+        "tabIndex": { "type": "number" },
+        "totalItems": { "type": "number" }
+      }
+    },
+    "inspectItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "content", "lineNumber", "timestamp"],
+      "properties": {
+        "type": { "enum": ["output", "event", "marker"] },
+        "content": { "type": "string" },
+        "lineNumber": { "type": ["number", "null"] },
+        "timestamp": { "type": "string" },
+        "paneId": { "type": "string" },
+        "highlights": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/inspectHighlight" }
+        }
+      }
+    },
+    "inspectSnapshotShape": {
+      "required": ["descriptor", "items", "cursor", "truncated"],
+      "properties": {
+        "descriptor": { "$ref": "#/$defs/inspectDescriptor" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/inspectItem" }
+        },
+        "cursor": { "type": ["string", "null"] },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "inspectSnapshotPayload": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/inspectSnapshotShape" }
+      ]
+    },
+    "requestInspectLegacy": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/inspectRequestShape" },
+        {
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "request_inspect" }
+          }
+        }
+      ]
+    },
+    "requestInspectEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "inspect" },
+        "type": { "const": "request_inspect" },
+        "version": { "const": 1 },
+        "requestId": { "type": ["string", "null"] },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["server", "client"] },
+        "payload": { "$ref": "#/$defs/inspectRequestPayload" }
+      }
+    },
+    "inspectSnapshotLegacy": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/inspectSnapshotShape" },
+        {
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "inspect_snapshot" }
+          }
+        }
+      ]
+    },
+    "inspectSnapshotEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "inspect" },
+        "type": { "const": "inspect_snapshot" },
+        "version": { "const": 1 },
+        "requestId": { "type": ["string", "null"] },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["server", "client"] },
+        "payload": { "$ref": "#/$defs/inspectSnapshotPayload" }
+      }
+    }
+  }
+}

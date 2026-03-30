@@ -1,0 +1,4 @@
+{
+  "type": "auth_error",
+  "reason": "expected auth"
+}

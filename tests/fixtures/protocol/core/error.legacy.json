@@ -1,0 +1,5 @@
+{
+  "type": "error",
+  "code": 400,
+  "message": "invalid inspect scope"
+}

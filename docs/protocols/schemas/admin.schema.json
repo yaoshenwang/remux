@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remux.yaoshen.wang/protocols/admin.schema.json",
+  "title": "Remux Admin Protocol",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/bandwidthStatsLegacy" },
+    { "$ref": "#/$defs/bandwidthStatsEnvelope" }
+  ],
+  "$defs": {
+    "bandwidthStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rawBytesPerSec",
+        "compressedBytesPerSec",
+        "savedPercent",
+        "fullSnapshotsSent",
+        "diffUpdatesSent",
+        "avgChangedRowsPerDiff",
+        "totalRawBytes",
+        "totalCompressedBytes",
+        "totalSavedBytes",
+        "rttMs",
+        "protocol"
+      ],
+      "properties": {
+        "rawBytesPerSec": { "type": "number" },
+        "compressedBytesPerSec": { "type": "number" },
+        "savedPercent": { "type": "number" },
+        "fullSnapshotsSent": { "type": "number" },
+        "diffUpdatesSent": { "type": "number" },
+        "avgChangedRowsPerDiff": { "type": "number" },
+        "totalRawBytes": { "type": "number" },
+        "totalCompressedBytes": { "type": "number" },
+        "totalSavedBytes": { "type": "number" },
+        "rttMs": { "type": ["number", "null"] },
+        "protocol": { "type": "string" }
+      }
+    },
+    "bandwidthStatsShape": {
+      "required": ["stats"],
+      "properties": {
+        "stats": { "$ref": "#/$defs/bandwidthStats" }
+      }
+    },
+    "bandwidthStatsPayload": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/bandwidthStatsShape" }
+      ]
+    },
+    "bandwidthStatsLegacy": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/bandwidthStatsShape" },
+        {
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "bandwidth_stats" }
+          }
+        }
+      ]
+    },
+    "bandwidthStatsEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "type", "version", "emittedAt", "source", "payload"],
+      "properties": {
+        "domain": { "const": "admin" },
+        "type": { "const": "bandwidth_stats" },
+        "version": { "const": 1 },
+        "requestId": { "type": ["string", "null"] },
+        "emittedAt": { "type": "string" },
+        "source": { "enum": ["server", "client"] },
+        "payload": { "$ref": "#/$defs/bandwidthStatsPayload" }
+      }
+    }
+  }
+}

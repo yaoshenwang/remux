@@ -1,0 +1,27 @@
+{
+  "type": "workspace_state",
+  "session": "protocol-fixture",
+  "tabs": [
+    {
+      "index": 0,
+      "name": "main",
+      "active": true,
+      "isFullscreen": false,
+      "hasBell": false,
+      "panes": [
+        {
+          "id": "terminal_1",
+          "focused": true,
+          "title": "api",
+          "command": "npm run dev",
+          "cwd": "/tmp/api",
+          "rows": 24,
+          "cols": 80,
+          "x": 0,
+          "y": 0
+        }
+      ]
+    }
+  ],
+  "activeTabIndex": 0
+}
