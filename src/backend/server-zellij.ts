@@ -24,7 +24,14 @@ export interface RunningServer {
   server: http.Server;
 }
 
-interface AuthenticatedClient {
+interface TerminalClient {
+  ws: WebSocket;
+  authenticated: boolean;
+  /** Per-client PTY — each browser gets its own zellij attach process. */
+  pty: ZellijPty | null;
+}
+
+interface ControlClient {
   ws: WebSocket;
   authenticated: boolean;
 }
@@ -56,10 +63,11 @@ export const createZellijServer = (
   const server = http.createServer(app);
   const terminalWss = new WebSocketServer({ noServer: true });
   const controlWss = new WebSocketServer({ noServer: true });
-  const clients = new Set<AuthenticatedClient>();
-  const controlClients = new Set<AuthenticatedClient>();
-  let pty: ZellijPty | null = null;
+  const terminalClients = new Set<TerminalClient>();
+  const controlClients = new Set<ControlClient>();
   let controller: ZellijController | null = null;
+  /** Whether the Zellij session has been bootstrapped (first client created it). */
+  let sessionBootstrapped = false;
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -81,10 +89,24 @@ export const createZellijServer = (
     socket.setNoDelay(true);
   });
 
-  const ensurePty = (cols: number, rows: number): ZellijPty => {
-    if (pty) return pty;
+  /** Ensure the ZellijController is initialized. */
+  const ensureController = (): void => {
+    if (controller) return;
+    controller = new ZellijController({
+      session: config.zellijSession,
+      zellijBin: config.zellijBin,
+      logger,
+    });
+  };
 
-    pty = createZellijPty({
+  /**
+   * Create a per-client PTY that attaches to the shared Zellij session.
+   * The first client creates the session (--create); subsequent clients
+   * attach to the existing session.  Each PTY is sized to that client's
+   * terminal dimensions, and Zellij handles multi-client size negotiation.
+   */
+  const createClientPty = (client: TerminalClient, cols: number, rows: number): ZellijPty => {
+    const pty = createZellijPty({
       session: config.zellijSession,
       zellijBin: config.zellijBin,
       cols,
@@ -92,29 +114,22 @@ export const createZellijServer = (
     });
 
     pty.onData((data: string) => {
-      for (const client of clients) {
-        if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
-          client.ws.send(data);
-        }
+      if (client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(data);
       }
     });
 
     pty.onExit(({ exitCode }) => {
-      logger.log(`Zellij exited with code ${exitCode}`);
-      pty = null;
-      // Close all clients when Zellij exits.
-      for (const client of clients) {
+      logger.log(`Client PTY exited (pid=${pty.pid}, code=${exitCode})`);
+      client.pty = null;
+      if (client.ws.readyState === WebSocket.OPEN) {
         client.ws.close(1001, "zellij exited");
       }
     });
 
-    controller = new ZellijController({
-      session: config.zellijSession,
-      zellijBin: config.zellijBin,
-      logger,
-    });
-
-    logger.log(`Zellij PTY started (pid=${pty.pid}, session=${config.zellijSession})`);
+    sessionBootstrapped = true;
+    ensureController();
+    logger.log(`Client PTY started (pid=${pty.pid}, session=${config.zellijSession}, ${cols}x${rows})`);
     return pty;
   };
 
@@ -135,25 +150,24 @@ export const createZellijServer = (
   };
 
   terminalWss.on("connection", (ws: WebSocket) => {
-    const client: AuthenticatedClient = { ws, authenticated: false };
-    clients.add(client);
+    const client: TerminalClient = { ws, authenticated: false, pty: null };
+    terminalClients.add(client);
 
     ws.on("message", (raw: Buffer | ArrayBuffer | Buffer[]) => {
       // After auth, treat all messages as either JSON control or raw terminal input.
-      if (client.authenticated) {
+      if (client.authenticated && client.pty) {
         const data = toNodeBuffer(raw);
 
         // Try to parse as JSON control message (resize, ping).
         if (data[0] === 0x7b) {
-          // '{' — likely JSON
           try {
             const msg = JSON.parse(data.toString("utf8"));
             if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
-              pty?.resize(msg.cols, msg.rows);
+              // Resize THIS client's PTY only — Zellij handles multi-client negotiation.
+              client.pty.resize(msg.cols, msg.rows);
               return;
             }
             if (msg.type === "ping") {
-              // Respond with pong and drop — don't write to PTY.
               ws.send(JSON.stringify({ type: "pong", timestamp: msg.timestamp }));
               return;
             }
@@ -162,7 +176,7 @@ export const createZellijServer = (
           }
         }
 
-        pty?.write(data.toString("utf8"));
+        client.pty.write(data.toString("utf8"));
         return;
       }
 
@@ -198,9 +212,9 @@ export const createZellijServer = (
       const rows = typeof msg.rows === "number" ? msg.rows : 30;
 
       try {
-        ensurePty(cols, rows);
+        client.pty = createClientPty(client, cols, rows);
       } catch (err) {
-        logger.error("Failed to start Zellij PTY:", err);
+        logger.error("Failed to start client PTY:", err);
         ws.send(JSON.stringify({ type: "auth_error", reason: "failed to start terminal" }));
         ws.close(1011, "pty error");
         return;
@@ -210,19 +224,29 @@ export const createZellijServer = (
     });
 
     ws.on("close", () => {
-      clients.delete(client);
+      // Kill this client's PTY — Zellij auto-adjusts to remaining clients.
+      if (client.pty) {
+        logger.log(`Client disconnected, killing PTY (pid=${client.pty.pid})`);
+        client.pty.kill();
+        client.pty = null;
+      }
+      terminalClients.delete(client);
     });
 
     ws.on("error", (err: Error) => {
       logger.error("WebSocket error:", err.message);
-      clients.delete(client);
+      if (client.pty) {
+        client.pty.kill();
+        client.pty = null;
+      }
+      terminalClients.delete(client);
     });
   });
 
   // --- Control WebSocket (/ws/control) ---
 
   controlWss.on("connection", (ws: WebSocket) => {
-    const client: AuthenticatedClient = { ws, authenticated: false };
+    const client: ControlClient = { ws, authenticated: false };
     controlClients.add(client);
 
     ws.on("message", async (raw: Buffer | ArrayBuffer | Buffer[]) => {
@@ -332,19 +356,18 @@ export const createZellijServer = (
       });
     },
     async stop() {
-      // Kill PTY first.
-      if (pty) {
-        pty.kill();
-        pty = null;
-      }
-      // Close all WebSocket connections.
-      for (const client of clients) {
+      // Kill all per-client PTYs.
+      for (const client of terminalClients) {
+        if (client.pty) {
+          client.pty.kill();
+          client.pty = null;
+        }
         client.ws.close(1001, "server shutting down");
       }
       for (const client of controlClients) {
         client.ws.close(1001, "server shutting down");
       }
-      clients.clear();
+      terminalClients.clear();
       controlClients.clear();
       terminalWss.close();
       controlWss.close();
