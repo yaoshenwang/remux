@@ -15,6 +15,7 @@ import type {
   ControlClientMessage,
   ControlServerMessage,
   TerminalPatchMessage,
+  TerminalPatchPayloadV1,
   TerminalTransportMode,
 } from "../shared/protocol.js";
 import type { RuntimeConfig } from "./config.js";
@@ -51,6 +52,7 @@ import {
 import type {
   RuntimeV2ControlClientMessage,
   RuntimeV2ControlServerMessage,
+  RuntimeV2EncodedChunkPayload,
   RuntimeV2InspectSnapshot,
   RuntimeV2Metadata,
   RuntimeV2SessionSummary,
@@ -212,6 +214,31 @@ const toBuffer = (raw: RawData): Buffer => {
     return Buffer.concat(raw);
   }
   return Buffer.from(raw);
+};
+
+const decodeRuntimeChunkPayload = (
+  payload: RuntimeV2EncodedChunkPayload | null | undefined,
+  fallbackBase64?: string | null,
+): Buffer | null => {
+  try {
+    if (payload) {
+      if (Array.isArray(payload.chunksBase64) && payload.chunksBase64.length > 0) {
+        return Buffer.concat(payload.chunksBase64.map((chunk) => Buffer.from(chunk, "base64")));
+      }
+      if (typeof payload.chunkBase64 === "string") {
+        return Buffer.from(payload.chunkBase64, "base64");
+      }
+      if (typeof payload.dataBase64 === "string") {
+        return Buffer.from(payload.dataBase64, "base64");
+      }
+    }
+    if (typeof fallbackBase64 === "string") {
+      return Buffer.from(fallbackBase64, "base64");
+    }
+  } catch {
+    return null;
+  }
+  return null;
 };
 
 /**
@@ -940,6 +967,11 @@ export class SharedRuntimeV2PaneBridge {
       size?: RuntimeV2TerminalSize;
     },
   ): string {
+    const dataBase64 = payload.toString("base64");
+    const structuredPayload: TerminalPatchPayloadV1 = {
+      encoding: "base64_chunks_v1",
+      chunksBase64: [dataBase64],
+    };
     const frame: TerminalPatchMessage = {
       type: "terminal_patch",
       paneId: this.paneId,
@@ -949,7 +981,8 @@ export class SharedRuntimeV2PaneBridge {
       baseRevision: options.baseRevision,
       reset: options.reset,
       source: options.source,
-      dataBase64: payload.toString("base64"),
+      payload: structuredPayload,
+      dataBase64,
       ...(options.size ? { cols: options.size.cols, rows: options.size.rows } : {}),
     };
     return JSON.stringify(frame);
@@ -1527,7 +1560,14 @@ export class SharedRuntimeV2PaneBridge {
     if (message.type === "snapshot") {
       this.clearPendingSnapshotRequest();
       this.snapshotRequestPending = false;
-      const snapshotContent = Buffer.from(message.replayBase64 ?? message.contentBase64, "base64");
+      const snapshotContent = decodeRuntimeChunkPayload(
+        message.replayPayload ?? message.contentPayload,
+        message.replayBase64 ?? message.contentBase64,
+      );
+      if (!snapshotContent) {
+        this.logger.error("failed to decode runtime terminal snapshot payload");
+        return;
+      }
       const fanoutMode = this.snapshotFanoutMode;
       const retainedChunks = this.applySnapshotCache(snapshotContent, message.sequence, {
         reassignRetainedRevisions: fanoutMode === "all" || this.awaitingFreshSnapshotReplay,
@@ -1552,7 +1592,11 @@ export class SharedRuntimeV2PaneBridge {
     }
 
     if (message.type === "stream") {
-      const chunk = Buffer.from(message.chunkBase64, "base64");
+      const chunk = decodeRuntimeChunkPayload(message.chunkPayload, message.chunkBase64);
+      if (!chunk) {
+        this.logger.error("failed to decode runtime terminal stream payload");
+        return;
+      }
       const text = chunk.toString("utf8");
 
       // Feed stream data to cursor tracker for DSR interception.

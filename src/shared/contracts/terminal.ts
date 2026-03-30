@@ -17,6 +17,18 @@ export interface TerminalClosedPayload {
 
 export type TerminalTransportMode = "raw" | "patch";
 
+export interface TerminalPatchPayloadV1 {
+  encoding: "base64_chunks_v1";
+  chunksBase64: string[];
+}
+
+export interface TerminalPatchPayloadAdapter {
+  encoding?: string;
+  chunksBase64?: string[];
+  chunkBase64?: string;
+  dataBase64?: string;
+}
+
 export interface TerminalPatchMessage {
   type: "terminal_patch";
   paneId: string;
@@ -26,7 +38,8 @@ export interface TerminalPatchMessage {
   baseRevision: number | null;
   reset: boolean;
   source: "snapshot" | "stream";
-  dataBase64: string;
+  payload?: TerminalPatchPayloadAdapter;
+  dataBase64?: string;
   cols?: number;
   rows?: number;
 }

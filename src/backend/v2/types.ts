@@ -29,6 +29,13 @@ export interface RuntimeV2TerminalCursorPosition {
   col: number;
 }
 
+export interface RuntimeV2EncodedChunkPayload {
+  encoding?: string;
+  chunksBase64?: string[];
+  chunkBase64?: string;
+  dataBase64?: string;
+}
+
 export type RuntimeV2SplitDirection = "right" | "down" | "vertical" | "horizontal";
 
 export type RuntimeV2LayoutNode =
@@ -195,13 +202,16 @@ export type RuntimeV2TerminalServerMessage =
       scrollbackRowWraps?: boolean[];
       visibleRowWraps?: boolean[];
       sequence: number;
-      contentBase64: string;
+      contentBase64?: string;
       replayBase64?: string | null;
+      contentPayload?: RuntimeV2EncodedChunkPayload;
+      replayPayload?: RuntimeV2EncodedChunkPayload | null;
     }
   | {
       type: "stream";
       sequence: number;
-      chunkBase64: string;
+      chunkBase64?: string;
+      chunkPayload?: RuntimeV2EncodedChunkPayload;
     }
   | {
       type: "resize_confirmed";

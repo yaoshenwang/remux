@@ -43,6 +43,8 @@ export type {
   TerminalResizePayload,
   TerminalClosedPayload,
   TerminalPatchMessage,
+  TerminalPatchPayloadAdapter,
+  TerminalPatchPayloadV1,
   TerminalTransportMode,
 } from "./contracts/terminal.js";
 
