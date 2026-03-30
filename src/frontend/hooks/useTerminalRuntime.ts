@@ -5,6 +5,20 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { themes } from "../themes";
 import type { ToolbarHandle } from "../components/Toolbar";
 import { loadPreferredTerminalRenderer } from "../terminal-renderer";
+import {
+  createTerminalWriteBuffer,
+  type TerminalWriteBuffer,
+  type TerminalWriteChunk,
+  type TerminalWriteOptions,
+} from "../terminal-write-buffer";
+import { LocalEchoPrediction } from "../local-echo-prediction";
+
+/**
+ * Regex to match CPR (Cursor Position Report) responses: \x1b[{row};{col}R.
+ * The server intercepts DSR queries and responds server-side, so CPR
+ * responses from the browser xterm.js should not be sent upstream.
+ */
+const CPR_RESPONSE_RE = /\x1b\[\d+;\d+R/g;
 
 declare global {
   interface Window {
@@ -21,6 +35,8 @@ declare global {
 interface UseTerminalRuntimeOptions {
   mobileLayout: boolean;
   onSendRaw: (data: string) => void;
+  onBeforeReset?: (reason: string) => void;
+  onResizeSent?: (payload: { cols: number; rows: number; source: string }) => void;
   setStatusMessage: Dispatch<SetStateAction<string>>;
   terminalVisible: boolean;
   terminalSocketRef: MutableRefObject<WebSocket | null>;
@@ -38,14 +54,21 @@ interface UseTerminalRuntimeResult {
   fileInputRef: RefObject<HTMLInputElement | null>;
   fitAddonRef: MutableRefObject<FitAddon | null>;
   focusTerminal: () => void;
+  localEchoRef: MutableRefObject<LocalEchoPrediction | null>;
   readTerminalGeometry: () => { cols: number; rows: number } | null;
   readTerminalBuffer: () => string;
+  readTerminalViewport: () => string;
   requestTerminalFit: (options?: TerminalFitOptions) => void;
   resetTerminalBuffer: () => void;
-  scrollbackContentRef: RefObject<HTMLDivElement | null>;
+  inspectContentRef: RefObject<HTMLDivElement | null>;
   serializeAddonRef: MutableRefObject<SerializeAddon | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
+  writeToTerminal: (
+    chunk: TerminalWriteChunk,
+    onComplete?: () => void,
+    options?: Omit<TerminalWriteOptions, "onComplete">,
+  ) => void;
 }
 
 const getPreferredTerminalFontSize = (mobileLayout: boolean): number => mobileLayout ? 12 : 14;
@@ -54,6 +77,8 @@ const TERMINAL_RESIZE_DEBOUNCE_MS = 80;
 export const useTerminalRuntime = ({
   mobileLayout,
   onSendRaw,
+  onBeforeReset,
+  onResizeSent,
   setStatusMessage,
   terminalVisible,
   terminalSocketRef,
@@ -61,7 +86,7 @@ export const useTerminalRuntime = ({
   toolbarRef
 }: UseTerminalRuntimeOptions): UseTerminalRuntimeResult => {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
-  const scrollbackContentRef = useRef<HTMLDivElement | null>(null);
+  const inspectContentRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const serializeAddonRef = useRef<SerializeAddon | null>(null);
@@ -78,6 +103,8 @@ export const useTerminalRuntime = ({
   const requestTerminalFitRef = useRef<(options?: TerminalFitOptions) => void>(() => undefined);
   const terminalVisibleRef = useRef(terminalVisible);
   const rendererAddonRef = useRef<{ dispose(): void } | null>(null);
+  const terminalWriteBufferRef = useRef<TerminalWriteBuffer | null>(null);
+  const localEchoRef = useRef<LocalEchoPrediction | null>(null);
 
   sendRawToSocketRef.current = onSendRaw;
   setStatusMessageRef.current = setStatusMessage;
@@ -116,9 +143,14 @@ export const useTerminalRuntime = ({
       cols: terminal.cols,
       rows: terminal.rows
     }));
+    onResizeSent?.({
+      cols: terminal.cols,
+      rows: terminal.rows,
+      source: "fit",
+    });
     lastResizeSocketRef.current = socket;
     lastResizeSignatureRef.current = signature;
-  }, [terminalSocketRef]);
+  }, [onResizeSent, terminalSocketRef]);
 
   const scheduleTerminalResize = useCallback((): void => {
     clearPendingResize();
@@ -242,12 +274,69 @@ export const useTerminalRuntime = ({
     if (!terminal) {
       return;
     }
+    onBeforeReset?.("terminal buffer reset");
+    terminalWriteBufferRef.current?.clear();
     terminal.reset();
     const themeConfig = themes[theme];
     if (themeConfig) {
       terminal.options.theme = themeConfig.xterm;
     }
-  }, [theme]);
+  }, [onBeforeReset, theme]);
+
+  const writeToTerminal = useCallback((
+    chunk: TerminalWriteChunk,
+    onComplete?: () => void,
+    options: Omit<TerminalWriteOptions, "onComplete"> = {},
+  ): void => {
+    const echo = localEchoRef.current;
+    const complete = (): void => {
+      onComplete?.();
+    };
+    if (echo && typeof chunk === "string") {
+      echo.detectAlternateScreen(chunk);
+      const reconciled = echo.reconcileServerOutput(chunk);
+      if (reconciled) {
+        terminalWriteBufferRef.current?.enqueue(reconciled, {
+          ...options,
+          onComplete: complete,
+        });
+        return;
+      }
+      complete();
+      return;
+    }
+    if (echo && chunk instanceof Uint8Array) {
+      // Fast path: no predictions pending — pass binary directly to xterm
+      // which has its own streaming UTF-8 decoder (handles multi-byte
+      // boundaries correctly across write() calls).
+      if (echo.pending.length === 0) {
+        echo.detectAlternateScreenBinary(chunk);
+        terminalWriteBufferRef.current?.enqueue(chunk, {
+          ...options,
+          onComplete: complete,
+        });
+        return;
+      }
+      // Slow path: predictions pending — must decode to string for
+      // reconciliation against predicted characters.
+      const text = new TextDecoder().decode(chunk);
+      echo.detectAlternateScreen(text);
+      const reconciled = echo.reconcileServerOutput(text);
+      if (reconciled) {
+        terminalWriteBufferRef.current?.enqueue(reconciled, {
+          ...options,
+          onComplete: complete,
+        });
+        return;
+      }
+      complete();
+      return;
+    }
+    terminalWriteBufferRef.current?.enqueue(chunk, {
+      ...options,
+      onComplete: complete,
+    });
+  }, []);
 
   const copySelection = useCallback(async (): Promise<void> => {
     let text = window.getSelection()?.toString() || "";
@@ -320,6 +409,12 @@ export const useTerminalRuntime = ({
       return true;
     });
     terminal.open(terminalContainerRef.current);
+    terminalWriteBufferRef.current = createTerminalWriteBuffer((chunk, onWritten) => {
+      terminal.write(chunk, onWritten);
+    });
+    localEchoRef.current = new LocalEchoPrediction({
+      writeToTerminal: (data) => terminal.write(data),
+    });
     requestAnimationFrame(() => {
       terminal.focus();
       requestTerminalFitRef.current({ notify: false, retryUntilVisible: true });
@@ -327,7 +422,12 @@ export const useTerminalRuntime = ({
 
     const disposable = terminal.onData((data) => {
       const output = toolbarRef.current?.applyModifiersAndClear(data) ?? data;
-      sendRawToSocketRef.current(output);
+      // Filter out CPR responses — the server handles DSR queries directly.
+      const filtered = output.replace(CPR_RESPONSE_RE, "");
+      if (filtered) {
+        localEchoRef.current?.predictInput(filtered);
+        sendRawToSocketRef.current(filtered);
+      }
     });
 
     terminalRef.current = terminal;
@@ -357,8 +457,12 @@ export const useTerminalRuntime = ({
       resizeObserver.disconnect();
       fontSet?.removeEventListener?.("loadingdone", handleFontsChanged);
       disposable.dispose();
+      localEchoRef.current?.reset();
+      localEchoRef.current = null;
       rendererAddonRef.current?.dispose();
       rendererAddonRef.current = null;
+      terminalWriteBufferRef.current?.clear();
+      terminalWriteBufferRef.current = null;
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -416,13 +520,16 @@ export const useTerminalRuntime = ({
     fileInputRef,
     fitAddonRef,
     focusTerminal,
+    localEchoRef,
     readTerminalGeometry,
     readTerminalBuffer,
+    readTerminalViewport,
     requestTerminalFit,
     resetTerminalBuffer,
-    scrollbackContentRef,
+    inspectContentRef,
     serializeAddonRef,
     terminalContainerRef,
-    terminalRef
+    terminalRef,
+    writeToTerminal
   };
 };

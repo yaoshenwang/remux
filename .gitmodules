@@ -1,0 +1,3 @@
+[submodule "vendor/zellij"]
+	path = vendor/zellij
+	url = https://github.com/yaoshenwang/zellij.git

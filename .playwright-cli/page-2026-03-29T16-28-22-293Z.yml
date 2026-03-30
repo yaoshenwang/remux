@@ -1,0 +1,123 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - button "◀" [ref=e6] [cursor=pointer]
+      - generic [ref=e7]:
+        - generic [ref=e113]:
+          - 'button "0: Shell" [ref=e114] [cursor=pointer]':
+            - generic [ref=e115]: "0: Shell"
+          - button "Close tab 0" [ref=e116] [cursor=pointer]: ×
+        - generic [ref=e117]:
+          - 'button "1: Shell" [active] [ref=e118] [cursor=pointer]':
+            - generic [ref=e119]: "1: Shell"
+          - button "Close tab 1" [ref=e120] [cursor=pointer]: ×
+        - generic [ref=e121]:
+          - 'button "2: Shell" [ref=e122] [cursor=pointer]':
+            - generic [ref=e123]: "2: Shell"
+          - button "Close tab 2" [ref=e124] [cursor=pointer]: ×
+        - generic [ref=e125]:
+          - 'button "3: Shell" [ref=e126] [cursor=pointer]':
+            - generic [ref=e127]: "3: Shell"
+          - button "Close tab 3" [ref=e128] [cursor=pointer]: ×
+        - generic [ref=e129]:
+          - 'button "4: Shell" [ref=e130] [cursor=pointer]':
+            - generic [ref=e131]: "4: Shell"
+          - button "Close tab 4" [ref=e132] [cursor=pointer]: ×
+        - generic [ref=e133]:
+          - 'button "5: Shell" [ref=e134] [cursor=pointer]':
+            - generic [ref=e135]: "5: Shell"
+          - button "Close tab 5" [ref=e136] [cursor=pointer]: ×
+        - button "New tab" [ref=e137]: +
+      - generic [ref=e8]:
+        - 'generic "Status: attached: remux" [ref=e138]'
+        - button "Feedback" [ref=e10] [cursor=pointer]
+        - button "Live precise live" [ref=e86] [cursor=pointer]
+    - generic [ref=e12]:
+      - main [ref=e14]:
+        - generic [ref=e15]:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - textbox "Terminal input"
+          - generic [ref=e88]:
+            - generic [ref=e89]:
+              - generic [ref=e90]:
+                - heading "Inspect" [level=2] [ref=e91]
+                - paragraph [ref=e151]: "remux / tab 1: Shell"
+              - generic [ref=e93]:
+                - generic [ref=e94]: Tab History
+                - generic [ref=e95]: server timeline
+                - generic [ref=e96]: precise
+                - generic [ref=e97]: 1000 lines
+            - generic [ref=e98]:
+              - searchbox "Search current tab history" [ref=e99]
+              - button "Refresh" [ref=e100] [cursor=pointer]
+              - button "More" [ref=e101] [cursor=pointer]
+            - generic [ref=e102]:
+              - button "All panes" [ref=e103] [cursor=pointer]
+              - button "Pane 0" [ref=e152] [cursor=pointer]
+            - generic [ref=e153]:
+              - generic [ref=e154]: Captured 2026/3/30 00:28:20
+              - generic [ref=e155]: 1/1 panes shown · 0 events
+            - generic [ref=e156]:
+              - generic [ref=e157]:
+                - strong [ref=e158]: Pane 0 · pane_6ed53c43957a4704b4118cba859a5f60
+                - generic [ref=e159]: precise · width 123
+              - generic [ref=e160]: "└ Merge made by the 'ort' strategy. package-lock.json … +9 lines tests/integration/runtime-v2-gateway.test.ts 11 files changed, 241 insertions(+), 45 delet • Waited for background terminal · git push origin • Ran git push origin dev └ To https://github.com/yaoshenwang/remux.git 75d0121..e4a52b3 dev -> dev ────────────────────────────────────────────────── • 接下来是强制的真实网页验收。我会用 playwright-cl • Explored └ Read SKILL.md • Ran which playwright-cli └ /opt/homebrew/bin/playwright-cli • Ran gh run list --branch dev --limit 8 --json │ databaseId,workflowName,displayTitle,status, • Ran gh run watch 23713239085 --exit-status └ Run Deploy Runtime (23713239085) has already c 69 + payload: \"\\u0003\", 70 + submit: false, 71 + tone: \"danger\", 72 + }, 73 + { 74 + id: \"escape\", 75 + label: \"Esc\", 76 + payload: \"\\u001b\", 77 + submit: false, 78 + }, 79 +]; 80 + 81 +const codexProfile: AiToolProfile = { 82 + id: \"codex\", 83 + label: \"Codex\", 84 + description: \"OpenAI coding agent\", 85 + actions: [ 86 + { 87 + id: \"model\", 88 + label: \"Model\", 89 + payload: \"/model\", 90 + submit: true, 91 + tone: \"accent\", 92 + }, 93 + { 94 + id: \"approvals\", 95 + label: \"Approvals\", 96 + payload: \"/approvals\", 97 + submit: true, 98 + }, 99 + { 100 + id: \"status\", 101 + label: \"Status\", 102 + payload: \"/status\", 103 + submit: true, 104 + }, 105 + ...sharedActions, 106 + ],"
+      - generic [ref=e23]:
+        - textbox "Type a command here and press Enter to send it to the terminal" [ref=e24]:
+          - /placeholder: Compose command
+        - button "Send" [disabled] [ref=e25]
+  - complementary [ref=e26]:
+    - generic [ref=e28]: REMUX
+    - heading "Live Sessions" [level=3] [ref=e29]
+    - list [ref=e50]:
+      - listitem [ref=e51]:
+        - generic [ref=e52]:
+          - button "main shell ·" [ref=e53]:
+            - generic [ref=e54]: main
+            - generic [ref=e55]: shell ·
+          - button "Close session main" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: ×
+      - listitem [ref=e58]:
+        - generic [ref=e59]:
+          - button "remux * shell ·" [ref=e149]:
+            - generic [ref=e61]: remux *
+            - generic [ref=e62]: shell ·
+          - button "Close session remux" [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: ×
+      - listitem [ref=e65]:
+        - generic [ref=e66]:
+          - button "timu shell ·" [ref=e67]:
+            - generic [ref=e68]: timu
+            - generic [ref=e69]: shell ·
+          - button "Close session timu" [ref=e70] [cursor=pointer]:
+            - generic [ref=e71]: ×
+      - listitem [ref=e72]:
+        - generic [ref=e73]:
+          - button "verify-ai-toolbar shell ·" [ref=e150]:
+            - generic [ref=e75]: verify-ai-toolbar
+            - generic [ref=e76]: shell ·
+          - button "Close session verify-ai-toolbar" [ref=e77] [cursor=pointer]:
+            - generic [ref=e78]: ×
+    - button "+ New Session" [ref=e30] [cursor=pointer]
+    - heading "Appearance" [level=3] [ref=e31]
+    - generic [ref=e32]:
+      - button "Dark" [ref=e33] [cursor=pointer]
+      - button "Light" [ref=e34] [cursor=pointer]
+    - heading "Focus Sync" [level=3] [ref=e79]
+    - button "Pinned to Current View" [ref=e81] [cursor=pointer]
+    - paragraph [ref=e82]: Enable this to follow active tab and pane changes reported by the backend.
+    - heading "Font Size" [level=3] [ref=e35]
+    - generic [ref=e36]:
+      - button "A-" [ref=e37] [cursor=pointer]
+      - generic [ref=e38]: Auto
+      - button "A+" [ref=e39] [cursor=pointer]
+    - button "Reset to Auto" [ref=e40] [cursor=pointer]
+    - heading "Snippets" [level=3] [ref=e41]
+    - button "+ Add Snippet" [ref=e42] [cursor=pointer]
+    - generic [ref=e83]:
+      - paragraph [ref=e84]: v0.2.37
+      - paragraph [ref=e85]: dev · 550e9cf0

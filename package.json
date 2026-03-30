@@ -1,7 +1,7 @@
 {
   "name": "remux",
-  "version": "0.2.31",
-  "description": "Remote workspace cockpit for terminal-first work, powered by the unified runtime-v2 backend",
+  "version": "0.2.54",
+  "description": "Remote workspace cockpit for terminal-first work, powered by Zellij",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
     "mobile",
     "websocket",
     "workspace",
-    "runtime-v2",
+    "zellij",
     "web-terminal"
   ],
   "type": "module",
@@ -31,43 +31,27 @@
     "LICENSE"
   ],
   "bin": {
-    "remux": "dist/backend/cli.js"
+    "remux": "dist/backend/cli-zellij.js"
   },
   "scripts": {
     "dev": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
-    "dev:backend": "VITE_DEV_MODE=1 tsx watch src/backend/cli.ts",
+    "dev:backend": "VITE_DEV_MODE=1 tsx watch src/backend/cli-zellij.ts",
     "dev:frontend": "vite --config vite.config.ts",
-    "build": "npm run build:frontend && npm run build:backend && node -e \"require('fs').utimesSync('dist/backend/cli.js',new Date(),new Date())\"",
+    "build": "npm run build:frontend && npm run build:backend",
     "build:backend": "tsc -p tsconfig.backend.json",
     "build:frontend": "vite build --config vite.config.ts",
-    "start": "npm run build && node dist/backend/cli.js",
+    "start": "npm run build && node dist/backend/cli-zellij.js",
     "typecheck": "tsc -p tsconfig.backend.json --noEmit && tsc -p tsconfig.frontend.json --noEmit",
-    "runtime:install-launchd": "scripts/install-launchd.sh",
-    "runtime:load-launchd": "scripts/load-launchd.sh all",
-    "runtime:status": "scripts/check-runtime-status.sh all",
-    "runtime:sync": "scripts/sync-runtime.sh all --verify-public",
-    "runtime:promote-shared": "scripts/sync-runtime.sh dev --verify-public --promote-shared-runtime",
-    "native:v2:check": "cargo check --workspace --manifest-path Cargo.toml",
-    "native:v2:test": "cargo test --workspace --manifest-path Cargo.toml",
-    "native:v2:run": "cargo run --manifest-path Cargo.toml -p remuxd --",
-    "runner:install": "scripts/install-github-runner.sh",
-    "runner:remove": "scripts/remove-github-runner.sh",
-    "runner:status": "scripts/github-runner-status.sh",
-    "test:gate": "npm run typecheck && npm test && npm run native:v2:check && npm run build && npm run test:e2e",
-    "test:e2e": "npm run build && npm run test:e2e:functional && npm run test:e2e:width",
-    "test:e2e:functional": "playwright test tests/e2e/runtime-v2.browser.spec.ts",
-    "test:e2e:width": "playwright test tests/e2e/terminal-width.spec.ts",
-    "test:e2e:screenshots": "playwright test tests/e2e/screenshot.spec.ts",
-    "test:release": "npm run test:gate && npm run test:e2e:screenshots && npm pack --dry-run",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
+    "test:gate": "npm run typecheck && npm test && npm run build",
     "prepack": "npm run build"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@microsoft/snapfeed": "^0.1.0",
+    "@microsoft/snapfeed": "0.1.0",
     "@microsoft/snapfeed-server": "^0.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
@@ -75,15 +59,12 @@
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "express": "^5.2.1",
-    "html2canvas": "^1.4.1",
     "node-pty": "^1.0.0",
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "web-push": "^3.6.7",
     "ws": "^8.20.0",
-    "yargs": "^18.0.0",
-    "zod": "^4.3.6"
+    "yargs": "^18.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.51.1",
@@ -92,7 +73,6 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
     "@vitejs/plugin-react": "^6.0.1",

@@ -8,6 +8,8 @@ interface AppShellProps {
   sidebar: ReactNode;
   sidebarCollapsed: boolean;
   viewportHeight: number;
+  viewportOffsetLeft: number;
+  viewportOffsetTop: number;
   children: ReactNode;
 }
 
@@ -19,11 +21,17 @@ export const AppShell = ({
   sidebar,
   sidebarCollapsed,
   viewportHeight,
+  viewportOffsetLeft,
+  viewportOffsetTop,
   children,
 }: AppShellProps) => (
   <div
     className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileLayout ? " mobile-layout" : ""}${mobileLandscape ? " mobile-landscape" : ""}`}
-    style={{ "--app-height": `${viewportHeight}px` } as CSSProperties}
+    style={{
+      "--app-height": `${viewportHeight}px`,
+      "--app-offset-left": `${viewportOffsetLeft}px`,
+      "--app-offset-top": `${viewportOffsetTop}px`,
+    } as CSSProperties}
   >
     {children}
     {sidebar}

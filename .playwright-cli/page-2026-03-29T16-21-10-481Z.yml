@@ -1,0 +1,81 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - button "◀" [ref=e6] [cursor=pointer]
+      - generic [ref=e7]:
+        - generic [ref=e43]:
+          - 'button "0: Shell" [ref=e44] [cursor=pointer]':
+            - generic [ref=e45]: "0: Shell"
+          - button "Close tab 0" [ref=e46] [cursor=pointer]: ×
+        - generic [ref=e47]:
+          - 'button "1: Shell" [ref=e48] [cursor=pointer]':
+            - generic [ref=e49]: "1: Shell"
+          - button "Close tab 1" [ref=e50] [cursor=pointer]: ×
+        - generic [ref=e51]:
+          - 'button "2: Shell" [ref=e52] [cursor=pointer]':
+            - generic [ref=e53]: "2: Shell"
+          - button "Close tab 2" [ref=e54] [cursor=pointer]: ×
+        - generic [ref=e55]:
+          - 'button "3: Shell" [ref=e56] [cursor=pointer]':
+            - generic [ref=e57]: "3: Shell"
+          - button "Close tab 3" [ref=e58] [cursor=pointer]: ×
+        - generic [ref=e59]:
+          - 'button "4: Shell" [ref=e60] [cursor=pointer]':
+            - generic [ref=e61]: "4: Shell"
+          - button "Close tab 4" [ref=e62] [cursor=pointer]: ×
+        - button "New tab" [ref=e63]: +
+      - generic [ref=e8]:
+        - 'generic "Status: attached: remux" [ref=e64]'
+        - button "Feedback" [ref=e10] [cursor=pointer]
+        - button "Inspect precise live" [ref=e65] [cursor=pointer]
+    - generic [ref=e12]:
+      - main [ref=e14]:
+        - textbox "Terminal input" [ref=e66]
+      - generic [ref=e23]:
+        - textbox "Type a command here and press Enter to send it to the terminal" [ref=e24]:
+          - /placeholder: Compose command
+        - button "Send" [disabled] [ref=e25]
+  - complementary [ref=e26]:
+    - generic [ref=e28]: REMUX
+    - heading "Live Sessions" [level=3] [ref=e29]
+    - list [ref=e67]:
+      - listitem [ref=e68]:
+        - generic [ref=e69]:
+          - button "main shell ·" [ref=e70]:
+            - generic [ref=e71]: main
+            - generic [ref=e72]: shell ·
+          - button "Close session main" [ref=e73] [cursor=pointer]:
+            - generic [ref=e74]: ×
+      - listitem [ref=e75]:
+        - generic [ref=e76]:
+          - button "remux * shell ·" [ref=e77]:
+            - generic [ref=e78]: remux *
+            - generic [ref=e79]: shell ·
+          - button "Close session remux" [ref=e80] [cursor=pointer]:
+            - generic [ref=e81]: ×
+      - listitem [ref=e82]:
+        - generic [ref=e83]:
+          - button "timu shell ·" [ref=e84]:
+            - generic [ref=e85]: timu
+            - generic [ref=e86]: shell ·
+          - button "Close session timu" [ref=e87] [cursor=pointer]:
+            - generic [ref=e88]: ×
+    - button "+ New Session" [ref=e30] [cursor=pointer]
+    - heading "Appearance" [level=3] [ref=e31]
+    - generic [ref=e32]:
+      - button "Dark" [ref=e33] [cursor=pointer]
+      - button "Light" [ref=e34] [cursor=pointer]
+    - heading "Focus Sync" [level=3] [ref=e89]
+    - button "Pinned to Current View" [ref=e91] [cursor=pointer]
+    - paragraph [ref=e92]: Enable this to follow active tab and pane changes reported by the backend.
+    - heading "Font Size" [level=3] [ref=e35]
+    - generic [ref=e36]:
+      - button "A-" [ref=e37] [cursor=pointer]
+      - generic [ref=e38]: Auto
+      - button "A+" [ref=e39] [cursor=pointer]
+    - button "Reset to Auto" [ref=e40] [cursor=pointer]
+    - heading "Snippets" [level=3] [ref=e41]
+    - button "+ Add Snippet" [ref=e42] [cursor=pointer]
+    - generic [ref=e93]:
+      - paragraph [ref=e94]: v0.2.36
+      - paragraph [ref=e95]: dev · f4fc6050

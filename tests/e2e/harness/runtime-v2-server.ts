@@ -7,6 +7,8 @@ import { FakeRuntimeV2Server } from "../../harness/fakeRuntimeV2Server.js";
 
 export interface RuntimeV2E2EServerOptions {
   password?: string;
+  terminalSizePolicy?: "largest" | "smallest" | "latest";
+  terminalTransportMode?: "raw" | "patch";
 }
 
 export interface StartedRuntimeV2E2EServer {
@@ -25,7 +27,19 @@ export const startRuntimeV2E2EServer = async (
   options: RuntimeV2E2EServerOptions = {},
 ): Promise<StartedRuntimeV2E2EServer> => {
   const previousIdleBridgeGraceMs = process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS;
+  const previousTerminalSizePolicy = process.env.REMUX_TERMINAL_SIZE_POLICY;
+  const previousTerminalTransportMode = process.env.REMUX_TERMINAL_TRANSPORT_MODE;
   process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS = "0";
+  if (options.terminalSizePolicy) {
+    process.env.REMUX_TERMINAL_SIZE_POLICY = options.terminalSizePolicy;
+  } else {
+    delete process.env.REMUX_TERMINAL_SIZE_POLICY;
+  }
+  if (options.terminalTransportMode) {
+    process.env.REMUX_TERMINAL_TRANSPORT_MODE = options.terminalTransportMode;
+  } else {
+    delete process.env.REMUX_TERMINAL_TRANSPORT_MODE;
+  }
   const token = "runtime-v2-e2e-token";
   const upstream = new FakeRuntimeV2Server();
   const upstreamBaseUrl = await upstream.start();
@@ -37,7 +51,7 @@ export const startRuntimeV2E2EServer = async (
     password: options.password,
     tunnel: false,
     defaultSession: "main",
-    scrollbackLines: 1000,
+    inspectLines: 1000,
     pollIntervalMs: 100,
     token,
     frontendDir: path.resolve(process.cwd(), "dist/frontend"),
@@ -68,6 +82,16 @@ export const startRuntimeV2E2EServer = async (
         delete process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS;
       } else {
         process.env.REMUX_IDLE_PANE_BRIDGE_GRACE_MS = previousIdleBridgeGraceMs;
+      }
+      if (previousTerminalSizePolicy === undefined) {
+        delete process.env.REMUX_TERMINAL_SIZE_POLICY;
+      } else {
+        process.env.REMUX_TERMINAL_SIZE_POLICY = previousTerminalSizePolicy;
+      }
+      if (previousTerminalTransportMode === undefined) {
+        delete process.env.REMUX_TERMINAL_TRANSPORT_MODE;
+      } else {
+        process.env.REMUX_TERMINAL_TRANSPORT_MODE = previousTerminalTransportMode;
       }
     },
   };

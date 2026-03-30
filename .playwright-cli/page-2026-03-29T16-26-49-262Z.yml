@@ -1,0 +1,70 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - button "◀" [ref=e6] [cursor=pointer]
+      - generic [ref=e7]:
+        - 'button "0: Shell" [ref=e44] [cursor=pointer]':
+          - generic [ref=e45]: "0: Shell"
+        - button "New tab" [ref=e46]: +
+      - generic [ref=e8]:
+        - 'generic "Status: attached: verify-ai-toolbar" [ref=e47]'
+        - button "Feedback" [ref=e10] [cursor=pointer]
+        - button "Inspect precise live" [ref=e48] [cursor=pointer]
+    - generic [ref=e12]:
+      - main [ref=e14]:
+        - textbox "Terminal input" [active] [ref=e49]
+      - generic [ref=e23]:
+        - textbox "Type a command here and press Enter to send it to the terminal" [ref=e24]:
+          - /placeholder: Compose command
+        - button "Send" [disabled] [ref=e25]
+  - complementary [ref=e26]:
+    - generic [ref=e28]: REMUX
+    - heading "Live Sessions" [level=3] [ref=e29]
+    - list [ref=e50]:
+      - listitem [ref=e51]:
+        - generic [ref=e52]:
+          - button "main shell ·" [ref=e53]:
+            - generic [ref=e54]: main
+            - generic [ref=e55]: shell ·
+          - button "Close session main" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: ×
+      - listitem [ref=e58]:
+        - generic [ref=e59]:
+          - button "remux shell ·" [ref=e60]:
+            - generic [ref=e61]: remux
+            - generic [ref=e62]: shell ·
+          - button "Close session remux" [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: ×
+      - listitem [ref=e65]:
+        - generic [ref=e66]:
+          - button "timu shell ·" [ref=e67]:
+            - generic [ref=e68]: timu
+            - generic [ref=e69]: shell ·
+          - button "Close session timu" [ref=e70] [cursor=pointer]:
+            - generic [ref=e71]: ×
+      - listitem [ref=e72]:
+        - generic [ref=e73]:
+          - button "verify-ai-toolbar * shell ·" [ref=e74]:
+            - generic [ref=e75]: verify-ai-toolbar *
+            - generic [ref=e76]: shell ·
+          - button "Close session verify-ai-toolbar" [ref=e77] [cursor=pointer]:
+            - generic [ref=e78]: ×
+    - button "+ New Session" [ref=e30] [cursor=pointer]
+    - heading "Appearance" [level=3] [ref=e31]
+    - generic [ref=e32]:
+      - button "Dark" [ref=e33] [cursor=pointer]
+      - button "Light" [ref=e34] [cursor=pointer]
+    - heading "Focus Sync" [level=3] [ref=e79]
+    - button "Pinned to Current View" [ref=e81] [cursor=pointer]
+    - paragraph [ref=e82]: Enable this to follow active tab and pane changes reported by the backend.
+    - heading "Font Size" [level=3] [ref=e35]
+    - generic [ref=e36]:
+      - button "A-" [ref=e37] [cursor=pointer]
+      - generic [ref=e38]: Auto
+      - button "A+" [ref=e39] [cursor=pointer]
+    - button "Reset to Auto" [ref=e40] [cursor=pointer]
+    - heading "Snippets" [level=3] [ref=e41]
+    - button "+ Add Snippet" [ref=e42] [cursor=pointer]
+    - generic [ref=e83]:
+      - paragraph [ref=e84]: v0.2.37
+      - paragraph [ref=e85]: dev · 550e9cf0

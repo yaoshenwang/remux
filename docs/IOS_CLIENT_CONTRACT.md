@@ -28,9 +28,10 @@ Returns server configuration. Call this first to determine auth requirements.
 {
   "version": "0.2.0",
   "passwordRequired": false,
-  "scrollbackLines": 1000,
+  "inspectLines": 1000,
   "pollIntervalMs": 2500,
   "uploadMaxSize": 52428800,
+  "preferredTerminalTransport": "patch",
   "backendKind": "runtime-v2",
   "runtimeMode": "runtime-v2"
 }
@@ -82,6 +83,7 @@ Server → { "type": "auth_ok", "clientId": "abc123", "requiresPassword": false,
     "supportsPaneFocusById": true,
     "supportsTabRename": true,
     "supportsSessionRename": true,
+    "supportsPreciseInspect": true,
     "supportsPreciseScrollback": true,
     "supportsFloatingPanes": false,
     "supportsFullscreenPane": true
@@ -92,6 +94,7 @@ Server → { "type": "auth_ok", "clientId": "abc123", "requiresPassword": false,
       "supportsPaneFocusById": true,
       "supportsTabRename": true,
       "supportsSessionRename": true,
+      "supportsPreciseInspect": true,
       "supportsPreciseScrollback": true,
       "supportsFloatingPanes": false,
       "supportsFullscreenPane": true,
@@ -130,6 +133,7 @@ Server → { "type": "auth_error", "reason": "invalid password" }
     "supportsPaneFocusById": true,
     "supportsTabRename": true,
     "supportsSessionRename": true,
+    "supportsPreciseInspect": true,
     "supportsPreciseScrollback": true,
     "supportsFloatingPanes": false,
     "supportsFullscreenPane": true,
@@ -188,6 +192,7 @@ Server → { "type": "auth_error", "reason": "invalid password" }
 ```json
 {
   "type": "workspace_state",
+  "viewRevision": 1,
   "workspace": {
     "capturedAt": "2026-03-26T13:00:00.000Z",
     "sessions": [
@@ -232,6 +237,7 @@ Server → { "type": "auth_error", "reason": "invalid password" }
 ```json
 {
   "type": "tab_history",
+  "viewRevision": 1,
   "sessionName": "main",
   "tabIndex": 0,
   "tabName": "shell",

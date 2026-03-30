@@ -1,380 +1,129 @@
-import { useRef } from "react";
-import type { DragEvent, MutableRefObject } from "react";
-import type { TopStatus } from "../app-status";
-import type { BandwidthStats, ServerConfig } from "../app-types";
-import type { WorkspaceRuntimeState } from "../../shared/protocol.js";
+import { useCallback, useRef, useState } from "react";
+import type { WorkspaceTab } from "../hooks/useZellijControl";
 
 interface AppHeaderProps {
-  activeTabLabel: string;
-  awaitingSessionSelection: boolean;
-  bandwidthStats: BandwidthStats | null;
-  beginDrag: (event: DragEvent<HTMLElement>, type: "session" | "tab" | "snippet", value: string) => void;
-  draggedTabKey: string | null;
   mobileLayout: boolean;
-  onCloseTab: (tabIndex: number) => void;
-  onRenameTab: (tabIndex: number, newName: string) => void;
   onToggleDrawer: () => void;
-  onSelectTab: (tabIndex: number) => void;
-  onReorderTabs: (draggedTabKey: string, targetKey: string) => void;
-  onSetDraggedTabKey: (value: string | null) => void;
-  onSetRenameTabValue: (value: string) => void;
-  onSetRenamingTab: (value: number | null) => void;
-  onSetTabDropTarget: (value: string | null | ((current: string | null) => string | null)) => void;
-  onToggleSidebarCollapsed: () => void;
-  onToggleStats: () => void;
-  onToggleViewMode: () => void;
-  onCreateTab?: () => void;
-  renameHandledByKeyRef: MutableRefObject<boolean>;
-  renameTabValue: string;
   sidebarCollapsed: boolean;
-  serverConfig: ServerConfig | null;
-  supportsTabRename: boolean;
-  tabDropTarget: string | null;
-  tabs: Array<{
-    canClose: boolean;
-    index: number;
-    isActive: boolean;
-    isRenaming: boolean;
-    key: string;
-    label: string;
-    name: string;
-  }>;
-  topStatus: TopStatus;
-  viewMode: "inspect" | "terminal";
-  inspectPrecision?: "precise" | "approximate" | "partial";
-  runtimeState?: WorkspaceRuntimeState | null;
-  formatBytes: (bytes: number) => string;
+  onToggleSidebar: () => void;
+
+  // Tab data
+  tabs: WorkspaceTab[];
+  activeTabIndex: number;
+  sessionName: string;
+
+  // Tab actions
+  onSelectTab: (tabIndex: number) => void;
+  onCloseTab: (tabIndex: number) => void;
+  onNewTab: () => void;
+  onRenameTab: (tabIndex: number, name: string) => void;
+
+  // View mode
+  viewMode: "terminal" | "inspect";
+  onSetViewMode: (mode: "terminal" | "inspect") => void;
 }
 
-export const describeRuntimeState = (
-  runtimeState: WorkspaceRuntimeState | null | undefined
-): { className: string; label: string; title: string } | null => {
-  if (!runtimeState) {
-    return null;
-  }
-
-  switch (runtimeState.streamMode) {
-    case "native-bridge":
-      return {
-        className: "stream-badge native",
-        label: "precise live",
-        title: "Using the runtime-v2 live stream with precise scrollback"
-      };
-    case "cli-polling":
-      return {
-        className: "stream-badge degraded",
-        label: "degraded live",
-        title: runtimeState.degradedReason
-          ? `Runtime live stream degraded (${runtimeState.degradedReason}) - falling back to snapshot polling`
-          : "Runtime live stream degraded - falling back to snapshot polling"
-      };
-    case "unsupported":
-      return {
-        className: "stream-badge unsupported",
-        label: "limited",
-        title: runtimeState.degradedReason
-          ? `Runtime live stream unavailable (${runtimeState.degradedReason})`
-          : "Runtime live stream unavailable for this backend"
-      };
-    case "pending":
-      return {
-        className: "stream-badge pending",
-        label: "starting",
-        title: "Starting the runtime-v2 live stream"
-      };
-    default:
-      return null;
-  }
-};
-
-export const formatInspectPrecisionBadge = (
-  inspectPrecision: "precise" | "approximate" | "partial" | undefined
-): string | null => {
-  if (!inspectPrecision || inspectPrecision === "precise") {
-    return null;
-  }
-  return inspectPrecision === "approximate" ? "approx" : inspectPrecision;
-};
-
 export const AppHeader = ({
-  activeTabLabel,
-  awaitingSessionSelection,
-  bandwidthStats,
-  beginDrag,
-  draggedTabKey,
   mobileLayout,
-  onCloseTab,
-  onRenameTab,
   onToggleDrawer,
-  onReorderTabs,
-  onSelectTab,
-  onSetDraggedTabKey,
-  onSetRenameTabValue,
-  onSetRenamingTab,
-  onSetTabDropTarget,
-  onToggleSidebarCollapsed,
-  onToggleStats,
-  onToggleViewMode,
-  onCreateTab,
-  renameHandledByKeyRef,
-  renameTabValue,
   sidebarCollapsed,
-  serverConfig,
-  supportsTabRename,
-  tabDropTarget,
+  onToggleSidebar,
   tabs,
-  topStatus,
+  activeTabIndex,
+  sessionName,
+  onSelectTab,
+  onCloseTab,
+  onNewTab,
+  onRenameTab,
   viewMode,
-  inspectPrecision,
-  runtimeState,
-  formatBytes
+  onSetViewMode,
 }: AppHeaderProps) => {
-  const showTabs = !awaitingSessionSelection && tabs.length > 0;
-  const mobileRenameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const suppressNextSelectRef = useRef<number | null>(null);
-  const inspectPrecisionBadge = formatInspectPrecisionBadge(inspectPrecision);
-  const runtimeBadge = serverConfig?.backendKind === "runtime-v2"
-    ? describeRuntimeState(runtimeState)
-    : null;
-  const mobileStatsTitle = bandwidthStats
-    ? `${topStatus.label}. ${formatBytes(bandwidthStats.compressedBytesPerSec)}/s, ${bandwidthStats.savedPercent}% saved.`
-    : topStatus.label;
+  const [renamingTab, setRenamingTab] = useState<number | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
-  const clearMobileRenameTimer = (): void => {
-    if (mobileRenameTimerRef.current) {
-      clearTimeout(mobileRenameTimerRef.current);
-      mobileRenameTimerRef.current = null;
-    }
-  };
+  const handleDoubleClick = useCallback((tabIndex: number) => {
+    setRenamingTab(tabIndex);
+    requestAnimationFrame(() => renameInputRef.current?.select());
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (renamingTab === null) return;
+    const value = renameInputRef.current?.value.trim();
+    if (value) onRenameTab(renamingTab, value);
+    setRenamingTab(null);
+  }, [renamingTab, onRenameTab]);
 
   return (
-    <header className="tab-bar">
-      <button
-        onClick={onToggleDrawer}
-        className="tab-bar-burger"
-        data-testid="drawer-toggle"
-        title="Open sidebar — manage sessions, themes, and snippets"
-      >
-        ☰
-      </button>
-      <button
-        onClick={onToggleSidebarCollapsed}
-        className="tab-bar-sidebar-toggle"
-        title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-      >
-        {sidebarCollapsed ? "▶" : "◀"}
-      </button>
-      {showTabs ? (
-        <div className="tab-list" data-testid="tab-list">
-          {tabs.map((tab) => (
-            <div
-              key={tab.index}
-              className={`tab-shell${tab.isActive ? " active" : ""}${tabDropTarget === tab.key ? " drag-target" : ""}`}
-              data-testid={`header-tab-${tab.index}`}
-              data-tab-key={tab.key}
-              onDragOver={(event) => {
-                if (mobileLayout) {
-                  return;
-                }
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-              }}
-              onDragEnter={(event) => {
-                if (mobileLayout) {
-                  return;
-                }
-                event.preventDefault();
-                if (draggedTabKey && draggedTabKey !== tab.key) {
-                  onSetTabDropTarget(tab.key);
-                  onReorderTabs(draggedTabKey, tab.key);
-                }
-              }}
-              onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  onSetTabDropTarget((current) => current === tab.key ? null : current);
-                }
-              }}
-              onDrop={(event) => {
-                if (mobileLayout) {
-                  return;
-                }
-                event.preventDefault();
-                if (!draggedTabKey || draggedTabKey === tab.key) {
-                  onSetTabDropTarget(null);
-                  return;
-                }
-                onReorderTabs(draggedTabKey, tab.key);
-                onSetDraggedTabKey(null);
-                onSetTabDropTarget(null);
-              }}
-            >
-              {tab.isRenaming ? (
-                <input
-                  className="tab-rename-input"
-                  value={renameTabValue}
-                  onChange={(event) => onSetRenameTabValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && renameTabValue.trim()) {
-                      renameHandledByKeyRef.current = true;
-                      onRenameTab(tab.index, renameTabValue.trim());
-                      onSetRenamingTab(null);
-                    } else if (event.key === "Escape") {
-                      renameHandledByKeyRef.current = true;
-                      onSetRenamingTab(null);
-                    }
-                  }}
-                  onBlur={() => {
-                    if (renameHandledByKeyRef.current) {
-                      renameHandledByKeyRef.current = false;
-                      return;
-                    }
-                    if (renameTabValue.trim() && renameTabValue.trim() !== tab.name) {
-                      onRenameTab(tab.index, renameTabValue.trim());
-                    }
-                    onSetRenamingTab(null);
-                  }}
-                  autoFocus
-                  data-testid={`header-tab-rename-${tab.index}`}
-                />
-              ) : (
-                <>
-                  <button
-                    className={`tab${tab.isActive ? " active" : ""}`}
-                    draggable={!mobileLayout}
-                    onClick={() => {
-                      if (suppressNextSelectRef.current === tab.index) {
-                        suppressNextSelectRef.current = null;
-                        return;
-                      }
-                      onSelectTab(tab.index);
-                    }}
-                    onDoubleClick={supportsTabRename ? () => {
-                      onSetRenamingTab(tab.index);
-                      onSetRenameTabValue(tab.name);
-                    } : undefined}
-                    onPointerDown={() => {
-                      if (!mobileLayout || !supportsTabRename) {
-                        return;
-                      }
-                      clearMobileRenameTimer();
-                      mobileRenameTimerRef.current = setTimeout(() => {
-                        suppressNextSelectRef.current = tab.index;
-                        onSetRenamingTab(tab.index);
-                        onSetRenameTabValue(tab.name);
-                      }, 450);
-                    }}
-                    onPointerLeave={clearMobileRenameTimer}
-                    onPointerUp={clearMobileRenameTimer}
-                    onPointerCancel={clearMobileRenameTimer}
-                    onDragStart={(event) => {
-                      if (mobileLayout) {
-                        return;
-                      }
-                      beginDrag(event, "tab", tab.key);
-                      onSetDraggedTabKey(tab.key);
-                    }}
-                    onDragEnd={() => {
-                      clearMobileRenameTimer();
-                      onSetDraggedTabKey(null);
-                      onSetTabDropTarget(null);
-                    }}
-                    data-testid={`header-tab-button-${tab.index}`}
-                  >
-                    <span className="tab-label">{tab.label}</span>
-                  </button>
-                  {tab.canClose ? (
-                    <button
-                      type="button"
-                      className="tab-close"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onCloseTab(tab.index);
-                      }}
-                      title={`Close tab ${tab.index}`}
-                      aria-label={`Close tab ${tab.index}`}
-                      data-testid={`header-tab-close-${tab.index}`}
-                    >
-                      ×
-                    </button>
-                  ) : null}
-                </>
-              )}
-            </div>
-          ))}
-          {onCreateTab ? (
-            <button
-              className="tab-new"
-              onClick={onCreateTab}
-              title="New tab"
-              aria-label="New tab"
-            >
-              +
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        <div className="top-title">
-          {awaitingSessionSelection ? "Select Session" : `Tab: ${activeTabLabel}`}
-        </div>
-      )}
-      <div className="tab-bar-actions">
-        {mobileLayout ? (
-          <button
-            type="button"
-            className={`top-status-button ${topStatus.kind}`}
-            onClick={onToggleStats}
-            title={mobileStatsTitle}
-            aria-label={`Open connection stats. ${mobileStatsTitle}`}
-            data-testid="mobile-stats-toggle"
-          >
-            <span
-              className={`top-status ${topStatus.kind}`}
-              title={topStatus.label}
-              aria-label={`Status: ${topStatus.label}`}
-              data-testid="top-status-indicator"
-            />
-          </button>
-        ) : (
-          <span
-            className={`top-status ${topStatus.kind}`}
-            title={topStatus.label}
-            aria-label={`Status: ${topStatus.label}`}
-            data-testid="top-status-indicator"
-          />
-        )}
-        {!mobileLayout && bandwidthStats && (
-          <button
-            className={`bandwidth-indicator ${bandwidthStats.savedPercent > 50 ? "good" : bandwidthStats.savedPercent > 20 ? "ok" : "low"}`}
-            onClick={onToggleStats}
-            title={`Bandwidth: ${formatBytes(bandwidthStats.compressedBytesPerSec)}/s (${bandwidthStats.savedPercent}% saved). Click for details.`}
-          >
-            ↓{formatBytes(bandwidthStats.compressedBytesPerSec)}/s
-            {bandwidthStats.savedPercent > 0 && <span className="saved-badge">{bandwidthStats.savedPercent}%</span>}
+    <header className="app-header" data-testid="app-header">
+      <div className="app-header-left">
+        {mobileLayout && (
+          <button className="header-btn hamburger-btn" onClick={onToggleDrawer} title="Menu">
+            <span className="material-icon">&#9776;</span>
           </button>
         )}
-        <button
-          className={`top-btn${viewMode === "inspect" ? " active" : ""}`}
-          title="Toggle between live terminal and inspect history"
-          onClick={onToggleViewMode}
-        >
-          {viewMode === "inspect" ? "Live" : "Inspect"}
-          {viewMode === "inspect" && inspectPrecisionBadge && (
-            <>
-              {" "}
-              <span className="mode-badge" title={`Inspect history is ${inspectPrecision}`}>
-                {inspectPrecisionBadge}
+        {!mobileLayout && (
+          <button className="header-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="Toggle sidebar">
+            {sidebarCollapsed ? "▸" : "◂"}
+          </button>
+        )}
+        <span className="session-name" title={sessionName}>{sessionName}</span>
+      </div>
+
+      {/* Tab bar */}
+      <nav className="tab-bar" data-testid="tab-bar">
+        {tabs.map((tab) => (
+          <button
+            key={tab.index}
+            className={`tab-item${tab.active ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
+            onClick={() => onSelectTab(tab.index)}
+            onDoubleClick={() => handleDoubleClick(tab.index)}
+            title={tab.name}
+          >
+            {renamingTab === tab.index ? (
+              <input
+                ref={renameInputRef}
+                className="tab-rename-input"
+                defaultValue={tab.name}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  if (e.key === "Escape") setRenamingTab(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="tab-label">{tab.name}</span>
+            )}
+            {tabs.length > 1 && (
+              <span
+                className="tab-close"
+                onClick={(e) => { e.stopPropagation(); onCloseTab(tab.index); }}
+                title="Close tab"
+              >
+                ×
               </span>
-            </>
-          )}
-          {runtimeBadge && (
-            <>
-              {" "}
-              <span className={runtimeBadge.className} title={runtimeBadge.title}>
-                {runtimeBadge.label}
-              </span>
-            </>
-          )}
-        </button>
+            )}
+          </button>
+        ))}
+        <button className="tab-item tab-new" onClick={onNewTab} title="New tab">+</button>
+      </nav>
+
+      <div className="app-header-right">
+        {/* View mode toggle */}
+        <div className="view-mode-toggle">
+          <button
+            className={viewMode === "terminal" ? "active" : ""}
+            onClick={() => onSetViewMode("terminal")}
+          >
+            Live
+          </button>
+          <button
+            className={viewMode === "inspect" ? "active" : ""}
+            onClick={() => onSetViewMode("inspect")}
+          >
+            Inspect
+          </button>
+        </div>
       </div>
     </header>
   );

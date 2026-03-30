@@ -1,11 +1,7 @@
-import type { ControlServerMessage } from "../shared/protocol";
-import { parseLaunchContext } from "./launch-context";
-
 const query = new URLSearchParams(window.location.search);
 
 export const token = query.get("token") ?? "";
 export const debugMode = query.get("debug") === "1";
-export const initialLaunchContext = parseLaunchContext(query);
 
 export const wsOrigin = (() => {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
@@ -14,14 +10,6 @@ export const wsOrigin = (() => {
 
 export const RECONNECT_BASE_MS = 1000;
 export const RECONNECT_MAX_MS = 8000;
-
-export const parseMessage = (raw: string): ControlServerMessage | null => {
-  try {
-    return JSON.parse(raw) as ControlServerMessage;
-  } catch {
-    return null;
-  }
-};
 
 export const debugLog = (event: string, payload?: unknown): void => {
   if (!debugMode) {

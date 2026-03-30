@@ -26,3 +26,5 @@ AGENTS.md
 # Zellij plugin build artifacts (keep remux-focus.wasm)
 src/backend/zellij/plugin/target/
 native/zellij-bridge/target/
+.playwright-cli/
+*.yaml

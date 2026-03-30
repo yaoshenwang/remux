@@ -3,13 +3,14 @@ import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harne
 
 let server: StartedRuntimeV2E2EServer | undefined;
 
-test.beforeAll(async () => {
+test.beforeEach(async () => {
   server = await startRuntimeV2E2EServer();
 });
 
-test.afterAll(async () => {
+test.afterEach(async () => {
   if (server) {
     await server.stop();
+    server = undefined;
   }
 });
 

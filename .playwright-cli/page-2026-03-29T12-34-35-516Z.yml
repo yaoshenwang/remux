@@ -1,0 +1,81 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - button "◀" [ref=e6] [cursor=pointer]
+      - generic [ref=e7]:
+        - 'button "0: Shell" [ref=e96] [cursor=pointer]':
+          - generic [ref=e97]: "0: Shell"
+        - button "New tab" [ref=e98]: +
+      - generic [ref=e8]:
+        - 'generic "Status: attached: main" [ref=e108]'
+        - button "Inspect precise live" [ref=e78] [cursor=pointer]
+    - generic [ref=e11]:
+      - main [ref=e13]:
+        - textbox "Terminal input" [ref=e79]
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - button "Esc" [ref=e24] [cursor=pointer]
+            - button "Ctrl" [ref=e25] [cursor=pointer]
+            - button "Alt" [ref=e26] [cursor=pointer]
+            - button "Cmd" [ref=e27] [cursor=pointer]
+            - button / [ref=e28] [cursor=pointer]
+            - button "@" [ref=e29] [cursor=pointer]
+            - button "Hm" [ref=e30] [cursor=pointer]
+            - button "↑" [ref=e31] [cursor=pointer]
+            - button "Ed" [ref=e32] [cursor=pointer]
+          - generic [ref=e33]:
+            - button "^C" [ref=e34] [cursor=pointer]
+            - button "^B" [ref=e35] [cursor=pointer]
+            - button "^R" [ref=e36] [cursor=pointer]
+            - button "Sft" [ref=e37] [cursor=pointer]
+            - button "Tab" [ref=e38] [cursor=pointer]
+            - button "Enter" [ref=e39] [cursor=pointer]
+            - button "▼" [ref=e40] [cursor=pointer]
+            - button "←" [ref=e41] [cursor=pointer]
+            - button "↓" [ref=e42] [cursor=pointer]
+            - button "→" [ref=e43] [cursor=pointer]
+          - generic:
+            - button "^D" [ref=e44] [cursor=pointer]
+            - button "^L" [ref=e45] [cursor=pointer]
+            - button "Paste" [ref=e46] [cursor=pointer]
+            - button "Upload" [ref=e47] [cursor=pointer]
+            - button "Del" [ref=e48] [cursor=pointer]
+            - button "Insert" [ref=e49] [cursor=pointer]
+            - button "PgUp" [ref=e50] [cursor=pointer]
+            - button "PgDn" [ref=e51] [cursor=pointer]
+            - button "F-Keys ▼" [ref=e52] [cursor=pointer]
+        - generic [ref=e53]:
+          - textbox "Type a command here and press Enter to send it to the terminal" [ref=e54]:
+            - /placeholder: Compose command
+          - button "Send" [disabled] [ref=e55]
+  - complementary [ref=e56]:
+    - generic [ref=e58]: REMUX
+    - heading "Live Sessions" [level=3] [ref=e59]
+    - list [ref=e80]:
+      - listitem [ref=e81]:
+        - generic [ref=e82]:
+          - button "main * shell ·" [ref=e109]:
+            - generic [ref=e84]: main *
+            - generic [ref=e85]: shell ·
+          - button "Close session main" [disabled] [ref=e86]:
+            - generic [ref=e87]: ×
+    - button "+ New Session" [ref=e60] [cursor=pointer]
+    - heading "Appearance" [level=3] [ref=e61]
+    - generic [ref=e62]:
+      - button "Dark" [ref=e63] [cursor=pointer]
+      - button "Light" [ref=e64] [cursor=pointer]
+    - heading "Focus Sync" [level=3] [ref=e88]
+    - button "Pinned to Current View" [ref=e90] [cursor=pointer]
+    - paragraph [ref=e91]: Enable this to follow active tab and pane changes reported by the backend.
+    - heading "Font Size" [level=3] [ref=e65]
+    - generic [ref=e66]:
+      - button "A-" [ref=e67] [cursor=pointer]
+      - generic [ref=e68]: Auto
+      - button "A+" [ref=e69] [cursor=pointer]
+    - button "Reset to Auto" [ref=e70] [cursor=pointer]
+    - heading "Snippets" [level=3] [ref=e71]
+    - button "+ Add Snippet" [ref=e72] [cursor=pointer]
+    - generic [ref=e92]:
+      - paragraph [ref=e93]: v0.2.27
+      - paragraph [ref=e94]: dev · 15925f5d

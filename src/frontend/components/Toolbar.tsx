@@ -1,12 +1,19 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
-import {
-  groupSnippets,
-  type SnippetGroup,
-  type SnippetRecord as Snippet
-} from "../snippets.js";
+
+/** Minimal snippet type for toolbar compatibility. */
+export interface Snippet {
+  id: string;
+  label: string;
+  icon?: string;
+  command: string;
+  group?: string;
+}
 
 type ModifierKey = "ctrl" | "alt" | "shift" | "meta";
 type ModifierMode = "off" | "sticky" | "locked";
+
+const readToolbarExpandedPreference = (): boolean =>
+  globalThis.localStorage?.getItem?.("remux-toolbar-expanded") === "true";
 
 export interface ToolbarHandle {
   applyModifiersAndClear: (input: string) => string;
@@ -16,6 +23,7 @@ export interface ToolbarProps {
   sendRaw: (data: string) => void;
   onFocusTerminal: () => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
+  mobileLayout: boolean;
   setStatusMessage: (msg: string) => void;
   snippets: Snippet[];
   onExecuteSnippet: (snippet: Snippet) => void;
@@ -23,7 +31,7 @@ export interface ToolbarProps {
 }
 
 export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
-  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, setStatusMessage, snippets, onExecuteSnippet, hidden }, ref) {
+  function Toolbar({ sendRaw, onFocusTerminal, fileInputRef, mobileLayout, setStatusMessage, snippets, onExecuteSnippet, hidden }, ref) {
     const [modifiers, setModifiers] = useState<Record<ModifierKey, ModifierMode>>({
       ctrl: "off",
       alt: "off",
@@ -32,13 +40,20 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
     });
     const modifierTapRef = useRef<{ key: ModifierKey; at: number } | null>(null);
 
-    const [toolbarExpanded, setToolbarExpanded] = useState(
-      localStorage.getItem("remux-toolbar-expanded") === "true"
-    );
+    const [toolbarExpanded, setToolbarExpanded] = useState(readToolbarExpandedPreference);
     const [toolbarDeepExpanded, setToolbarDeepExpanded] = useState(false);
+    const [zellijExpanded, setZellijExpanded] = useState(false);
     const [snippetsExpanded, setSnippetsExpanded] = useState(false);
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-    const groupedSnippets: SnippetGroup[] = groupSnippets(snippets);
+    // Group snippets by their group field (simplified from old snippet system).
+    const groupedSnippets: Array<{ name: string; snippets: Snippet[] }> = [];
+    const groupMap = new Map<string, Snippet[]>();
+    for (const s of snippets) {
+      const g = s.group ?? "General";
+      if (!groupMap.has(g)) groupMap.set(g, []);
+      groupMap.get(g)!.push(s);
+    }
+    for (const [name, items] of groupMap) groupedSnippets.push({ name, snippets: items });
 
     // We need a ref to always have access to the latest modifiers in the imperative handle
     const modifiersRef = useRef(modifiers);
@@ -111,11 +126,15 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
     }));
 
     useEffect(() => {
-      localStorage.setItem("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
+      globalThis.localStorage?.setItem?.("remux-toolbar-expanded", toolbarExpanded ? "true" : "false");
     }, [toolbarExpanded]);
 
     return (
-      <section className="toolbar" onMouseUp={onFocusTerminal} style={hidden ? { display: "none" } : undefined}>
+      <section
+        className={`toolbar${mobileLayout ? "" : " desktop-hidden"}`}
+        onMouseUp={onFocusTerminal}
+        style={hidden ? { display: "none" } : undefined}
+      >
         {/* Row 1: Esc, Ctrl, Alt, Cmd, /, @, Hm, ↑, Ed */}
         <div className="toolbar-main">
           <button onClick={() => sendTerminal("\u001b")}>Esc</button>
@@ -143,6 +162,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
               setToolbarExpanded((v) => !v);
               if (toolbarExpanded) {
                 setToolbarDeepExpanded(false);
+                setZellijExpanded(false);
                 setSnippetsExpanded(false);
               }
             }}
@@ -175,11 +195,16 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
           >
             Upload
           </button>
-          {/* file input moved outside toolbar for scroll mode access */}
+          {/* file input moved outside toolbar for inspect mode access */}
           <button onClick={() => sendTerminal("\u001b[3~")}>Del</button>
-          <button onClick={() => sendTerminal("\u001b[2~")}>Insert</button>
           <button onClick={() => sendTerminal("\u001b[5~")}>PgUp</button>
           <button onClick={() => sendTerminal("\u001b[6~")}>PgDn</button>
+          <button
+            className="toolbar-expand-btn"
+            onClick={() => setZellijExpanded((v) => !v)}
+          >
+            {zellijExpanded ? "Zellij ▲" : "Zellij ▼"}
+          </button>
           <button
             className="toolbar-expand-btn"
             onClick={() => setToolbarDeepExpanded((v) => !v)}
@@ -195,6 +220,27 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
             </button>
           )}
         </div>
+
+        {/* Zellij actions row (collapsible from within expanded) */}
+        {toolbarExpanded && (
+          <div className={`toolbar-row-deep ${zellijExpanded ? "expanded" : ""}`}>
+            <div className="toolbar-row-zellij">
+              {/* Tab operations: Ctrl+T enters tab mode */}
+              <button onClick={() => { sendRaw("\u0014n"); onFocusTerminal(); }}>+Tab</button>
+              <button onClick={() => { sendRaw("\u0014\u001b[D"); onFocusTerminal(); }}>◂Tab</button>
+              <button onClick={() => { sendRaw("\u0014\u001b[C"); onFocusTerminal(); }}>Tab▸</button>
+              <button onClick={() => { sendRaw("\u0014x"); onFocusTerminal(); }}>✕Tab</button>
+              {/* Pane operations: Ctrl+P enters pane mode */}
+              <button onClick={() => { sendRaw("\u0010d"); onFocusTerminal(); }}>⬓Split</button>
+              <button onClick={() => { sendRaw("\u0010r"); onFocusTerminal(); }}>⬔Split</button>
+              <button onClick={() => { sendRaw("\u0010f"); onFocusTerminal(); }}>Full</button>
+              <button onClick={() => { sendRaw("\u0010x"); onFocusTerminal(); }}>✕Pane</button>
+              {/* Pane navigation: Ctrl+P then arrows */}
+              <button onClick={() => { sendRaw("\u0010\u001b[D"); onFocusTerminal(); }}>◂P</button>
+              <button onClick={() => { sendRaw("\u0010\u001b[C"); onFocusTerminal(); }}>P▸</button>
+            </div>
+          </div>
+        )}
 
         {/* F-keys row (collapsible from within expanded) */}
         {toolbarExpanded && (

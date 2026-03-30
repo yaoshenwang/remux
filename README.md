@@ -73,7 +73,7 @@ npm start
 - Session, tab, and pane management from the browser control drawer
 - Full terminal streaming through xterm.js for Live interaction
 - Inspect view for readable history and mobile-friendly text selection
-- Server-backed scrollback replay so Live and Inspect survive browser reconnects with meaningful history intact
+- Server-backed history so Inspect and Live survive browser reconnects with meaningful context intact
 - Compose input for native mobile keyboard entry
 - Custom snippets stored in local browser storage
 - Drag-and-drop or picker-based file upload into the active pane working directory
@@ -121,6 +121,7 @@ Read the full model in [docs/SECURITY.md](./docs/SECURITY.md).
 ## Documentation
 
 - [docs/TESTING.md](./docs/TESTING.md): current runtime-v2-first test flow and release gate
+- [docs/ZELLIJ_BOOTSTRAP.md](./docs/ZELLIJ_BOOTSTRAP.md): short-term Zellij bootstrap path, stable URLs, and launchd commands
 - [docs/PRODUCT_ARCHITECTURE.md](./docs/PRODUCT_ARCHITECTURE.md): product definition, interaction model, inspect/history strategy, backend posture, and roadmap
 - [docs/SPEC.md](./docs/SPEC.md): current architecture and protocol model
 - [docs/SECURITY.md](./docs/SECURITY.md): security assumptions, risks, and operating guidance

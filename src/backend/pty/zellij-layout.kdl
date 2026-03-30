@@ -1,0 +1,5 @@
+// Bare layout for Remux — no tab-bar, no status-bar.
+// The web UI provides its own chrome; Zellij only renders pane content.
+layout {
+    pane
+}

@@ -77,11 +77,30 @@ npm run typecheck && npm test && npm run test:e2e && npm run build
 
 非平凡的代码变更必须采用 TDD：先写测试（红）→ 实现（绿）→ 重构。
 
+### 评估验收原则
+
+- 实现前先定义可衡量的成功标准，覆盖四维度：结果、过程、风格、效率
+- 先写确定性检查（文件存在、命令执行、输出匹配），再加定性评估
+- 用实际失败驱动测试覆盖扩展，不靠猜测穷举
+- 完整方法论参见 skill `eval-driven-development`
+
 ### 安全要点
 
 - 两个 WebSocket 端点独立认证，修改 `server.ts` 或 `auth-service.ts` 时必须保持此特性
 - tmux/zellij 命令使用参数数组，禁止退化为 shell 拼接字符串
 - PTY 路径中的 session 名称必须继续保持安全转义
+
+### 浏览器自动化（强制）
+
+- 使用 `playwright-cli` 进行所有浏览器自动化测试和页面检查
+- **禁止使用 chrome-devtools MCP**
+- 常用命令：
+  - `playwright-cli open <url>` — 打开页面
+  - `playwright-cli snapshot` — 获取页面快照和元素 ref
+  - `playwright-cli click <ref>` — 点击元素
+  - `playwright-cli eval '<js>'` — 执行 JavaScript
+  - `playwright-cli screenshot` — 截图
+  - `playwright-cli -s=<session>` — 指定会话操作
 
 ### 交付流程（强制）
 

@@ -1,0 +1,87 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - button "◀" [ref=e6] [cursor=pointer]
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - 'button "0: Shell" [ref=e9] [cursor=pointer]':
+            - generic [ref=e10]: "0: Shell"
+          - button "Close tab 0" [ref=e11] [cursor=pointer]: ×
+        - generic [ref=e12]:
+          - 'button "1: Shell" [ref=e13] [cursor=pointer]':
+            - generic [ref=e14]: "1: Shell"
+          - button "Close tab 1" [ref=e15] [cursor=pointer]: ×
+        - button "New tab" [ref=e16]: +
+      - generic [ref=e17]:
+        - 'generic "Status: attached: main" [ref=e18]'
+        - button "Inspect precise live" [ref=e19] [cursor=pointer]
+    - generic [ref=e20]:
+      - main [ref=e22]:
+        - textbox "Terminal input" [ref=e28]
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - button "Esc" [ref=e36] [cursor=pointer]
+            - button "Ctrl" [ref=e37] [cursor=pointer]
+            - button "Alt" [ref=e38] [cursor=pointer]
+            - button "Cmd" [ref=e39] [cursor=pointer]
+            - button / [ref=e40] [cursor=pointer]
+            - button "@" [ref=e41] [cursor=pointer]
+            - button "Hm" [ref=e42] [cursor=pointer]
+            - button "↑" [ref=e43] [cursor=pointer]
+            - button "Ed" [ref=e44] [cursor=pointer]
+          - generic [ref=e45]:
+            - button "^C" [ref=e46] [cursor=pointer]
+            - button "^B" [ref=e47] [cursor=pointer]
+            - button "^R" [ref=e48] [cursor=pointer]
+            - button "Sft" [ref=e49] [cursor=pointer]
+            - button "Tab" [ref=e50] [cursor=pointer]
+            - button "Enter" [ref=e51] [cursor=pointer]
+            - button "▼" [ref=e52] [cursor=pointer]
+            - button "←" [ref=e53] [cursor=pointer]
+            - button "↓" [ref=e54] [cursor=pointer]
+            - button "→" [ref=e55] [cursor=pointer]
+          - generic:
+            - button "^D" [ref=e56] [cursor=pointer]
+            - button "^L" [ref=e57] [cursor=pointer]
+            - button "Paste" [ref=e58] [cursor=pointer]
+            - button "Upload" [ref=e59] [cursor=pointer]
+            - button "Del" [ref=e60] [cursor=pointer]
+            - button "Insert" [ref=e61] [cursor=pointer]
+            - button "PgUp" [ref=e62] [cursor=pointer]
+            - button "PgDn" [ref=e63] [cursor=pointer]
+            - button "F-Keys ▼" [ref=e64] [cursor=pointer]
+        - generic [ref=e65]:
+          - textbox "Type a command here and press Enter to send it to the terminal" [ref=e66]:
+            - /placeholder: Compose command
+          - button "Send" [disabled] [ref=e67]
+  - complementary [ref=e68]:
+    - generic [ref=e70]: REMUX
+    - heading "Live Sessions" [level=3] [ref=e71]
+    - list [ref=e72]:
+      - listitem [ref=e73]:
+        - generic [ref=e74]:
+          - button "main * shell ·" [ref=e75]:
+            - generic [ref=e76]: main *
+            - generic [ref=e77]: shell ·
+          - button "Close session main" [disabled] [ref=e78]:
+            - generic [ref=e79]: ×
+    - button "+ New Session" [ref=e80] [cursor=pointer]
+    - heading "Appearance" [level=3] [ref=e81]
+    - generic [ref=e82]:
+      - button "Dark" [active] [ref=e83] [cursor=pointer]
+      - button "Light" [ref=e84] [cursor=pointer]
+    - heading "Focus Sync" [level=3] [ref=e85]
+    - button "Pinned to Current View" [ref=e87] [cursor=pointer]
+    - paragraph [ref=e88]: Enable this to follow active tab and pane changes reported by the backend.
+    - heading "Font Size" [level=3] [ref=e89]
+    - generic [ref=e90]:
+      - button "A-" [ref=e91] [cursor=pointer]
+      - generic [ref=e92]: Auto
+      - button "A+" [ref=e93] [cursor=pointer]
+    - button "Reset to Auto" [ref=e94] [cursor=pointer]
+    - heading "Snippets" [level=3] [ref=e95]
+    - button "+ Add Snippet" [ref=e96] [cursor=pointer]
+    - generic [ref=e97]:
+      - paragraph [ref=e98]: v0.2.23
+      - paragraph [ref=e99]: dev · aef54b6d
