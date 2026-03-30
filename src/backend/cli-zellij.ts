@@ -122,7 +122,7 @@ const printConnectionInfo = (
 const main = async (): Promise<void> => {
   const args = await parseCliArgs();
   const effectivePassword = args.requirePassword
-    ? args.password ?? randomToken(16)
+    ? args.password ?? process.env.REMUX_PASSWORD ?? randomToken(16)
     : undefined;
   const authService = new AuthService({
     password: effectivePassword,
