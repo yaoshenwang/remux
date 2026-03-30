@@ -1,5 +1,8 @@
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface ZellijPtyOptions {
   /** Zellij session name (default: "remux"). */
@@ -67,6 +70,21 @@ export const createZellijPty = (options: ZellijPtyOptions = {}): ZellijPty => {
 
   const bin = resolveZellijBin(zellijBin);
 
+  // Use bundled config if user doesn't have their own.
+  const configEnv: Record<string, string> = {};
+  if (!process.env.ZELLIJ_CONFIG_FILE) {
+    const thisDir = path.dirname(fileURLToPath(import.meta.url));
+    const bundledConfig = path.resolve(thisDir, "zellij-config.kdl");
+    // Also check relative to source location (tsx watch).
+    const srcConfig = path.resolve(thisDir, "../../src/backend/pty/zellij-config.kdl");
+    const configPath = fs.existsSync(bundledConfig) ? bundledConfig
+      : fs.existsSync(srcConfig) ? srcConfig
+      : undefined;
+    if (configPath) {
+      configEnv.ZELLIJ_CONFIG_FILE = configPath;
+    }
+  }
+
   const pty: IPty = ptySpawn(bin, ["attach", session, "--create"], {
     name: "xterm-256color",
     cols,
@@ -76,6 +94,7 @@ export const createZellijPty = (options: ZellijPtyOptions = {}): ZellijPty => {
       ...process.env,
       TERM: "xterm-256color",
       LANG: "en_US.UTF-8",
+      ...configEnv,
       ...env,
     },
   });

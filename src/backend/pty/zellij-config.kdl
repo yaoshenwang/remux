@@ -1,0 +1,32 @@
+// Remux-optimized Zellij configuration for web access.
+// Shorter status bar, simplified UI, web-friendly defaults.
+
+simplified_ui true
+default_shell "zsh"
+pane_frames false
+session_serialization true
+scrollback_lines 10000
+
+themes {
+    remux {
+        fg "#d1e4ff"
+        bg "#0d1117"
+        black "#1a1a2e"
+        red "#ff6b6b"
+        green "#9acd32"
+        yellow "#ffd93d"
+        blue "#6c9ef8"
+        magenta "#c792ea"
+        cyan "#00ffc2"
+        white "#e5e2e1"
+        orange "#ffb347"
+    }
+}
+
+theme "remux"
+
+ui {
+    pane_frames {
+        rounded_corners true
+    }
+}
