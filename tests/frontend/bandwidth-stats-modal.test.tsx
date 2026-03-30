@@ -40,6 +40,9 @@ describe("BandwidthStatsModal", () => {
             diffUpdatesSent: 8,
             avgChangedRowsPerDiff: 128,
             avgDiffBytesPerUpdate: 128,
+            rebuiltSnapshotsSent: 1,
+            continuationResumes: 2,
+            continuationFallbackSnapshots: 3,
             viewerQueueHighWatermarkHits: 3,
             droppedBacklogFrames: 7,
             totalRawBytes: 4096,
@@ -55,6 +58,9 @@ describe("BandwidthStatsModal", () => {
     expect(container.textContent ?? "").toContain("Raw");
     expect(container.textContent ?? "").toContain("Wire");
     expect(container.textContent ?? "").toContain("Full snapshots");
+    expect(container.textContent ?? "").toContain("Rebuilt snapshots");
+    expect(container.textContent ?? "").toContain("Continuation resumes");
+    expect(container.textContent ?? "").toContain("Continuation fallbacks");
     expect(container.textContent ?? "").toContain("Queue high watermark hits");
     expect(container.textContent ?? "").toContain("Dropped backlog frames");
   });

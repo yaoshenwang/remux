@@ -564,6 +564,68 @@ describe("SharedRuntimeV2PaneBridge", () => {
     expect(resumedBrowser.sent).toHaveLength(1);
   });
 
+  test("rebuilds a fresh terminal_patch snapshot from cached state when continuation cannot resume", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-1",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const firstBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-1",
+      firstBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+
+    await expect.poll(() => attachCount).toBe(1);
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_base64: encodeBase64("REVISION-TWO\r\n"),
+    }));
+    await expect.poll(() => firstBrowser.sent.length).toBe(2);
+
+    const resumedBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-2",
+      resumedBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+        baseRevision: 0,
+      },
+    );
+
+    await expect.poll(() => resumedBrowser.sent.length).toBe(1);
+    const rebuiltSnapshot = JSON.parse(resumedBrowser.sent[0]!.toString("utf8")) as {
+      revision: number;
+      baseRevision: number | null;
+      reset: boolean;
+      source: string;
+      dataBase64: string;
+    };
+    expect(rebuiltSnapshot).toMatchObject({
+      revision: 2,
+      baseRevision: null,
+      reset: true,
+      source: "snapshot",
+    });
+    const rebuiltContent = Buffer.from(rebuiltSnapshot.dataBase64, "base64").toString("utf8");
+    expect(rebuiltContent).toContain("BASELINE-HISTORY");
+    expect(rebuiltContent).toContain("REVISION-TWO");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(resumedBrowser.sent).toHaveLength(1);
+  });
+
   test("drops queued stream backlog for a slow patch viewer and resyncs it with a fresh snapshot", async () => {
     process.env.REMUX_TERMINAL_VIEWER_QUEUE_HIGH_WATERMARK_BYTES = "80";
     process.env.REMUX_TERMINAL_VIEWER_QUEUE_LOW_WATERMARK_BYTES = "32";
@@ -1092,5 +1154,8 @@ describe("SharedRuntimeV2PaneBridge", () => {
     await expect.poll(() => bandwidthTracker.getStats().diffUpdatesSent).toBeGreaterThan(0);
     expect(bandwidthTracker.getStats().rawBytesPerSec).toBeGreaterThan(0);
     expect(bandwidthTracker.getStats().compressedBytesPerSec).toBeGreaterThan(0);
+    expect(bandwidthTracker.getStats().rebuiltSnapshotsSent).toBeGreaterThanOrEqual(0);
+    expect(bandwidthTracker.getStats().continuationResumes).toBeGreaterThanOrEqual(0);
+    expect(bandwidthTracker.getStats().continuationFallbackSnapshots).toBeGreaterThanOrEqual(0);
   });
 });

@@ -68,6 +68,9 @@ export interface BandwidthStats {
   /** @deprecated Compatibility alias for older UI/tests. */
   avgChangedRowsPerDiff: number;
   avgDiffBytesPerUpdate: number;
+  rebuiltSnapshotsSent: number;
+  continuationResumes: number;
+  continuationFallbackSnapshots: number;
   viewerQueueHighWatermarkHits: number;
   droppedBacklogFrames: number;
   totalRawBytes: number;
