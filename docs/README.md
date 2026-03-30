@@ -26,7 +26,7 @@ Use these documents as implementation references:
 
 These documents drive upcoming work, but they do not override shipped behavior until code and active docs agree:
 
-- [remux-zellij-master-plan-2026-v2.md](./remux-zellij-master-plan-2026-v2.md)
+- [remux-master-plan-2026-v2.md](./remux-master-plan-2026-v2.md)
 - [ROADMAP_SCOPE.md](./ROADMAP_SCOPE.md)
 - [REPO_EVOLUTION_PLAN.md](./REPO_EVOLUTION_PLAN.md)
 
@@ -35,4 +35,3 @@ These documents drive upcoming work, but they do not override shipped behavior u
 Archived documents are preserved for context only. They are not current implementation authority.
 
 - [archive/README.md](./archive/README.md)
-

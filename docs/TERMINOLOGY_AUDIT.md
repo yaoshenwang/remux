@@ -28,11 +28,10 @@ These files still mention archived-runtime terminology because the term itself i
 
 | Path | Reason |
 | --- | --- |
-| `docs/remux-zellij-master-plan-2026-v2.md` | Current planning document explicitly compares current reality to archived assumptions |
+| `docs/remux-master-plan-2026-v2.md` | Current planning document explicitly compares current reality to archived assumptions |
 | `docs/LEGACY_PLAN_GAPS.md` | Explains which older assumptions no longer hold |
 | `docs/TERMINOLOGY_AUDIT.md` | Audit record must name the archived terms it is tracking |
 
 ## Current Result
 
 Active implementation docs, source files, tests, and workflows should no longer use archived-runtime terminology as if it described the shipping path. New occurrences outside the exception list fail the terminology guard.
-

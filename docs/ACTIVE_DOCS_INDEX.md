@@ -27,7 +27,7 @@ This index classifies repository documents by authority level so implementation 
 
 | Document | Authority | Purpose |
 | --- | --- | --- |
-| `docs/remux-zellij-master-plan-2026-v2.md` | Draft | Strategic plan and epic checklist for upcoming work |
+| `docs/remux-master-plan-2026-v2.md` | Draft | Strategic plan and epic checklist for upcoming work |
 | `docs/LEGACY_PLAN_GAPS.md` | Draft | Mapping between old assumptions and current reality |
 | `docs/TERMINOLOGY_AUDIT.md` | Draft | Audit record for archived-runtime terms and exceptions |
 
@@ -43,4 +43,3 @@ This index classifies repository documents by authority level so implementation 
 - When code and a draft disagree, follow the active docs and the current code.
 - When an archive doc and an active doc disagree, the archive doc loses automatically.
 - If a change needs to overturn an active document, write or update an ADR first.
-

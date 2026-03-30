@@ -7,7 +7,7 @@ const ignoredDirNames = new Set(["node_modules", "dist", ".git", "coverage"]);
 const allowedExtensions = new Set([".md", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".yml", ".yaml"]);
 const allowedFiles = new Map([
   ["docs/ACTIVE_DOCS_INDEX.md", "active index must point to the archived runtime-v2 document set by its real path"],
-  ["docs/remux-zellij-master-plan-2026-v2.md", "current planning document compares legacy assumptions against the current baseline"],
+  ["docs/remux-master-plan-2026-v2.md", "current planning document compares legacy assumptions against the current baseline"],
   ["docs/LEGACY_PLAN_GAPS.md", "legacy gap ledger must name the invalidated assumptions"],
   ["docs/TERMINOLOGY_AUDIT.md", "audit output must record the archived terms it scanned"],
 ]);
