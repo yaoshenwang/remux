@@ -123,6 +123,35 @@ pub enum WorkspaceError {
     LeaseNotHeld { pane_id: PaneId, client_id: String },
 }
 
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RestoreWorkspaceError {
+    #[error("runtime snapshot must contain at least one session")]
+    MissingSessions,
+    #[error("active session id {0} is missing from runtime snapshot")]
+    UnknownActiveSession(SessionId),
+    #[error("session {0} must contain at least one tab")]
+    SessionWithoutTabs(SessionId),
+    #[error("session {session_id} has unknown active tab {active_tab_id}")]
+    UnknownActiveTab {
+        session_id: SessionId,
+        active_tab_id: TabId,
+    },
+    #[error("tab {0} must contain at least one pane")]
+    TabWithoutPanes(TabId),
+    #[error("tab {tab_id} has unknown active pane {active_pane_id}")]
+    UnknownActivePane {
+        tab_id: TabId,
+        active_pane_id: PaneId,
+    },
+    #[error("tab {0} has layout/pane mismatch")]
+    LayoutPaneMismatch(TabId),
+    #[error("tab {tab_id} has unknown zoomed pane {zoomed_pane_id}")]
+    UnknownZoomedPane {
+        tab_id: TabId,
+        zoomed_pane_id: PaneId,
+    },
+}
+
 impl WorkspaceState {
     #[must_use]
     pub fn new(session_name: impl Into<String>, tab_title: impl Into<String>) -> Self {
@@ -229,6 +258,131 @@ impl WorkspaceState {
 
     pub fn mark_stopped(&mut self) {
         self.active_session_mut().session_state = SessionLifecycleState::Stopped;
+    }
+
+    pub fn mark_recoverable(&mut self) {
+        self.active_session_mut().session_state = SessionLifecycleState::Recoverable;
+    }
+
+    pub fn mark_all_sessions_recoverable(&mut self) {
+        for session in &mut self.sessions {
+            session.session_state = SessionLifecycleState::Recoverable;
+        }
+    }
+
+    #[must_use]
+    pub fn all_pane_ids(&self) -> Vec<PaneId> {
+        self.sessions
+            .iter()
+            .flat_map(|session| session.tabs.iter())
+            .flat_map(|tab| tab.panes.keys().cloned())
+            .collect()
+    }
+
+    pub fn from_runtime_snapshot(snapshot: RuntimeSnapshot) -> Result<Self, RestoreWorkspaceError> {
+        if snapshot.sessions.is_empty() {
+            return Err(RestoreWorkspaceError::MissingSessions);
+        }
+        if !snapshot
+            .sessions
+            .iter()
+            .any(|session| session.session_id == snapshot.active_session_id)
+        {
+            return Err(RestoreWorkspaceError::UnknownActiveSession(
+                snapshot.active_session_id,
+            ));
+        }
+
+        let mut sessions = Vec::with_capacity(snapshot.sessions.len());
+        for session in snapshot.sessions {
+            if session.tabs.is_empty() {
+                return Err(RestoreWorkspaceError::SessionWithoutTabs(
+                    session.session_id,
+                ));
+            }
+            if !session
+                .tabs
+                .iter()
+                .any(|tab| tab.tab_id == session.active_tab_id)
+            {
+                return Err(RestoreWorkspaceError::UnknownActiveTab {
+                    session_id: session.session_id,
+                    active_tab_id: session.active_tab_id,
+                });
+            }
+
+            let mut tabs = Vec::with_capacity(session.tabs.len());
+            for tab in session.tabs {
+                if tab.panes.is_empty() {
+                    return Err(RestoreWorkspaceError::TabWithoutPanes(tab.tab_id));
+                }
+
+                let layout_pane_ids = tab.layout.leaf_ids();
+                let pane_ids = tab
+                    .panes
+                    .iter()
+                    .map(|pane| pane.pane_id.clone())
+                    .collect::<Vec<_>>();
+                let all_panes_in_layout = pane_ids
+                    .iter()
+                    .all(|pane_id| layout_pane_ids.iter().any(|layout_id| layout_id == pane_id));
+                let all_layout_panes_in_snapshot = layout_pane_ids
+                    .iter()
+                    .all(|layout_id| pane_ids.iter().any(|pane_id| pane_id == layout_id));
+                if !all_panes_in_layout || !all_layout_panes_in_snapshot {
+                    return Err(RestoreWorkspaceError::LayoutPaneMismatch(tab.tab_id));
+                }
+                if !pane_ids
+                    .iter()
+                    .any(|pane_id| pane_id == &tab.active_pane_id)
+                {
+                    return Err(RestoreWorkspaceError::UnknownActivePane {
+                        tab_id: tab.tab_id,
+                        active_pane_id: tab.active_pane_id,
+                    });
+                }
+                if let Some(zoomed_pane_id) = tab.zoomed_pane_id.as_ref() {
+                    if !pane_ids.iter().any(|pane_id| pane_id == zoomed_pane_id) {
+                        return Err(RestoreWorkspaceError::UnknownZoomedPane {
+                            tab_id: tab.tab_id,
+                            zoomed_pane_id: zoomed_pane_id.clone(),
+                        });
+                    }
+                }
+
+                let mut panes = BTreeMap::new();
+                for pane in tab.panes {
+                    panes.insert(
+                        pane.pane_id,
+                        PaneState {
+                            writer_lease: pane.writer_lease,
+                        },
+                    );
+                }
+
+                tabs.push(TabState {
+                    tab_id: tab.tab_id,
+                    tab_title: tab.tab_title,
+                    active_pane_id: tab.active_pane_id,
+                    zoomed_pane_id: tab.zoomed_pane_id,
+                    layout: tab.layout,
+                    panes,
+                });
+            }
+
+            sessions.push(SessionState {
+                session_id: session.session_id,
+                session_state: session.session_state,
+                session_name: session.session_name,
+                active_tab_id: session.active_tab_id,
+                tabs,
+            });
+        }
+
+        Ok(Self {
+            active_session_id: snapshot.active_session_id,
+            sessions,
+        })
     }
 
     pub fn create_session(
@@ -962,6 +1116,78 @@ mod tests {
         assert_eq!(workspace.tab_count(), 1);
         assert_eq!(workspace.tab_id(), &second_tab);
         assert_eq!(workspace.tab_title(), "Build");
+    }
+
+    #[test]
+    fn workspace_can_restore_from_runtime_snapshot() {
+        let mut workspace = SinglePaneWorkspace::new("Main", "Shell");
+        let root_pane = workspace.pane_id().clone();
+        let _second = workspace
+            .split_pane(&root_pane, SplitDirection::Vertical)
+            .expect("split should succeed");
+        workspace.mark_degraded();
+        let snapshot = workspace.snapshot();
+
+        let restored = SinglePaneWorkspace::from_runtime_snapshot(snapshot.clone())
+            .expect("restore should succeed");
+
+        assert_eq!(restored.snapshot(), snapshot);
+    }
+
+    #[test]
+    fn restored_workspace_can_mark_all_sessions_recoverable() {
+        let mut workspace = SinglePaneWorkspace::new("Main", "Shell");
+        let session_a = workspace.session_id().clone();
+        workspace.mark_live();
+        let session_b = workspace
+            .create_session("Ops")
+            .expect("session create should succeed");
+        workspace
+            .select_session(&session_a)
+            .expect("session select should succeed");
+        workspace.mark_degraded();
+        workspace
+            .select_session(&session_b)
+            .expect("session select should succeed");
+        workspace.mark_stopped();
+
+        workspace.mark_all_sessions_recoverable();
+        let snapshot = workspace.snapshot();
+        assert!(snapshot
+            .sessions
+            .iter()
+            .all(|session| session.session_state == SessionLifecycleState::Recoverable));
+    }
+
+    #[test]
+    fn restore_rejects_layout_pane_mismatch() {
+        let pane_id = PaneId::new();
+        let tab_id = TabId::new();
+        let session_id = SessionId::new();
+        let snapshot = RuntimeSnapshot {
+            active_session_id: session_id.clone(),
+            sessions: vec![SessionSnapshot {
+                session_id,
+                session_state: SessionLifecycleState::Recoverable,
+                session_name: "Recovered".to_owned(),
+                active_tab_id: tab_id.clone(),
+                tabs: vec![TabSnapshot {
+                    tab_id: tab_id.clone(),
+                    tab_title: "Broken".to_owned(),
+                    active_pane_id: pane_id.clone(),
+                    zoomed_pane_id: None,
+                    layout: LayoutNode::Leaf(PaneId::new()),
+                    panes: vec![PaneSnapshot {
+                        pane_id,
+                        writer_lease: None,
+                    }],
+                }],
+            }],
+        };
+
+        let error = SinglePaneWorkspace::from_runtime_snapshot(snapshot)
+            .expect_err("restore should fail for layout mismatch");
+        assert_eq!(error, RestoreWorkspaceError::LayoutPaneMismatch(tab_id));
     }
 
     #[test]

@@ -25,13 +25,17 @@ use remux_protocol::{control, terminal};
 use remux_pty::{PortablePtyProcess, PtyCommand, PtyError, PtyEvent};
 use remux_session::{
     LayoutNode as SessionLayoutNode, LeaseMode, PaneSnapshot as SessionPaneSnapshot,
-    SessionSnapshot as RuntimeSessionSnapshot, SinglePaneWorkspace,
-    TabSnapshot as RuntimeTabSnapshot, WorkspaceError,
+    RuntimeSnapshot as WorkspaceSnapshot, SessionSnapshot as RuntimeSessionSnapshot,
+    SinglePaneWorkspace, TabSnapshot as RuntimeTabSnapshot, WorkspaceError,
+};
+use remux_store::{
+    default_store_path_from_home, load_envelope, new_marker, now_ms, save_envelope,
+    PersistenceEnvelopeV1, RuntimeLifecycleMarkerKind, StoreError,
 };
 use remux_terminal::{TerminalSnapshot, TerminalState};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
@@ -88,6 +92,37 @@ struct AppState {
     runtime: Option<Arc<WorkspaceRuntime>>,
 }
 
+#[derive(Debug)]
+enum PersistenceEvent {
+    WorkspaceSaved {
+        snapshot: WorkspaceSnapshot,
+    },
+    PaneResized {
+        pane_id: PaneId,
+        size: TerminalSize,
+    },
+    PaneOutput {
+        pane_id: PaneId,
+        sequence: u64,
+        byte_count: usize,
+    },
+    PaneExited {
+        pane_id: PaneId,
+        exit_code: Option<i32>,
+    },
+    RuntimeStopped,
+}
+
+#[derive(Clone)]
+struct PersistenceCoordinator {
+    sender: mpsc::UnboundedSender<PersistenceEvent>,
+}
+
+struct PersistenceBootstrap {
+    coordinator: PersistenceCoordinator,
+    restored_workspace: Option<WorkspaceSnapshot>,
+}
+
 #[derive(Debug, Clone)]
 enum RuntimeUpdate {
     Output { sequence: u64, chunk: Vec<u8> },
@@ -117,8 +152,172 @@ enum RuntimeError {
     },
 }
 
+impl PersistenceCoordinator {
+    fn emit(&self, event: PersistenceEvent) {
+        let _ = self.sender.send(event);
+    }
+
+    fn record_workspace_saved(&self, snapshot: WorkspaceSnapshot) {
+        self.emit(PersistenceEvent::WorkspaceSaved { snapshot });
+    }
+
+    fn record_pane_resized(&self, pane_id: &PaneId, size: TerminalSize) {
+        self.emit(PersistenceEvent::PaneResized {
+            pane_id: pane_id.clone(),
+            size,
+        });
+    }
+
+    fn record_pane_output(&self, pane_id: &PaneId, sequence: u64, byte_count: usize) {
+        self.emit(PersistenceEvent::PaneOutput {
+            pane_id: pane_id.clone(),
+            sequence,
+            byte_count,
+        });
+    }
+
+    fn record_pane_exited(&self, pane_id: &PaneId, exit_code: Option<i32>) {
+        self.emit(PersistenceEvent::PaneExited {
+            pane_id: pane_id.clone(),
+            exit_code,
+        });
+    }
+
+    fn record_runtime_stopped(&self) {
+        self.emit(PersistenceEvent::RuntimeStopped);
+    }
+}
+
+fn apply_persistence_event(envelope: &mut PersistenceEnvelopeV1, event: PersistenceEvent) {
+    let at_ms = now_ms();
+    match event {
+        PersistenceEvent::WorkspaceSaved { snapshot } => {
+            envelope.set_workspace_snapshot(at_ms, snapshot);
+            envelope.append_marker(new_marker(
+                RuntimeLifecycleMarkerKind::WorkspaceSaved,
+                at_ms,
+                None,
+                None,
+                None,
+            ));
+        }
+        PersistenceEvent::PaneResized { pane_id, size } => {
+            envelope.append_marker(new_marker(
+                RuntimeLifecycleMarkerKind::PaneResized,
+                at_ms,
+                Some(pane_id),
+                Some(size),
+                None,
+            ));
+        }
+        PersistenceEvent::PaneOutput {
+            pane_id,
+            sequence,
+            byte_count,
+        } => {
+            envelope.record_pane_output(&pane_id, sequence, byte_count, at_ms);
+        }
+        PersistenceEvent::PaneExited { pane_id, exit_code } => {
+            envelope.close_open_segment(&pane_id, at_ms);
+            envelope.append_marker(new_marker(
+                RuntimeLifecycleMarkerKind::PaneExited,
+                at_ms,
+                Some(pane_id),
+                None,
+                exit_code,
+            ));
+        }
+        PersistenceEvent::RuntimeStopped => {
+            envelope.append_marker(new_marker(
+                RuntimeLifecycleMarkerKind::RuntimeStopped,
+                at_ms,
+                None,
+                None,
+                None,
+            ));
+        }
+    }
+}
+
+fn load_or_initialize_envelope(
+    store_path: &Path,
+) -> Result<(PersistenceEnvelopeV1, Option<WorkspaceSnapshot>), StoreError> {
+    let mut envelope = load_envelope(store_path)?.unwrap_or_else(PersistenceEnvelopeV1::new_empty);
+    let restored_workspace = envelope
+        .workspace
+        .as_ref()
+        .map(|workspace| workspace.snapshot.clone());
+
+    if !envelope.previous_runtime_closed_cleanly() {
+        let crash_at = now_ms();
+        envelope.append_marker(new_marker(
+            RuntimeLifecycleMarkerKind::RuntimeCrashed,
+            crash_at,
+            None,
+            None,
+            None,
+        ));
+        for segment in &mut envelope.recording_segments {
+            if segment.ended_at_ms.is_none() {
+                segment.ended_at_ms = Some(crash_at);
+            }
+        }
+    }
+
+    envelope.append_marker(new_marker(
+        RuntimeLifecycleMarkerKind::RuntimeStarted,
+        now_ms(),
+        None,
+        None,
+        None,
+    ));
+    Ok((envelope, restored_workspace))
+}
+
+fn bootstrap_persistence(store_path: PathBuf) -> Option<PersistenceBootstrap> {
+    let (envelope, restored_workspace) = match load_or_initialize_envelope(&store_path) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!(
+                "[remux-server] failed to initialize persistence envelope at {}: {error}",
+                store_path.display()
+            );
+            return None;
+        }
+    };
+
+    if let Err(error) = save_envelope(&store_path, &envelope) {
+        eprintln!(
+            "[remux-server] failed to persist bootstrap envelope at {}: {error}",
+            store_path.display()
+        );
+        return None;
+    }
+
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut state = envelope;
+        while let Some(event) = receiver.recv().await {
+            apply_persistence_event(&mut state, event);
+            if let Err(error) = save_envelope(&store_path, &state) {
+                eprintln!(
+                    "[remux-server] failed to persist runtime state at {}: {error}",
+                    store_path.display()
+                );
+            }
+        }
+    });
+
+    Some(PersistenceBootstrap {
+        coordinator: PersistenceCoordinator { sender },
+        restored_workspace,
+    })
+}
+
 struct PaneRuntime {
     process: Arc<PortablePtyProcess>,
+    pane_id: Mutex<Option<PaneId>>,
+    persistence: Option<PersistenceCoordinator>,
     terminal: Mutex<TerminalState>,
     terminal_recovered_after_poison: AtomicBool,
     exit_code: Mutex<Option<i32>>,
@@ -138,6 +337,7 @@ struct TerminalAttachment {
 struct WorkspaceRuntime {
     workspace: Mutex<SinglePaneWorkspace>,
     panes: Mutex<BTreeMap<PaneId, Arc<PaneRuntime>>>,
+    persistence: Option<PersistenceCoordinator>,
     workspace_updates: broadcast::Sender<()>,
     terminal_client_sequence: AtomicU64,
     default_command: PtyCommand,
@@ -163,12 +363,18 @@ impl PaneRuntime {
         }
     }
 
-    fn spawn(command: PtyCommand, size: TerminalSize) -> Result<Arc<Self>, PtyError> {
+    fn spawn(
+        command: PtyCommand,
+        size: TerminalSize,
+        persistence: Option<PersistenceCoordinator>,
+    ) -> Result<Arc<Self>, PtyError> {
         let process = PortablePtyProcess::spawn(command, size)?;
         let (updates, _) = broadcast::channel(256);
 
         let pane = Arc::new(Self {
             process,
+            pane_id: Mutex::new(None),
+            persistence,
             terminal: Mutex::new(TerminalState::new(size, 10_000)),
             terminal_recovered_after_poison: AtomicBool::new(false),
             exit_code: Mutex::new(None),
@@ -194,11 +400,23 @@ impl PaneRuntime {
             PtyEvent::Output(chunk) => {
                 self.lock_terminal().ingest(&chunk);
                 let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+                if let (Some(persistence), Some(pane_id)) = (
+                    self.persistence.as_ref(),
+                    self.pane_id.lock().expect("pane id lock poisoned").clone(),
+                ) {
+                    persistence.record_pane_output(&pane_id, sequence, chunk.len());
+                }
                 let _ = self.updates.send(RuntimeUpdate::Output { sequence, chunk });
             }
             PtyEvent::Exited { exit_code, .. } => {
                 *self.exit_code.lock().expect("runtime exit lock poisoned") =
                     i32::try_from(exit_code).ok();
+                if let (Some(persistence), Some(pane_id)) = (
+                    self.persistence.as_ref(),
+                    self.pane_id.lock().expect("pane id lock poisoned").clone(),
+                ) {
+                    persistence.record_pane_exited(&pane_id, i32::try_from(exit_code).ok());
+                }
                 let _ = self.updates.send(RuntimeUpdate::Exit {
                     exit_code: i32::try_from(exit_code).ok(),
                 });
@@ -208,6 +426,10 @@ impl PaneRuntime {
 
     fn subscribe(&self) -> broadcast::Receiver<RuntimeUpdate> {
         self.updates.subscribe()
+    }
+
+    fn assign_pane_id(&self, pane_id: &PaneId) {
+        *self.pane_id.lock().expect("pane id lock poisoned") = Some(pane_id.clone());
     }
 
     fn resize(&self, size: TerminalSize) -> Result<(), PtyError> {
@@ -260,31 +482,71 @@ impl PaneRuntime {
 }
 
 impl WorkspaceRuntime {
+    fn default_runtime_command() -> PtyCommand {
+        PtyCommand::default_shell()
+            .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+    }
+
     fn spawn_default() -> Result<Arc<Self>, PtyError> {
-        Self::spawn_with_command(
-            PtyCommand::default_shell()
-                .env("TERM", "xterm-256color")
-                .env("COLORTERM", "truecolor"),
-        )
+        Self::spawn_with_command(Self::default_runtime_command())
     }
 
     fn spawn_with_command(default_command: PtyCommand) -> Result<Arc<Self>, PtyError> {
-        let mut workspace = SinglePaneWorkspace::new("Main", "Shell");
-        let root_pane_id = workspace.pane_id().clone();
-        let root_pane = PaneRuntime::spawn(default_command.clone(), TerminalSize::new(80, 24))?;
-        workspace.mark_live();
+        Self::spawn_with_command_and_restore(default_command, None, None)
+    }
+
+    fn spawn_with_command_and_restore(
+        default_command: PtyCommand,
+        persistence: Option<PersistenceCoordinator>,
+        restored_workspace: Option<WorkspaceSnapshot>,
+    ) -> Result<Arc<Self>, PtyError> {
+        let mut workspace = match restored_workspace {
+            Some(snapshot) => match SinglePaneWorkspace::from_runtime_snapshot(snapshot) {
+                Ok(mut restored) => {
+                    restored.mark_all_sessions_recoverable();
+                    restored
+                }
+                Err(error) => {
+                    eprintln!("[remux-server] failed to restore workspace snapshot: {error}");
+                    let mut fresh = SinglePaneWorkspace::new("Main", "Shell");
+                    fresh.mark_live();
+                    fresh
+                }
+            },
+            None => {
+                let mut fresh = SinglePaneWorkspace::new("Main", "Shell");
+                fresh.mark_live();
+                fresh
+            }
+        };
+        let pane_ids = workspace.all_pane_ids();
+        if pane_ids.is_empty() {
+            workspace = SinglePaneWorkspace::new("Main", "Shell");
+            workspace.mark_live();
+        }
 
         let mut panes = BTreeMap::new();
-        panes.insert(root_pane_id, root_pane);
+        for pane_id in workspace.all_pane_ids() {
+            let pane = PaneRuntime::spawn(
+                default_command.clone(),
+                TerminalSize::new(80, 24),
+                persistence.clone(),
+            )?;
+            pane.assign_pane_id(&pane_id);
+            panes.insert(pane_id, pane);
+        }
         let (workspace_updates, _) = broadcast::channel(64);
-
-        Ok(Arc::new(Self {
+        let runtime = Arc::new(Self {
             workspace: Mutex::new(workspace),
             panes: Mutex::new(panes),
+            persistence,
             workspace_updates,
             terminal_client_sequence: AtomicU64::new(0),
             default_command,
-        }))
+        });
+        runtime.persist_workspace_snapshot();
+        Ok(runtime)
     }
 
     fn subscribe_workspace(&self) -> broadcast::Receiver<()> {
@@ -293,6 +555,18 @@ impl WorkspaceRuntime {
 
     fn notify_workspace_changed(&self) {
         let _ = self.workspace_updates.send(());
+        self.persist_workspace_snapshot();
+    }
+
+    fn persist_workspace_snapshot(&self) {
+        if let Some(persistence) = self.persistence.as_ref() {
+            let snapshot = self
+                .workspace
+                .lock()
+                .expect("runtime workspace lock poisoned")
+                .snapshot();
+            persistence.record_workspace_saved(snapshot);
+        }
     }
 
     fn workspace_summary(&self) -> control::WorkspaceSummary {
@@ -387,8 +661,13 @@ impl WorkspaceRuntime {
             (session_id, pane_id)
         };
 
-        match PaneRuntime::spawn(self.default_command.clone(), default_size) {
+        match PaneRuntime::spawn(
+            self.default_command.clone(),
+            default_size,
+            self.persistence.clone(),
+        ) {
             Ok(pane) => {
+                pane.assign_pane_id(&pane_id);
                 self.panes
                     .lock()
                     .expect("runtime panes lock poisoned")
@@ -486,8 +765,13 @@ impl WorkspaceRuntime {
             (tab_id, pane_id)
         };
 
-        match PaneRuntime::spawn(self.default_command.clone(), default_size) {
+        match PaneRuntime::spawn(
+            self.default_command.clone(),
+            default_size,
+            self.persistence.clone(),
+        ) {
             Ok(pane) => {
+                pane.assign_pane_id(&pane_id);
                 self.panes
                     .lock()
                     .expect("runtime panes lock poisoned")
@@ -569,8 +853,8 @@ impl WorkspaceRuntime {
             .pane_runtime(pane_id)?
             .size()
             .map_err(RuntimeError::Size)?;
-        let pane =
-            PaneRuntime::spawn(self.default_command.clone(), size).map_err(RuntimeError::Spawn)?;
+        let pane = PaneRuntime::spawn(self.default_command.clone(), size, self.persistence.clone())
+            .map_err(RuntimeError::Spawn)?;
         let new_pane_id = {
             let mut workspace = self
                 .workspace
@@ -588,7 +872,10 @@ impl WorkspaceRuntime {
         self.panes
             .lock()
             .expect("runtime panes lock poisoned")
-            .insert(new_pane_id.clone(), pane);
+            .insert(new_pane_id.clone(), {
+                pane.assign_pane_id(&new_pane_id);
+                pane
+            });
         self.notify_workspace_changed();
         Ok(new_pane_id)
     }
@@ -639,6 +926,9 @@ impl WorkspaceRuntime {
     ) -> Result<TerminalAttachment, RuntimeError> {
         let pane = self.pane_runtime(pane_id)?;
         pane.resize(size).map_err(RuntimeError::Resize)?;
+        if let Some(persistence) = self.persistence.as_ref() {
+            persistence.record_pane_resized(pane_id, size);
+        }
 
         let requested_client_id = matches!(mode, terminal::ClientMode::Interactive)
             .then(|| self.next_terminal_client_id());
@@ -730,7 +1020,11 @@ impl WorkspaceRuntime {
     fn resize(&self, pane_id: &PaneId, size: TerminalSize) -> Result<(), RuntimeError> {
         self.pane_runtime(pane_id)?
             .resize(size)
-            .map_err(RuntimeError::Resize)
+            .map_err(RuntimeError::Resize)?;
+        if let Some(persistence) = self.persistence.as_ref() {
+            persistence.record_pane_resized(pane_id, size);
+        }
+        Ok(())
     }
 
     fn snapshot_message(&self, pane_id: &PaneId) -> Result<terminal::ServerMessage, RuntimeError> {
@@ -886,6 +1180,14 @@ fn discover_runtime_identity() -> RuntimeIdentity {
     }
 }
 
+fn resolve_runtime_v2_store_path() -> Option<PathBuf> {
+    if let Some(path) = normalize_string(env::var("REMUX_RUNTIME_V2_STORE_PATH").ok()) {
+        return Some(PathBuf::from(path));
+    }
+    let home = normalize_string(env::var("HOME").ok())?;
+    Some(default_store_path_from_home(Path::new(&home)))
+}
+
 fn package_version_from_dir(dir: &Path) -> Option<String> {
     let package_path = find_repo_package_json(dir)?;
     let raw = fs::read_to_string(package_path).ok()?;
@@ -960,11 +1262,27 @@ pub fn build_router(config: ServerConfig) -> Router {
 }
 
 pub async fn serve(config: ServerConfig) -> Result<(), std::io::Error> {
-    let runtime = WorkspaceRuntime::spawn_default()
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let persistence_bootstrap = resolve_runtime_v2_store_path().and_then(bootstrap_persistence);
+    let persistence = persistence_bootstrap
+        .as_ref()
+        .map(|bootstrap| bootstrap.coordinator.clone());
+    let restored_workspace = persistence_bootstrap
+        .as_ref()
+        .and_then(|bootstrap| bootstrap.restored_workspace.clone());
+
+    let runtime = WorkspaceRuntime::spawn_with_command_and_restore(
+        WorkspaceRuntime::default_runtime_command(),
+        persistence.clone(),
+        restored_workspace,
+    )
+    .map_err(|error| std::io::Error::other(error.to_string()))?;
     let bind_address = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(bind_address).await?;
-    axum::serve(listener, build_router_with_runtime(config, Some(runtime))).await
+    let result = axum::serve(listener, build_router_with_runtime(config, Some(runtime))).await;
+    if let Some(persistence) = persistence {
+        persistence.record_runtime_stopped();
+    }
+    result
 }
 
 fn build_router_with_runtime(
