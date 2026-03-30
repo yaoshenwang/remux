@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  buildInspectCacheBucketKey,
+  readInspectCache,
+  toLocalCacheSnapshot,
+  writeInspectCache,
+} from "../inspect/cache.js";
+import type { InspectRequest, InspectSnapshot } from "../inspect/types.js";
 import { token, wsOrigin, formatPasswordError } from "../remux-runtime";
 import { attachWebSocketKeepAlive } from "../websocket-keepalive";
 
@@ -58,7 +65,9 @@ export interface UseZellijControlResult {
   workspace: WorkspaceState | null;
 
   // Inspect
-  inspectContent: string | null;
+  inspectSnapshot: InspectSnapshot | null;
+  inspectLoading: boolean;
+  inspectError: string | null;
 
   // Bandwidth stats
   bandwidthStats: BandwidthStats | null;
@@ -72,25 +81,49 @@ export interface UseZellijControlResult {
   newPane: (direction: "right" | "down") => void;
   closePane: () => void;
   toggleFullscreen: () => void;
-  requestInspect: (full?: boolean) => void;
+  requestInspect: (
+    request?: Partial<InspectRequest>,
+    options?: { append?: boolean; preferCache?: boolean },
+  ) => void;
+  loadMoreInspect: () => void;
   renameSession: (name: string) => void;
+}
+
+interface PendingInspectRequest {
+  append: boolean;
+  baseRequest: InspectRequest;
+  cacheKey: string | null;
 }
 
 export const useZellijControl = (): UseZellijControlResult => {
   const socketRef = useRef<WebSocket | null>(null);
   const stopKeepAliveRef = useRef<(() => void) | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectRef = useRef<(passwordOverride?: string) => void>(() => undefined);
 
   const [connected, setConnected] = useState(false);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
-  const [inspectContent, setInspectContent] = useState<string | null>(null);
+  const [inspectSnapshot, setInspectSnapshot] = useState<InspectSnapshot | null>(null);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [inspectError, setInspectError] = useState<string | null>(null);
   const [bandwidthStats, setBandwidthStats] = useState<BandwidthStats | null>(null);
   const rttTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inspectSnapshotRef = useRef<InspectSnapshot | null>(null);
+  const pendingInspectRequestRef = useRef<PendingInspectRequest | null>(null);
+  const lastInspectRequestRef = useRef<InspectRequest | null>(null);
+  const workspaceSessionRef = useRef("remux");
 
   const passwordRef = useRef(password);
   passwordRef.current = password;
+  workspaceSessionRef.current = workspace?.session ?? workspaceSessionRef.current;
+
+  const markInspectSnapshot = useCallback((snapshot: InspectSnapshot | null) => {
+    inspectSnapshotRef.current = snapshot;
+    setInspectSnapshot(snapshot);
+  }, []);
 
   const send = useCallback((msg: Record<string, unknown>) => {
     const ws = socketRef.current;
@@ -99,9 +132,91 @@ export const useZellijControl = (): UseZellijControlResult => {
     }
   }, []);
 
+  const resolveInspectRequest = useCallback((request: Partial<InspectRequest> = {}): InspectRequest | null => {
+    const scope = request.scope ?? lastInspectRequestRef.current?.scope ?? "tab";
+    const currentTabIndex = request.tabIndex ?? workspace?.activeTabIndex ?? 0;
+    const activeTab = workspace?.tabs.find((tab) => tab.index === currentTabIndex)
+      ?? workspace?.tabs.find((tab) => tab.active)
+      ?? workspace?.tabs[0];
+
+    if (scope === "tab") {
+      return {
+        scope,
+        tabIndex: request.tabIndex ?? activeTab?.index ?? workspace?.activeTabIndex ?? 0,
+        query: request.query,
+        limit: request.limit,
+        cursor: request.cursor ?? null,
+      };
+    }
+
+    const defaultPaneId = activeTab?.panes.find((pane) => pane.focused)?.id ?? activeTab?.panes[0]?.id;
+    const paneId = request.paneId ?? defaultPaneId;
+    if (!paneId) {
+      return null;
+    }
+
+    return {
+      scope,
+      paneId,
+      tabIndex: activeTab?.index,
+      query: request.query,
+      limit: request.limit,
+      cursor: request.cursor ?? null,
+    };
+  }, [workspace]);
+
+  const requestInspect = useCallback((
+    request: Partial<InspectRequest> = {},
+    options: { append?: boolean; preferCache?: boolean } = {},
+  ) => {
+    const resolved = resolveInspectRequest(request);
+    if (!resolved) {
+      return;
+    }
+
+    const baseRequest: InspectRequest = {
+      scope: resolved.scope,
+      paneId: resolved.paneId,
+      tabIndex: resolved.tabIndex,
+      query: resolved.query,
+      limit: resolved.limit,
+    };
+    const sessionName = workspace?.session ?? "remux";
+    const cacheKey = !baseRequest.query
+      ? buildInspectCacheBucketKey(sessionName, baseRequest)
+      : null;
+
+    if (options.preferCache !== false && !resolved.cursor && cacheKey) {
+      const cached = readInspectCache(cacheKey);
+      if (cached) {
+        markInspectSnapshot(toLocalCacheSnapshot(cached));
+      }
+    }
+
+    if (!resolved.cursor) {
+      lastInspectRequestRef.current = baseRequest;
+    }
+
+    pendingInspectRequestRef.current = {
+      append: options.append ?? Boolean(resolved.cursor),
+      baseRequest,
+      cacheKey,
+    };
+    setInspectLoading(true);
+    setInspectError(null);
+    send({
+      type: "request_inspect",
+      ...resolved,
+    });
+  }, [markInspectSnapshot, resolveInspectRequest, send, workspace?.session]);
+
   const connect = useCallback((passwordOverride?: string) => {
     stopKeepAliveRef.current?.();
     socketRef.current?.close();
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     const ws = new WebSocket(`${wsOrigin}/ws/control`);
     socketRef.current = ws;
@@ -137,8 +252,20 @@ export const useZellijControl = (): UseZellijControlResult => {
           setConnected(true);
           setNeedsPassword(false);
           setPasswordErrorMessage("");
+          setInspectError(null);
           // Request initial workspace state.
           ws.send(JSON.stringify({ type: "subscribe_workspace" }));
+          if (lastInspectRequestRef.current) {
+            pendingInspectRequestRef.current = {
+              append: false,
+              baseRequest: lastInspectRequestRef.current,
+              cacheKey: lastInspectRequestRef.current.query
+                ? null
+                : buildInspectCacheBucketKey(workspaceSessionRef.current, lastInspectRequestRef.current),
+            };
+            setInspectLoading(true);
+            ws.send(JSON.stringify({ type: "request_inspect", ...lastInspectRequestRef.current }));
+          }
           // Start RTT measurement pings.
           if (rttTimerRef.current) clearInterval(rttTimerRef.current);
           rttTimerRef.current = setInterval(() => {
@@ -165,8 +292,51 @@ export const useZellijControl = (): UseZellijControlResult => {
           return;
         }
 
+        if (msg.type === "inspect_snapshot" && msg.descriptor && Array.isArray(msg.items)) {
+          const nextSnapshot = {
+            descriptor: msg.descriptor,
+            items: msg.items,
+            cursor: msg.cursor ?? null,
+            truncated: Boolean(msg.truncated),
+          } satisfies InspectSnapshot;
+          const pendingRequest = pendingInspectRequestRef.current;
+          const combinedSnapshot = pendingRequest?.append && inspectSnapshotRef.current
+            ? {
+              ...nextSnapshot,
+              items: [...inspectSnapshotRef.current.items, ...nextSnapshot.items],
+              descriptor: {
+                ...nextSnapshot.descriptor,
+                totalItems: nextSnapshot.descriptor.totalItems
+                  ?? inspectSnapshotRef.current.descriptor.totalItems
+                  ?? nextSnapshot.items.length,
+              },
+            }
+            : nextSnapshot;
+
+          markInspectSnapshot(combinedSnapshot);
+          pendingInspectRequestRef.current = null;
+          setInspectLoading(false);
+          setInspectError(null);
+
+          if (pendingRequest?.cacheKey && !pendingRequest.baseRequest.query) {
+            writeInspectCache(pendingRequest.cacheKey, combinedSnapshot);
+          }
+          return;
+        }
+
         if (msg.type === "inspect_content") {
-          setInspectContent(msg.content ?? null);
+          markInspectSnapshot(null);
+          setInspectLoading(false);
+          setInspectError(msg.content ? null : "legacy inspect content unavailable");
+          return;
+        }
+
+        if (msg.type === "error") {
+          if (pendingInspectRequestRef.current) {
+            pendingInspectRequestRef.current = null;
+            setInspectLoading(false);
+            setInspectError(msg.message ?? "inspect request failed");
+          }
           return;
         }
       } catch {
@@ -181,12 +351,22 @@ export const useZellijControl = (): UseZellijControlResult => {
         rttTimerRef.current = null;
       }
       setConnected(false);
+      if (inspectSnapshotRef.current) {
+        markInspectSnapshot({
+          ...inspectSnapshotRef.current,
+          descriptor: {
+            ...inspectSnapshotRef.current.descriptor,
+            staleness: "stale",
+          },
+        });
+      }
       // Auto-reconnect after 2s.
-      setTimeout(() => connect(), 2000);
+      reconnectTimerRef.current = setTimeout(() => connectRef.current(), 2000);
     };
 
     ws.onerror = () => {};
-  }, []);
+  }, [markInspectSnapshot]);
+  connectRef.current = connect;
 
   useEffect(() => {
     const init = async () => {
@@ -208,14 +388,32 @@ export const useZellijControl = (): UseZellijControlResult => {
     return () => {
       stopKeepAliveRef.current?.();
       if (rttTimerRef.current) clearInterval(rttTimerRef.current);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       socketRef.current?.close();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connect]);
 
   const submitPassword = useCallback(() => {
     setPasswordErrorMessage("");
     connect(passwordRef.current);
   }, [connect]);
+
+  const loadMoreInspect = useCallback(() => {
+    if (!inspectSnapshotRef.current?.cursor || !lastInspectRequestRef.current) {
+      return;
+    }
+
+    requestInspect(
+      {
+        ...lastInspectRequestRef.current,
+        cursor: inspectSnapshotRef.current.cursor,
+      },
+      {
+        append: true,
+        preferCache: false,
+      },
+    );
+  }, [requestInspect]);
 
   return {
     connected,
@@ -225,7 +423,9 @@ export const useZellijControl = (): UseZellijControlResult => {
     setPassword,
     submitPassword,
     workspace,
-    inspectContent,
+    inspectSnapshot,
+    inspectLoading,
+    inspectError,
     bandwidthStats,
     refreshWorkspace: useCallback(() => send({ type: "subscribe_workspace" }), [send]),
     newTab: useCallback((name?: string) => send({ type: "new_tab", name }), [send]),
@@ -235,7 +435,8 @@ export const useZellijControl = (): UseZellijControlResult => {
     newPane: useCallback((direction: "right" | "down") => send({ type: "new_pane", direction }), [send]),
     closePane: useCallback(() => send({ type: "close_pane" }), [send]),
     toggleFullscreen: useCallback(() => send({ type: "toggle_fullscreen" }), [send]),
-    requestInspect: useCallback((full?: boolean) => send({ type: "capture_inspect", full: full ?? true }), [send]),
+    requestInspect,
+    loadMoreInspect,
     renameSession: useCallback((name: string) => send({ type: "rename_session", name }), [send]),
   };
 };

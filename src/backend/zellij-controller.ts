@@ -74,13 +74,27 @@ export interface WorkspaceState {
   activeTabIndex: number;
 }
 
+export interface ZellijControllerApi {
+  queryWorkspaceState(): Promise<WorkspaceState>;
+  newTab(name?: string): Promise<void>;
+  closeTab(tabIndex: number): Promise<void>;
+  goToTab(tabIndex: number): Promise<void>;
+  renameTab(tabIndex: number, name: string): Promise<void>;
+  newPane(direction: "right" | "down"): Promise<void>;
+  closePane(): Promise<void>;
+  toggleFullscreen(): Promise<void>;
+  dumpScreen(full?: boolean): Promise<string>;
+  dumpPaneScreen(paneId: string, full?: boolean): Promise<string>;
+  renameSession(name: string): Promise<void>;
+}
+
 export interface ZellijControllerOptions {
   session: string;
   zellijBin?: string;
   logger?: Pick<Console, "log" | "error">;
 }
 
-export class ZellijController {
+export class ZellijController implements ZellijControllerApi {
   private session: string;
   private zellijBin: string;
   private logger: Pick<Console, "log" | "error">;
@@ -184,6 +198,17 @@ export class ZellijController {
   async dumpScreen(full = false): Promise<string> {
     const args = ["action", "dump-screen", "--ansi"];
     if (full) args.push("--full");
+    return this.run(args);
+  }
+
+  async dumpPaneScreen(paneId: string, full = true): Promise<string> {
+    const normalizedPaneId = paneId.startsWith("terminal_") || paneId.startsWith("plugin_")
+      ? paneId
+      : `terminal_${paneId}`;
+    const args = ["action", "dump-screen", "--pane-id", normalizedPaneId];
+    if (full) {
+      args.push("--full");
+    }
     return this.run(args);
   }
 

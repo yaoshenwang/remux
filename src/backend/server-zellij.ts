@@ -7,7 +7,8 @@ import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import type { AuthService } from "./auth/auth-service.js";
 import { createZellijPty, type ZellijPty } from "./pty/zellij-pty.js";
-import { ZellijController } from "./zellij-controller.js";
+import { InspectBadRequestError, InspectService } from "./inspect/index.js";
+import { ZellijController, type ZellijControllerApi } from "./zellij-controller.js";
 import type { Extensions } from "./extensions.js";
 
 export interface ZellijServerConfig {
@@ -22,6 +23,7 @@ export interface ZellijServerDeps {
   authService: AuthService;
   logger: Pick<Console, "log" | "error">;
   extensions?: Extensions;
+  createController?: () => ZellijControllerApi;
 }
 
 export interface RunningServer {
@@ -211,7 +213,8 @@ export const createZellijServer = (
   const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const terminalClients = new Set<TerminalClient>();
   const controlClients = new Set<ControlClient>();
-  let controller: ZellijController | null = null;
+  let controller: ZellijControllerApi | null = null;
+  let inspectService: InspectService | null = null;
   /** Whether the Zellij session has been bootstrapped (first client created it). */
   let sessionBootstrapped = false;
 
@@ -238,11 +241,33 @@ export const createZellijServer = (
   /** Ensure the ZellijController is initialized. */
   const ensureController = (): void => {
     if (controller) return;
-    controller = new ZellijController({
+    controller = deps.createController?.() ?? new ZellijController({
       session: config.zellijSession,
       zellijBin: config.zellijBin,
       logger,
     });
+  };
+
+  const ensureInspectService = (): InspectService => {
+    if (inspectService) {
+      return inspectService;
+    }
+    ensureController();
+    inspectService = new InspectService({
+      controller: controller ?? undefined,
+      tracker: null,
+    });
+    return inspectService;
+  };
+
+  const resolveFocusedPaneId = async (): Promise<string | null> => {
+    ensureController();
+    if (!controller) {
+      return null;
+    }
+    const workspace = await controller.queryWorkspaceState();
+    const activeTab = workspace.tabs.find((tab) => tab.index === workspace.activeTabIndex);
+    return activeTab?.panes.find((pane) => pane.focused)?.id ?? activeTab?.panes[0]?.id ?? null;
   };
 
   /**
@@ -433,6 +458,7 @@ export const createZellijServer = (
           return;
         }
         client.authenticated = true;
+        ensureController();
         ws.send(JSON.stringify({ type: "auth_ok" }));
         return;
       }
@@ -481,6 +507,34 @@ export const createZellijServer = (
             ws.send(JSON.stringify({ type: "inspect_content", content }));
             break;
           }
+          case "request_inspect": {
+            const service = ensureInspectService();
+            const scope = msg.scope;
+            const cursor = typeof msg.cursor === "string" ? msg.cursor : null;
+            const query = typeof msg.query === "string" ? msg.query : undefined;
+            const limit = typeof msg.limit === "number" ? msg.limit : undefined;
+
+            if (scope === "tab") {
+              const tabIndex = typeof msg.tabIndex === "number"
+                ? msg.tabIndex
+                : (await controller.queryWorkspaceState()).activeTabIndex;
+              const snapshot = await service.queryTabHistory(tabIndex, { cursor, query, limit });
+              ws.send(JSON.stringify({ type: "inspect_snapshot", ...snapshot }));
+              break;
+            }
+
+            if (scope === "pane") {
+              const paneId = typeof msg.paneId === "string" ? msg.paneId : await resolveFocusedPaneId();
+              if (!paneId) {
+                throw new InspectBadRequestError("missing paneId for inspect request");
+              }
+              const snapshot = await service.queryPaneHistory(paneId, { cursor, query, limit });
+              ws.send(JSON.stringify({ type: "inspect_snapshot", ...snapshot }));
+              break;
+            }
+
+            throw new InspectBadRequestError("invalid inspect scope");
+          }
           case "rename_session":
             await controller.renameSession(msg.name as string);
             await broadcastWorkspaceState();
@@ -489,6 +543,10 @@ export const createZellijServer = (
             ws.send(JSON.stringify({ type: "error", message: `unknown command: ${msg.type}` }));
         }
       } catch (err) {
+        if (err instanceof InspectBadRequestError) {
+          ws.send(JSON.stringify({ type: "error", code: err.statusCode, message: err.message }));
+          return;
+        }
         ws.send(JSON.stringify({ type: "error", message: String(err) }));
       }
     });

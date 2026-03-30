@@ -879,37 +879,37 @@ Agent board、Topic board、Runtime topology。
 
 ## EPIC-002 Inspect & History Service（16 项）
 
-- [ ] **E02-001 定义 InspectDescriptor 和 InspectSnapshot TypeScript 类型**。归属：Contract。前置：E01-005。执行：在 `src/backend/` 新建 `inspect/types.ts`，定义 `InspectDescriptor`（scope/source/precision/staleness/capturedAt）、`InspectSnapshot`（descriptor/items/cursor/truncated）、`InspectItem`（type/content/lineNumber/timestamp）三组类型。同时在前端建立对应类型文件。验收：后端和前端各有一份类型定义且字段名一致；类型编译通过。红线：不得在此任务实现业务逻辑。
+- [x] **E02-001 定义 InspectDescriptor 和 InspectSnapshot TypeScript 类型**。归属：Contract。前置：E01-005。执行：在 `src/backend/` 新建 `inspect/types.ts`，定义 `InspectDescriptor`（scope/source/precision/staleness/capturedAt）、`InspectSnapshot`（descriptor/items/cursor/truncated）、`InspectItem`（type/content/lineNumber/timestamp）三组类型。同时在前端建立对应类型文件。验收：后端和前端各有一份类型定义且字段名一致；类型编译通过。红线：不得在此任务实现业务逻辑。
 
-- [ ] **E02-002 定义 scope/source/precision/staleness 枚举**。归属：Contract。前置：E02-001。执行：在共享类型文件中定义四组字符串字面量联合类型，scope: `"pane" | "tab" | "session"`，source: `"runtime_capture" | "state_tracker" | "local_cache"`，precision: `"precise" | "approximate" | "partial"`，staleness: `"fresh" | "stale" | "unknown"`。验收：前后端通过同一枚举集读写；不存在 magic string。红线：不得把 unknown 值 silently 映射成 precise。
+- [x] **E02-002 定义 scope/source/precision/staleness 枚举**。归属：Contract。前置：E02-001。执行：在共享类型文件中定义四组字符串字面量联合类型，scope: `"pane" | "tab" | "session"`，source: `"runtime_capture" | "state_tracker" | "local_cache"`，precision: `"precise" | "approximate" | "partial"`，staleness: `"fresh" | "stale" | "unknown"`。验收：前后端通过同一枚举集读写；不存在 magic string。红线：不得把 unknown 值 silently 映射成 precise。
 
-- [ ] **E02-003 建立 inspect 服务模块骨架**。归属：TS Backend。前置：E02-001。执行：在 `src/backend/` 新建 `inspect/` 目录，包含 `inspect-service.ts`（类骨架）、`types.ts`（已有）、`index.ts`（导出）。InspectService 构造函数接收 `TerminalStateTracker` 引用。验收：模块可被 `server-zellij.ts` import；cargo/typecheck 通过。红线：不得实现具体查询逻辑。
+- [x] **E02-003 建立 inspect 服务模块骨架**。归属：TS Backend。前置：E02-001。执行：在 `src/backend/` 新建 `inspect/` 目录，包含 `inspect-service.ts`（类骨架）、`types.ts`（已有）、`index.ts`（导出）。InspectService 构造函数接收 `TerminalStateTracker` 引用。验收：模块可被 `server-zellij.ts` import；cargo/typecheck 通过。红线：不得实现具体查询逻辑。
 
-- [ ] **E02-004 实现 pane history 查询**。归属：TS Backend。前置：E02-003。执行：在 InspectService 中实现 `queryPaneHistory(paneId, cursor?, query?): InspectSnapshot`。从 `TerminalStateTracker` 获取指定 pane 的 xterm buffer 内容，转换为 InspectItem 数组，附带 InspectDescriptor（scope: "pane", source: "state_tracker", precision: "precise", staleness: "fresh"）。验收：给定有效 paneId 返回可分页历史；空 pane 返回空结果（非错误）。红线：不得把查询和 live terminal 通道耦合。
+- [x] **E02-004 实现 pane history 查询**。归属：TS Backend。前置：E02-003。执行：在 InspectService 中实现 `queryPaneHistory(paneId, cursor?, query?): InspectSnapshot`。从 `TerminalStateTracker` 获取指定 pane 的 xterm buffer 内容，转换为 InspectItem 数组，附带 InspectDescriptor（scope: "pane", source: "state_tracker", precision: "precise", staleness: "fresh"）。验收：给定有效 paneId 返回可分页历史；空 pane 返回空结果（非错误）。红线：不得把查询和 live terminal 通道耦合。
 
-- [ ] **E02-005 实现 tab history 聚合**。归属：TS Backend。前置：E02-004。执行：在 InspectService 中实现 `queryTabHistory(tabIndex, cursor?): InspectSnapshot`。聚合当前 tab 下所有 pane 的 capture，每个 pane 的内容作为独立段，附带 paneId 标记。验收：tab history 返回所有 pane 的分段结果；descriptor scope 为 "tab"。红线：不得伪造跨 pane 精确时序。
+- [x] **E02-005 实现 tab history 聚合**。归属：TS Backend。前置：E02-004。执行：在 InspectService 中实现 `queryTabHistory(tabIndex, cursor?): InspectSnapshot`。聚合当前 tab 下所有 pane 的 capture，每个 pane 的内容作为独立段，附带 paneId 标记。验收：tab history 返回所有 pane 的分段结果；descriptor scope 为 "tab"。红线：不得伪造跨 pane 精确时序。
 
-- [ ] **E02-006 实现 opaque cursor 分页**。归属：TS Backend。前置：E02-004。执行：cursor 编码为 base64url 的 `{paneId, offset, version}` JSON，解码后用于续传。支持 `limit` 参数控制每页大小（默认 100 行，最大 1000）。验收：连续请求可正确翻页；末页 cursor 为 null；错误 cursor 返回 400。红线：不得暴露可拼凑的内部 offset。
+- [x] **E02-006 实现 opaque cursor 分页**。归属：TS Backend。前置：E02-004。执行：cursor 编码为 base64url 的 `{paneId, offset, version}` JSON，解码后用于续传。支持 `limit` 参数控制每页大小（默认 100 行，最大 1000）。验收：连续请求可正确翻页；末页 cursor 为 null；错误 cursor 返回 400。红线：不得暴露可拼凑的内部 offset。
 
-- [ ] **E02-007 实现 inspect 文本搜索**。归属：TS Backend。前置：E02-004。执行：在 pane history 查询上增加 `query` 过滤参数，在 xterm buffer 行中做子串匹配，返回匹配行及其上下各 2 行上下文。验收：给定 query 返回命中项；大小写不敏感搜索可用。红线：不得只在前端本地做搜索。
+- [x] **E02-007 实现 inspect 文本搜索**。归属：TS Backend。前置：E02-004。执行：在 pane history 查询上增加 `query` 过滤参数，在 xterm buffer 行中做子串匹配，返回匹配行及其上下各 2 行上下文。验收：给定 query 返回命中项；大小写不敏感搜索可用。红线：不得只在前端本地做搜索。
 
-- [ ] **E02-008 新增 control 通道 request_inspect 消息**。归属：TS Backend。前置：E02-004, E02-005。执行：在 control WebSocket 中新增 `request_inspect` 命令类型，支持 `{ scope: "pane"|"tab", paneId?, tabIndex?, cursor?, query?, limit? }`。返回 `inspect_snapshot` 消息。保留旧的 `capture_inspect` 命令作为兼容。验收：新命令返回 InspectSnapshot 格式；旧命令仍可用。红线：不得删除旧命令。
+- [x] **E02-008 新增 control 通道 request_inspect 消息**。归属：TS Backend。前置：E02-004, E02-005。执行：在 control WebSocket 中新增 `request_inspect` 命令类型，支持 `{ scope: "pane"|"tab", paneId?, tabIndex?, cursor?, query?, limit? }`。返回 `inspect_snapshot` 消息。保留旧的 `capture_inspect` 命令作为兼容。验收：新命令返回 InspectSnapshot 格式；旧命令仍可用。红线：不得删除旧命令。
 
-- [ ] **E02-009 前端：Inspect 视图显示 source badge**。归属：TS Frontend。前置：E02-008。执行：在 `InspectView.tsx` 头部渲染 descriptor.source，用不同颜色 badge 显示 `runtime_capture`/`state_tracker`/`local_cache`。Badge 包含文字标签和 tooltip 解释。验收：不同 source 显示不同 badge；无 source 时显示 "unknown"。红线：不得通过颜色单独表达语义。
+- [x] **E02-009 前端：Inspect 视图显示 source badge**。归属：TS Frontend。前置：E02-008。执行：在 `InspectView.tsx` 头部渲染 descriptor.source，用不同颜色 badge 显示 `runtime_capture`/`state_tracker`/`local_cache`。Badge 包含文字标签和 tooltip 解释。验收：不同 source 显示不同 badge；无 source 时显示 "unknown"。红线：不得通过颜色单独表达语义。
 
-- [ ] **E02-010 前端：Inspect 视图显示 precision badge**。归属：TS Frontend。前置：E02-008。执行：在 Inspect 视图加入 precision badge，tooltip 解释 precise/approximate/partial 含义。验收：用户一次点击可看懂可信度；badge 随 payload 更新。红线：不得默认把 unknown 当 precise。
+- [x] **E02-010 前端：Inspect 视图显示 precision badge**。归属：TS Frontend。前置：E02-008。执行：在 Inspect 视图加入 precision badge，tooltip 解释 precise/approximate/partial 含义。验收：用户一次点击可看懂可信度；badge 随 payload 更新。红线：不得默认把 unknown 当 precise。
 
-- [ ] **E02-011 前端：Inspect 视图显示 staleness/capturedAt**。归属：TS Frontend。前置：E02-008。执行：显示 capturedAt 时间戳和 staleness 状态。断线重连后显示 stale；新鲜数据刷新后回到 fresh。验收：断线状态可见 stale badge；包含绝对时间和相对时间。红线：不得只显示相对时间。
+- [x] **E02-011 前端：Inspect 视图显示 staleness/capturedAt**。归属：TS Frontend。前置：E02-008。执行：显示 capturedAt 时间戳和 staleness 状态。断线重连后显示 stale；新鲜数据刷新后回到 fresh。验收：断线状态可见 stale badge；包含绝对时间和相对时间。红线：不得只显示相对时间。
 
-- [ ] **E02-012 前端：Inspect 分页 UI**。归属：TS Frontend。前置：E02-008。执行：在 Inspect 视图底部增加"加载更多"按钮和无限滚动加载，基于 cursor 分页。显示总行数（如果 descriptor 提供）。验收：大量内容可分页加载；末页无加载按钮。红线：不得一次性加载全部历史。
+- [x] **E02-012 前端：Inspect 分页 UI**。归属：TS Frontend。前置：E02-008。执行：在 Inspect 视图底部增加"加载更多"按钮和无限滚动加载，基于 cursor 分页。显示总行数（如果 descriptor 提供）。验收：大量内容可分页加载；末页无加载按钮。红线：不得一次性加载全部历史。
 
-- [ ] **E02-013 前端：Inspect 搜索 UI**。归属：TS Frontend。前置：E02-007, E02-008。执行：在 Inspect 视图顶部增加搜索框，输入时 debounce 300ms 后发送 request_inspect with query。搜索结果高亮匹配文本。验收：搜索可返回结果并高亮；清空搜索恢复正常浏览。红线：不得阻塞 UI 主线程。
+- [x] **E02-013 前端：Inspect 搜索 UI**。归属：TS Frontend。前置：E02-007, E02-008。执行：在 Inspect 视图顶部增加搜索框，输入时 debounce 300ms 后发送 request_inspect with query。搜索结果高亮匹配文本。验收：搜索可返回结果并高亮；清空搜索恢复正常浏览。红线：不得阻塞 UI 主线程。
 
-- [ ] **E02-014 前端：移动端默认入口切到 Inspect**。归属：TS Frontend。前置：E02-009~E02-013。执行：在 `App.tsx` 中，当 `mobileLayout` 为 true 时，默认 `viewMode` 设为 "inspect" 而非 "terminal"。保留用户手动切换能力。验收：手机首次进入显示 Inspect；仍可一跳切到 Live。红线：不得移除用户设置默认页的能力。
+- [x] **E02-014 前端：移动端默认入口切到 Inspect**。归属：TS Frontend。前置：E02-009~E02-013。执行：在 `App.tsx` 中，当 `mobileLayout` 为 true 时，默认 `viewMode` 设为 "inspect" 而非 "terminal"。保留用户手动切换能力。验收：手机首次进入显示 Inspect；仍可一跳切到 Live。红线：不得移除用户设置默认页的能力。
 
-- [ ] **E02-015 Inspect 本地缓存策略**。归属：TS Frontend。前置：E02-008。执行：对 inspect 结果按 `sessionName/tabIndex/paneId` 分桶缓存到 localStorage（上限 5MB），附带 capturedAt 时间戳。重复打开同一 scope 先读缓存再请求最新。版本变化时旧缓存失效。验收：重复打开响应更快；缓存过期可自动清除。红线：不得把 local cache 冒充 authoritative history（source 必须标为 local_cache）。
+- [x] **E02-015 Inspect 本地缓存策略**。归属：TS Frontend。前置：E02-008。执行：对 inspect 结果按 `sessionName/tabIndex/paneId` 分桶缓存到 localStorage（上限 5MB），附带 capturedAt 时间戳。重复打开同一 scope 先读缓存再请求最新。版本变化时旧缓存失效。验收：重复打开响应更快；缓存过期可自动清除。红线：不得把 local cache 冒充 authoritative history（source 必须标为 local_cache）。
 
-- [ ] **E02-016 补齐 inspect 端到端测试**。归属：QA。前置：E02-004~E02-015。执行：新增 Playwright 测试覆盖 pane/tab scope 切换、分页、搜索、badge 显示、重连后刷新。验收：测试在 gate 中稳定通过。红线：不得用 sleep 常量掩盖 race condition。
+- [x] **E02-016 补齐 inspect 端到端测试**。归属：QA。前置：E02-004~E02-015。执行：新增 Playwright 测试覆盖 pane/tab scope 切换、分页、搜索、badge 显示、重连后刷新。验收：测试在 gate 中稳定通过。红线：不得用 sleep 常量掩盖 race condition。
 
 
 ## EPIC-003 协议升级（12 项）
