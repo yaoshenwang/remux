@@ -1389,6 +1389,38 @@ button, input {
   padding: 0.22rem 0.5rem;
 }
 
+.inspect-badge--source-runtime_capture {
+  border-color: color-mix(in srgb, #44c776 55%, var(--btn-border));
+  color: #8ef0b1;
+}
+
+.inspect-badge--source-state_tracker {
+  border-color: color-mix(in srgb, #4a8dff 55%, var(--btn-border));
+  color: #9ec8ff;
+}
+
+.inspect-badge--source-local_cache {
+  border-color: color-mix(in srgb, #f2b43b 55%, var(--btn-border));
+  color: #ffd37c;
+}
+
+.inspect-badge--precision-precise {
+  border-color: color-mix(in srgb, #4a8dff 45%, var(--btn-border));
+}
+
+.inspect-badge--precision-partial {
+  border-color: color-mix(in srgb, #f2b43b 45%, var(--btn-border));
+}
+
+.inspect-badge--staleness-fresh {
+  border-color: color-mix(in srgb, #44c776 45%, var(--btn-border));
+}
+
+.inspect-badge--staleness-stale {
+  border-color: color-mix(in srgb, #f26d6d 45%, var(--btn-border));
+  color: #ffb4b4;
+}
+
 .inspect-toolbar {
   display: flex;
   gap: 0.45rem;
@@ -1547,6 +1579,13 @@ button, input {
 .inspect-pane-content {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.inspect-pane-content mark {
+  background: color-mix(in srgb, #f2b43b 28%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.1rem;
 }
 
 /* Upload overlay on terminal */

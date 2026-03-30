@@ -6,7 +6,7 @@ import { ComposeBar } from "./components/ComposeBar";
 import { SessionSection } from "./components/sidebar/SessionSection";
 import { AppearanceSection } from "./components/sidebar/AppearanceSection";
 import { AppShell } from "./screens/AppShell";
-import { useViewportLayout } from "./mobile-layout";
+import { matchesMobileLayout, useViewportLayout } from "./mobile-layout";
 import { useTerminalRuntime } from "./hooks/useTerminalRuntime";
 import { useZellijConnection } from "./hooks/useZellijConnection";
 import { useZellijControl } from "./hooks/useZellijControl";
@@ -29,8 +29,18 @@ export const App = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     localStorage.getItem("remux-sidebar-collapsed") === "true",
   );
-  const [viewMode, setViewMode] = useState<"terminal" | "inspect">("terminal");
+  const [viewMode, setViewMode] = useState<"terminal" | "inspect">(() => {
+    const stored = localStorage.getItem("remux-view-mode");
+    if (stored === "terminal" || stored === "inspect") {
+      return stored;
+    }
+    return matchesMobileLayout() ? "inspect" : "terminal";
+  });
   const { mobileLayout, mobileLandscape, viewportHeight, viewportOffsetLeft, viewportOffsetTop } = useViewportLayout();
+  const [inspectScope, setInspectScope] = useState<"pane" | "tab">("tab");
+  const [inspectPaneId, setInspectPaneId] = useState<string | null>(null);
+  const [inspectSearchInput, setInspectSearchInput] = useState("");
+  const [debouncedInspectSearch, setDebouncedInspectSearch] = useState("");
 
   // --- Theme ---
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -44,6 +54,9 @@ export const App = () => {
   useEffect(() => {
     localStorage.setItem("remux-sidebar-collapsed", sidebarCollapsed ? "true" : "false");
   }, [sidebarCollapsed]);
+  useEffect(() => {
+    localStorage.setItem("remux-view-mode", viewMode);
+  }, [viewMode]);
 
   // --- Zellij control channel ---
   const control = useZellijControl();
@@ -88,11 +101,49 @@ export const App = () => {
   }, [viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Request inspect content when switching to inspect mode.
+  const ws = control.workspace;
+  const tabs = ws?.tabs ?? [];
+  const activeTabIndex = ws?.activeTabIndex ?? 0;
+  const activeTab = tabs.find((tab) => tab.index === activeTabIndex) ?? tabs[0];
+  const activePaneId = activeTab?.panes.find((pane) => pane.focused)?.id ?? activeTab?.panes[0]?.id ?? null;
+
+  useEffect(() => {
+    if (!activeTab) {
+      setInspectPaneId(null);
+      return;
+    }
+
+    const paneIds = new Set(activeTab.panes.map((pane) => pane.id));
+    setInspectPaneId((current) => current && paneIds.has(current) ? current : activePaneId);
+  }, [activePaneId, activeTab]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedInspectSearch(inspectSearchInput.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [inspectSearchInput]);
+
   useEffect(() => {
     if (viewMode === "inspect" && control.connected) {
-      control.requestInspect(true);
+      control.requestInspect({
+        scope: inspectScope,
+        paneId: inspectScope === "pane" ? inspectPaneId ?? undefined : undefined,
+        tabIndex: inspectScope === "tab" ? activeTabIndex : undefined,
+        query: debouncedInspectSearch || undefined,
+      }, {
+        preferCache: !debouncedInspectSearch,
+      });
     }
-  }, [viewMode, control.connected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    activeTabIndex,
+    control.connected,
+    control.requestInspect,
+    debouncedInspectSearch,
+    inspectPaneId,
+    inspectScope,
+    viewMode,
+  ]);
 
   // --- Compose bar ---
   const [composeText, setComposeText] = useState("");
@@ -145,9 +196,6 @@ export const App = () => {
   // --- Derived state ---
   const showPassword = connection.needsPassword || control.needsPassword;
   const isConnected = connection.status === "connected";
-  const ws = control.workspace;
-  const tabs = ws?.tabs ?? [];
-  const activeTabIndex = ws?.activeTabIndex ?? 0;
   const sessionName = ws?.session ?? "remux";
 
   const terminalStatusMessage =
@@ -229,10 +277,25 @@ export const App = () => {
               {viewMode === "inspect" && (
                 <div className="inspect-layer is-active">
                   <InspectView
-                    content={control.inspectContent}
-                    loading={false}
-                    onRefresh={() => control.requestInspect(false)}
-                    onRequestFull={() => control.requestInspect(true)}
+                    snapshot={control.inspectSnapshot}
+                    loading={control.inspectLoading}
+                    error={control.inspectError}
+                    scope={inspectScope}
+                    selectedPaneId={inspectPaneId}
+                    paneOptions={activeTab?.panes ?? []}
+                    searchQuery={inspectSearchInput}
+                    onRefresh={() => control.requestInspect({
+                      scope: inspectScope,
+                      paneId: inspectScope === "pane" ? inspectPaneId ?? undefined : undefined,
+                      tabIndex: inspectScope === "tab" ? activeTabIndex : undefined,
+                      query: debouncedInspectSearch || undefined,
+                    }, {
+                      preferCache: false,
+                    })}
+                    onLoadMore={control.loadMoreInspect}
+                    onScopeChange={setInspectScope}
+                    onPaneChange={setInspectPaneId}
+                    onSearchChange={setInspectSearchInput}
                   />
                 </div>
               )}
