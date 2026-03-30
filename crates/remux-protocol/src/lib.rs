@@ -205,6 +205,34 @@ pub mod terminal {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum TerminalPatchSource {
+        Snapshot,
+        Stream,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct TerminalPatchLine {
+        pub text: String,
+        pub wrapped: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct TerminalPatchChunk {
+        pub start_row: u16,
+        pub lines: Vec<TerminalPatchLine>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct TerminalPatchPayload {
+        pub visible_row_base: usize,
+        pub chunks: Vec<TerminalPatchChunk>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum ClientMessage {
         Attach {
@@ -241,6 +269,30 @@ pub mod terminal {
         Stream {
             sequence: u64,
             chunk_base64: String,
+        },
+        TerminalPatch {
+            #[serde(rename = "paneId")]
+            pane_id: PaneId,
+            #[serde(rename = "epoch")]
+            epoch: u64,
+            #[serde(rename = "viewRevision")]
+            view_revision: u64,
+            #[serde(rename = "revision")]
+            revision: u64,
+            #[serde(rename = "baseRevision")]
+            base_revision: Option<u64>,
+            #[serde(rename = "reset")]
+            reset: bool,
+            #[serde(rename = "source")]
+            source: TerminalPatchSource,
+            #[serde(rename = "cols")]
+            cols: u16,
+            #[serde(rename = "rows")]
+            rows: u16,
+            #[serde(rename = "dataBase64")]
+            data_base64: String,
+            #[serde(rename = "payload")]
+            payload: Option<TerminalPatchPayload>,
         },
         ResizeConfirmed {
             size: TerminalSize,

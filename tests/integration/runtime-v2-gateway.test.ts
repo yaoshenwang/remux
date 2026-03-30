@@ -496,6 +496,10 @@ describe("runtime v2 gateway server", () => {
         reset: boolean;
         source: string;
         dataBase64: string;
+        payload?: {
+          encoding: string;
+          chunksBase64: string[];
+        };
       };
       expect(snapshotFrame).toMatchObject({
         type: "terminal_patch",
@@ -508,6 +512,10 @@ describe("runtime v2 gateway server", () => {
         source: "snapshot",
       });
       expect(Buffer.from(snapshotFrame.dataBase64, "base64").toString("utf8")).toContain("PANE_ONE_READY");
+      expect(snapshotFrame.payload).toMatchObject({
+        encoding: "base64_chunks_v1",
+        chunksBase64: [snapshotFrame.dataBase64],
+      });
 
       upstream.pushTerminalOutput("pane-1", "PATCH_FLOW\r\n");
       const streamFrame = JSON.parse(await waitForRawMessage(terminal)) as {
@@ -519,6 +527,10 @@ describe("runtime v2 gateway server", () => {
         reset: boolean;
         source: string;
         dataBase64: string;
+        payload?: {
+          encoding: string;
+          chunksBase64: string[];
+        };
       };
       expect(streamFrame).toMatchObject({
         type: "terminal_patch",
@@ -530,6 +542,10 @@ describe("runtime v2 gateway server", () => {
         source: "stream",
       });
       expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("PATCH_FLOW\r\n");
+      expect(streamFrame.payload).toMatchObject({
+        encoding: "base64_chunks_v1",
+        chunksBase64: [streamFrame.dataBase64],
+      });
 
       const switchedSnapshotPromise = waitForRawMessage(terminal);
       control.send(JSON.stringify({

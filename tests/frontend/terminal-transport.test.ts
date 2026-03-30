@@ -36,10 +36,80 @@ describe("terminal transport helpers", () => {
     expect(new TextDecoder().decode(decodeTerminalPatchData(message!))).toBe("hello\r\n");
   });
 
+  test("parses a structured terminal_patch payload without legacy dataBase64", () => {
+    const payload = JSON.stringify({
+      type: "terminal_patch",
+      paneId: "pane-structured",
+      epoch: 9,
+      viewRevision: 4,
+      revision: 11,
+      baseRevision: 10,
+      reset: false,
+      source: "stream",
+      payload: {
+        encoding: "base64_chunks_v1",
+        chunksBase64: ["aGVsbG8=", "DQp3b3JsZA=="],
+      },
+    });
+
+    const message = parseTerminalPatchMessage(payload);
+    expect(message).toMatchObject({
+      type: "terminal_patch",
+      paneId: "pane-structured",
+      epoch: 9,
+      viewRevision: 4,
+      revision: 11,
+      baseRevision: 10,
+      reset: false,
+      source: "stream",
+      payload: {
+        encoding: "base64_chunks_v1",
+        chunksBase64: ["aGVsbG8=", "DQp3b3JsZA=="],
+      },
+    });
+    expect(new TextDecoder().decode(decodeTerminalPatchData(message!))).toBe("hello\r\nworld");
+  });
+
+  test("prefers structured payload chunks over legacy dataBase64 when both are present", () => {
+    const payload = JSON.stringify({
+      type: "terminal_patch",
+      paneId: "pane-dual",
+      epoch: 9,
+      viewRevision: 4,
+      revision: 11,
+      baseRevision: 10,
+      reset: false,
+      source: "stream",
+      dataBase64: "TEVHQUNZ",
+      payload: {
+        encoding: "base64_chunks_v1",
+        chunksBase64: ["U1RSVUNUVVJFRA=="],
+      },
+    });
+
+    const message = parseTerminalPatchMessage(payload);
+    expect(message).not.toBeNull();
+    expect(new TextDecoder().decode(decodeTerminalPatchData(message!))).toBe("STRUCTURED");
+  });
+
   test("rejects malformed or unrelated text frames", () => {
     expect(parseTerminalPatchMessage("plain terminal output")).toBeNull();
     expect(parseTerminalPatchMessage("{")).toBeNull();
     expect(parseTerminalPatchMessage(JSON.stringify({ type: "ping" }))).toBeNull();
+    expect(parseTerminalPatchMessage(JSON.stringify({
+      type: "terminal_patch",
+      paneId: "pane-1",
+      epoch: 1,
+      viewRevision: 1,
+      revision: 2,
+      baseRevision: 1,
+      reset: false,
+      source: "stream",
+      payload: {
+        encoding: "base64_chunks_v1",
+        chunksBase64: [123],
+      },
+    }))).toBeNull();
     expect(parseTerminalPatchMessage(JSON.stringify({
       type: "terminal_patch",
       paneId: "pane-1",

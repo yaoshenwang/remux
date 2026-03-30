@@ -940,6 +940,10 @@ describe("SharedRuntimeV2PaneBridge", () => {
       reset: boolean;
       source: string;
       dataBase64: string;
+      payload?: {
+        encoding: string;
+        chunksBase64: string[];
+      };
     };
     expect(snapshotFrame).toMatchObject({
       type: "terminal_patch",
@@ -952,6 +956,10 @@ describe("SharedRuntimeV2PaneBridge", () => {
       source: "snapshot",
     });
     expect(Buffer.from(snapshotFrame.dataBase64, "base64").toString("utf8")).toContain("BASELINE-HISTORY");
+    expect(snapshotFrame.payload).toMatchObject({
+      encoding: "base64_chunks_v1",
+      chunksBase64: [snapshotFrame.dataBase64],
+    });
 
     runtimeSocket?.send(JSON.stringify({
       type: "stream",
@@ -969,6 +977,10 @@ describe("SharedRuntimeV2PaneBridge", () => {
       reset: boolean;
       source: string;
       dataBase64: string;
+      payload?: {
+        encoding: string;
+        chunksBase64: string[];
+      };
     };
     expect(streamFrame).toMatchObject({
       type: "terminal_patch",
@@ -980,6 +992,67 @@ describe("SharedRuntimeV2PaneBridge", () => {
       source: "stream",
     });
     expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("PATCH-LIVE\r\n");
+    expect(streamFrame.payload).toMatchObject({
+      encoding: "base64_chunks_v1",
+      chunksBase64: [streamFrame.dataBase64],
+    });
+  });
+
+  test("accepts structured runtime stream payload chunks and forwards them as a single patch frame", async () => {
+    bridge = new SharedRuntimeV2PaneBridge(
+      "pane-structured",
+      wsUrl,
+      silentLogger,
+      "largest",
+      () => undefined,
+    );
+
+    const patchBrowser = createBrowserSocket();
+    await bridge.subscribe(
+      "viewer-1",
+      patchBrowser.socket,
+      { cols: 120, rows: 40 },
+      {
+        transportMode: "patch",
+        getViewRevision: () => 1,
+      },
+    );
+
+    await expect.poll(() => attachCount).toBe(1);
+    expect(patchBrowser.sent.length).toBe(1);
+
+    runtimeSocket?.send(JSON.stringify({
+      type: "stream",
+      sequence: 2,
+      chunk_payload: {
+        encoding: "base64_chunks_v1",
+        chunks_base64: [
+          encodeBase64("STRUCTURED-"),
+          encodeBase64("STREAM\r\n"),
+        ],
+      },
+    }));
+
+    await expect.poll(() => patchBrowser.sent.length).toBe(2);
+    const streamFrame = JSON.parse(patchBrowser.sent[1]!.toString("utf8")) as {
+      source: string;
+      reset: boolean;
+      dataBase64: string;
+      payload?: {
+        encoding: string;
+        chunksBase64: string[];
+      };
+    };
+
+    expect(streamFrame).toMatchObject({
+      source: "stream",
+      reset: false,
+    });
+    expect(Buffer.from(streamFrame.dataBase64, "base64").toString("utf8")).toBe("STRUCTURED-STREAM\r\n");
+    expect(streamFrame.payload).toMatchObject({
+      encoding: "base64_chunks_v1",
+      chunksBase64: [streamFrame.dataBase64],
+    });
   });
 
   test("bumps terminal_patch epoch after the upstream pane socket reconnects", async () => {

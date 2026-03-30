@@ -6,6 +6,43 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 const isOptionalFiniteNumber = (value: unknown): value is number =>
   value === undefined || (typeof value === "number" && Number.isFinite(value));
 
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((entry) => typeof entry === "string");
+
+const parsePatchPayload = (value: unknown): TerminalPatchMessage["payload"] | null | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isObject(value)) {
+    return null;
+  }
+  if (
+    (value.encoding !== undefined && typeof value.encoding !== "string")
+    || (value.chunksBase64 !== undefined && !isStringArray(value.chunksBase64))
+    || (value.chunkBase64 !== undefined && typeof value.chunkBase64 !== "string")
+    || (value.dataBase64 !== undefined && typeof value.dataBase64 !== "string")
+  ) {
+    return null;
+  }
+  return {
+    ...(typeof value.encoding === "string" ? { encoding: value.encoding } : {}),
+    ...(isStringArray(value.chunksBase64) ? { chunksBase64: value.chunksBase64 } : {}),
+    ...(typeof value.chunkBase64 === "string" ? { chunkBase64: value.chunkBase64 } : {}),
+    ...(typeof value.dataBase64 === "string" ? { dataBase64: value.dataBase64 } : {}),
+  };
+};
+
+const hasDecodablePatchPayload = (payload: TerminalPatchMessage["payload"]): boolean => {
+  if (!payload) {
+    return false;
+  }
+  return (
+    (Array.isArray(payload.chunksBase64) && payload.chunksBase64.length > 0)
+    || typeof payload.chunkBase64 === "string"
+    || typeof payload.dataBase64 === "string"
+  );
+};
+
 export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | null => {
   if (!raw.startsWith("{")) {
     return null;
@@ -16,6 +53,8 @@ export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | n
     if (!isObject(parsed) || parsed.type !== "terminal_patch") {
       return null;
     }
+    const payload = parsePatchPayload(parsed.payload);
+    const hasLegacyData = typeof parsed.dataBase64 === "string";
     if (
       typeof parsed.paneId !== "string"
       || typeof parsed.epoch !== "number"
@@ -27,7 +66,9 @@ export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | n
       || !(parsed.baseRevision === null || (typeof parsed.baseRevision === "number" && Number.isFinite(parsed.baseRevision)))
       || typeof parsed.reset !== "boolean"
       || (parsed.source !== "snapshot" && parsed.source !== "stream")
-      || typeof parsed.dataBase64 !== "string"
+      || (parsed.dataBase64 !== undefined && typeof parsed.dataBase64 !== "string")
+      || payload === null
+      || (!hasLegacyData && !hasDecodablePatchPayload(payload))
       || !isOptionalFiniteNumber(parsed.cols)
       || !isOptionalFiniteNumber(parsed.rows)
     ) {
@@ -42,7 +83,8 @@ export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | n
       baseRevision: parsed.baseRevision,
       reset: parsed.reset,
       source: parsed.source,
-      dataBase64: parsed.dataBase64,
+      ...(payload ? { payload } : {}),
+      ...(typeof parsed.dataBase64 === "string" ? { dataBase64: parsed.dataBase64 } : {}),
       ...(typeof parsed.cols === "number" ? { cols: parsed.cols } : {}),
       ...(typeof parsed.rows === "number" ? { rows: parsed.rows } : {}),
     };
@@ -51,13 +93,52 @@ export const parseTerminalPatchMessage = (raw: string): TerminalPatchMessage | n
   }
 };
 
-export const decodeTerminalPatchData = (message: TerminalPatchMessage): Uint8Array => {
-  const decoded = atob(message.dataBase64);
+const decodeBase64 = (base64: string): Uint8Array => {
+  const decoded = atob(base64);
   const bytes = new Uint8Array(decoded.length);
   for (let index = 0; index < decoded.length; index += 1) {
     bytes[index] = decoded.charCodeAt(index);
   }
   return bytes;
+};
+
+const decodePayloadData = (payload: TerminalPatchMessage["payload"]): Uint8Array | null => {
+  if (!payload) {
+    return null;
+  }
+  try {
+    if (Array.isArray(payload.chunksBase64) && payload.chunksBase64.length > 0) {
+      const chunks = payload.chunksBase64.map((chunk) => decodeBase64(chunk));
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const merged = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return merged;
+    }
+    if (typeof payload.chunkBase64 === "string") {
+      return decodeBase64(payload.chunkBase64);
+    }
+    if (typeof payload.dataBase64 === "string") {
+      return decodeBase64(payload.dataBase64);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+export const decodeTerminalPatchData = (message: TerminalPatchMessage): Uint8Array => {
+  const structured = decodePayloadData(message.payload);
+  if (structured) {
+    return structured;
+  }
+  if (typeof message.dataBase64 === "string") {
+    return decodeBase64(message.dataBase64);
+  }
+  return new Uint8Array(0);
 };
 
 export const resolveTerminalPatchDisposition = (
