@@ -203,7 +203,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
             className="toolbar-expand-btn"
             onClick={() => setZellijExpanded((v) => !v)}
           >
-            {zellijExpanded ? "Zellij ▲" : "Zellij ▼"}
+            {zellijExpanded ? "Panes ▲" : "Panes ▼"}
           </button>
           <button
             className="toolbar-expand-btn"
@@ -221,7 +221,7 @@ export const Toolbar = memo(forwardRef<ToolbarHandle, ToolbarProps>(
           )}
         </div>
 
-        {/* Zellij actions row (collapsible from within expanded) */}
+        {/* Tab & pane quick-actions row (collapsible from within expanded) */}
         {toolbarExpanded && (
           <div className={`toolbar-row-deep ${zellijExpanded ? "expanded" : ""}`}>
             <div className="toolbar-row-zellij">

@@ -1,11 +1,13 @@
-// Remux-optimized Zellij configuration for web access.
-// Shorter status bar, simplified UI, web-friendly defaults.
+// Remux-optimized configuration. Hides all multiplexer chrome
+// so the web UI provides the only user-facing interface.
 
 simplified_ui true
 default_shell "zsh"
 pane_frames false
 session_serialization true
 scrollback_lines 10000
+show_startup_tips false
+show_release_notes false
 
 themes {
     remux {
