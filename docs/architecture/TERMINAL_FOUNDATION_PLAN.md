@@ -126,6 +126,9 @@ snapshot 和 replay 不应消失，但应退化为：
 - inspect / `tab_history` / client diagnostic 已显式绑定 `viewRevision`，旧视图响应与旧诊断会被丢弃
 - 新 viewer / stale continuation fallback 已改成“当前组合快照”路径，不再先发旧 snapshot 再补 replay backlog
 - bandwidth stats 已显式暴露 rebuilt snapshot、continuation resume、continuation fallback 计数
+- bandwidth telemetry 现在会忽略非有限数值输入，避免异常样本把总量与 RTT 污染成 `NaN`
+- bandwidth stats modal 现在直接展示 continuation attempts / success rate / fallback rate，便于快速看出重连命中率
+- `BandwidthTracker` 已有单测覆盖 rolling window、continuation 计数、异常输入清洗
 - runtime-v2 的 patch / resize owner / reconnect / slow viewer 已有后端、集成和 browser 回归测试
 
 部分完成但仍未收口的项：

@@ -1,6 +1,14 @@
 import { formatBytes } from "../app-status";
 import type { BandwidthStats } from "../app-types";
 
+const formatPercentage = (numerator: number, denominator: number): string => {
+  if (denominator <= 0) {
+    return "n/a";
+  }
+
+  return `${Math.round((numerator / denominator) * 100)}%`;
+};
+
 interface BandwidthStatsModalProps {
   onClose: () => void;
   stats: BandwidthStats | null;
@@ -10,6 +18,10 @@ const BandwidthStatsModal = ({ onClose, stats }: BandwidthStatsModalProps) => {
   if (!stats) {
     return null;
   }
+
+  const continuationAttempts = stats.continuationResumes + stats.continuationFallbackSnapshots;
+  const continuationSuccessRate = formatPercentage(stats.continuationResumes, continuationAttempts);
+  const continuationFallbackRate = formatPercentage(stats.continuationFallbackSnapshots, continuationAttempts);
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -33,6 +45,9 @@ const BandwidthStatsModal = ({ onClose, stats }: BandwidthStatsModalProps) => {
             <div className="stats-row"><span>Rebuilt snapshots</span><span>{stats.rebuiltSnapshotsSent}</span></div>
             <div className="stats-row"><span>Continuation resumes</span><span>{stats.continuationResumes}</span></div>
             <div className="stats-row"><span>Continuation fallbacks</span><span>{stats.continuationFallbackSnapshots}</span></div>
+            <div className="stats-row"><span>Continuation attempts</span><span>{continuationAttempts}</span></div>
+            <div className="stats-row"><span>Continuation success rate</span><span>{continuationSuccessRate}</span></div>
+            <div className="stats-row"><span>Continuation fallback rate</span><span>{continuationFallbackRate}</span></div>
             <div className="stats-row"><span>Queue high watermark hits</span><span>{stats.viewerQueueHighWatermarkHits}</span></div>
             <div className="stats-row"><span>Dropped backlog frames</span><span>{stats.droppedBacklogFrames}</span></div>
           </div>

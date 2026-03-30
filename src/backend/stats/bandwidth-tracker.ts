@@ -13,6 +13,9 @@ interface Sample {
   timestamp: number;
 }
 
+const normalizeBytes = (value: number): number => (Number.isFinite(value) && value >= 0 ? value : 0);
+const normalizeRttMs = (value: number): number | null => (Number.isFinite(value) && value >= 0 ? value : null);
+
 export class BandwidthTracker {
   // Rolling window samples (1 per second, keep last 10)
   private samples: Sample[] = [];
@@ -40,9 +43,10 @@ export class BandwidthTracker {
    * Record raw bytes (before compression) being sent to a client.
    */
   recordRawBytes(bytes: number): void {
+    const safeBytes = normalizeBytes(bytes);
     this.maybeRotateSample();
-    this.currentSample.rawBytes += bytes;
-    this.totalRaw += bytes;
+    this.currentSample.rawBytes += safeBytes;
+    this.totalRaw += safeBytes;
   }
 
   /**
@@ -50,9 +54,10 @@ export class BandwidthTracker {
    * Call this with the socket's bytesWritten delta.
    */
   recordCompressedBytes(bytes: number): void {
+    const safeBytes = normalizeBytes(bytes);
     this.maybeRotateSample();
-    this.currentSample.compressedBytes += bytes;
-    this.totalCompressed += bytes;
+    this.currentSample.compressedBytes += safeBytes;
+    this.totalCompressed += safeBytes;
   }
 
   /**
@@ -66,8 +71,9 @@ export class BandwidthTracker {
    * Record a diff update with the number of raw terminal bytes in the update.
    */
   recordDiffUpdate(diffBytes: number): void {
+    const safeDiffBytes = normalizeBytes(diffBytes);
     this._diffUpdatesSent++;
-    this.totalDiffBytes += diffBytes;
+    this.totalDiffBytes += safeDiffBytes;
   }
 
   recordRebuiltSnapshot(): void {
@@ -87,14 +93,14 @@ export class BandwidthTracker {
   }
 
   recordDroppedBacklogFrames(frames: number): void {
-    this.droppedBacklogFrames += Math.max(0, Math.floor(frames));
+    this.droppedBacklogFrames += Math.floor(normalizeBytes(frames));
   }
 
   /**
    * Update the measured RTT.
    */
   setRtt(ms: number): void {
-    this._rttMs = ms;
+    this._rttMs = normalizeRttMs(ms);
   }
 
   /**
