@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.54",
+  "version": "0.2.55",
   "description": "Remote workspace cockpit for terminal-first work, powered by Zellij",
   "license": "MIT",
   "repository": {
@@ -31,7 +31,8 @@
     "LICENSE"
   ],
   "bin": {
-    "remux": "dist/backend/cli-zellij.js"
+    "remux": "dist/backend/cli-zellij.js",
+    "remux-tmux": "dist/backend/cli-tmux-compat.js"
   },
   "scripts": {
     "dev": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
