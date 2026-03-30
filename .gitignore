@@ -27,3 +27,4 @@ AGENTS.md
 src/backend/zellij/plugin/target/
 native/zellij-bridge/target/
 .playwright-cli/
+*.yaml
