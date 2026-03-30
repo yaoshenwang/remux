@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { startRuntimeV2E2EServer, type StartedRuntimeV2E2EServer } from "./harness/runtime-v2-server.js";
+import { startZellijE2EServer, type StartedZellijE2EServer } from "./harness/zellij-e2e-server.js";
 
-let server: StartedRuntimeV2E2EServer | undefined;
+let server: StartedZellijE2EServer | undefined;
 
 test.beforeEach(async () => {
-  server = await startRuntimeV2E2EServer();
+  server = await startZellijE2EServer();
 });
 
 test.afterEach(async () => {

@@ -2,7 +2,7 @@
 
 ![Remux hero](./docs/assets/hero.svg)
 
-**Monitor, inspect, and control live terminal workspaces from a phone, tablet, or second laptop.**
+**Cross-device AI-native workspace cockpit for Zellij sessions.**
 
 [![GitHub stars](https://img.shields.io/github/stars/yaoshenwang/remux?style=social)](https://github.com/yaoshenwang/remux/stargazers)
 ![GitHub contributors](https://img.shields.io/github/contributors/yaoshenwang/remux)
@@ -34,11 +34,22 @@ Remux does not try to replace Zellij. Zellij owns session, tab, pane, and attach
 - `/ws/terminal` carries terminal I/O and resize messages
 - `/ws/control` carries workspace state, structured commands, inspect capture, and stats
 - Each browser client gets its own attach PTY, while Zellij remains the shared source of truth
-- Old `runtime-v2` and `remuxd` planning material is preserved under [docs/archive/README.md](./docs/archive/README.md)
+- Historical planning material is preserved under [docs/archive/README.md](./docs/archive/README.md)
 
 ## Quick Start
 
-### Run from npm
+### 1. Install prerequisites
+
+- Node.js 20+
+- Zellij installed and available in `PATH`
+
+Verify Zellij first:
+
+```bash
+zellij --version
+```
+
+### 2. Run from npm
 
 ```bash
 npx remux
@@ -51,7 +62,13 @@ Remux prints:
 - a password when password protection is enabled
 - a QR code for quick mobile access
 
-### Run from source
+### 3. Open from another device
+
+- Browser: open the printed local or tunnel URL
+- Phone or tablet: scan the printed QR code
+- Shared access: use the printed password when password protection is enabled
+
+### 4. Run from source
 
 ```bash
 git clone https://github.com/yaoshenwang/remux.git
@@ -114,9 +131,12 @@ Options:
 
 ## Documentation
 
+- [docs/README.md](./docs/README.md): documentation entrypoint
+- [docs/CURRENT_BASELINE.md](./docs/CURRENT_BASELINE.md): current architecture truth
+- [docs/ACTIVE_DOCS_INDEX.md](./docs/ACTIVE_DOCS_INDEX.md): active, draft, and archive authority map
 - [docs/SPEC.md](./docs/SPEC.md): current Zellij-backed architecture, transport model, and API surface
 - [docs/TESTING.md](./docs/TESTING.md): current test loop and merge gate
-- [docs/archive/README.md](./docs/archive/README.md): archived runtime-v2-era and transition documents
+- [docs/archive/README.md](./docs/archive/README.md): archived legacy and transition documents
 
 ## Development
 

@@ -4,11 +4,11 @@ import { AuthService } from "../../../src/backend/auth/auth-service.js";
 import { createZellijServer, type RunningServer } from "../../../src/backend/server-zellij.js";
 import { createExtensions } from "../../../src/backend/extensions.js";
 
-export interface RuntimeV2E2EServerOptions {
+export interface ZellijE2EServerOptions {
   password?: string;
 }
 
-export interface StartedRuntimeV2E2EServer {
+export interface StartedZellijE2EServer {
   baseUrl: string;
   token: string;
   stop: () => Promise<void>;
@@ -19,9 +19,9 @@ const silentLogger = {
   error: () => undefined,
 };
 
-export const startRuntimeV2E2EServer = async (
-  options: RuntimeV2E2EServerOptions = {},
-): Promise<StartedRuntimeV2E2EServer> => {
+export const startZellijE2EServer = async (
+  options: ZellijE2EServerOptions = {},
+): Promise<StartedZellijE2EServer> => {
   const token = "e2e-test-token";
   const authService = new AuthService({ password: options.password, token });
   const extensions = createExtensions(silentLogger);

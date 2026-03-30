@@ -1,5 +1,9 @@
 # iOS Client Bootstrap Contract
 
+> **Superseded / Archived**
+> This document is preserved for historical context only. It does not define the current Remux shipping path.
+> Use [README.md](../../../../README.md), [docs/CURRENT_BASELINE.md](../../../CURRENT_BASELINE.md), and [docs/ACTIVE_DOCS_INDEX.md](../../../ACTIVE_DOCS_INDEX.md) for current implementation authority.
+
 Date: 2026-03-26
 Status: Draft — based on protocol revision from Milestone 1
 

@@ -1,5 +1,9 @@
 # Zellij Foundation — Architecture & Roadmap
 
+> **Superseded / Archived**
+> This document is preserved for historical context only. It does not define the current Remux shipping path.
+> Use [README.md](../../../../README.md), [docs/CURRENT_BASELINE.md](../../../CURRENT_BASELINE.md), and [docs/ACTIVE_DOCS_INDEX.md](../../../ACTIVE_DOCS_INDEX.md) for current implementation authority.
+
 ## Problem
 
 Remux started as a cross-device terminal management tool, but the architecture

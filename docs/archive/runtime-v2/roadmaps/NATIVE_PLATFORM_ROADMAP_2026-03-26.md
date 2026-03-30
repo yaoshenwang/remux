@@ -1,4 +1,6 @@
-> **Archived**: This document has been superseded by the [Remux Master Plan 2026](../remux-master-plan-2026-v1.1-with-checklist.md). Retained for historical reference only.
+> **Superseded / Archived**
+> This document is preserved for historical context only. It does not define the current Remux shipping path.
+> Use [README.md](../../../../README.md), [docs/CURRENT_BASELINE.md](../../../CURRENT_BASELINE.md), and [docs/ACTIVE_DOCS_INDEX.md](../../../ACTIVE_DOCS_INDEX.md) for current implementation authority.
 
 # Remux Native Platform Roadmap
 

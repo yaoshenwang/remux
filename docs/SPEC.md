@@ -11,7 +11,7 @@ The current public product path is:
 - xterm.js in the browser for live terminal rendering
 - separate control and terminal WebSocket channels
 
-Legacy `runtime-v2` and `remuxd` material is archived under [docs/archive/README.md](./archive/README.md).
+Legacy planning material is archived under [docs/archive/README.md](./archive/README.md).
 
 ## Product Shape
 
@@ -151,4 +151,4 @@ Remux is not trying to be:
 
 - a replacement for Zellij
 - a generic browser SSH client
-- a revival of the old `runtime-v2` / `remuxd` architecture
+- a revival of archived runtime plans as a second public product path

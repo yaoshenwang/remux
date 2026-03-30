@@ -1,5 +1,9 @@
 # Self-Hosted Runner
 
+> **Superseded / Archived**
+> This document is preserved for historical context only. It does not define the current Remux shipping path.
+> Use [README.md](../../../../README.md), [docs/CURRENT_BASELINE.md](../../../CURRENT_BASELINE.md), and [docs/ACTIVE_DOCS_INDEX.md](../../../ACTIVE_DOCS_INDEX.md) for current implementation authority.
+
 This repository can now deploy `main` and `dev` automatically through a repository-level self-hosted runner with the custom label `remux-deploy`.
 
 ## Why this setup

@@ -42,11 +42,12 @@
     "build:backend": "tsc -p tsconfig.backend.json",
     "build:frontend": "vite build --config vite.config.ts",
     "start": "npm run build && node dist/backend/cli-zellij.js",
+    "check:terminology": "node scripts/check-active-terminology.mjs",
     "typecheck": "tsc -p tsconfig.backend.json --noEmit && tsc -p tsconfig.frontend.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "test:e2e": "npx playwright test",
-    "test:gate": "npm run typecheck && npm test && npm run build",
+    "test:gate": "npm run check:terminology && npm run typecheck && npm test && npm run build",
     "prepack": "npm run build"
   },
   "engines": {
