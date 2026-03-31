@@ -3726,7 +3726,27 @@ body {
 }
 
 .sidebar-create-session {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   padding: 0 0.6rem 0.5rem;
+}
+
+.sidebar-session-create-submit {
+  border: 1px solid var(--accent-glow);
+  border-radius: 6px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sidebar-session-create-submit:hover {
+  background: var(--accent-glow);
+  color: var(--text-primary);
 }
 
 .sidebar-session-list {

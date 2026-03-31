@@ -276,6 +276,9 @@ export const App = () => {
               }
             }}
           />
+          <button className="sidebar-session-create-submit" type="submit">
+            Create
+          </button>
         </form>
       )}
 
