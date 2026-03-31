@@ -436,6 +436,49 @@ describe("VT snapshot", () => {
   }, 10000);
 });
 
+// ── Inspect ───────────────────────────────────────────────────────
+
+describe("inspect", () => {
+  it("returns text snapshot of current tab", async () => {
+    const ws = await connectAuthed();
+
+    // Attach and run a command
+    await sendAndCollect(ws, { type: "attach_first", session: "main", cols: 80, rows: 24 }, { timeout: 2000 });
+    ws.send("echo inspect-test-output\n");
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // Request inspect
+    const msgs = await sendAndCollect(
+      ws,
+      { type: "inspect" },
+      { timeout: 3000 },
+    );
+    const result = msgs.find((m) => m.type === "inspect_result");
+    expect(result).toBeDefined();
+    expect(typeof result.text).toBe("string");
+    expect(result.text).toContain("inspect-test-output");
+    expect(result.meta).toBeDefined();
+    expect(result.meta.session).toBe("main");
+    expect(typeof result.meta.cols).toBe("number");
+    expect(typeof result.meta.timestamp).toBe("number");
+
+    ws.close();
+  });
+
+  it("inspect text has no ANSI escape sequences", async () => {
+    const ws = await connectAuthed();
+    await sendAndCollect(ws, { type: "attach_first", session: "main", cols: 80, rows: 24 }, { timeout: 2000 });
+
+    const msgs = await sendAndCollect(ws, { type: "inspect" }, { timeout: 3000 });
+    const result = msgs.find((m) => m.type === "inspect_result");
+    expect(result).toBeDefined();
+    // No ESC sequences in the text
+    expect(result.text).not.toMatch(/\x1b\[/);
+
+    ws.close();
+  });
+});
+
 // ── Persistence ───────────────────────────────────────────────────
 
 describe("persistence", () => {
