@@ -39,16 +39,15 @@ jobs:
         working-directory: ${{ steps.target.outputs.worktree }}
         run: |
           git fetch origin ${{ steps.target.outputs.branch }}
-          git checkout ${{ steps.target.outputs.branch }}
-          git reset --hard origin/${{ steps.target.outputs.branch }}
+          git checkout --detach origin/${{ steps.target.outputs.branch }}
 
       - name: Install dependencies
         working-directory: ${{ steps.target.outputs.worktree }}
-        run: npm ci --ignore-scripts
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         working-directory: ${{ steps.target.outputs.worktree }}
-        run: npm run build
+        run: pnpm run build
 
       - name: Restart PM2 app
         run: |
