@@ -11,12 +11,6 @@ import {
 import { LocalEchoPrediction } from "../local-echo-prediction";
 import { uploadImage } from "../upload";
 
-/**
- * Regex to match CPR (Cursor Position Report) responses: \x1b[{row};{col}R.
- * The server intercepts DSR queries and responds server-side, so CPR
- * responses from the browser xterm.js should not be sent upstream.
- */
-const CPR_RESPONSE_RE = /\x1b\[\d+;\d+R/g;
 
 declare global {
   interface Window {
@@ -277,7 +271,7 @@ export const useTerminalRuntime = ({
     terminal.reset();
     const themeConfig = themes[theme];
     if (themeConfig) {
-      terminal.options.theme = themeConfig.xterm;
+      terminal.options.theme = themeConfig.terminal;
     }
   }, [onBeforeReset, theme]);
 
@@ -370,10 +364,10 @@ export const useTerminalRuntime = ({
         scrollback: 10000,
         fontFamily: "'MesloLGS NF', 'MesloLGM NF', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrainsMono Nerd Font', 'DejaVu Sans Mono Nerd Font', 'Symbols Nerd Font Mono', Menlo, Monaco, 'Courier New', monospace",
         fontSize: initialFontSize,
-        theme: themeConfig?.xterm ?? {
-          background: "#0d1117",
-          foreground: "#d1e4ff",
-          cursor: "#93c5fd"
+        theme: themeConfig?.terminal ?? themeConfig?.xterm ?? {
+          background: "#1e1e1e",
+          foreground: "#d4d4d4",
+          cursor: "#ffffff"
         },
       });
 
@@ -466,11 +460,9 @@ export const useTerminalRuntime = ({
 
       const disposable = terminal.onData((data: string) => {
         const output = toolbarRef.current?.applyModifiersAndClear(data) ?? data;
-        // Filter out CPR responses — the server handles DSR queries directly.
-        const filtered = output.replace(CPR_RESPONSE_RE, "");
-        if (filtered) {
-          localEchoRef.current?.predictInput(filtered);
-          sendRawToSocketRef.current(filtered);
+        if (output) {
+          localEchoRef.current?.predictInput(output);
+          sendRawToSocketRef.current(output);
         }
       });
 
@@ -531,7 +523,7 @@ export const useTerminalRuntime = ({
   useEffect(() => {
     const themeConfig = themes[theme];
     if (themeConfig && terminalRef.current) {
-      terminalRef.current.options.theme = themeConfig.xterm;
+      terminalRef.current.options.theme = themeConfig.terminal;
     }
   }, [theme]);
 

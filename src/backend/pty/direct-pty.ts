@@ -71,6 +71,7 @@ export const createDirectPty = (options: DirectPtyOptions = {}): DirectPty => {
     env: {
       ...process.env,
       TERM: "xterm-256color",
+      COLORTERM: "truecolor",
       LANG: process.env.LANG ?? "en_US.UTF-8",
       ...env,
     },
