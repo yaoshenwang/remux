@@ -365,6 +365,7 @@ export const createZellijServer = (
   const controllers = new Map<string, ZellijControllerApi>();
   let sessionListCache: { data: ZellijSessionInfo[]; at: number } | null = null;
   const SESSION_LIST_CACHE_MS = 2_000;
+  const WORKSPACE_SYNC_RETRY_DELAYS_MS = [0, 100, 250, 500, 1_000];
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -476,26 +477,26 @@ export const createZellijServer = (
     getController(session);
     extensions?.onSessionCreated(session, cols, rows);
     logger.log(`Client PTY started (pid=${pty.pid}, session=${session}, ${cols}x${rows})`);
-    queueMicrotask(() => {
-      void broadcastWorkspaceState(session);
-    });
+    scheduleWorkspaceSync(session);
     return pty;
   };
 
   const sendWorkspaceState = async (
     client: ControlClient,
     session = client.currentSession,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     try {
       const state = await getController(session).queryWorkspaceState();
       sendProtocolMessage(client, "runtime", "workspace_state", state);
+      return true;
     } catch (err) {
       logger.error("Failed to query workspace state:", err);
+      return false;
     }
   };
 
   /** Broadcast workspace state to all authenticated control clients on the same session. */
-  const broadcastWorkspaceState = async (session: string): Promise<void> => {
+  const broadcastWorkspaceState = async (session: string): Promise<boolean> => {
     try {
       const state = await getController(session).queryWorkspaceState();
       for (const client of controlClients) {
@@ -507,9 +508,25 @@ export const createZellijServer = (
           sendProtocolMessage(client, "runtime", "workspace_state", state);
         }
       }
+      return true;
     } catch (err) {
       logger.error("Failed to query workspace state:", err);
+      return false;
     }
+  };
+
+  const scheduleWorkspaceSync = (
+    session: string,
+    retryDelaysMs: number[] = WORKSPACE_SYNC_RETRY_DELAYS_MS,
+  ): void => {
+    const [delayMs = 0, ...remainingDelays] = retryDelaysMs;
+    setTimeout(() => {
+      void broadcastWorkspaceState(session).then((synced) => {
+        if (!synced && remainingDelays.length > 0) {
+          scheduleWorkspaceSync(session, remainingDelays);
+        }
+      });
+    }, delayMs);
   };
 
   const sendLegacyControlMessage = (
