@@ -1,10 +1,10 @@
-# Remux Next 全端 AI 原生工作空间平台总规划（2026 重制版 v2）
+# Remux Next 全端 AI 原生工作空间平台总规划（2026 重制版 v2.1）
 
-**版本**：2.0
-**基线**：当前 remux 主仓库 dev 分支 (v0.2.55) 实际代码审计
-**日期**：2026-03-30
+**版本**：2.1
+**基线**：当前 remux 主仓库 dev 分支 (v0.2.65) 实际代码审计
+**日期**：2026-03-31
 
-> 本文档基于 v1.1 的战略方向，但对照仓库实际代码进行了全面修正。所有技术假设均已验证。
+> 本文档基于 v2 的架构框架，反映 E01--E06 全部完成后的项目现状。v2.1 变更要点：E01--E06 标记完工、引入开源复用原则、整合 cmux 等竞品分析洞察、pnpm 迁移与 TypeScript 6.0 升级。
 
 ---
 
@@ -32,7 +32,7 @@ v1.1 规划的战略方向正确，但其执行层严重脱离仓库现实——
 | TUI 客户端 | Go + Bubbletea | `tui/` 目录，多主机连接管理 |
 | 原生桥接 | Rust（仅 zellij-bridge） | `native/zellij-bridge/`，辅助桥接，非独立 runtime |
 | 测试 | Vitest + Playwright | 单元测试 + 浏览器 E2E + 宽度验收 |
-| 分发 | npm 包（`npx remux`） | v0.2.55，公开发布 |
+| 分发 | npm 包（`npx remux`） | v0.2.65，公开发布，pnpm 管理 |
 
 **关键澄清**：
 
@@ -80,14 +80,17 @@ v1.1 规划的战略方向正确，但其执行层严重脱离仓库现实——
 
 ## 1.3 已有但不完整的能力
 
-| 能力 | 状态 | 缺失部分 |
-|------|------|----------|
-| Web Push 通知 | 订阅管理已实现 | RFC 8030/8291 实际推送未实现，需 `web-push` npm 包 |
-| 事件监听 | 文件监视 + JSONL 解析 | 无 WebSocket 通道广播到客户端 |
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| Web Push 通知 | ✅ 已完成 (E06) | RFC 8030/8291 推送链路完整，VAPID 密钥管理、订阅持久化、推送触发均已实现 |
+| Inspect 视图 | ✅ 已完成 (E02) | 完整元数据（precision/source/staleness）、分页、搜索、历史服务 |
+| 协议 envelope | ✅ 已完成 (E03) | domain envelope 格式上线，向后兼容旧客户端，含 iOS/Android 模型 |
+| Device Trust | ✅ 已完成 (E05) | QR 配对、设备信任存储（SQLite）、resume token (JWT)、设备管理 UI |
+| Client Connection State | ✅ 已完成 (E04) | 多客户端状态透出、观察/活跃模式、连接生命周期管理 |
 | ConPTY server | 提供者已实现 | 未接入 HTTP server（server-zellij.ts 硬编码 Zellij） |
 | DevTunnel 认证 | Entra 标志位已设 | 中间件未完整接入 Express |
 | 文件浏览器 | API 已实现 | 安全与性能审查未做 |
-| Inspect 视图 | 基础抓取已有 | 无 precision/source/staleness 元数据，无分页，无搜索 |
+| 事件监听 | 文件监视 + JSONL 解析 | 无 WebSocket 通道广播到客户端（E10 范畴） |
 
 ## 1.4 WebSocket 协议现状
 
@@ -676,6 +679,37 @@ interface SemanticAdapter {
 
 - PostgreSQL + object storage + 事件总线（Phase C）
 
+## 6.9 开源复用与竞品参考
+
+### 核心原则
+
+**优先复用成熟开源代码，不重复造轮子。** 在实现新功能前，先调研是否已有质量合格的开源方案可以直接采用或 fork 适配。仅在以下情况自行实现：(a) 无合适开源方案；(b) 集成成本高于自研；(c) 涉及核心差异化能力。
+
+### 关键参考项目
+
+| 项目 | 仓库 | 关注点 |
+|------|------|--------|
+| **cmux** | manaflow-ai/cmux (12K stars) | macOS 原生终端 + AI 集成，Ghostty 引擎，panel 架构，OSC 通知，agent-browser API |
+| **Wave Terminal** | wavetermdev/waveterm | Go + Electron 架构，block 系统，AI 集成，跨平台桌面终端 |
+| **Warp** | warpdotdev/warp | Rust 原生终端，block 交互范式，AI 命令搜索，协作特性 |
+
+### 具体采用目标
+
+1. **OSC 9/99/777 通知序列**：cmux 通过 OSC escape sequences 实现终端内事件感知。Remux 应在 xterm.js 层解析这些序列，驱动通知系统。
+2. **通知分层模式**：借鉴 cmux 的四级通知策略（pane highlight → tab badge → sidebar indicator → system notification），Remux 实现对应的 Web/Tauri 分层。
+3. **Panel 架构**：参考 cmux 的 TerminalPanel/BrowserPanel/MarkdownPanel 分离模式，Tauri 桌面版中规划可组合面板系统。
+4. **Agent-browser API**：cmux 采用 vercel-labs/agent-browser。Remux 在 E12 中评估集成同类方案。
+5. **自动更新模式**：参考 Sparkle 框架模式，Tauri 使用 tauri-plugin-updater 实现静默检查 + 用户确认。
+
+### 明确不采用的部分
+
+| 不采用 | 原因 |
+|--------|------|
+| libghostty（Zig 终端渲染引擎） | Remux 使用 xterm.js，跨平台一致性更重要 |
+| Swift / AppKit UI 框架 | Remux 桌面端选择 Tauri + React |
+| GPL 许可代码 | Remux 为 MIT 许可，不兼容 GPL 传染 |
+| macOS-only 架构假设 | Remux 必须全端 |
+
 ---
 
 # 7. 里程碑与开发排期
@@ -782,45 +816,47 @@ interface SemanticAdapter {
 
 # 8. Epic 列表
 
-## EPIC-001 术语清理与文档治理（10 项）
+> E01--E06 已于 2026-03-31 前全部完成。后续 Epic 在实现时优先调研开源方案，避免重复造轮子。
 
-统一术语、清理残留命名、建立新文档骨架。
+## ✅ EPIC-001 术语清理与文档治理（10 项）— 已完成
 
-## EPIC-002 Inspect & History Service（16 项）
+统一术语、清理残留命名、建立新文档骨架。CI 术语守卫已生效。
 
-把 Inspect 从"基础抓取"升级为带元数据的真实历史服务。
+## ✅ EPIC-002 Inspect & History Service（16 项）— 已完成
 
-## EPIC-003 协议升级（12 项）
+Inspect 升级为带完整元数据的历史服务，支持 precision/source/staleness、分页与搜索。
 
-从简单 JSON 消息升级为 domain envelope 格式。
+## ✅ EPIC-003 协议升级（12 项）— 已完成
 
-## EPIC-004 Client Connection State（8 项）
+从简单 JSON 消息升级为 domain envelope 格式，向后兼容，含 iOS Swift / Android Kotlin 模型。
 
-多客户端状态透出、lease 概念、观察/活跃模式。
+## ✅ EPIC-004 Client Connection State（8 项）— 已完成
 
-## EPIC-005 Device Trust & Pairing（16 项）
+多客户端状态透出、观察/活跃模式、连接生命周期管理。
 
-QR 配对、设备信任、resume token、relay discovery。
+## ✅ EPIC-005 Device Trust & Pairing（16 项）— 已完成
 
-## EPIC-006 Web Push 完整实现（6 项）
+QR 配对、设备信任、resume token (JWT)、设备管理 UI。
 
-补全 Web Push 推送链路（RFC 8030/8291）。
+## ✅ EPIC-006 Web Push 完整实现（6 项）— 已完成
 
-## EPIC-007 Tauri Desktop Shell（18 项）
+RFC 8030/8291 推送链路完整实现，VAPID 密钥管理、订阅同步、推送触发。
 
-桌面旗舰应用的完整实现。
+## EPIC-007 Tauri Desktop Shell（20 项）
 
-## EPIC-008 iOS Command Center（22 项）
+桌面旗舰应用。包含 Panel 架构（参考 cmux）、OSC 通知序列检测、通知分层、系统集成（tray/快捷键/深链接/自动更新）。
 
-SwiftUI 原生 iOS 客户端。
+## EPIC-008 iOS Command Center（16 项）
 
-## EPIC-009 Android Command Center（16 项）
+SwiftUI 原生 iOS 客户端。核心 command center 功能，WKWebView 桥接终端渲染。
 
-Kotlin 原生 Android 客户端。
+## EPIC-009 Android Command Center（14 项）
+
+Kotlin 原生 Android 客户端。与 iOS 对等功能范围，WebView 桥接终端渲染。
 
 ## EPIC-010 Event Streaming & Adapter Platform（14 项）
 
-把事件监听从文件监视升级为客户端可消费的实时流。
+把事件监听从文件监视升级为客户端可消费的实时流。含 Adapter 插件框架，首个 Adapter 对接 Claude Code。
 
 ## EPIC-011 Worktree & Review Center（16 项）
 
@@ -828,7 +864,7 @@ Kotlin 原生 Android 客户端。
 
 ## EPIC-012 Agents, Runs & Approvals（16 项）
 
-Agent 一等化、Run 对象、审批系统。
+Agent 一等化、Run 对象、审批系统。评估集成 agent-browser API。
 
 ## EPIC-013 Topics & Artifacts（14 项）
 
@@ -856,25 +892,25 @@ Agent board、Topic board、Runtime topology。
 
 ## EPIC-001 术语清理与文档治理（10 项）
 
-- [ ] **E01-001 扫描并清理前端代码中的 scroll 产品术语**。归属：TS Frontend。前置：无。执行：在 `src/frontend/` 中搜索 `scroll`（不含 xterm scrollback 等技术用途），把产品语义的 `scroll` 替换为 `inspect`，包括 CSS 类名、变量名、注释。验收：`grep -r 'scroll' src/frontend/` 结果中不再出现产品语义的 scroll（保留 xterm scrollback、CSS overflow-scroll 等技术用途）。红线：不得改动 xterm.js 的 scrollback 配置或 CSS overflow 属性。
+- [x] **E01-001 扫描并清理前端代码中的 scroll 产品术语**。归属：TS Frontend。前置：无。执行：在 `src/frontend/` 中搜索 `scroll`（不含 xterm scrollback 等技术用途），把产品语义的 `scroll` 替换为 `inspect`，包括 CSS 类名、变量名、注释。验收：`grep -r 'scroll' src/frontend/` 结果中不再出现产品语义的 scroll（保留 xterm scrollback、CSS overflow-scroll 等技术用途）。红线：不得改动 xterm.js 的 scrollback 配置或 CSS overflow 属性。
 
-- [ ] **E01-002 扫描并清理后端代码中的 scroll 产品术语**。归属：TS Backend。前置：无。执行：在 `src/backend/` 中搜索 `scroll`（不含 scrollback buffer 技术用途），把 `capture_inspect` 相关的旧命名统一。特别关注 `server-zellij.ts` 的 `capture_inspect` 命令、`extensions.ts` 的 `getScrollback` 方法名。验收：后端 API 和内部方法名使用 inspect 而非 scroll 作为产品术语。红线：不得改动 scrollback ring buffer 的技术实现。
+- [x] **E01-002 扫描并清理后端代码中的 scroll 产品术语**。归属：TS Backend。前置：无。执行：在 `src/backend/` 中搜索 `scroll`（不含 scrollback buffer 技术用途），把 `capture_inspect` 相关的旧命名统一。特别关注 `server-zellij.ts` 的 `capture_inspect` 命令、`extensions.ts` 的 `getScrollback` 方法名。验收：后端 API 和内部方法名使用 inspect 而非 scroll 作为产品术语。红线：不得改动 scrollback ring buffer 的技术实现。
 
-- [ ] **E01-003 统一 API 端点命名**。归属：TS Backend。前置：E01-002。执行：把 `/api/scrollback/:session` 端点改为 `/api/inspect/:session`，保留旧端点作为兼容重定向。验收：新端点可用；旧端点 301 重定向到新端点；Go TUI 客户端仍能工作。红线：不得直接删除旧端点导致已部署客户端断裂。
+- [x] **E01-003 统一 API 端点命名**。归属：TS Backend。前置：E01-002。执行：把 `/api/scrollback/:session` 端点改为 `/api/inspect/:session`，保留旧端点作为兼容重定向。验收：新端点可用；旧端点 301 重定向到新端点；Go TUI 客户端仍能工作。红线：不得直接删除旧端点导致已部署客户端断裂。
 
-- [ ] **E01-004 统一测试文件与 fixture 命名**。归属：QA。前置：E01-001, E01-002。执行：把 `tests/` 中引用 scroll 产品术语的测试名、文件名改为 inspect。验收：测试文件命名与产品术语一致；所有测试通过。红线：不得同时改动测试逻辑。
+- [x] **E01-004 统一测试文件与 fixture 命名**。归属：QA。前置：E01-001, E01-002。执行：把 `tests/` 中引用 scroll 产品术语的测试名、文件名改为 inspect。验收：测试文件命名与产品术语一致；所有测试通过。红线：不得同时改动测试逻辑。
 
-- [ ] **E01-005 补一份术语 ADR**。归属：Architecture。前置：E01-001。执行：新增 `docs/adr/ADR_TERMINOLOGY.md`，固定主词汇表（Inspect/Live/Control/Topic/Run/Artifact/Approval/Agent），明确禁用词（Scroll 作为产品主名）。验收：ADR 落库，可作为后续命名审查依据。红线：不得写成泛泛宣言。
+- [x] **E01-005 补一份术语 ADR**。归属：Architecture。前置：E01-001。执行：新增 `docs/adr/ADR_TERMINOLOGY.md`，固定主词汇表（Inspect/Live/Control/Topic/Run/Artifact/Approval/Agent），明确禁用词（Scroll 作为产品主名）。验收：ADR 落库，可作为后续命名审查依据。红线：不得写成泛泛宣言。
 
-- [ ] **E01-006 归档旧规划文档**。归属：Docs。前置：E01-005。执行：把 `docs/ZELLIJ_FOUNDATION_PLAN.md` 和 `docs/remux-master-plan-2026-v1.1-with-checklist.md` 移到 `docs/archive/`，在文件头加"已归档"说明。验收：主 docs 目录只保留当前有效文档；归档文档仍可追溯。红线：不得物理删除任何历史文档。
+- [x] **E01-006 归档旧规划文档**。归属：Docs。前置：E01-005。执行：把 `docs/ZELLIJ_FOUNDATION_PLAN.md` 和 `docs/remux-master-plan-2026-v1.1-with-checklist.md` 移到 `docs/archive/`，在文件头加"已归档"说明。验收：主 docs 目录只保留当前有效文档；归档文档仍可追溯。红线：不得物理删除任何历史文档。
 
-- [ ] **E01-007 建立新 docs 目录骨架**。归属：Docs。前置：E01-006。执行：创建 `docs/architecture/`、`docs/product/`、`docs/protocols/`、`docs/native/`、`docs/epics/`、`docs/adr/` 目录，每个目录放一个 README.md 说明用途。验收：目录结构建立；README 清晰。红线：不得把内容生成与目录创建混在同一 PR。
+- [x] **E01-007 建立新 docs 目录骨架**。归属：Docs。前置：E01-006。执行：创建 `docs/architecture/`、`docs/product/`、`docs/protocols/`、`docs/native/`、`docs/epics/`、`docs/adr/` 目录，每个目录放一个 README.md 说明用途。验收：目录结构建立；README 清晰。红线：不得把内容生成与目录创建混在同一 PR。
 
-- [ ] **E01-008 更新 README.md 产品叙事**。归属：Docs。前置：E01-005。执行：把 README 的 hero section、功能列表、技术栈描述更新为三阶段叙事（Runtime Cockpit → Agentic Workstation → Collaboration OS）。验收：README 首屏传达新定位；安装和使用流程不变。红线：不得改动 CLI 参数或启动行为。
+- [x] **E01-008 更新 README.md 产品叙事**。归属：Docs。前置：E01-005。执行：把 README 的 hero section、功能列表、技术栈描述更新为三阶段叙事（Runtime Cockpit → Agentic Workstation → Collaboration OS）。验收：README 首屏传达新定位；安装和使用流程不变。红线：不得改动 CLI 参数或启动行为。
 
-- [ ] **E01-009 更新 SPEC.md 协议文档**。归属：Docs。前置：E01-003。执行：把 `docs/SPEC.md` 中的端点列表、消息类型更新为当前实际（含 inspect 重命名）。验收：SPEC.md 与代码一致。红线：不得在 SPEC 中描述尚未实现的协议。
+- [x] **E01-009 更新 SPEC.md 协议文档**。归属：Docs。前置：E01-003。执行：把 `docs/SPEC.md` 中的端点列表、消息类型更新为当前实际（含 inspect 重命名）。验收：SPEC.md 与代码一致。红线：不得在 SPEC 中描述尚未实现的协议。
 
-- [ ] **E01-010 建立 CI 术语检查**。归属：DevEx。前置：E01-005。执行：在 `npm run typecheck` 后增加一个脚本，扫描 `src/` 和 `docs/`（排除 `archive/`）中的禁用产品术语。验收：在受检路径新增 `scroll` 作为产品主名会使检查失败；archive 和依赖被排除。红线：不得误伤 xterm scrollback、CSS overflow-scroll 等技术用途。
+- [x] **E01-010 建立 CI 术语检查**。归属：DevEx。前置：E01-005。执行：在 `npm run typecheck` 后增加一个脚本，扫描 `src/` 和 `docs/`（排除 `archive/`）中的禁用产品术语。验收：在受检路径新增 `scroll` 作为产品主名会使检查失败；archive 和依赖被排除。红线：不得误伤 xterm scrollback、CSS overflow-scroll 等技术用途。
 
 
 ## EPIC-002 Inspect & History Service（16 项）
@@ -914,137 +950,143 @@ Agent board、Topic board、Runtime topology。
 
 ## EPIC-003 协议升级（12 项）
 
-- [ ] **E03-001 定义 RemuxEnvelope TypeScript 类型**。归属：Contract。前置：无。执行：在 `src/backend/protocol/` 新建 `envelope.ts`，定义 `RemuxEnvelope<T>` 泛型接口（domain/type/version/requestId/emittedAt/source/payload）和 domain 字符串字面量联合类型。验收：类型编译通过；前后端可共享。红线：不得在此任务改动现有消息处理。
+- [x] **E03-001 定义 RemuxEnvelope TypeScript 类型**。归属：Contract。前置：无。执行：在 `src/backend/protocol/` 新建 `envelope.ts`，定义 `RemuxEnvelope<T>` 泛型接口（domain/type/version/requestId/emittedAt/source/payload）和 domain 字符串字面量联合类型。验收：类型编译通过；前后端可共享。红线：不得在此任务改动现有消息处理。
 
-- [ ] **E03-002 实现 envelope 序列化/反序列化工具函数**。归属：TS Backend。前置：E03-001。执行：实现 `createEnvelope(domain, type, payload)` 和 `parseEnvelope(raw)` 函数。parseEnvelope 支持旧格式 fallback（检测到无 domain 字段时包装为 `core/*` 域）。验收：新格式可正确往返序列化；旧格式可被 parse 为兼容 envelope。红线：不得破坏现有消息解析。
+- [x] **E03-002 实现 envelope 序列化/反序列化工具函数**。归属：TS Backend。前置：E03-001。执行：实现 `createEnvelope(domain, type, payload)` 和 `parseEnvelope(raw)` 函数。parseEnvelope 支持旧格式 fallback（检测到无 domain 字段时包装为 `core/*` 域）。验收：新格式可正确往返序列化；旧格式可被 parse 为兼容 envelope。红线：不得破坏现有消息解析。
 
-- [ ] **E03-003 在 control 通道添加 capabilities 协商**。归属：TS Backend。前置：E03-002。执行：在 auth_ok 响应中增加 `capabilities: { envelope: boolean, inspectV2: boolean, deviceTrust: boolean }` 字段。客户端在 auth 消息中也声明自身 capabilities。验收：旧客户端不发送 capabilities 时服务器 fallback 到旧协议；新客户端可协商功能。红线：不得强制要求所有客户端升级。
+- [x] **E03-003 在 control 通道添加 capabilities 协商**。归属：TS Backend。前置：E03-002。执行：在 auth_ok 响应中增加 `capabilities: { envelope: boolean, inspectV2: boolean, deviceTrust: boolean }` 字段。客户端在 auth 消息中也声明自身 capabilities。验收：旧客户端不发送 capabilities 时服务器 fallback 到旧协议；新客户端可协商功能。红线：不得强制要求所有客户端升级。
 
-- [ ] **E03-004 把新的 inspect 消息切到 envelope 格式**。归属：TS Backend。前置：E03-002, E02-008。执行：`request_inspect` 和 `inspect_snapshot` 消息使用 envelope 格式（domain: "inspect"）。保留旧 `capture_inspect` 命令的原始格式。验收：新消息走 envelope；旧消息不受影响。红线：不得改动旧消息的 wire format。
+- [x] **E03-004 把新的 inspect 消息切到 envelope 格式**。归属：TS Backend。前置：E03-002, E02-008。执行：`request_inspect` 和 `inspect_snapshot` 消息使用 envelope 格式（domain: "inspect"）。保留旧 `capture_inspect` 命令的原始格式。验收：新消息走 envelope；旧消息不受影响。红线：不得改动旧消息的 wire format。
 
-- [ ] **E03-005 把 workspace_state 消息切到 envelope 格式**。归属：TS Backend。前置：E03-003。执行：当客户端声明支持 envelope 时，`workspace_state` 广播使用 `{ domain: "runtime", type: "workspace_state", ... }` 格式。不支持 envelope 的客户端继续收旧格式。验收：新旧客户端同时连接时各收自己格式的消息。红线：不得在 broadcast 逻辑中引入 N*M 的序列化开销。
+- [x] **E03-005 把 workspace_state 消息切到 envelope 格式**。归属：TS Backend。前置：E03-003。执行：当客户端声明支持 envelope 时，`workspace_state` 广播使用 `{ domain: "runtime", type: "workspace_state", ... }` 格式。不支持 envelope 的客户端继续收旧格式。验收：新旧客户端同时连接时各收自己格式的消息。红线：不得在 broadcast 逻辑中引入 N*M 的序列化开销。
 
-- [ ] **E03-006 把 bandwidth_stats 消息切到 envelope 格式**。归属：TS Backend。前置：E03-003。执行：同 E03-005 逻辑，bandwidth_stats 使用 `{ domain: "admin", type: "bandwidth_stats", ... }` 格式。验收：同上。红线：同上。
+- [x] **E03-006 把 bandwidth_stats 消息切到 envelope 格式**。归属：TS Backend。前置：E03-003。执行：同 E03-005 逻辑，bandwidth_stats 使用 `{ domain: "admin", type: "bandwidth_stats", ... }` 格式。验收：同上。红线：同上。
 
-- [ ] **E03-007 前端适配 envelope 格式解析**。归属：TS Frontend。前置：E03-004, E03-005, E03-006。执行：在 `useZellijControl.ts` 中增加 envelope 解析层。收到消息时先尝试 parseEnvelope，如果是 envelope 格式则按 domain/type 路由，否则走旧逻辑。验收：前端可同时处理新旧格式消息。红线：不得删除旧格式处理代码。
+- [x] **E03-007 前端适配 envelope 格式解析**。归属：TS Frontend。前置：E03-004, E03-005, E03-006。执行：在 `useZellijControl.ts` 中增加 envelope 解析层。收到消息时先尝试 parseEnvelope，如果是 envelope 格式则按 domain/type 路由，否则走旧逻辑。验收：前端可同时处理新旧格式消息。红线：不得删除旧格式处理代码。
 
-- [ ] **E03-008 建立 protocol-schemas 目录**。归属：Contract。前置：E03-001。执行：在 `docs/protocols/` 新建 `schemas/` 目录，为每个 domain 写 JSON Schema 文件（先覆盖 core、runtime、inspect、admin 四个 domain）。验收：schema 文件存在且可被 ajv 校验。红线：schema 只描述已实现的消息，不描述未来计划。
+- [x] **E03-008 建立 protocol-schemas 目录**。归属：Contract。前置：E03-001。执行：在 `docs/protocols/` 新建 `schemas/` 目录，为每个 domain 写 JSON Schema 文件（先覆盖 core、runtime、inspect、admin 四个 domain）。验收：schema 文件存在且可被 ajv 校验。红线：schema 只描述已实现的消息，不描述未来计划。
 
-- [ ] **E03-009 建立 golden payload fixtures**。归属：QA/Contract。前置：E03-008。执行：在 `tests/fixtures/protocol/` 中为每个已定义的消息类型创建 golden payload JSON 文件。包含 envelope 格式和旧格式各一份。验收：每个 fixture 可被 schema 校验通过；单元测试读取 fixture 并验证解析。红线：不得创建未实现的消息 fixture。
+- [x] **E03-009 建立 golden payload fixtures**。归属：QA/Contract。前置：E03-008。执行：在 `tests/fixtures/protocol/` 中为每个已定义的消息类型创建 golden payload JSON 文件。包含 envelope 格式和旧格式各一份。验收：每个 fixture 可被 schema 校验通过；单元测试读取 fixture 并验证解析。红线：不得创建未实现的消息 fixture。
 
-- [ ] **E03-010 生成 Swift Codable 模型**。归属：iOS Contract。前置：E03-008。执行：基于 JSON Schema 手写（或用 quicktype 生成）Swift Codable 结构体，覆盖 core、runtime、inspect、admin domain。验收：Swift 模型可解码所有 golden payload。红线：不得自创字段。
+- [x] **E03-010 生成 Swift Codable 模型**。归属：iOS Contract。前置：E03-008。执行：基于 JSON Schema 手写（或用 quicktype 生成）Swift Codable 结构体，覆盖 core、runtime、inspect、admin domain。验收：Swift 模型可解码所有 golden payload。红线：不得自创字段。
 
-- [ ] **E03-011 生成 Kotlin data class 模型**。归属：Android Contract。前置：E03-008。执行：基于 JSON Schema 手写（或用 quicktype 生成）Kotlin data class，使用 kotlinx.serialization。验收：Kotlin 模型可解码所有 golden payload。红线：不得自创字段。
+- [x] **E03-011 生成 Kotlin data class 模型**。归属：Android Contract。前置：E03-008。执行：基于 JSON Schema 手写（或用 quicktype 生成）Kotlin data class，使用 kotlinx.serialization。验收：Kotlin 模型可解码所有 golden payload。红线：不得自创字段。
 
-- [ ] **E03-012 补齐协议兼容性集成测试**。归属：QA。前置：E03-007, E03-009。执行：Playwright E2E 测试验证：旧客户端连新服务器、新客户端连新服务器、capabilities 协商正确。验收：两种客户端模式都能正常工作。红线：不得跳过旧格式兼容测试。
+- [x] **E03-012 补齐协议兼容性集成测试**。归属：QA。前置：E03-007, E03-009。执行：Playwright E2E 测试验证：旧客户端连新服务器、新客户端连新服务器、capabilities 协商正确。验收：两种客户端模式都能正常工作。红线：不得跳过旧格式兼容测试。
 
 
 ## EPIC-004 Client Connection State（8 项）
 
-- [ ] **E04-001 在服务端追踪已连接客户端列表**。归属：TS Backend。前置：无。执行：在 `server-zellij.ts` 中维护一个 `connectedClients: Map<string, ClientInfo>` 结构，记录每个 control WebSocket 连接的 clientId（自动生成 UUID）、connectTime、deviceName（auth 时可选传入）、platform、lastActivityAt。验收：可通过内部 API 列出所有已连接客户端。红线：不得把 clientId 暴露为可猜测的序号。
+- [x] **E04-001 在服务端追踪已连接客户端列表**。归属：TS Backend。前置：无。执行：在 `server-zellij.ts` 中维护一个 `connectedClients: Map<string, ClientInfo>` 结构，记录每个 control WebSocket 连接的 clientId（自动生成 UUID）、connectTime、deviceName（auth 时可选传入）、platform、lastActivityAt。验收：可通过内部 API 列出所有已连接客户端。红线：不得把 clientId 暴露为可猜测的序号。
 
-- [ ] **E04-002 广播客户端连接/断开事件**。归属：TS Backend。前置：E04-001。执行：当客户端连接或断开时，向所有已认证的 control WebSocket 广播 `clients_changed` 消息，包含当前客户端列表快照。验收：新客户端连接时，其他客户端能收到更新。红线：不得泄露客户端的 auth token。
+- [x] **E04-002 广播客户端连接/断开事件**。归属：TS Backend。前置：E04-001。执行：当客户端连接或断开时，向所有已认证的 control WebSocket 广播 `clients_changed` 消息，包含当前客户端列表快照。验收：新客户端连接时，其他客户端能收到更新。红线：不得泄露客户端的 auth token。
 
-- [ ] **E04-003 在 control 通道增加 set_client_mode 命令**。归属：TS Backend。前置：E04-001。执行：客户端可发送 `{ type: "set_client_mode", mode: "active" | "observer" }` 声明自己是活跃模式还是观察模式。服务端记录并广播。验收：模式切换即时生效；默认为 active。红线：observer 模式下服务端不阻止输入（Zellij 本身处理），只是 UI 层提示。
+- [x] **E04-003 在 control 通道增加 set_client_mode 命令**。归属：TS Backend。前置：E04-001。执行：客户端可发送 `{ type: "set_client_mode", mode: "active" | "observer" }` 声明自己是活跃模式还是观察模式。服务端记录并广播。验收：模式切换即时生效；默认为 active。红线：observer 模式下服务端不阻止输入（Zellij 本身处理），只是 UI 层提示。
 
-- [ ] **E04-004 前端显示已连接客户端列表**。归属：TS Frontend。前置：E04-002。执行：在 sidebar 或 status bar 显示当前连接的客户端数量和列表。每个客户端显示 deviceName/platform/mode/connectTime。验收：多设备连接时可看到完整列表。红线：不得在移动端显示过于复杂的列表。
+- [x] **E04-004 前端显示已连接客户端列表**。归属：TS Frontend。前置：E04-002。执行：在 sidebar 或 status bar 显示当前连接的客户端数量和列表。每个客户端显示 deviceName/platform/mode/connectTime。验收：多设备连接时可看到完整列表。红线：不得在移动端显示过于复杂的列表。
 
-- [ ] **E04-005 前端显示 client mode badge**。归属：TS Frontend。前置：E04-003。执行：在终端视图顶部显示当前客户端的模式（Active/Observer）。提供一键切换按钮。验收：模式状态实时更新；切换有确认。红线：不得让 observer 模式完全禁用终端输入（留给用户自行决定）。
+- [x] **E04-005 前端显示 client mode badge**。归属：TS Frontend。前置：E04-003。执行：在终端视图顶部显示当前客户端的模式（Active/Observer）。提供一键切换按钮。验收：模式状态实时更新；切换有确认。红线：不得让 observer 模式完全禁用终端输入（留给用户自行决定）。
 
-- [ ] **E04-006 Tauri 桌面显示连接状态徽章**。归属：Tauri。前置：E04-004。执行：在 Tauri 系统 tray icon 上通过 tooltip 显示当前连接数和模式。验收：tray tooltip 反映实时连接状态。红线：不得每次状态变化都弹出通知。
+- [ ] **E04-006 Tauri 桌面显示连接状态徽章**。归属：Tauri。前置：E04-004。执行：在 Tauri 系统 tray icon 上通过 tooltip 显示当前连接数和模式。验收：tray tooltip 反映实时连接状态。红线：不得每次状态变化都弹出通知。(Tauri/原生依赖，延迟到 E07/E08)
 
-- [ ] **E04-007 移动端显示连接状态**。归属：iOS/Android。前置：E04-002。执行：在原生 UI 的状态栏区域显示当前连接状态（connected/reconnecting/disconnected）和其他设备信息。验收：状态变化实时更新。红线：不得占据过多屏幕空间。
+- [ ] **E04-007 移动端显示连接状态**。归属：iOS/Android。前置：E04-002。执行：在原生 UI 的状态栏区域显示当前连接状态（connected/reconnecting/disconnected）和其他设备信息。验收：状态变化实时更新。红线：不得占据过多屏幕空间。(Tauri/原生依赖，延迟到 E07/E08)
 
-- [ ] **E04-008 补齐多客户端集成测试**。归属：QA。前置：E04-001~E04-005。执行：Playwright 测试用两个浏览器 context 同时连接，验证客户端列表广播、模式切换。验收：多客户端场景稳定通过。红线：不得靠 sleep 同步。
+- [x] **E04-008 补齐多客户端集成测试**。归属：QA。前置：E04-001~E04-005。执行：Playwright 测试用两个浏览器 context 同时连接，验证客户端列表广播、模式切换。验收：多客户端场景稳定通过。红线：不得靠 sleep 同步。
 
 
 ## EPIC-005 Device Trust & Pairing（16 项）
 
-- [ ] **E05-001 定义 DeviceIdentity 和 PairingSession 类型**。归属：Contract。前置：无。执行：在 `src/backend/auth/` 新建 `device-types.ts`，定义 DeviceIdentity（deviceId/publicKey/displayName/platform/lastSeenAt/trustLevel）和 PairingSession（pairingSessionId/token/expiresAt/redeemed/redeemedBy）。验收：类型编译通过。红线：不得把设备身份与用户 session token 混成一个对象。
+- [x] **E05-001 定义 DeviceIdentity 和 PairingSession 类型**。归属：Contract。前置：无。执行：在 `src/backend/auth/` 新建 `device-types.ts`，定义 DeviceIdentity（deviceId/publicKey/displayName/platform/lastSeenAt/trustLevel）和 PairingSession（pairingSessionId/token/expiresAt/redeemed/redeemedBy）。验收：类型编译通过。红线：不得把设备身份与用户 session token 混成一个对象。
 
-- [ ] **E05-002 实现设备存储层**。归属：TS Backend。前置：E05-001。执行：在 `src/backend/auth/` 新建 `device-store.ts`，使用 SQLite（`better-sqlite3` 或 `sql.js`）存储设备和配对记录到 `~/.remux/devices.db`。提供 CRUD 方法。验收：设备可持久化存储；服务器重启后记录不丢失。红线：不得把数据存在内存中。
+- [x] **E05-002 实现设备存储层**。归属：TS Backend。前置：E05-001。执行：在 `src/backend/auth/` 新建 `device-store.ts`，使用 SQLite（`better-sqlite3` 或 `sql.js`）存储设备和配对记录到 `~/.remux/devices.db`。提供 CRUD 方法。验收：设备可持久化存储；服务器重启后记录不丢失。红线：不得把数据存在内存中。
 
-- [ ] **E05-003 实现 PairingSession 创建 API**。归属：TS Backend。前置：E05-002。执行：新增 `POST /api/pairing/create` 端点，生成 pairing session（含 token、过期时间），返回 QR payload JSON。验收：API 返回有效 payload；过期时间默认 5 分钟。红线：不得让未认证请求创建 pairing session。
+- [x] **E05-003 实现 PairingSession 创建 API**。归属：TS Backend。前置：E05-002。执行：新增 `POST /api/pairing/create` 端点，生成 pairing session（含 token、过期时间），返回 QR payload JSON。验收：API 返回有效 payload；过期时间默认 5 分钟。红线：不得让未认证请求创建 pairing session。
 
-- [ ] **E05-004 定义 QR pairing payload v2 格式**。归属：Contract。前置：E05-003。执行：固定 QR 内容 JSON 格式：`{ url, token, pairingSessionId, expiresAt, protocolVersion: 2, serverVersion }`。写入 `docs/protocols/PAIRING_V2.md`。验收：文档与实现一致。红线：不得继续扩展无版本号的自由 JSON。
+- [x] **E05-004 定义 QR pairing payload v2 格式**。归属：Contract。前置：E05-003。执行：固定 QR 内容 JSON 格式：`{ url, token, pairingSessionId, expiresAt, protocolVersion: 2, serverVersion }`。写入 `docs/protocols/PAIRING_V2.md`。验收：文档与实现一致。红线：不得继续扩展无版本号的自由 JSON。
 
-- [ ] **E05-005 实现 pairing 兑付 API**。归属：TS Backend。前置：E05-003。执行：新增 `POST /api/pairing/redeem` 端点，接收 pairingSessionId + 设备公钥，校验未过期且未使用，创建 trusted device 记录，返回 resume token。验收：有效 session 可兑付；过期或重复兑付返回结构化错误。红线：不得在兑付后保留无限期有效的 pairing token。
+- [x] **E05-005 实现 pairing 兑付 API**。归属：TS Backend。前置：E05-003。执行：新增 `POST /api/pairing/redeem` 端点，接收 pairingSessionId + 设备公钥，校验未过期且未使用，创建 trusted device 记录，返回 resume token。验收：有效 session 可兑付；过期或重复兑付返回结构化错误。红线：不得在兑付后保留无限期有效的 pairing token。
 
-- [ ] **E05-006 实现 resume token 签发与校验**。归属：TS Backend。前置：E05-005。执行：resume token 使用 JWT（HS256，server secret），包含 deviceId 和过期时间（默认 7 天）。在 WebSocket auth 流程中增加 resume token 校验分支。验收：已配对设备可用 resume token 快速认证；过期 token 被拒绝。红线：不得签发不含 deviceId 的通用 token。
+- [x] **E05-006 实现 resume token 签发与校验**。归属：TS Backend。前置：E05-005。执行：resume token 使用 JWT（HS256，server secret），包含 deviceId 和过期时间（默认 7 天）。在 WebSocket auth 流程中增加 resume token 校验分支。验收：已配对设备可用 resume token 快速认证；过期 token 被拒绝。红线：不得签发不含 deviceId 的通用 token。
 
-- [ ] **E05-007 实现 pairing 过期清理**。归属：TS Backend。前置：E05-002。执行：服务器启动时和每小时运行一次清理，标记过期未兑付的 pairing session。验收：过期记录被标记不可用。红线：不得删除审计所需的最小记录。
+- [x] **E05-007 实现 pairing 过期清理**。归属：TS Backend。前置：E05-002。执行：服务器启动时和每小时运行一次清理，标记过期未兑付的 pairing session。验收：过期记录被标记不可用。红线：不得删除审计所需的最小记录。
 
-- [ ] **E05-008 实现设备撤销 API**。归属：TS Backend。前置：E05-002。执行：新增 `POST /api/devices/:deviceId/revoke` 端点，标记设备为 revoked 并记录时间和原因。验收：撤销后该设备的 resume token 被拒绝。红线：不得只在前端隐藏设备。
+- [x] **E05-008 实现设备撤销 API**。归属：TS Backend。前置：E05-002。执行：新增 `POST /api/devices/:deviceId/revoke` 端点，标记设备为 revoked 并记录时间和原因。验收：撤销后该设备的 resume token 被拒绝。红线：不得只在前端隐藏设备。
 
-- [ ] **E05-009 实现设备列表 API**。归属：TS Backend。前置：E05-002。执行：新增 `GET /api/devices` 端点，返回所有已知设备列表（含 trust level、last seen）。验收：列表包含所有设备状态。红线：不得暴露设备私钥。
+- [x] **E05-009 实现设备列表 API**。归属：TS Backend。前置：E05-002。执行：新增 `GET /api/devices` 端点，返回所有已知设备列表（含 trust level、last seen）。验收：列表包含所有设备状态。红线：不得暴露设备私钥。
 
-- [ ] **E05-010 Web UI 设备管理页面**。归属：TS Frontend。前置：E05-009, E05-008。执行：在 sidebar 中增加"设备"页面，显示已信任设备列表、最后连接时间、平台图标、撤销按钮。验收：可查看和撤销设备；当前设备有特殊标记。红线：不得在无确认情况下撤销当前设备。
+- [x] **E05-010 Web UI 设备管理页面**。归属：TS Frontend。前置：E05-009, E05-008。执行：在 sidebar 中增加"设备"页面，显示已信任设备列表、最后连接时间、平台图标、撤销按钮。验收：可查看和撤销设备；当前设备有特殊标记。红线：不得在无确认情况下撤销当前设备。
 
-- [ ] **E05-011 Web UI QR 配对显示**。归属：TS Frontend。前置：E05-003。执行：在设备管理页面增加"配对新设备"按钮，点击后显示 QR 码（使用 `qrcode` 库渲染到 canvas）。验收：QR 码包含 v2 payload；5 分钟后自动过期刷新。红线：不得在 QR 中包含明文密码。
+- [x] **E05-011 Web UI QR 配对显示**。归属：TS Frontend。前置：E05-003。执行：在设备管理页面增加"配对新设备"按钮，点击后显示 QR 码（使用 `qrcode` 库渲染到 canvas）。验收：QR 码包含 v2 payload；5 分钟后自动过期刷新。红线：不得在 QR 中包含明文密码。
 
-- [ ] **E05-012 iOS 实现 QR 扫码配对**。归属：iOS。前置：E05-004, E05-005。执行：在 iOS 首次启动页面使用 AVCaptureSession 扫码，解析 v2 payload，调用 redeem API，存储 resume token 到 Keychain。验收：扫码后可成功建立信任连接。红线：不得把 resume token 存在 UserDefaults。
+- [ ] **E05-012 iOS 实现 QR 扫码配对**。归属：iOS。前置：E05-004, E05-005。执行：在 iOS 首次启动页面使用 AVCaptureSession 扫码，解析 v2 payload，调用 redeem API，存储 resume token 到 Keychain。验收：扫码后可成功建立信任连接。红线：不得把 resume token 存在 UserDefaults。(iOS/Android 原生，延迟到 E08/E09)
 
-- [ ] **E05-013 iOS 实现 trusted reconnect**。归属：iOS。前置：E05-006, E05-012。执行：App 启动时检查 Keychain 中的 resume token，如果有效则直接用 token 认证 WebSocket。验收：已配对设备无需重新扫码。红线：不得在 token 过期后静默失败。
+- [ ] **E05-013 iOS 实现 trusted reconnect**。归属：iOS。前置：E05-006, E05-012。执行：App 启动时检查 Keychain 中的 resume token，如果有效则直接用 token 认证 WebSocket。验收：已配对设备无需重新扫码。红线：不得在 token 过期后静默失败。(iOS/Android 原生，延迟到 E08/E09)
 
-- [ ] **E05-014 Android 实现 QR 扫码配对**。归属：Android。前置：E05-004, E05-005。执行：使用 ML Kit Barcode Scanning 扫码，解析 v2 payload，调用 redeem API，存储 resume token 到 EncryptedSharedPreferences。验收：同 iOS。红线：不得存储到明文 SharedPreferences。
+- [ ] **E05-014 Android 实现 QR 扫码配对**。归属：Android。前置：E05-004, E05-005。执行：使用 ML Kit Barcode Scanning 扫码，解析 v2 payload，调用 redeem API，存储 resume token 到 EncryptedSharedPreferences。验收：同 iOS。红线：不得存储到明文 SharedPreferences。(iOS/Android 原生，延迟到 E08/E09)
 
-- [ ] **E05-015 Android 实现 trusted reconnect**。归属：Android。前置：E05-006, E05-014。执行：同 iOS 逻辑。验收：已配对设备无需重新扫码。红线：同 iOS。
+- [ ] **E05-015 Android 实现 trusted reconnect**。归属：Android。前置：E05-006, E05-014。执行：同 iOS 逻辑。验收：已配对设备无需重新扫码。红线：同 iOS。(iOS/Android 原生，延迟到 E08/E09)
 
-- [ ] **E05-016 补齐 pairing 集成测试**。归属：QA。前置：E05-003~E05-006。执行：测试完整流程：创建 pairing → 兑付 → 获取 resume token → 用 resume token 连接 → 撤销 → 连接失败。验收：全链路测试通过。红线：不得跳过撤销后的拒绝验证。
+- [x] **E05-016 补齐 pairing 集成测试**。归属：QA。前置：E05-003~E05-006。执行：测试完整流程：创建 pairing → 兑付 → 获取 resume token → 用 resume token 连接 → 撤销 → 连接失败。验收：全链路测试通过。红线：不得跳过撤销后的拒绝验证。
 
 
 ## EPIC-006 Web Push 完整实现（6 项）
 
-- [ ] **E06-001 添加 web-push npm 依赖**。归属：TS Backend。前置：无。执行：`npm install web-push`，在 `notifications/push-sender.ts` 中封装发送函数。验收：可以向已注册的 subscription 发送实际推送消息。红线：不得改动 VAPID 密钥生成逻辑。
+- [x] **E06-001 添加 web-push npm 依赖**。归属：TS Backend。前置：无。执行：`npm install web-push`，在 `notifications/push-sender.ts` 中封装发送函数。验收：可以向已注册的 subscription 发送实际推送消息。红线：不得改动 VAPID 密钥生成逻辑。
 
-- [ ] **E06-002 实现 bell 通知推送**。归属：TS Backend。前置：E06-001。执行：当 `TerminalNotifier` 检测到 bell 字符时，通过 web-push 向所有订阅发送推送（标题："Terminal Bell"，正文：session 名称）。验收：浏览器收到系统通知。红线：保留 5 秒冷却期。
+- [x] **E06-002 实现 bell 通知推送**。归属：TS Backend。前置：E06-001。执行：当 `TerminalNotifier` 检测到 bell 字符时，通过 web-push 向所有订阅发送推送（标题："Terminal Bell"，正文：session 名称）。验收：浏览器收到系统通知。红线：保留 5 秒冷却期。
 
-- [ ] **E06-003 实现 session exit 通知推送**。归属：TS Backend。前置：E06-001。执行：session 退出时推送通知（标题："Session Exited"，正文：session 名 + exit code）。验收：session 退出后收到推送。红线：不得在正常退出（code 0）时也推送（可配置）。
+- [x] **E06-003 实现 session exit 通知推送**。归属：TS Backend。前置：E06-001。执行：session 退出时推送通知（标题："Session Exited"，正文：session 名 + exit code）。验收：session 退出后收到推送。红线：不得在正常退出（code 0）时也推送（可配置）。
 
-- [ ] **E06-004 实现通知点击深链接**。归属：TS Frontend。前置：E06-002。执行：推送 payload 包含 URL（指向对应 session/tab），Service Worker 处理 `notificationclick` 事件打开对应页面。验收：点击通知可跳转到对应 session。红线：不得打开新标签页如果已有标签页打开。
+- [x] **E06-004 实现通知点击深链接**。归属：TS Frontend。前置：E06-002。执行：推送 payload 包含 URL（指向对应 session/tab），Service Worker 处理 `notificationclick` 事件打开对应页面。验收：点击通知可跳转到对应 session。红线：不得打开新标签页如果已有标签页打开。
 
-- [ ] **E06-005 前端通知设置 UI**。归属：TS Frontend。前置：E06-001。执行：在设置中增加通知开关（bell/exit 分别可控）。使用 Notification API 请求权限并注册 push subscription。验收：用户可独立控制 bell 和 exit 通知。红线：不得在用户未授权时反复弹出权限请求。
+- [x] **E06-005 前端通知设置 UI**。归属：TS Frontend。前置：E06-001。执行：在设置中增加通知开关（bell/exit 分别可控）。使用 Notification API 请求权限并注册 push subscription。验收：用户可独立控制 bell 和 exit 通知。红线：不得在用户未授权时反复弹出权限请求。
 
-- [ ] **E06-006 Tauri 桌面通知集成**。归属：Tauri。前置：E06-002。执行：Tauri 应用使用 `@tauri-apps/plugin-notification` 接收并显示系统通知（不走 Web Push，直接从 WebSocket 事件触发）。验收：Tauri 桌面收到原生系统通知。红线：不得同时触发 Web Push 和 Tauri 通知导致重复。
+- [ ] **E06-006 Tauri 桌面通知集成**。归属：Tauri。前置：E06-002。执行：Tauri 应用使用 `@tauri-apps/plugin-notification` 接收并显示系统通知（不走 Web Push，直接从 WebSocket 事件触发）。验收：Tauri 桌面收到原生系统通知。红线：不得同时触发 Web Push 和 Tauri 通知导致重复。(Tauri 依赖，延迟到 E07)
 
 
-## EPIC-007 Tauri Desktop Shell（18 项）
+## EPIC-007 Tauri Desktop Shell（20 项）
 
-- [ ] **E07-001 初始化 Tauri 2 项目**。归属：Tauri。前置：无。执行：在项目根目录运行 `npm create tauri-app`（或手动配置），选择 React + Vite 前端。在 `src-tauri/` 目录建立 Rust 后端。Tauri 的 `devUrl` 指向现有 Vite dev server（`http://localhost:5173`）。验收：`npm run tauri dev` 可打开窗口显示现有 Remux Web UI。红线：不得改动现有 Web 前端代码。
+> 参考 wave-terminal 的 Tauri 集成模式和 cmux 的通知分层体系。优先复用 Tauri 官方插件生态。
 
-- [ ] **E07-002 配置 Tauri build 与现有 npm scripts 集成**。归属：Tauri。前置：E07-001。执行：在 `package.json` 中增加 `tauri:dev`、`tauri:build` 脚本。Tauri 的 `beforeDevCommand` 指向 `npm run dev:frontend`，`beforeBuildCommand` 指向 `npm run build:frontend`。验收：`npm run tauri:dev` 一键启动前端 + Tauri 窗口。红线：不得影响现有 `npm run dev` 流程。
+- [ ] **E07-001 初始化 Tauri 2 项目骨架**。归属：Tauri。前置：无。执行：在项目根目录 `src-tauri/` 下初始化 Tauri 2 项目；`tauri.conf.json` 中 `devUrl` 指向现有 Vite dev server (`http://localhost:5173`)，`frontendDist` 指向 `../dist/frontend`；参考 wave-terminal 的 Tauri 项目结构，Rust 侧保持最小化（仅 `main.rs` + `lib.rs`）。验收：`pnpm tauri dev` 启动后窗口显示现有 Remux 前端首页；`src-tauri/Cargo.toml` 中 tauri 版本 ≥ 2.0。红线：不修改现有前端代码结构；不引入 Tauri v1 API。
 
-- [ ] **E07-003 配置 Tauri 窗口基础属性**。归属：Tauri。前置：E07-001。执行：设置默认窗口大小（1280x800）、最小大小（640x480）、标题（"Remux"）、图标、透明度。启用 `decorations` 和 `resizable`。验收：窗口启动时大小合适；有正确图标和标题。红线：不得隐藏原生窗口控件。
+- [ ] **E07-002 配置 pnpm scripts 集成**。归属：Tauri。前置：E07-001。执行：在 `package.json` 添加 `tauri:dev`、`tauri:build` 脚本；`beforeDevCommand` 执行 `pnpm run dev:frontend`，`beforeBuildCommand` 执行 `pnpm run build:frontend`。验收：`pnpm tauri:dev` 一条命令完成前后端联合启动；`pnpm tauri:build` 产出安装包。红线：不影响现有 `pnpm run dev` 流程。
 
-- [ ] **E07-004 实现系统 Tray**。归属：Tauri。前置：E07-001。执行：使用 Tauri 的 `tray` API 创建系统 tray icon。右键菜单包含：Show/Hide 窗口、当前连接状态、Quit。验收：最小化到 tray 后应用继续运行；点击 tray icon 恢复窗口。红线：不得在退出时不清理 tray icon。
+- [ ] **E07-003 配置窗口基础属性**。归属：Tauri。前置：E07-001。执行：设置默认窗口大小 1280×800，最小 640×480，标题 "Remux"，原生标题栏；通过 `pnpm tauri icon` 生成全平台图标集。验收：窗口启动尺寸正确；标题和图标正确显示。红线：不使用自定义无边框窗口。
 
-- [ ] **E07-005 实现全局快捷键**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-global-shortcut` 注册 `Cmd+Shift+R`（macOS）/ `Ctrl+Shift+R`（Windows/Linux）呼出/隐藏 Remux 窗口。快捷键可在设置中自定义。验收：快捷键在任何应用中可用；冲突时有提示。红线：不得注册常见快捷键（如 Cmd+C）。
+- [ ] **E07-004 实现系统 Tray**。归属：Tauri。前置：E07-003。执行：使用 `tauri::tray::TrayIconBuilder` 创建系统托盘；右键菜单：Show/Hide Window、连接状态（灰色不可点击）、Quit；托盘图标根据连接状态切换。验收：托盘在 macOS 菜单栏和 Windows 系统托盘可见；Show/Hide 切换窗口显隐。红线：不在退出时残留托盘图标。
 
-- [ ] **E07-006 实现系统通知**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-notification` 发送系统通知。从 WebSocket 事件（bell、session exit、approval request）触发。验收：通知可点击激活窗口。红线：不得与 Web Push 重复通知。
+- [ ] **E07-005 实现全局快捷键**。归属：Tauri。前置：E07-004。执行：使用 `@tauri-apps/plugin-global-shortcut` 注册 `Cmd+Shift+R`（macOS）/ `Ctrl+Shift+R`（Windows/Linux）呼出/隐藏窗口。验收：后台按快捷键窗口前置；前台按快捷键窗口隐藏。红线：不劫持常用组合键。
 
-- [ ] **E07-007 实现窗口状态持久化**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-window-state` 记住窗口位置、大小、最大化状态。验收：重启后窗口恢复到上次位置。红线：不得在多显示器切换时窗口跑出屏幕。
+- [ ] **E07-006 实现系统通知**。归属：Tauri。前置：E07-004、E06。执行：使用 `@tauri-apps/plugin-notification`；从 WebSocket 事件（bell、session exit、approval）触发系统通知；参考 cmux 通知策略，仅在窗口非聚焦时升级为系统通知。验收：后台收到 bell 弹系统通知；窗口聚焦时不弹系统通知。红线：不与 Web Push 重复通知。
 
-- [ ] **E07-008 实现开机自启动**。归属：Tauri。前置：E07-004。执行：使用 `@tauri-apps/plugin-autostart` 实现可选的开机自启动。在设置 UI 中提供开关。验收：启用后重启系统自动启动到 tray。红线：默认不启用；不得在未经用户确认时启用。
+- [ ] **E07-007 实现窗口状态持久化**。归属：Tauri。前置：E07-003。执行：使用 `@tauri-apps/plugin-window-state` 保存/恢复窗口位置、大小、最大化状态。验收：重启后窗口恢复到上次位置和大小。红线：多显示器切换时窗口不跑出屏幕。
 
-- [ ] **E07-009 实现深链接协议处理**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-deep-link` 注册 `remux://` 协议。`remux://connect?url=xxx&token=yyy` 自动连接到指定服务器。验收：从浏览器或终端打开深链接可激活 Tauri 窗口并连接。红线：不得在深链接中传递密码。
+- [ ] **E07-008 实现开机自启动**。归属：Tauri。前置：E07-004。执行：使用 `@tauri-apps/plugin-autostart`；Settings 页增加 "Launch on login" 开关。验收：启用后重启系统自动启动到 tray。红线：默认不启用。
 
-- [ ] **E07-010 实现本地 SQLite 缓存**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-sql` 初始化 SQLite 数据库（`~/.remux/desktop.db`），存储连接历史、设备信息、inspect 缓存索引、用户偏好。验收：数据可持久化；启动时加载。红线：不得存储敏感凭据到 SQLite（用 Keychain）。
+- [ ] **E07-009 实现深链接协议处理**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-deep-link` 注册 `remux://` 协议；处理 `remux://connect?host=<host>&token=<token>` 自动连接。验收：浏览器点击深链接可激活 Tauri 窗口并连接。红线：不在深链接中传递密码。
 
-- [ ] **E07-011 实现多窗口支持**。归属：Tauri。前置：E07-003。执行：支持通过菜单或快捷键打开新窗口，每个窗口可连接不同的 Remux 服务器。窗口间状态独立。验收：可以同时打开多个窗口连接不同服务器。红线：不得让窗口共享 WebSocket 连接。
+- [ ] **E07-010 实现剪贴板集成**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-clipboard-manager`；xterm.js selection 接入系统剪贴板写入，粘贴时读取系统剪贴板写入 PTY。验收：终端选中文本可在外部粘贴；外部复制可在终端 Cmd+V 粘贴。红线：不自动读取剪贴板。
 
-- [ ] **E07-012 实现 macOS 菜单栏**。归属：Tauri。前置：E07-004。执行：配置 macOS 原生菜单栏，包含 File（New Window、Close）、Edit（Copy、Paste、Select All）、View（Toggle Sidebar、Toggle Fullscreen）、Help。验收：菜单项功能正确；快捷键标注正确。红线：不得覆盖系统标准快捷键行为。
+- [ ] **E07-011 实现本地 SQLite 缓存**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-sql`；在 `$APPDATA/remux/cache.db` 创建 SQLite 存储连接历史、session 快照缓存、偏好设置。验收：连接记录持久化；下次启动可从缓存展示。红线：不在 SQLite 中存储 token。
 
-- [ ] **E07-013 前端检测 Tauri 环境**。归属：TS Frontend。前置：E07-001。执行：在前端增加 `isTauri()` 检测函数（检查 `window.__TAURI__`），根据环境调整行为：隐藏"安装 PWA"提示、使用 Tauri 通知而非 Web Push、调整窗口控件。验收：Tauri 和浏览器环境行为正确分叉。红线：不得在浏览器中尝试调用 Tauri API。
+- [ ] **E07-012 实现多窗口支持**。归属：Tauri。前置：E07-003、E07-014。执行：使用 `WebviewWindowBuilder` 支持动态创建子窗口；不同视图可在独立窗口中打开实现 side-by-side；参考 cmux panel 架构思路。验收：可同时打开 ≥ 2 个窗口显示不同 session。红线：不为每个窗口建立独立 WebSocket 连接。
 
-- [ ] **E07-014 前端 Tauri 专属状态栏**。归属：TS Frontend。前置：E07-013。执行：在 Tauri 环境下，底部状态栏显示额外信息：连接质量、RTT、当前连接的设备数、tray 状态。验收：状态栏在 Tauri 中显示；在浏览器中隐藏。红线：不得占据过多垂直空间。
+- [ ] **E07-013 实现 macOS 原生菜单栏**。归属：Tauri。前置：E07-001。执行：使用 `tauri::menu::MenuBuilder` 构建原生菜单；包含 App/Edit/View/Window/Help 标准菜单项；修复 Cmd+C/V 在 Tauri 中的已知问题。验收：macOS 菜单栏显示完整；Cmd+C/V/A 正常工作。红线：不覆盖终端内快捷键绑定。
 
-- [ ] **E07-015 实现文件拖放支持**。归属：Tauri。前置：E07-001。执行：使用 Tauri 的 drag-drop 事件，当文件拖入窗口时触发上传（复用现有 `/api/upload` 端点）。验收：拖入图片文件后路径出现在终端。红线：不得上传非图片文件到终端。
+- [ ] **E07-014 前端 Panel 抽象**。归属：TS Frontend。前置：无。执行：定义 `Panel` 接口（id/type/title/icon/render/canDetach）；重构 Live、Inspect、Control 视图实现 Panel 接口；创建 `PanelRegistry` 管理已注册 Panel 类型；此 ticket 仅做抽象，不改 UI 布局。验收：现有视图通过 PanelRegistry 注册；视觉回归测试通过。红线：不引入新 UI 框架。
 
-- [ ] **E07-016 实现剪贴板增强**。归属：Tauri。前置：E07-001。执行：使用 `@tauri-apps/plugin-clipboard-manager` 增强剪贴板操作，支持从系统剪贴板读取图片并上传。验收：Cmd/Ctrl+V 粘贴图片可以上传。红线：不得在未经确认时读取剪贴板内容。
+- [ ] **E07-015 实现 OSC 通知序列检测**。归属：TS Backend/Frontend。前置：E02。执行：在 `terminal-notifier.ts` 中解析 OSC 9（iTerm2 兼容）、OSC 99（Kitty 通知协议）、OSC 777（rxvt-unicode 通知）序列；参考 cmux 实现思路，hook xterm.js parser 注册自定义 OSC handler；解析结果发射为 `TerminalNotificationEvent`。验收：终端执行 `printf '\e]9;Build complete\e\\'` 触发事件；三种 OSC 变体均正确解析；单元测试覆盖 edge case。红线：不修改 xterm.js 源码。
 
-- [ ] **E07-017 Tauri 打包与分发配置**。归属：Release。前置：E07-001~E07-016。执行：配置 `tauri.conf.json` 的 macOS dmg、Windows msi/nsis、Linux deb/AppImage 打包。设置签名（macOS codesign、Windows authenticode）。验收：三平台可正确打包并安装。红线：不得在未签名情况下分发。
+- [ ] **E07-016 实现通知分层**。归属：TS Frontend + Tauri。前置：E07-006、E07-015。执行：借鉴 cmux 四级通知分层，实现三级分层：Level 1 — tab badge（红点 + 计数）→ Level 2 — sidebar indicator（session 项高亮）→ Level 3 — system notification（窗口非聚焦时）；根据当前 UI 焦点状态决定升级路径。验收：当前 tab bell 不弹通知；其他 tab bell 显示 badge；最小化窗口 bell 弹系统通知。红线：30 秒内最多 1 条系统通知（rate limit）。
 
-- [ ] **E07-018 补齐 Tauri 集成测试**。归属：QA。前置：E07-001~E07-016。执行：使用 Tauri 的 WebDriver 测试框架验证基本功能：窗口启动、连接服务器、终端输入输出、tray 操作。验收：CI 中可运行。红线：不得依赖 GUI 可见性（headless 模式）。
+- [ ] **E07-017 编写 Agent 通知钩子文档**。归属：Docs。前置：E07-015。执行：在 `docs/agent-notifications.md` 撰写指南，提供 Claude Code、Codex、Aider 等代理的 OSC 通知 hook 配置示例；参考 cmux agent hook 文档风格。验收：文档含 ≥ 3 种代理配置示例；可复制粘贴直接使用。红线：不对第三方工具做兼容性承诺。
+
+- [ ] **E07-018 Tauri CI 构建矩阵**。归属：CI。前置：E07-002。执行：创建 `.github/workflows/tauri-build.yml`；matrix：macOS（arm64 + x86_64）、Windows（x86_64）、Ubuntu（x86_64）；产物上传为 GitHub Release assets 或 workflow artifacts。验收：三平台 CI 构建通过；构建时间 < 15 min。红线：不在 CI 中存储签名密钥明文。
+
+- [ ] **E07-019 Tauri 自动更新配置**。归属：Tauri。前置：E07-018。执行：启用 `tauri-plugin-updater`，endpoints 指向 GitHub Releases；参考 cmux 的 Sparkle 更新流程但使用 Tauri 原生实现；有新版本时显示非阻塞 toast。验收：发布新 Release 后客户端检测到更新并提示；更新签名校验通过。红线：不强制更新。
+
+- [ ] **E07-020 Tauri 集成测试**。归属：QA。前置：E07-001~E07-019 中至少 5 项完成。执行：使用 `@tauri-apps/api/mocks` 在 Vitest 中编写 Tauri 集成测试；覆盖 tray、快捷键、深链接、通知、Panel 注册等场景。验收：测试覆盖 ≥ 15 个场景；`pnpm test` 全部通过。红线：mock 层不掩盖真实 API 签名变化。
 
 
 ## EPIC-008 iOS Command Center（22 项）
@@ -1378,15 +1420,23 @@ Agent board、Topic board、Runtime topology。
 # 10. Epic 依赖关系与执行顺序
 
 ```
-Phase A (Month 1-3):
-  E01 术语清理 ──────────────────┐
-  E02 Inspect ───────────────────┤
-  E03 协议升级 ──────────────────┤──→ E05 Device Trust ──→ E08 iOS
-  E06 Web Push ──────────────────┤                        ──→ E09 Android
-  E07 Tauri Desktop ─────────────┘
-  E04 Client State ──────────────────────────────────────────────→
+Phase A (Month 1-3) — E01~E06 已完成 ✅:
+  ✅ E01 术语清理
+  ✅ E02 Inspect
+  ✅ E03 协议升级
+  ✅ E04 Client State
+  ✅ E05 Device Trust
+  ✅ E06 Web Push
 
-Phase B (Month 3-9):
+当前执行线 (Month 4+):
+  E07 Tauri Desktop ──────────────────────┐
+                                          ├──→ E08 iOS
+  E10 Event Streaming ──→ E12 Agents/Runs │    E09 Android
+                                          │
+  E11 Worktree/Review ───────────────────→┘
+
+Phase B (Month 4-9):
+  E07 Tauri Desktop ──→ E08 iOS ──→ E09 Android
   E10 Event Streaming ──→ E12 Agents/Runs ──→ E13 Topics
   E11 Worktree/Review ──────────────────────────────────→
 
@@ -1395,18 +1445,23 @@ Phase C (Month 9-18):
   E16 Packaging/Quality (持续并行)
 ```
 
-**关键路径**：E01 → E02/E03 → E05 → E08（iOS Alpha）
+**关键路径**：E07（Tauri Desktop）→ E08（iOS Alpha）
+
+**已解锁的前置条件**（E01--E06 完成带来的收益）：
+- E07 可直接使用 domain envelope 协议（E03）和 Device Trust（E05）
+- E08/E09 可直接使用 Web Push（E06）和 Client Connection State（E04）
+- E10 可直接使用协议 envelope 格式（E03）传输事件流
 
 **可并行的独立路线**：
-- E07（Tauri）从 Day 1 就可以开始，与 E01 并行
-- E06（Web Push）独立于其他 Epic
+- E07（Tauri）立即可以开始，所有前置已满足
+- E10（Event Streaming）独立于 E07，可并行
 - E16（Packaging/Quality）全程并行
 
 ---
 
-# 11. 你现在就应该拍板的 15 个决策
+# 11. 你现在就应该拍板的 16 个决策
 
-1. Remux 的唯一主叙事从今天起就是"全端 AI 原生工作空间操作系统"
+1. Remux 的唯一主叙事从今天起就是"全端 AI 原生工作空间操作系统"——在 cmux（macOS-only 原生终端）和 Warp（Rust 原生终端）之间，Remux 的差异化定位是 **全端 + Web-first + 远程工作空间控制**
 2. **桌面旗舰使用 Tauri 2**，共享现有 React 前端资产
 3. **iOS 使用 SwiftUI 原生开发**，终端渲染用 WKWebView 桥接
 4. **Android 使用 Kotlin + Jetpack Compose 原生开发**，终端渲染用 WebView 桥接
@@ -1421,6 +1476,7 @@ Phase C (Month 9-18):
 13. 不做 Go/Rust 服务端重写（当前 TS 够用）
 14. pixel/world 延后到 board/graph 成熟之后
 15. 旧规划进入 archive，不再并列竞争主叙事
+16. **优先复用成熟开源代码，不重复造轮子**——实现新功能前先调研开源方案，仅在无合适方案或涉及核心差异化时自研
 
 ---
 
@@ -1474,18 +1530,20 @@ Phase C (Month 9-18):
 
 # 附录 B：v1.1 → v2 变更摘要
 
-| 维度 | v1.1 | v2 |
-|------|------|-----|
-| 后端核心 | Rust (`remuxd` + crates) | TypeScript (现有 server-zellij.ts) |
-| macOS 桌面 | SwiftUI + AppKit | **Tauri 2** |
-| Windows 桌面 | WinUI 3 | **Tauri 2** |
-| Linux 桌面 | GTK4 + Rust | **Tauri 2** |
-| iOS | SwiftUI | SwiftUI（不变） |
-| Android | Kotlin + Compose | Kotlin + Compose（不变） |
-| 协议升级 | 假设已有 domain envelope | 从简单 JSON 渐进迁移 |
-| Writer Lease | 单 pane 单 writer（Rust ADR） | 简化版多客户端状态透出 |
-| 团队规模 | 7~12 人 | 个人开发者（调整执行节奏） |
-| `Scroll` → `Inspect` | 全面改名（假设大量残留） | 部分已完成，清理残留 |
-| WorkspaceSnapshot | 需迁移到 RuntimeSnapshot | 类型不存在，无需迁移 |
-| Epic 数量 | 20 | 17（合并精简） |
-| Checklist 项数 | 319 | 278（基于现实裁剪） |
+| 维度 | v1.1 | v2 | v2.1 |
+|------|------|-----|------|
+| 后端核心 | Rust (`remuxd` + crates) | TypeScript (server-zellij.ts) | 同 v2 |
+| macOS 桌面 | SwiftUI + AppKit | Tauri 2 | 同 v2 |
+| Windows 桌面 | WinUI 3 | Tauri 2 | 同 v2 |
+| Linux 桌面 | GTK4 + Rust | Tauri 2 | 同 v2 |
+| 协议升级 | 假设已有 domain envelope | 从简单 JSON 渐进迁移 | ✅ domain envelope 已完成 (E03) |
+| Writer Lease | 单 pane 单 writer | 简化版多客户端状态透出 | ✅ Client Connection State 已完成 (E04) |
+| 团队规模 | 7~12 人 | 个人开发者 | 同 v2 |
+| `Scroll` → `Inspect` | 全面改名 | 部分已完成 | ✅ 术语治理完成 (E01) |
+| Epic 数量 | 20 | 17 | 17（E01--E06 完成，E07--E17 待执行） |
+| Checklist 项数 | 319 | 278 | 已完成 68 项，剩余 210 项 |
+| 包管理器 | npm | npm | **pnpm**（已迁移） |
+| TypeScript | 5.x | 5.x | **6.0**（已升级） |
+| 当前版本 | v0.1.x | v0.2.55 | **v0.2.65** |
+| 开源复用 | 未提及 | 未提及 | **新增原则：优先复用成熟开源代码** |
+| 竞品分析 | 未做 | 未做 | **新增：cmux / Wave / Warp 竞品对标** |
