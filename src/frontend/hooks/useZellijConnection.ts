@@ -29,11 +29,17 @@ export interface UseZellijConnectionResult {
   sendResize: (cols: number, rows: number) => void;
 
   socketRef: React.MutableRefObject<WebSocket | null>;
+
+  serverVersion: string | null;
+  serverGitBranch: string | null;
+  serverGitCommitSha: string | null;
 }
 
 interface ServerConfig {
   passwordRequired: boolean;
   version?: string;
+  gitBranch?: string;
+  gitCommitSha?: string;
 }
 
 export const useZellijConnection = (
@@ -207,5 +213,8 @@ export const useZellijConnection = (
     sendRaw,
     sendResize,
     socketRef,
+    serverVersion: serverConfig?.version ?? null,
+    serverGitBranch: serverConfig?.gitBranch ?? null,
+    serverGitCommitSha: serverConfig?.gitCommitSha ?? null,
   };
 };

@@ -235,6 +235,13 @@ export const App = () => {
         showFollowFocus={false}
         theme={theme}
       />
+      <div className="drawer-footer-info" data-testid="sidebar-version">
+        <div className="drawer-version">
+          {connection.serverVersion ? `v${connection.serverVersion}` : ""}
+          {connection.serverGitBranch ? ` · ${connection.serverGitBranch}` : ""}
+          {connection.serverGitCommitSha ? ` · ${connection.serverGitCommitSha.slice(0, 7)}` : ""}
+        </div>
+      </div>
     </aside>
   );
 

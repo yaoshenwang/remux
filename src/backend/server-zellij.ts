@@ -10,6 +10,7 @@ import { createZellijPty, type ZellijPty } from "./pty/zellij-pty.js";
 import { InspectBadRequestError, InspectService } from "./inspect/index.js";
 import { ZellijController, type ZellijControllerApi } from "./zellij-controller.js";
 import type { Extensions } from "./extensions.js";
+import { readRuntimeMetadata } from "./util/runtime-metadata.js";
 import {
   createEnvelope,
   EMPTY_PROTOCOL_CAPABILITIES,
@@ -157,10 +158,14 @@ export const createZellijServer = (
     },
   );
 
+  const runtimeMeta = readRuntimeMetadata();
+
   app.get("/api/config", (_req, res) => {
     res.json({
       passwordRequired: authService.requiresPassword(),
       version: resolveServerVersion(),
+      gitBranch: runtimeMeta.gitBranch,
+      gitCommitSha: runtimeMeta.gitCommitSha,
     });
   });
 

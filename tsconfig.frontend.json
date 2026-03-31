@@ -3,8 +3,7 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["vite/client"],
-    "baseUrl": "."
+    "types": ["vite/client"]
   },
   "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx"]
 }
