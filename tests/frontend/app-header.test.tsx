@@ -24,7 +24,7 @@ describe("AppHeader", () => {
     }
   });
 
-  test("renders the workspace meta row and action row", () => {
+  test("renders tab bar and view mode toggle", () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -33,18 +33,14 @@ describe("AppHeader", () => {
       root?.render(
         <AppHeader
           activeTabIndex={0}
-          clientMode="active"
-          connectionStateLabel="Connected"
           mobileLayout={false}
           onCloseTab={vi.fn()}
           onNewTab={vi.fn()}
           onRenameTab={vi.fn()}
           onSelectTab={vi.fn()}
           onSetViewMode={vi.fn()}
-          onToggleClientMode={vi.fn()}
           onToggleDrawer={vi.fn()}
           onToggleSidebar={vi.fn()}
-          sessionName="remux-dev"
           sidebarCollapsed={false}
           tabs={[{
             active: true,
@@ -59,9 +55,9 @@ describe("AppHeader", () => {
       );
     });
 
-    expect(container.querySelector(".app-header-meta")?.textContent).toContain("remux-dev");
-    expect(container.querySelector(".app-header-main")).not.toBeNull();
-    expect(container.querySelector(".session-eyebrow")?.textContent).toBe("Workspace");
-    expect(container.querySelector(".connection-state-badge")?.textContent).toContain("Connected");
+    expect(container.querySelector("[data-testid='tab-bar']")).not.toBeNull();
+    expect(container.querySelector(".tab-item")?.textContent).toContain("Tab #1");
+    expect(container.querySelector(".view-mode-toggle")).not.toBeNull();
+    expect(container.querySelector(".sidebar-toggle-btn")).not.toBeNull();
   });
 });
