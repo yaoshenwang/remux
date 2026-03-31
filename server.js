@@ -387,11 +387,23 @@ function recalcTabSize(tab) {
     if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
+var _sendEnvelopeFn = null;
+var _getClientListFn = null;
+function setBroadcastHooks(sendFn, clientListFn) {
+  _sendEnvelopeFn = sendFn;
+  _getClientListFn = clientListFn;
+}
 function broadcastState() {
   const state = getState();
-  const msg = JSON.stringify({ type: "state", sessions: state });
+  const clients = _getClientListFn ? _getClientListFn() : [];
   for (const ws of controlClients) {
-    if (ws.readyState === ws.OPEN) ws.send(msg);
+    if (_sendEnvelopeFn) {
+      _sendEnvelopeFn(ws, "state", { sessions: state, clients });
+    } else {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ v: 1, type: "state", payload: { sessions: state, clients } }));
+      }
+    }
   }
 }
 var PERSIST_DIR = path.join(homedir(), ".remux");
@@ -435,8 +447,69 @@ function restoreSessions() {
 }
 
 // src/ws-handler.ts
+import crypto2 from "crypto";
 import { WebSocketServer } from "ws";
+function sendEnvelope(ws, type, payload) {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ v: 1, type, payload }));
+  }
+}
+function unwrapMessage(parsed) {
+  if (parsed && parsed.v === 1 && typeof parsed.type === "string") {
+    return { type: parsed.type, ...parsed.payload || {} };
+  }
+  return parsed;
+}
+var clientStates = /* @__PURE__ */ new Map();
+function generateClientId() {
+  return crypto2.randomBytes(4).toString("hex");
+}
+function getActiveClientForTab(tabId) {
+  for (const [ws, state] of clientStates) {
+    if (state.currentTabId === tabId && state.role === "active") return ws;
+  }
+  return null;
+}
+function assignRole(ws, tabId) {
+  const state = clientStates.get(ws);
+  if (!state) return;
+  const existingActive = getActiveClientForTab(tabId);
+  if (!existingActive || existingActive === ws) {
+    state.role = "active";
+  } else {
+    state.role = "observer";
+  }
+  state.currentTabId = tabId;
+}
+function reassignRolesAfterDetach(tabId, wasActive) {
+  if (!wasActive) return;
+  for (const [ws, state] of clientStates) {
+    if (state.currentTabId === tabId && state.role === "observer" && ws.readyState === ws.OPEN) {
+      state.role = "active";
+      sendEnvelope(ws, "role_changed", {
+        clientId: state.clientId,
+        role: "active"
+      });
+      break;
+    }
+  }
+}
+function getClientList() {
+  const list = [];
+  for (const [ws, state] of clientStates) {
+    if (ws.readyState === ws.OPEN) {
+      list.push({
+        clientId: state.clientId,
+        role: state.role,
+        session: state.currentSession,
+        tabId: state.currentTabId
+      });
+    }
+  }
+  return list;
+}
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
+  setBroadcastHooks(sendEnvelope, getClientList);
   const wss = new WebSocketServer({ noServer: true });
   httpServer2.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -464,32 +537,44 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
     ws._remuxRows = 24;
     const requiresAuth = !!(TOKEN2 || PASSWORD2);
     ws._remuxAuthed = !requiresAuth;
+    const clientId = generateClientId();
+    const clientState = {
+      clientId,
+      role: "observer",
+      connectedAt: Date.now(),
+      currentSession: null,
+      currentTabId: null
+    };
+    clientStates.set(ws, clientState);
     if (!requiresAuth) controlClients.add(ws);
     ws.on("message", (raw) => {
       const msg = raw.toString("utf8");
       if (!ws._remuxAuthed) {
         try {
-          const parsed = JSON.parse(msg);
+          const rawParsed = JSON.parse(msg);
+          const parsed = unwrapMessage(rawParsed);
           if (parsed.type === "auth") {
             if (validateToken(parsed.token, TOKEN2)) {
               ws._remuxAuthed = true;
               controlClients.add(ws);
-              ws.send(JSON.stringify({ type: "auth_ok" }));
-              ws.send(JSON.stringify({ type: "state", sessions: getState() }));
+              sendEnvelope(ws, "auth_ok", {});
+              sendEnvelope(ws, "state", {
+                sessions: getState(),
+                clients: getClientList()
+              });
               return;
             }
           }
         } catch {
         }
-        ws.send(
-          JSON.stringify({ type: "auth_error", reason: "invalid token" })
-        );
+        sendEnvelope(ws, "auth_error", { reason: "invalid token" });
         ws.close(4001, "unauthorized");
         return;
       }
       if (msg.startsWith("{")) {
         try {
-          const p = JSON.parse(msg);
+          const rawParsed = JSON.parse(msg);
+          const p = unwrapMessage(rawParsed);
           if (p.type === "attach_first") {
             const name = p.session || "main";
             const session = createSession(name);
@@ -506,10 +591,15 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               p.cols || ws._remuxCols,
               p.rows || ws._remuxRows
             );
+            clientState.currentSession = name;
+            assignRole(ws, tab.id);
             broadcastState();
-            ws.send(
-              JSON.stringify({ type: "attached", tabId: tab.id, session: name })
-            );
+            sendEnvelope(ws, "attached", {
+              tabId: tab.id,
+              session: name,
+              clientId: clientState.clientId,
+              role: clientState.role
+            });
             return;
           }
           if (p.type === "attach_tab") {
@@ -521,14 +611,15 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                 p.cols || ws._remuxCols,
                 p.rows || ws._remuxRows
               );
+              clientState.currentSession = found2.session.name;
+              assignRole(ws, found2.tab.id);
               broadcastState();
-              ws.send(
-                JSON.stringify({
-                  type: "attached",
-                  tabId: found2.tab.id,
-                  session: found2.session.name
-                })
-              );
+              sendEnvelope(ws, "attached", {
+                tabId: found2.tab.id,
+                session: found2.session.name,
+                clientId: clientState.clientId,
+                role: clientState.role
+              });
             }
             return;
           }
@@ -545,14 +636,15 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               p.cols || ws._remuxCols,
               p.rows || ws._remuxRows
             );
+            clientState.currentSession = session.name;
+            assignRole(ws, tab.id);
             broadcastState();
-            ws.send(
-              JSON.stringify({
-                type: "attached",
-                tabId: tab.id,
-                session: session.name
-              })
-            );
+            sendEnvelope(ws, "attached", {
+              tabId: tab.id,
+              session: session.name,
+              clientId: clientState.clientId,
+              role: clientState.role
+            });
             return;
           }
           if (p.type === "close_tab") {
@@ -583,10 +675,15 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               p.cols || ws._remuxCols,
               p.rows || ws._remuxRows
             );
+            clientState.currentSession = name;
+            assignRole(ws, tab.id);
             broadcastState();
-            ws.send(
-              JSON.stringify({ type: "attached", tabId: tab.id, session: name })
-            );
+            sendEnvelope(ws, "attached", {
+              tabId: tab.id,
+              session: name,
+              clientId: clientState.clientId,
+              role: clientState.role
+            });
             return;
           }
           if (p.type === "delete_session") {
@@ -600,31 +697,25 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             const found2 = findTab(ws._remuxTabId);
             if (found2 && found2.tab.vt && !found2.tab.ended) {
               const { text, cols, rows } = found2.tab.vt.textSnapshot();
-              ws.send(
-                JSON.stringify({
-                  type: "inspect_result",
-                  text,
-                  meta: {
-                    session: found2.session.name,
-                    tabId: found2.tab.id,
-                    tabTitle: found2.tab.title,
-                    cols,
-                    rows,
-                    timestamp: Date.now()
-                  }
-                })
-              );
+              sendEnvelope(ws, "inspect_result", {
+                text,
+                meta: {
+                  session: found2.session.name,
+                  tabId: found2.tab.id,
+                  tabTitle: found2.tab.title,
+                  cols,
+                  rows,
+                  timestamp: Date.now()
+                }
+              });
             } else {
               const found22 = findTab(ws._remuxTabId);
-              const raw2 = found22 ? found22.tab.scrollback.read().toString("utf8") : "";
-              const text = raw2.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
-              ws.send(
-                JSON.stringify({
-                  type: "inspect_result",
-                  text,
-                  meta: { timestamp: Date.now() }
-                })
-              );
+              const rawText = found22 ? found22.tab.scrollback.read().toString("utf8") : "";
+              const text = rawText.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+              sendEnvelope(ws, "inspect_result", {
+                text,
+                meta: { timestamp: Date.now() }
+              });
             }
             return;
           }
@@ -643,18 +734,71 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             if (found2) recalcTabSize(found2.tab);
             return;
           }
+          if (p.type === "request_control") {
+            const tabId = ws._remuxTabId;
+            if (tabId == null) return;
+            const currentActive = getActiveClientForTab(tabId);
+            if (currentActive && currentActive !== ws) {
+              const activeState = clientStates.get(currentActive);
+              if (activeState) {
+                activeState.role = "observer";
+                sendEnvelope(currentActive, "role_changed", {
+                  clientId: activeState.clientId,
+                  role: "observer"
+                });
+              }
+            }
+            clientState.role = "active";
+            sendEnvelope(ws, "role_changed", {
+              clientId: clientState.clientId,
+              role: "active"
+            });
+            broadcastState();
+            return;
+          }
+          if (p.type === "release_control") {
+            const tabId = ws._remuxTabId;
+            if (tabId == null) return;
+            if (clientState.role === "active") {
+              clientState.role = "observer";
+              sendEnvelope(ws, "role_changed", {
+                clientId: clientState.clientId,
+                role: "observer"
+              });
+              for (const [otherWs, otherState] of clientStates) {
+                if (otherWs !== ws && otherState.currentTabId === tabId && otherState.role === "observer" && otherWs.readyState === otherWs.OPEN) {
+                  otherState.role = "active";
+                  sendEnvelope(otherWs, "role_changed", {
+                    clientId: otherState.clientId,
+                    role: "active"
+                  });
+                  break;
+                }
+              }
+              broadcastState();
+            }
+            return;
+          }
           return;
         } catch {
         }
       }
+      if (clientState.role !== "active") return;
       const found = findTab(ws._remuxTabId);
       if (found && !found.tab.ended) {
         found.tab.pty.write(msg);
       }
     });
     ws.on("close", () => {
+      const tabId = ws._remuxTabId;
+      const wasActive = clientState.role === "active";
       detachFromTab(ws);
       controlClients.delete(ws);
+      clientStates.delete(ws);
+      if (tabId != null) {
+        reassignRolesAfterDetach(tabId, wasActive);
+        broadcastState();
+      }
     });
     ws.on("error", () => {
     });
@@ -894,6 +1038,13 @@ var HTML_TEMPLATE = `<!doctype html>
       .status-dot.connecting { background: var(--dot-warn); animation: pulse 1s infinite; }
       @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
+      .role-indicator { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+      .role-indicator.active { color: var(--dot-ok); }
+      .role-indicator.observer { color: var(--dot-warn); }
+      .role-btn { background: none; border: 1px solid var(--border); border-radius: 4px;
+        color: var(--text-muted); font-size: 10px; padding: 2px 8px; cursor: pointer; font-family: inherit; }
+      .role-btn:hover { color: var(--text-bright); border-color: var(--text-muted); }
+
       /* -- Theme toggle -- */
       .theme-toggle { background: none; border: none; cursor: pointer; font-size: 16px;
         color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
@@ -927,6 +1078,9 @@ var HTML_TEMPLATE = `<!doctype html>
       .tab .close:hover { color: var(--text-on-active); background: var(--compose-border); }
       .tab:not(:hover) .close:not(:focus) { opacity: 0; }
       .tab.active .close { opacity: 1; color: var(--text-muted); }
+
+      .tab .client-count { font-size: 9px; color: var(--text-muted); margin-left: 4px;
+        background: var(--bg-hover); border-radius: 8px; padding: 1px 5px; pointer-events: none; }
 
       .tab-new { display: flex; align-items: center; justify-content: center;
         width: 28px; height: 28px; margin: 0 4px; font-size: 18px; color: var(--text-dim);
@@ -1011,6 +1165,11 @@ var HTML_TEMPLATE = `<!doctype html>
       </div>
       <div class="session-list" id="session-list"></div>
       <div class="sidebar-footer">
+        <div class="role-indicator" id="role-indicator">
+          <span id="role-dot"></span>
+          <span id="role-text"></span>
+          <button class="role-btn" id="btn-role" style="display:none"></button>
+        </div>
         <button id="btn-theme" class="theme-toggle" title="Toggle theme">&#9728;</button>
         <div class="status">
           <div class="status-dot connecting" id="status-dot"></div>
@@ -1112,6 +1271,7 @@ var HTML_TEMPLATE = `<!doctype html>
       window.addEventListener('resize', () => { if (fitAddon) fitAddon.fit(); });
 
       let sessions = [], currentSession = 'main', currentTabId = null, ws = null, ctrlActive = false;
+      let myClientId = null, myRole = null, clientsList = [];
       const $ = id => document.getElementById(id);
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
 
@@ -1199,7 +1359,9 @@ var HTML_TEMPLATE = `<!doctype html>
         sess.tabs.forEach(t => {
           const el = document.createElement('button');
           el.className = 'tab' + (t.id === currentTabId ? ' active' : '');
-          el.innerHTML = '<span class="title">' + t.title + '</span>'
+          const clientCount = t.clients || 0;
+          const countBadge = clientCount > 1 ? '<span class="client-count">' + clientCount + '</span>' : '';
+          el.innerHTML = '<span class="title">' + t.title + '</span>' + countBadge
             + '<button class="close" data-close="' + t.id + '">\xD7</button>';
           el.addEventListener('pointerdown', e => {
             const closeId = e.target.dataset.close ?? e.target.closest('[data-close]')?.dataset.close;
@@ -1214,6 +1376,31 @@ var HTML_TEMPLATE = `<!doctype html>
           list.appendChild(el);
         });
       }
+
+      // -- Render role indicator --
+      function renderRole() {
+        const indicator = $('role-indicator');
+        const dot = $('role-dot');
+        const text = $('role-text');
+        const btn = $('btn-role');
+        if (!indicator || !myRole) return;
+        indicator.className = 'role-indicator ' + myRole;
+        if (myRole === 'active') {
+          dot.textContent = '\u25CF';
+          text.textContent = 'Active';
+          btn.textContent = 'Release';
+          btn.style.display = 'inline-block';
+        } else {
+          dot.textContent = '\u25CB';
+          text.textContent = 'Observer';
+          btn.textContent = 'Take control';
+          btn.style.display = 'inline-block';
+        }
+      }
+      $('btn-role').addEventListener('click', () => {
+        if (myRole === 'active') sendCtrl({ type: 'release_control' });
+        else sendCtrl({ type: 'request_control' });
+      });
 
       function selectSession(name) {
         currentSession = name;
@@ -1310,13 +1497,25 @@ var HTML_TEMPLATE = `<!doctype html>
           lastMessageAt = Date.now();
           if (typeof e.data === 'string' && e.data[0] === '{') {
             try {
-              const msg = JSON.parse(e.data);
+              const parsed = JSON.parse(e.data);
+              // Handle both envelope (v:1) and legacy messages
+              const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
               if (msg.type === 'auth_ok') return;
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
-              if (msg.type === 'state') { sessions = msg.sessions; renderSessions(); renderTabs(); return; }
+              if (msg.type === 'state') {
+                sessions = msg.sessions || [];
+                clientsList = msg.clients || [];
+                renderSessions(); renderTabs(); renderRole(); return;
+              }
               if (msg.type === 'attached') {
                 currentTabId = msg.tabId; currentSession = msg.session;
-                setStatus('connected', msg.session); renderSessions(); renderTabs(); return;
+                if (msg.clientId) myClientId = msg.clientId;
+                if (msg.role) myRole = msg.role;
+                setStatus('connected', msg.session); renderSessions(); renderTabs(); renderRole(); return;
+              }
+              if (msg.type === 'role_changed') {
+                if (msg.clientId === myClientId) myRole = msg.role;
+                renderRole(); return;
               }
               if (msg.type === 'inspect_result') {
                 window._inspectText = msg.text || '(empty)';

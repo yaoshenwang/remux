@@ -213,6 +213,13 @@ const HTML_TEMPLATE = `<!doctype html>
       .status-dot.connecting { background: var(--dot-warn); animation: pulse 1s infinite; }
       @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
+      .role-indicator { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+      .role-indicator.active { color: var(--dot-ok); }
+      .role-indicator.observer { color: var(--dot-warn); }
+      .role-btn { background: none; border: 1px solid var(--border); border-radius: 4px;
+        color: var(--text-muted); font-size: 10px; padding: 2px 8px; cursor: pointer; font-family: inherit; }
+      .role-btn:hover { color: var(--text-bright); border-color: var(--text-muted); }
+
       /* -- Theme toggle -- */
       .theme-toggle { background: none; border: none; cursor: pointer; font-size: 16px;
         color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
@@ -246,6 +253,9 @@ const HTML_TEMPLATE = `<!doctype html>
       .tab .close:hover { color: var(--text-on-active); background: var(--compose-border); }
       .tab:not(:hover) .close:not(:focus) { opacity: 0; }
       .tab.active .close { opacity: 1; color: var(--text-muted); }
+
+      .tab .client-count { font-size: 9px; color: var(--text-muted); margin-left: 4px;
+        background: var(--bg-hover); border-radius: 8px; padding: 1px 5px; pointer-events: none; }
 
       .tab-new { display: flex; align-items: center; justify-content: center;
         width: 28px; height: 28px; margin: 0 4px; font-size: 18px; color: var(--text-dim);
@@ -330,6 +340,11 @@ const HTML_TEMPLATE = `<!doctype html>
       </div>
       <div class="session-list" id="session-list"></div>
       <div class="sidebar-footer">
+        <div class="role-indicator" id="role-indicator">
+          <span id="role-dot"></span>
+          <span id="role-text"></span>
+          <button class="role-btn" id="btn-role" style="display:none"></button>
+        </div>
         <button id="btn-theme" class="theme-toggle" title="Toggle theme">&#9728;</button>
         <div class="status">
           <div class="status-dot connecting" id="status-dot"></div>
@@ -431,6 +446,7 @@ const HTML_TEMPLATE = `<!doctype html>
       window.addEventListener('resize', () => { if (fitAddon) fitAddon.fit(); });
 
       let sessions = [], currentSession = 'main', currentTabId = null, ws = null, ctrlActive = false;
+      let myClientId = null, myRole = null, clientsList = [];
       const $ = id => document.getElementById(id);
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
 
@@ -518,7 +534,9 @@ const HTML_TEMPLATE = `<!doctype html>
         sess.tabs.forEach(t => {
           const el = document.createElement('button');
           el.className = 'tab' + (t.id === currentTabId ? ' active' : '');
-          el.innerHTML = '<span class="title">' + t.title + '</span>'
+          const clientCount = t.clients || 0;
+          const countBadge = clientCount > 1 ? '<span class="client-count">' + clientCount + '</span>' : '';
+          el.innerHTML = '<span class="title">' + t.title + '</span>' + countBadge
             + '<button class="close" data-close="' + t.id + '">\u00d7</button>';
           el.addEventListener('pointerdown', e => {
             const closeId = e.target.dataset.close ?? e.target.closest('[data-close]')?.dataset.close;
@@ -533,6 +551,31 @@ const HTML_TEMPLATE = `<!doctype html>
           list.appendChild(el);
         });
       }
+
+      // -- Render role indicator --
+      function renderRole() {
+        const indicator = $('role-indicator');
+        const dot = $('role-dot');
+        const text = $('role-text');
+        const btn = $('btn-role');
+        if (!indicator || !myRole) return;
+        indicator.className = 'role-indicator ' + myRole;
+        if (myRole === 'active') {
+          dot.textContent = '\u25cf';
+          text.textContent = 'Active';
+          btn.textContent = 'Release';
+          btn.style.display = 'inline-block';
+        } else {
+          dot.textContent = '\u25cb';
+          text.textContent = 'Observer';
+          btn.textContent = 'Take control';
+          btn.style.display = 'inline-block';
+        }
+      }
+      $('btn-role').addEventListener('click', () => {
+        if (myRole === 'active') sendCtrl({ type: 'release_control' });
+        else sendCtrl({ type: 'request_control' });
+      });
 
       function selectSession(name) {
         currentSession = name;
@@ -629,13 +672,25 @@ const HTML_TEMPLATE = `<!doctype html>
           lastMessageAt = Date.now();
           if (typeof e.data === 'string' && e.data[0] === '{') {
             try {
-              const msg = JSON.parse(e.data);
+              const parsed = JSON.parse(e.data);
+              // Handle both envelope (v:1) and legacy messages
+              const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
               if (msg.type === 'auth_ok') return;
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
-              if (msg.type === 'state') { sessions = msg.sessions; renderSessions(); renderTabs(); return; }
+              if (msg.type === 'state') {
+                sessions = msg.sessions || [];
+                clientsList = msg.clients || [];
+                renderSessions(); renderTabs(); renderRole(); return;
+              }
               if (msg.type === 'attached') {
                 currentTabId = msg.tabId; currentSession = msg.session;
-                setStatus('connected', msg.session); renderSessions(); renderTabs(); return;
+                if (msg.clientId) myClientId = msg.clientId;
+                if (msg.role) myRole = msg.role;
+                setStatus('connected', msg.session); renderSessions(); renderTabs(); renderRole(); return;
+              }
+              if (msg.type === 'role_changed') {
+                if (msg.clientId === myClientId) myRole = msg.role;
+                renderRole(); return;
               }
               if (msg.type === 'inspect_result') {
                 window._inspectText = msg.text || '(empty)';

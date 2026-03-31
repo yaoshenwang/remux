@@ -1,6 +1,7 @@
 /**
  * Integration tests for Remux server.
- * Tests: startup, HTTP auth, WebSocket session/tab management, VT snapshot, persistence.
+ * Tests: startup, HTTP auth, WebSocket session/tab management, VT snapshot,
+ * persistence, protocol envelope, client connection state (active/observer).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -36,6 +37,17 @@ function connectWs() {
   });
 }
 
+/**
+ * Unwrap envelope: if message has v:1, flatten type + payload.
+ * This allows tests to work with both enveloped and legacy messages.
+ */
+function unwrap(parsed) {
+  if (parsed && parsed.v === 1 && typeof parsed.type === "string") {
+    return { type: parsed.type, ...(parsed.payload || {}) };
+  }
+  return parsed;
+}
+
 /** Connect, authenticate, and consume the initial state broadcast. */
 async function connectAuthed() {
   const ws = await connectWs();
@@ -55,7 +67,7 @@ function sendAndCollect(ws, msg, { timeout = 3000, filter } = {}) {
     const handler = (raw) => {
       const s = raw.toString();
       try {
-        const parsed = JSON.parse(s);
+        const parsed = unwrap(JSON.parse(s));
         if (!filter || filter(parsed)) messages.push(parsed);
       } catch {
         messages.push({ _raw: s });
@@ -78,7 +90,7 @@ function waitForMsg(ws, type, timeout = 3000) {
     }, timeout);
     const handler = (raw) => {
       try {
-        const msg = JSON.parse(raw.toString());
+        const msg = unwrap(JSON.parse(raw.toString()));
         if (msg.type === type) {
           clearTimeout(timer);
           ws.removeListener("message", handler);
@@ -149,6 +161,82 @@ describe("HTTP", () => {
   it("serves WASM file", async () => {
     const res = await httpGet("/ghostty-vt.wasm");
     expect(res.status).toBe(200);
+  });
+});
+
+// ── Protocol envelope ────────────────────────────────────────────
+
+describe("protocol envelope", () => {
+  it("server sends messages in envelope format (v:1)", async () => {
+    const ws = await connectWs();
+    const rawMsgs = [];
+    ws.on("message", (raw) => rawMsgs.push(raw.toString()));
+    ws.send(JSON.stringify({ type: "auth", token: TOKEN }));
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // All JSON messages should have envelope format
+    const jsonMsgs = rawMsgs
+      .filter((s) => s.startsWith("{"))
+      .map((s) => JSON.parse(s));
+    expect(jsonMsgs.length).toBeGreaterThan(0);
+    for (const m of jsonMsgs) {
+      expect(m.v).toBe(1);
+      expect(typeof m.type).toBe("string");
+      expect(m).toHaveProperty("payload");
+    }
+    ws.close();
+  });
+
+  it("server accepts legacy bare messages (backward compat)", async () => {
+    const ws = await connectAuthed();
+    // Send a legacy message without envelope wrapper
+    const msgs = await sendAndCollect(
+      ws,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const attached = msgs.find((m) => m.type === "attached");
+    expect(attached).toBeDefined();
+    expect(attached.session).toBe("main");
+    ws.close();
+  });
+
+  it("server accepts enveloped messages", async () => {
+    const ws = await connectAuthed();
+    // Send an enveloped message
+    ws.send(JSON.stringify({
+      v: 1,
+      type: "attach_first",
+      payload: { session: "main", cols: 80, rows: 24 },
+    }));
+    const msg = await waitForMsg(ws, "attached");
+    expect(msg.session).toBe("main");
+    ws.close();
+  });
+
+  it("envelope payload contains correct data", async () => {
+    const ws = await connectWs();
+    const rawMsgs = [];
+    ws.on("message", (raw) => rawMsgs.push(raw.toString()));
+    ws.send(JSON.stringify({ type: "auth", token: TOKEN }));
+    await new Promise((r) => setTimeout(r, 3000));
+
+    const authOk = rawMsgs
+      .filter((s) => s.startsWith("{"))
+      .map((s) => JSON.parse(s))
+      .find((m) => m.type === "auth_ok");
+    expect(authOk).toBeDefined();
+    expect(authOk.v).toBe(1);
+    expect(authOk.type).toBe("auth_ok");
+
+    const stateMsg = rawMsgs
+      .filter((s) => s.startsWith("{"))
+      .map((s) => JSON.parse(s))
+      .find((m) => m.type === "state");
+    expect(stateMsg).toBeDefined();
+    expect(stateMsg.payload.sessions).toBeDefined();
+    expect(stateMsg.payload.clients).toBeDefined();
+    ws.close();
   });
 });
 
@@ -322,6 +410,269 @@ describe("session and tab management", () => {
       const main = state.sessions.find((s) => s.name === "main");
       expect(main.tabs.some((t) => t.id === newTabId)).toBe(false);
     }
+  });
+});
+
+// ── Client connection state ──────────────────────────────────────
+
+describe("client connection state", () => {
+  it("attached message includes clientId and role", async () => {
+    const ws = await connectAuthed();
+    const msgs = await sendAndCollect(
+      ws,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const attached = msgs.find((m) => m.type === "attached");
+    expect(attached).toBeDefined();
+    expect(typeof attached.clientId).toBe("string");
+    expect(attached.clientId.length).toBe(8); // 4 bytes hex = 8 chars
+    expect(["active", "observer"]).toContain(attached.role);
+    ws.close();
+  });
+
+  it("state broadcasts include clients list", async () => {
+    const ws = await connectAuthed();
+    const msgs = await sendAndCollect(
+      ws,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const state = msgs.filter((m) => m.type === "state").pop();
+    expect(state).toBeDefined();
+    expect(Array.isArray(state.clients)).toBe(true);
+    expect(state.clients.length).toBeGreaterThanOrEqual(1);
+    const client = state.clients[0];
+    expect(typeof client.clientId).toBe("string");
+    expect(["active", "observer"]).toContain(client.role);
+    ws.close();
+  });
+
+  it("first client on tab becomes active, second becomes observer", async () => {
+    const ws1 = await connectAuthed();
+    const ws2 = await connectAuthed();
+
+    const msgs1 = await sendAndCollect(
+      ws1,
+      { type: "attach_first", session: "main", cols: 100, rows: 30 },
+      { timeout: 3000 },
+    );
+    const att1 = msgs1.find((m) => m.type === "attached");
+    expect(att1).toBeDefined();
+    expect(att1.role).toBe("active");
+    const tabId = att1.tabId;
+
+    const msgs2 = await sendAndCollect(
+      ws2,
+      { type: "attach_tab", tabId, cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att2 = msgs2.find((m) => m.type === "attached");
+    expect(att2).toBeDefined();
+    expect(att2.role).toBe("observer");
+    expect(att2.tabId).toBe(tabId);
+
+    ws1.close();
+    ws2.close();
+  });
+
+  it("observer terminal input is silently dropped", async () => {
+    const ws1 = await connectAuthed();
+    const ws2 = await connectAuthed();
+
+    // ws1 attaches first (active)
+    await sendAndCollect(
+      ws1,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+
+    // ws2 attaches to same tab (observer)
+    const msgs2 = await sendAndCollect(
+      ws2,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att2 = msgs2.find((m) => m.type === "attached");
+    expect(att2.role).toBe("observer");
+
+    // Observer sends terminal input -- should be silently dropped (no error)
+    ws2.send("echo observer-test-should-not-run\n");
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // ws2 is still connected (no error, no disconnect)
+    expect(ws2.readyState).toBe(WebSocket.OPEN);
+
+    ws1.close();
+    ws2.close();
+  });
+
+  it("request_control: observer takes control from active", async () => {
+    const ws1 = await connectAuthed();
+    const ws2 = await connectAuthed();
+
+    // ws1 attaches first (active)
+    const msgs1 = await sendAndCollect(
+      ws1,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att1 = msgs1.find((m) => m.type === "attached");
+    expect(att1.role).toBe("active");
+    const clientId1 = att1.clientId;
+
+    // ws2 attaches (observer)
+    const msgs2 = await sendAndCollect(
+      ws2,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att2 = msgs2.find((m) => m.type === "attached");
+    expect(att2.role).toBe("observer");
+    const clientId2 = att2.clientId;
+
+    // Collect messages on both sockets
+    const ws1RoleChanges = [];
+    const ws2RoleChanges = [];
+    const handler1 = (raw) => {
+      try {
+        const msg = unwrap(JSON.parse(raw.toString()));
+        if (msg.type === "role_changed") ws1RoleChanges.push(msg);
+      } catch {}
+    };
+    const handler2 = (raw) => {
+      try {
+        const msg = unwrap(JSON.parse(raw.toString()));
+        if (msg.type === "role_changed") ws2RoleChanges.push(msg);
+      } catch {}
+    };
+    ws1.on("message", handler1);
+    ws2.on("message", handler2);
+
+    // ws2 requests control
+    ws2.send(JSON.stringify({ type: "request_control" }));
+    await new Promise((r) => setTimeout(r, 1500));
+
+    ws1.removeListener("message", handler1);
+    ws2.removeListener("message", handler2);
+
+    // ws1 should get demoted
+    const ws1Demoted = ws1RoleChanges.find(
+      (m) => m.clientId === clientId1 && m.role === "observer",
+    );
+    expect(ws1Demoted).toBeDefined();
+
+    // ws2 should become active
+    const ws2Promoted = ws2RoleChanges.find(
+      (m) => m.clientId === clientId2 && m.role === "active",
+    );
+    expect(ws2Promoted).toBeDefined();
+
+    ws1.close();
+    ws2.close();
+  });
+
+  it("release_control: active releases, first observer promoted", async () => {
+    const ws1 = await connectAuthed();
+    const ws2 = await connectAuthed();
+
+    // ws1 attaches first (active)
+    const msgs1 = await sendAndCollect(
+      ws1,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att1 = msgs1.find((m) => m.type === "attached");
+    expect(att1.role).toBe("active");
+    const clientId1 = att1.clientId;
+
+    // ws2 attaches (observer)
+    const msgs2 = await sendAndCollect(
+      ws2,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att2 = msgs2.find((m) => m.type === "attached");
+    expect(att2.role).toBe("observer");
+    const clientId2 = att2.clientId;
+
+    // Listen for role changes
+    const ws1RoleChanges = [];
+    const ws2RoleChanges = [];
+    ws1.on("message", (raw) => {
+      try {
+        const msg = unwrap(JSON.parse(raw.toString()));
+        if (msg.type === "role_changed") ws1RoleChanges.push(msg);
+      } catch {}
+    });
+    ws2.on("message", (raw) => {
+      try {
+        const msg = unwrap(JSON.parse(raw.toString()));
+        if (msg.type === "role_changed") ws2RoleChanges.push(msg);
+      } catch {}
+    });
+
+    // ws1 releases control
+    ws1.send(JSON.stringify({ type: "release_control" }));
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // ws1 should become observer
+    const ws1Released = ws1RoleChanges.find(
+      (m) => m.clientId === clientId1 && m.role === "observer",
+    );
+    expect(ws1Released).toBeDefined();
+
+    // ws2 should be promoted to active
+    const ws2Promoted = ws2RoleChanges.find(
+      (m) => m.clientId === clientId2 && m.role === "active",
+    );
+    expect(ws2Promoted).toBeDefined();
+
+    ws1.close();
+    ws2.close();
+  });
+
+  it("active disconnect promotes observer", async () => {
+    const ws1 = await connectAuthed();
+    const ws2 = await connectAuthed();
+
+    // ws1 attaches (active)
+    await sendAndCollect(
+      ws1,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+
+    // ws2 attaches (observer)
+    const msgs2 = await sendAndCollect(
+      ws2,
+      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { timeout: 3000 },
+    );
+    const att2 = msgs2.find((m) => m.type === "attached");
+    expect(att2.role).toBe("observer");
+    const clientId2 = att2.clientId;
+
+    // Listen for role changes on ws2
+    const ws2RoleChanges = [];
+    ws2.on("message", (raw) => {
+      try {
+        const msg = unwrap(JSON.parse(raw.toString()));
+        if (msg.type === "role_changed") ws2RoleChanges.push(msg);
+      } catch {}
+    });
+
+    // Disconnect ws1 (the active client)
+    ws1.close();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // ws2 should be promoted to active
+    const promoted = ws2RoleChanges.find(
+      (m) => m.clientId === clientId2 && m.role === "active",
+    );
+    expect(promoted).toBeDefined();
+
+    ws2.close();
   });
 });
 

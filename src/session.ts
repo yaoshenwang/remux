@@ -301,11 +301,32 @@ export function recalcTabSize(tab: Tab): void {
 
 // ── Broadcast ────────────────────────────────────────────────────
 
+// Broadcast hooks -- injected by ws-handler to avoid circular imports.
+// sendEnvelopeFn and getClientListFn are set at startup.
+let _sendEnvelopeFn: ((ws: any, type: string, payload: any) => void) | null =
+  null;
+let _getClientListFn: (() => any[]) | null = null;
+
+export function setBroadcastHooks(
+  sendFn: (ws: any, type: string, payload: any) => void,
+  clientListFn: () => any[],
+): void {
+  _sendEnvelopeFn = sendFn;
+  _getClientListFn = clientListFn;
+}
+
 export function broadcastState(): void {
   const state = getState();
-  const msg = JSON.stringify({ type: "state", sessions: state });
+  const clients = _getClientListFn ? _getClientListFn() : [];
   for (const ws of controlClients) {
-    if (ws.readyState === ws.OPEN) ws.send(msg);
+    if (_sendEnvelopeFn) {
+      _sendEnvelopeFn(ws, "state", { sessions: state, clients });
+    } else {
+      // Fallback: legacy format (before hooks are wired)
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ v: 1, type: "state", payload: { sessions: state, clients } }));
+      }
+    }
   }
 }
 

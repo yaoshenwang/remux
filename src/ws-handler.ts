@@ -1,8 +1,17 @@
 /**
  * WebSocket handler for Remux.
  * All WebSocket message routing: auth gate, control messages, terminal I/O.
+ *
+ * Protocol envelope (v1): all server-sent JSON messages are wrapped in
+ * { v: 1, type: string, payload: T }. Incoming messages accept both
+ * enveloped (v:1) and legacy bare formats for backward compatibility.
+ *
+ * Client connection state: each WebSocket gets a clientId and role
+ * (active/observer). First client on a tab is active; subsequent are
+ * observers whose terminal input is silently dropped.
  */
 
+import crypto from "crypto";
 import type http from "http";
 import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
@@ -19,8 +28,136 @@ import {
   detachFromTab,
   recalcTabSize,
   broadcastState,
+  setBroadcastHooks,
 } from "./session.js";
 import { validateToken } from "./auth.js";
+
+// ── Protocol Envelope ───────────────────────────────────────────
+
+/**
+ * Send an enveloped JSON message: { v: 1, type, payload }.
+ */
+export function sendEnvelope<T>(
+  ws: WebSocket | RemuxWebSocket,
+  type: string,
+  payload: T,
+): void {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ v: 1, type, payload }));
+  }
+}
+
+/**
+ * Unwrap an incoming message. If it has `v: 1`, extract type + payload.
+ * Otherwise treat as legacy bare message (return as-is).
+ */
+function unwrapMessage(parsed: any): { type: string; [key: string]: any } {
+  if (parsed && parsed.v === 1 && typeof parsed.type === "string") {
+    return { type: parsed.type, ...(parsed.payload || {}) };
+  }
+  return parsed;
+}
+
+// ── Client Connection State ─────────────────────────────────────
+
+export interface ClientState {
+  clientId: string;
+  role: "active" | "observer";
+  connectedAt: number;
+  currentSession: string | null;
+  currentTabId: number | null;
+}
+
+/** Map from WebSocket to client tracking state. */
+export const clientStates = new Map<RemuxWebSocket, ClientState>();
+
+function generateClientId(): string {
+  return crypto.randomBytes(4).toString("hex");
+}
+
+/**
+ * Determine the active client for a given tab.
+ * Returns the first client found with role 'active' on that tab.
+ */
+function getActiveClientForTab(tabId: number): RemuxWebSocket | null {
+  for (const [ws, state] of clientStates) {
+    if (state.currentTabId === tabId && state.role === "active") return ws;
+  }
+  return null;
+}
+
+/**
+ * Assign roles after a client attaches to a tab.
+ * If no active client exists on the tab, the client becomes active.
+ * Otherwise it becomes an observer.
+ */
+function assignRole(ws: RemuxWebSocket, tabId: number): void {
+  const state = clientStates.get(ws);
+  if (!state) return;
+
+  const existingActive = getActiveClientForTab(tabId);
+  if (!existingActive || existingActive === ws) {
+    state.role = "active";
+  } else {
+    state.role = "observer";
+  }
+  state.currentTabId = tabId;
+}
+
+/**
+ * When a client detaches or disconnects, reassign roles.
+ * If the disconnecting client was active, promote the first observer.
+ */
+function reassignRolesAfterDetach(
+  tabId: number,
+  wasActive: boolean,
+): void {
+  if (!wasActive) return;
+
+  // Find first observer on the same tab and promote
+  for (const [ws, state] of clientStates) {
+    if (
+      state.currentTabId === tabId &&
+      state.role === "observer" &&
+      ws.readyState === ws.OPEN
+    ) {
+      state.role = "active";
+      sendEnvelope(ws, "role_changed", {
+        clientId: state.clientId,
+        role: "active",
+      });
+      break;
+    }
+  }
+}
+
+/**
+ * Get client list for state broadcasts.
+ */
+export function getClientList(): Array<{
+  clientId: string;
+  role: "active" | "observer";
+  session: string | null;
+  tabId: number | null;
+}> {
+  const list: Array<{
+    clientId: string;
+    role: "active" | "observer";
+    session: string | null;
+    tabId: number | null;
+  }> = [];
+  for (const [ws, state] of clientStates) {
+    if (ws.readyState === ws.OPEN) {
+      list.push({
+        clientId: state.clientId,
+        role: state.role,
+        session: state.currentSession,
+        tabId: state.currentTabId,
+      });
+    }
+  }
+  return list;
+}
 
 // ── Setup ────────────────────────────────────────────────────────
 
@@ -32,6 +169,9 @@ export function setupWebSocket(
   TOKEN: string | null,
   PASSWORD: string | null,
 ): WebSocketServer {
+  // Wire broadcast hooks to break the circular session <-> ws-handler dependency
+  setBroadcastHooks(sendEnvelope, getClientList);
+
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -62,6 +202,18 @@ export function setupWebSocket(
     // Auth: no auth needed only if neither token nor password is configured
     const requiresAuth = !!(TOKEN || PASSWORD);
     ws._remuxAuthed = !requiresAuth;
+
+    // Initialize client state
+    const clientId = generateClientId();
+    const clientState: ClientState = {
+      clientId,
+      role: "observer",
+      connectedAt: Date.now(),
+      currentSession: null,
+      currentTabId: null,
+    };
+    clientStates.set(ws, clientState);
+
     if (!requiresAuth) controlClients.add(ws);
 
     ws.on("message", (raw) => {
@@ -70,20 +222,22 @@ export function setupWebSocket(
       // ── Auth gate ──
       if (!ws._remuxAuthed) {
         try {
-          const parsed = JSON.parse(msg);
+          const rawParsed = JSON.parse(msg);
+          const parsed = unwrapMessage(rawParsed);
           if (parsed.type === "auth") {
             if (validateToken(parsed.token, TOKEN)) {
               ws._remuxAuthed = true;
               controlClients.add(ws);
-              ws.send(JSON.stringify({ type: "auth_ok" }));
-              ws.send(JSON.stringify({ type: "state", sessions: getState() }));
+              sendEnvelope(ws, "auth_ok", {});
+              sendEnvelope(ws, "state", {
+                sessions: getState(),
+                clients: getClientList(),
+              });
               return;
             }
           }
         } catch {}
-        ws.send(
-          JSON.stringify({ type: "auth_error", reason: "invalid token" }),
-        );
+        sendEnvelope(ws, "auth_error", { reason: "invalid token" });
         ws.close(4001, "unauthorized");
         return;
       }
@@ -91,7 +245,8 @@ export function setupWebSocket(
       // ── JSON control messages ──
       if (msg.startsWith("{")) {
         try {
-          const p = JSON.parse(msg);
+          const rawParsed = JSON.parse(msg);
+          const p = unwrapMessage(rawParsed);
 
           // Attach to first tab of a session (or create one)
           if (p.type === "attach_first") {
@@ -110,11 +265,16 @@ export function setupWebSocket(
               p.cols || ws._remuxCols,
               p.rows || ws._remuxRows,
             );
+            clientState.currentSession = name;
+            assignRole(ws, tab.id);
             // Send state BEFORE attached so client has session/tab data when processing attached
             broadcastState();
-            ws.send(
-              JSON.stringify({ type: "attached", tabId: tab.id, session: name }),
-            );
+            sendEnvelope(ws, "attached", {
+              tabId: tab.id,
+              session: name,
+              clientId: clientState.clientId,
+              role: clientState.role,
+            });
             return;
           }
 
@@ -128,14 +288,15 @@ export function setupWebSocket(
                 p.cols || ws._remuxCols,
                 p.rows || ws._remuxRows,
               );
+              clientState.currentSession = found.session.name;
+              assignRole(ws, found.tab.id);
               broadcastState();
-              ws.send(
-                JSON.stringify({
-                  type: "attached",
-                  tabId: found.tab.id,
-                  session: found.session.name,
-                }),
-              );
+              sendEnvelope(ws, "attached", {
+                tabId: found.tab.id,
+                session: found.session.name,
+                clientId: clientState.clientId,
+                role: clientState.role,
+              });
             }
             return;
           }
@@ -154,14 +315,15 @@ export function setupWebSocket(
               p.cols || ws._remuxCols,
               p.rows || ws._remuxRows,
             );
+            clientState.currentSession = session.name;
+            assignRole(ws, tab.id);
             broadcastState();
-            ws.send(
-              JSON.stringify({
-                type: "attached",
-                tabId: tab.id,
-                session: session.name,
-              }),
-            );
+            sendEnvelope(ws, "attached", {
+              tabId: tab.id,
+              session: session.name,
+              clientId: clientState.clientId,
+              role: clientState.role,
+            });
             return;
           }
 
@@ -200,10 +362,15 @@ export function setupWebSocket(
               p.cols || ws._remuxCols,
               p.rows || ws._remuxRows,
             );
+            clientState.currentSession = name;
+            assignRole(ws, tab.id);
             broadcastState();
-            ws.send(
-              JSON.stringify({ type: "attached", tabId: tab.id, session: name }),
-            );
+            sendEnvelope(ws, "attached", {
+              tabId: tab.id,
+              session: name,
+              clientId: clientState.clientId,
+              role: clientState.role,
+            });
             return;
           }
 
@@ -221,37 +388,31 @@ export function setupWebSocket(
             const found = findTab(ws._remuxTabId);
             if (found && found.tab.vt && !found.tab.ended) {
               const { text, cols, rows } = found.tab.vt.textSnapshot();
-              ws.send(
-                JSON.stringify({
-                  type: "inspect_result",
-                  text,
-                  meta: {
-                    session: found.session.name,
-                    tabId: found.tab.id,
-                    tabTitle: found.tab.title,
-                    cols,
-                    rows,
-                    timestamp: Date.now(),
-                  },
-                }),
-              );
+              sendEnvelope(ws, "inspect_result", {
+                text,
+                meta: {
+                  session: found.session.name,
+                  tabId: found.tab.id,
+                  tabTitle: found.tab.title,
+                  cols,
+                  rows,
+                  timestamp: Date.now(),
+                },
+              });
             } else {
               // Fallback: raw scrollback as text
               const found2 = findTab(ws._remuxTabId);
-              const raw = found2
+              const rawText = found2
                 ? found2.tab.scrollback.read().toString("utf8")
                 : "";
               // Strip ANSI escape sequences
-              const text = raw
+              const text = rawText
                 .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
                 .replace(/\x1b\][^\x07]*\x07/g, "");
-              ws.send(
-                JSON.stringify({
-                  type: "inspect_result",
-                  text,
-                  meta: { timestamp: Date.now() },
-                }),
-              );
+              sendEnvelope(ws, "inspect_result", {
+                text,
+                meta: { timestamp: Date.now() },
+              });
             }
             return;
           }
@@ -275,6 +436,69 @@ export function setupWebSocket(
             return;
           }
 
+          // ── Control handoff ──
+
+          // Request control: observer requests to become active
+          if (p.type === "request_control") {
+            const tabId = ws._remuxTabId;
+            if (tabId == null) return;
+
+            const currentActive = getActiveClientForTab(tabId);
+            if (currentActive && currentActive !== ws) {
+              // Demote current active to observer
+              const activeState = clientStates.get(currentActive);
+              if (activeState) {
+                activeState.role = "observer";
+                sendEnvelope(currentActive, "role_changed", {
+                  clientId: activeState.clientId,
+                  role: "observer",
+                });
+              }
+            }
+
+            // Promote requester to active
+            clientState.role = "active";
+            sendEnvelope(ws, "role_changed", {
+              clientId: clientState.clientId,
+              role: "active",
+            });
+            broadcastState();
+            return;
+          }
+
+          // Release control: active voluntarily becomes observer
+          if (p.type === "release_control") {
+            const tabId = ws._remuxTabId;
+            if (tabId == null) return;
+
+            if (clientState.role === "active") {
+              clientState.role = "observer";
+              sendEnvelope(ws, "role_changed", {
+                clientId: clientState.clientId,
+                role: "observer",
+              });
+
+              // Promote first waiting observer
+              for (const [otherWs, otherState] of clientStates) {
+                if (
+                  otherWs !== ws &&
+                  otherState.currentTabId === tabId &&
+                  otherState.role === "observer" &&
+                  otherWs.readyState === otherWs.OPEN
+                ) {
+                  otherState.role = "active";
+                  sendEnvelope(otherWs, "role_changed", {
+                    clientId: otherState.clientId,
+                    role: "active",
+                  });
+                  break;
+                }
+              }
+              broadcastState();
+            }
+            return;
+          }
+
           return;
         } catch {
           /* not JSON */
@@ -282,6 +506,9 @@ export function setupWebSocket(
       }
 
       // ── Raw terminal input -> current tab's PTY ──
+      // Only active clients can write to PTY; observer input is silently dropped
+      if (clientState.role !== "active") return;
+
       const found = findTab(ws._remuxTabId);
       if (found && !found.tab.ended) {
         found.tab.pty.write(msg);
@@ -289,8 +516,18 @@ export function setupWebSocket(
     });
 
     ws.on("close", () => {
+      const tabId = ws._remuxTabId;
+      const wasActive = clientState.role === "active";
+
       detachFromTab(ws);
       controlClients.delete(ws);
+      clientStates.delete(ws);
+
+      // Reassign roles if the disconnecting client was active
+      if (tabId != null) {
+        reassignRolesAfterDetach(tabId, wasActive);
+        broadcastState();
+      }
     });
 
     ws.on("error", () => {});
