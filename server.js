@@ -20,6 +20,8 @@ import { parseTunnelArgs, isCloudflaredAvailable, startTunnel, buildTunnelAccess
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
+const PKG = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
+const VERSION = PKG.version;
 const PORT = process.env.PORT || 8767;
 
 // ── Authentication ────────────────────────────────────────────────
@@ -579,6 +581,9 @@ const HTML_TEMPLATE = `<!doctype html>
       .session-item .del:hover { color: var(--dot-err); background: var(--compose-bg); }
 
       .sidebar-footer { padding: 8px 12px; border-top: 1px solid var(--border);
+        display: flex; flex-direction: column; gap: 6px; }
+      .sidebar-footer .version { font-size: 10px; color: var(--text-dim); }
+      .sidebar-footer .footer-row { display: flex; align-items: center; gap: 8px; }
         display: flex; align-items: center; gap: 8px; }
       .sidebar-footer .status { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
       .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
@@ -692,6 +697,7 @@ const HTML_TEMPLATE = `<!doctype html>
           <div class="status-dot connecting" id="status-dot"></div>
           <span id="status-text">...</span>
         </div>
+        <div class="version">v${VERSION}</div>
       </div>
     </aside>
     <div class="main">
