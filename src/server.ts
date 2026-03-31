@@ -1,802 +1,121 @@
-#!/usr/bin/env node
+/**
+ * Remux server -- ghostty-web terminal with session management.
+ * Adapted from coder/ghostty-web demo (MIT) + tsm session patterns.
+ */
 
-// src/server.ts
-import fs3 from "fs";
+import fs from "fs";
 import http from "http";
-import path2 from "path";
+import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
+import { resolveAuth, generateToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
+import { initGhosttyVt } from "./vt-tracker.js";
+import {
+  sessionMap,
+  createSession,
+  createTab,
+  persistSessions,
+  restoreSessions,
+  PERSIST_INTERVAL_MS,
+} from "./session.js";
+import { setupWebSocket } from "./ws-handler.js";
+import {
+  parseTunnelArgs,
+  isCloudflaredAvailable,
+  startTunnel,
+  buildTunnelAccessUrl,
+} from "./tunnel.js";
+import type { ChildProcess } from "child_process";
 
-// src/auth.ts
-import crypto from "crypto";
-var passwordTokens = /* @__PURE__ */ new Set();
-function parseCliPassword(argv) {
-  const idx = argv.indexOf("--password");
-  return idx !== -1 && idx + 1 < argv.length ? argv[idx + 1] : null;
-}
-function resolveAuth(argv) {
-  const PASSWORD2 = process.env.REMUX_PASSWORD || parseCliPassword(argv) || null;
-  const TOKEN2 = process.env.REMUX_TOKEN || (PASSWORD2 ? null : crypto.randomBytes(16).toString("hex"));
-  return { TOKEN: TOKEN2, PASSWORD: PASSWORD2 };
-}
-function generateToken() {
-  return crypto.randomBytes(16).toString("hex");
-}
-function validateToken(token, TOKEN2) {
-  if (TOKEN2 && token === TOKEN2) return true;
-  if (passwordTokens.has(token)) return true;
-  return false;
-}
-var PASSWORD_PAGE = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Remux \u2014 Login</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #1e1e1e; color: #ccc; height: 100vh; display: flex;
-      align-items: center; justify-content: center; }
-    .login { background: #252526; border-radius: 8px; padding: 32px; width: 320px;
-      box-shadow: 0 4px 24px rgba(0,0,0,.4); }
-    .login h1 { font-size: 18px; color: #e5e5e5; margin-bottom: 20px; text-align: center; }
-    .login input { width: 100%; padding: 10px 12px; font-size: 14px; background: #1e1e1e;
-      border: 1px solid #3a3a3a; border-radius: 4px; color: #d4d4d4;
-      font-family: inherit; outline: none; margin-bottom: 12px; }
-    .login input:focus { border-color: #007acc; }
-    .login button { width: 100%; padding: 10px; font-size: 14px; background: #007acc;
-      border: none; border-radius: 4px; color: #fff; cursor: pointer;
-      font-family: inherit; font-weight: 500; }
-    .login button:hover { background: #0098ff; }
-    .login .error { color: #f14c4c; font-size: 12px; margin-bottom: 12px; display: none; text-align: center; }
-  </style>
-</head>
-<body>
-  <form class="login" method="POST" action="/auth">
-    <h1>Remux</h1>
-    <div class="error" id="error">Incorrect password</div>
-    <input type="password" name="password" placeholder="Password" autofocus required />
-    <button type="submit">Login</button>
-  </form>
-  <script>
-    if (location.search.includes('error=1')) document.getElementById('error').style.display = 'block';
-  </script>
-</body>
-</html>`;
-
-// src/vt-tracker.ts
-import fs from "fs";
-var wasmExports = null;
-var wasmMemory = null;
-async function initGhosttyVt(wasmPath2) {
-  const wasmBytes = fs.readFileSync(wasmPath2);
-  const result = await WebAssembly.instantiate(wasmBytes, {
-    env: { log: () => {
-    } }
-  });
-  wasmExports = result.instance.exports;
-  wasmMemory = wasmExports.memory;
-  console.log("[ghostty-vt] WASM loaded for server-side VT tracking");
-}
-function createVtTerminal(cols, rows) {
-  if (!wasmExports) return null;
-  const handle = wasmExports.ghostty_terminal_new(cols, rows);
-  if (!handle) return null;
-  return {
-    handle,
-    consume(data) {
-      const bytes = typeof data === "string" ? Buffer.from(data) : data;
-      const ptr = wasmExports.ghostty_wasm_alloc_u8_array(bytes.length);
-      new Uint8Array(wasmMemory.buffer).set(bytes, ptr);
-      wasmExports.ghostty_terminal_write(handle, ptr, bytes.length);
-      wasmExports.ghostty_wasm_free_u8_array(ptr, bytes.length);
-    },
-    resize(cols2, rows2) {
-      wasmExports.ghostty_terminal_resize(handle, cols2, rows2);
-    },
-    isAltScreen() {
-      return !!wasmExports.ghostty_terminal_is_alternate_screen(handle);
-    },
-    snapshot() {
-      wasmExports.ghostty_render_state_update(handle);
-      const cols2 = wasmExports.ghostty_render_state_get_cols(handle);
-      const rows2 = wasmExports.ghostty_render_state_get_rows(handle);
-      const cellSize = 16;
-      const bufSize = cols2 * rows2 * cellSize;
-      const bufPtr = wasmExports.ghostty_wasm_alloc_u8_array(bufSize);
-      const count = wasmExports.ghostty_render_state_get_viewport(
-        handle,
-        bufPtr,
-        bufSize
-      );
-      const view = new DataView(wasmMemory.buffer);
-      let out = "\x1B[H\x1B[2J";
-      let lastFg = null;
-      let lastBg = null;
-      let lastFlags = 0;
-      for (let row = 0; row < rows2; row++) {
-        if (row > 0) out += "\r\n";
-        for (let col = 0; col < cols2; col++) {
-          const off = bufPtr + (row * cols2 + col) * cellSize;
-          const cp = view.getUint32(off, true);
-          const fg_r = view.getUint8(off + 4);
-          const fg_g = view.getUint8(off + 5);
-          const fg_b = view.getUint8(off + 6);
-          const bg_r = view.getUint8(off + 7);
-          const bg_g = view.getUint8(off + 8);
-          const bg_b = view.getUint8(off + 9);
-          const flags = view.getUint8(off + 10);
-          const width = view.getUint8(off + 11);
-          if (width === 0) continue;
-          const fgKey = fg_r << 16 | fg_g << 8 | fg_b;
-          const bgKey = bg_r << 16 | bg_g << 8 | bg_b;
-          let sgr = "";
-          if (flags !== lastFlags) {
-            sgr += "\x1B[0m";
-            if (flags & 1) sgr += "\x1B[1m";
-            if (flags & 2) sgr += "\x1B[3m";
-            if (flags & 4) sgr += "\x1B[4m";
-            if (flags & 128) sgr += "\x1B[2m";
-            lastFg = null;
-            lastBg = null;
-            lastFlags = flags;
-          }
-          if (fgKey !== lastFg && fgKey !== 0) {
-            sgr += `\x1B[38;2;${fg_r};${fg_g};${fg_b}m`;
-            lastFg = fgKey;
-          }
-          if (bgKey !== lastBg && bgKey !== 0) {
-            sgr += `\x1B[48;2;${bg_r};${bg_g};${bg_b}m`;
-            lastBg = bgKey;
-          }
-          out += sgr;
-          out += cp > 0 ? String.fromCodePoint(cp) : " ";
-        }
-      }
-      const cx = wasmExports.ghostty_render_state_get_cursor_x(handle);
-      const cy = wasmExports.ghostty_render_state_get_cursor_y(handle);
-      out += `\x1B[0m\x1B[${cy + 1};${cx + 1}H`;
-      wasmExports.ghostty_wasm_free_u8_array(bufPtr, bufSize);
-      return out;
-    },
-    textSnapshot() {
-      wasmExports.ghostty_render_state_update(handle);
-      const cols2 = wasmExports.ghostty_render_state_get_cols(handle);
-      const rows2 = wasmExports.ghostty_render_state_get_rows(handle);
-      const cellSize = 16;
-      const bufSize = cols2 * rows2 * cellSize;
-      const bufPtr = wasmExports.ghostty_wasm_alloc_u8_array(bufSize);
-      wasmExports.ghostty_render_state_get_viewport(handle, bufPtr, bufSize);
-      const view = new DataView(wasmMemory.buffer);
-      const lines = [];
-      for (let row = 0; row < rows2; row++) {
-        let line = "";
-        for (let col = 0; col < cols2; col++) {
-          const off = bufPtr + (row * cols2 + col) * cellSize;
-          const cp = view.getUint32(off, true);
-          const width = view.getUint8(off + 11);
-          if (width === 0) continue;
-          line += cp > 0 ? String.fromCodePoint(cp) : " ";
-        }
-        lines.push(line.trimEnd());
-      }
-      wasmExports.ghostty_wasm_free_u8_array(bufPtr, bufSize);
-      while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-      return { text: lines.join("\n"), cols: cols2, rows: rows2 };
-    },
-    dispose() {
-      wasmExports.ghostty_terminal_free(handle);
-    }
-  };
-}
-
-// src/session.ts
-import fs2 from "fs";
-import path from "path";
-import { homedir } from "os";
-import pty from "node-pty";
-var RingBuffer = class {
-  buf;
-  maxBytes;
-  writePos;
-  length;
-  constructor(maxBytes = 10 * 1024 * 1024) {
-    this.buf = Buffer.alloc(maxBytes);
-    this.maxBytes = maxBytes;
-    this.writePos = 0;
-    this.length = 0;
-  }
-  write(data) {
-    const bytes = typeof data === "string" ? Buffer.from(data) : data;
-    if (bytes.length >= this.maxBytes) {
-      bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
-      this.writePos = 0;
-      this.length = this.maxBytes;
-      return;
-    }
-    const space = this.maxBytes - this.writePos;
-    if (bytes.length <= space) {
-      bytes.copy(this.buf, this.writePos);
-    } else {
-      bytes.copy(this.buf, this.writePos, 0, space);
-      bytes.copy(this.buf, 0, space);
-    }
-    this.writePos = (this.writePos + bytes.length) % this.maxBytes;
-    this.length = Math.min(this.length + bytes.length, this.maxBytes);
-  }
-  read() {
-    if (this.length === 0) return Buffer.alloc(0);
-    if (this.length < this.maxBytes) {
-      return this.buf.subarray(this.writePos - this.length, this.writePos);
-    }
-    return Buffer.concat([
-      this.buf.subarray(this.writePos),
-      this.buf.subarray(0, this.writePos)
-    ]);
-  }
-};
-function getShell() {
-  if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
-  if (process.env.SHELL) return process.env.SHELL;
-  try {
-    fs2.accessSync("/bin/zsh", fs2.constants.X_OK);
-    return "/bin/zsh";
-  } catch {
-  }
-  return "/bin/bash";
-}
-var tabIdCounter = 0;
-var sessionMap = /* @__PURE__ */ new Map();
-var controlClients = /* @__PURE__ */ new Set();
-function createTab(session, cols = 80, rows = 24) {
-  const id = tabIdCounter++;
-  const ptyProcess = pty.spawn(getShell(), [], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: homedir(),
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor"
-    }
-  });
-  const vtTerminal = createVtTerminal(cols, rows);
-  const tab = {
-    id,
-    pty: ptyProcess,
-    scrollback: new RingBuffer(),
-    vt: vtTerminal,
-    clients: /* @__PURE__ */ new Set(),
-    cols,
-    rows,
-    ended: false,
-    title: `Tab ${session.tabs.length + 1}`
-  };
-  ptyProcess.onData((data) => {
-    tab.scrollback.write(data);
-    if (tab.vt) tab.vt.consume(data);
-    for (const ws of tab.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(data);
-    }
-  });
-  ptyProcess.onExit(({ exitCode }) => {
-    tab.ended = true;
-    if (tab.vt) {
-      tab.vt.dispose();
-      tab.vt = null;
-    }
-    const msg = `\r
-\x1B[33mShell exited (code: ${exitCode})\x1B[0m\r
-`;
-    for (const ws of tab.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(msg);
-    }
-    broadcastState();
-  });
-  session.tabs.push(tab);
-  console.log(
-    `[tab] created id=${id} in session "${session.name}" (pid=${ptyProcess.pid})`
-  );
-  return tab;
-}
-function createSession(name) {
-  if (sessionMap.has(name)) return sessionMap.get(name);
-  const session = { name, tabs: [], createdAt: Date.now() };
-  sessionMap.set(name, session);
-  console.log(`[session] created "${name}"`);
-  return session;
-}
-function deleteSession(name) {
-  const session = sessionMap.get(name);
-  if (!session) return;
-  for (const tab of session.tabs) {
-    if (!tab.ended) tab.pty.kill();
-  }
-  sessionMap.delete(name);
-  console.log(`[session] deleted "${name}"`);
-}
-function getState() {
-  return [...sessionMap.values()].map((s) => ({
-    name: s.name,
-    tabs: s.tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      ended: t.ended,
-      clients: t.clients.size
-    })),
-    createdAt: s.createdAt
-  }));
-}
-function findTab(tabId) {
-  if (tabId == null) return null;
-  for (const session of sessionMap.values()) {
-    const tab = session.tabs.find((t) => t.id === tabId);
-    if (tab) return { session, tab };
-  }
-  return null;
-}
-function attachToTab(tab, ws, cols, rows) {
-  detachFromTab(ws);
-  if (ws.readyState === ws.OPEN) {
-    if (tab.vt && !tab.ended) {
-      const snapshot = tab.vt.snapshot();
-      if (snapshot) ws.send(snapshot);
-    } else {
-      const history = tab.scrollback.read();
-      if (history.length > 0) ws.send(history.toString("utf8"));
-    }
-  }
-  tab.clients.add(ws);
-  ws._remuxTabId = tab.id;
-  ws._remuxCols = cols;
-  ws._remuxRows = rows;
-  recalcTabSize(tab);
-  if (!tab.ended) {
-    setTimeout(() => {
-      tab.pty.write("\f");
-    }, 50);
-  }
-}
-function detachFromTab(ws) {
-  const prevId = ws._remuxTabId;
-  if (prevId == null) return;
-  for (const session of sessionMap.values()) {
-    const tab = session.tabs.find((t) => t.id === prevId);
-    if (tab) {
-      tab.clients.delete(ws);
-      if (tab.clients.size > 0) recalcTabSize(tab);
-      break;
-    }
-  }
-  ws._remuxTabId = null;
-}
-function recalcTabSize(tab) {
-  let minCols = Infinity;
-  let minRows = Infinity;
-  for (const ws of tab.clients) {
-    if (ws._remuxCols) minCols = Math.min(minCols, ws._remuxCols);
-    if (ws._remuxRows) minRows = Math.min(minRows, ws._remuxRows);
-  }
-  if (minCols < Infinity && minRows < Infinity && !tab.ended) {
-    tab.cols = minCols;
-    tab.rows = minRows;
-    tab.pty.resize(minCols, minRows);
-    if (tab.vt) tab.vt.resize(minCols, minRows);
-  }
-}
-function broadcastState() {
-  const state = getState();
-  const msg = JSON.stringify({ type: "state", sessions: state });
-  for (const ws of controlClients) {
-    if (ws.readyState === ws.OPEN) ws.send(msg);
-  }
-}
-var PERSIST_DIR = path.join(homedir(), ".remux");
-var PORT = process.env.PORT || 8767;
-var PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
-var PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${PERSIST_ID}.json`);
-var PERSIST_INTERVAL_MS = 8e3;
-function persistSessions() {
-  const data = [...sessionMap.values()].map((s) => ({
-    name: s.name,
-    createdAt: s.createdAt,
-    tabs: s.tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      ended: t.ended,
-      scrollback: t.ended ? null : t.scrollback.read().toString("utf8").slice(-2e5)
-    }))
-  }));
-  try {
-    if (!fs2.existsSync(PERSIST_DIR))
-      fs2.mkdirSync(PERSIST_DIR, { recursive: true });
-    fs2.writeFileSync(
-      PERSIST_FILE,
-      JSON.stringify({ version: 1, sessions: data })
-    );
-  } catch (e) {
-    console.error("[persist] save failed:", e.message);
-  }
-}
-function restoreSessions() {
-  try {
-    if (!fs2.existsSync(PERSIST_FILE)) return false;
-    const raw = JSON.parse(fs2.readFileSync(PERSIST_FILE, "utf8"));
-    if (raw.version !== 1 || !Array.isArray(raw.sessions)) return false;
-    console.log(`[persist] restoring ${raw.sessions.length} session(s)`);
-    return raw;
-  } catch (e) {
-    console.error("[persist] restore failed:", e.message);
-    return false;
-  }
-}
-
-// src/ws-handler.ts
-import { WebSocketServer } from "ws";
-function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
-  const wss = new WebSocketServer({ noServer: true });
-  httpServer2.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname === "/ws") {
-      wss.handleUpgrade(
-        req,
-        socket,
-        head,
-        (ws) => wss.emit("connection", ws, req)
-      );
-    } else {
-      socket.destroy();
-    }
-  });
-  const HEARTBEAT_INTERVAL = 3e4;
-  setInterval(() => {
-    for (const ws of controlClients) {
-      if (ws.readyState === ws.OPEN) ws.ping();
-    }
-  }, HEARTBEAT_INTERVAL);
-  wss.on("connection", (rawWs) => {
-    const ws = rawWs;
-    ws._remuxTabId = null;
-    ws._remuxCols = 80;
-    ws._remuxRows = 24;
-    const requiresAuth = !!(TOKEN2 || PASSWORD2);
-    ws._remuxAuthed = !requiresAuth;
-    if (!requiresAuth) controlClients.add(ws);
-    ws.on("message", (raw) => {
-      const msg = raw.toString("utf8");
-      if (!ws._remuxAuthed) {
-        try {
-          const parsed = JSON.parse(msg);
-          if (parsed.type === "auth") {
-            if (validateToken(parsed.token, TOKEN2)) {
-              ws._remuxAuthed = true;
-              controlClients.add(ws);
-              ws.send(JSON.stringify({ type: "auth_ok" }));
-              ws.send(JSON.stringify({ type: "state", sessions: getState() }));
-              return;
-            }
-          }
-        } catch {
-        }
-        ws.send(
-          JSON.stringify({ type: "auth_error", reason: "invalid token" })
-        );
-        ws.close(4001, "unauthorized");
-        return;
-      }
-      if (msg.startsWith("{")) {
-        try {
-          const p = JSON.parse(msg);
-          if (p.type === "attach_first") {
-            const name = p.session || "main";
-            const session = createSession(name);
-            let tab = session.tabs.find((t) => !t.ended);
-            if (!tab)
-              tab = createTab(
-                session,
-                p.cols || ws._remuxCols,
-                p.rows || ws._remuxRows
-              );
-            attachToTab(
-              tab,
-              ws,
-              p.cols || ws._remuxCols,
-              p.rows || ws._remuxRows
-            );
-            broadcastState();
-            ws.send(
-              JSON.stringify({ type: "attached", tabId: tab.id, session: name })
-            );
-            return;
-          }
-          if (p.type === "attach_tab") {
-            const found2 = findTab(p.tabId);
-            if (found2) {
-              attachToTab(
-                found2.tab,
-                ws,
-                p.cols || ws._remuxCols,
-                p.rows || ws._remuxRows
-              );
-              broadcastState();
-              ws.send(
-                JSON.stringify({
-                  type: "attached",
-                  tabId: found2.tab.id,
-                  session: found2.session.name
-                })
-              );
-            }
-            return;
-          }
-          if (p.type === "new_tab") {
-            const session = createSession(p.session || "main");
-            const tab = createTab(
-              session,
-              p.cols || ws._remuxCols,
-              p.rows || ws._remuxRows
-            );
-            attachToTab(
-              tab,
-              ws,
-              p.cols || ws._remuxCols,
-              p.rows || ws._remuxRows
-            );
-            broadcastState();
-            ws.send(
-              JSON.stringify({
-                type: "attached",
-                tabId: tab.id,
-                session: session.name
-              })
-            );
-            return;
-          }
-          if (p.type === "close_tab") {
-            const found2 = findTab(p.tabId);
-            if (found2) {
-              if (!found2.tab.ended) found2.tab.pty.kill();
-              found2.session.tabs = found2.session.tabs.filter(
-                (t) => t.id !== p.tabId
-              );
-              if (found2.session.tabs.length === 0 && found2.session.name !== "main") {
-                sessionMap.delete(found2.session.name);
-              }
-            }
-            broadcastState();
-            return;
-          }
-          if (p.type === "new_session") {
-            const name = p.name || "session-" + Date.now();
-            const session = createSession(name);
-            const tab = createTab(
-              session,
-              p.cols || ws._remuxCols,
-              p.rows || ws._remuxRows
-            );
-            attachToTab(
-              tab,
-              ws,
-              p.cols || ws._remuxCols,
-              p.rows || ws._remuxRows
-            );
-            broadcastState();
-            ws.send(
-              JSON.stringify({ type: "attached", tabId: tab.id, session: name })
-            );
-            return;
-          }
-          if (p.type === "delete_session") {
-            if (p.name) {
-              deleteSession(p.name);
-              broadcastState();
-            }
-            return;
-          }
-          if (p.type === "inspect") {
-            const found2 = findTab(ws._remuxTabId);
-            if (found2 && found2.tab.vt && !found2.tab.ended) {
-              const { text, cols, rows } = found2.tab.vt.textSnapshot();
-              ws.send(
-                JSON.stringify({
-                  type: "inspect_result",
-                  text,
-                  meta: {
-                    session: found2.session.name,
-                    tabId: found2.tab.id,
-                    tabTitle: found2.tab.title,
-                    cols,
-                    rows,
-                    timestamp: Date.now()
-                  }
-                })
-              );
-            } else {
-              const found22 = findTab(ws._remuxTabId);
-              const raw2 = found22 ? found22.tab.scrollback.read().toString("utf8") : "";
-              const text = raw2.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
-              ws.send(
-                JSON.stringify({
-                  type: "inspect_result",
-                  text,
-                  meta: { timestamp: Date.now() }
-                })
-              );
-            }
-            return;
-          }
-          if (p.type === "rename_tab") {
-            const found2 = findTab(p.tabId);
-            if (found2 && typeof p.title === "string" && p.title.trim()) {
-              found2.tab.title = p.title.trim().slice(0, 32);
-              broadcastState();
-            }
-            return;
-          }
-          if (p.type === "resize") {
-            ws._remuxCols = p.cols;
-            ws._remuxRows = p.rows;
-            const found2 = findTab(ws._remuxTabId);
-            if (found2) recalcTabSize(found2.tab);
-            return;
-          }
-          return;
-        } catch {
-        }
-      }
-      const found = findTab(ws._remuxTabId);
-      if (found && !found.tab.ended) {
-        found.tab.pty.write(msg);
-      }
-    });
-    ws.on("close", () => {
-      detachFromTab(ws);
-      controlClients.delete(ws);
-    });
-    ws.on("error", () => {
-    });
-  });
-  return wss;
-}
-
-// src/tunnel.ts
-import { spawn, execFile } from "child_process";
-function parseTunnelArgs(argv) {
-  if (argv.includes("--no-tunnel")) return { tunnelMode: "disable" };
-  if (argv.includes("--tunnel")) return { tunnelMode: "enable" };
-  return { tunnelMode: "auto" };
-}
-function isCloudflaredAvailable() {
-  return new Promise((resolve) => {
-    execFile("cloudflared", ["--version"], (err) => {
-      resolve(!err);
-    });
-  });
-}
-var TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
-function startTunnel(port, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "cloudflared",
-      ["tunnel", "--url", `http://localhost:${port}`],
-      { stdio: ["ignore", "pipe", "pipe"] }
-    );
-    let resolved = false;
-    let output = "";
-    const TIMEOUT_MS = 3e4;
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        reject(new Error("cloudflared tunnel URL not detected within 30s"));
-      }
-    }, TIMEOUT_MS);
-    function handleData(data) {
-      output += data.toString();
-      const match = output.match(TUNNEL_URL_RE);
-      if (match && !resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ url: match[0], process: child });
-      }
-    }
-    child.stderr.on("data", handleData);
-    child.stdout.on("data", handleData);
-    child.on("error", (err) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        reject(err);
-      }
-    });
-    child.on("close", (code) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        reject(
-          new Error(
-            `cloudflared exited with code ${code} before URL was detected`
-          )
-        );
-      }
-    });
-    if (options.signal) {
-      options.signal.addEventListener(
-        "abort",
-        () => {
-          child.kill("SIGTERM");
-        },
-        { once: true }
-      );
-    }
-  });
-}
-function buildTunnelAccessUrl(tunnelUrl, token, password) {
-  if (password && !token) return tunnelUrl;
-  if (token) return `${tunnelUrl}?token=${token}`;
-  return tunnelUrl;
-}
-
-// src/server.ts
-var __filename = fileURLToPath(import.meta.url);
-var __dirname = path2.dirname(__filename);
-var require2 = createRequire(import.meta.url);
-var PKG = JSON.parse(
-  fs3.readFileSync(path2.join(__dirname, "package.json"), "utf8")
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const PKG = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "package.json"), "utf8"),
 );
-var VERSION = PKG.version;
-var PORT2 = process.env.PORT || 8767;
-var { TOKEN, PASSWORD } = resolveAuth(process.argv);
-var { tunnelMode } = parseTunnelArgs(process.argv);
-var tunnelProcess = null;
-function findGhosttyWeb() {
-  const ghosttyWebMain = require2.resolve("ghostty-web");
+const VERSION = PKG.version;
+const PORT = process.env.PORT || 8767;
+
+// ── Authentication ───────────────────────────────────────────────
+const { TOKEN, PASSWORD } = resolveAuth(process.argv);
+
+// ── Tunnel ───────────────────────────────────────────────────────
+const { tunnelMode } = parseTunnelArgs(process.argv);
+let tunnelProcess: ChildProcess | null = null;
+
+// ── Locate ghostty-web assets ────────────────────────────────────
+
+function findGhosttyWeb(): { distPath: string; wasmPath: string } {
+  const ghosttyWebMain = require.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
-  const distPath2 = path2.join(ghosttyWebRoot, "dist");
-  const wasmPath2 = path2.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs3.existsSync(path2.join(distPath2, "ghostty-web.js")) && fs3.existsSync(wasmPath2)) {
-    return { distPath: distPath2, wasmPath: wasmPath2 };
+  const distPath = path.join(ghosttyWebRoot, "dist");
+  const wasmPath = path.join(ghosttyWebRoot, "ghostty-vt.wasm");
+  if (
+    fs.existsSync(path.join(distPath, "ghostty-web.js")) &&
+    fs.existsSync(wasmPath)
+  ) {
+    return { distPath, wasmPath };
   }
   console.error("Error: ghostty-web package not found.");
   process.exit(1);
 }
-var { distPath, wasmPath } = findGhosttyWeb();
-var startupDone = false;
-async function startup() {
+
+const { distPath, wasmPath } = findGhosttyWeb();
+
+// ── Startup: init WASM, restore sessions, create default ─────────
+
+let startupDone = false;
+
+async function startup(): Promise<void> {
   await initGhosttyVt(wasmPath);
+
+  // Try restoring saved sessions
   const saved = restoreSessions();
   if (saved && saved.sessions.length > 0) {
     for (const s of saved.sessions) {
       const session = createSession(s.name);
+      // Restore tabs -- each tab gets a new PTY, but pre-fill scrollback with saved data
       for (const t of s.tabs) {
         if (t.ended) continue;
         const tab = createTab(session);
         tab.title = t.title || tab.title;
         if (t.scrollback) {
+          // Write saved scrollback to the RingBuffer so it's available on attach
+          // Note: this goes to RingBuffer only, NOT to PTY or VT terminal
           tab.scrollback.write(t.scrollback);
         }
       }
+      // If all tabs were ended, create a fresh one
       if (session.tabs.length === 0) createTab(session);
     }
   }
+
+  // Ensure at least a "main" session exists
   if (sessionMap.size === 0) {
     const s = createSession("main");
     createTab(s);
   }
+
+  // Persistence timer (8s, like cmux)
   setInterval(persistSessions, PERSIST_INTERVAL_MS);
+
   startupDone = true;
 }
+
 startup().catch((e) => {
   console.error("[startup] fatal:", e);
+  // Fallback: create default session without VT tracking
   if (sessionMap.size === 0) {
     const s = createSession("main");
     createTab(s);
   }
   startupDone = true;
 });
-var HTML_TEMPLATE = `<!doctype html>
+
+// ── HTML Template ────────────────────────────────────────────────
+
+const HTML_TEMPLATE = `<!doctype html>
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
@@ -1170,7 +489,7 @@ var HTML_TEMPLATE = `<!doctype html>
           const live = s.tabs.filter(t => !t.ended).length;
           el.innerHTML = '<span class="dot"></span><span class="name">' + s.name
             + '</span><span class="count">' + live + '</span>'
-            + '<button class="del" data-del="' + s.name + '">\xD7</button>';
+            + '<button class="del" data-del="' + s.name + '">\u00d7</button>';
           el.addEventListener('pointerdown', e => {
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
@@ -1200,7 +519,7 @@ var HTML_TEMPLATE = `<!doctype html>
           const el = document.createElement('button');
           el.className = 'tab' + (t.id === currentTabId ? ' active' : '');
           el.innerHTML = '<span class="title">' + t.title + '</span>'
-            + '<button class="close" data-close="' + t.id + '">\xD7</button>';
+            + '<button class="close" data-close="' + t.id + '">\u00d7</button>';
           el.addEventListener('pointerdown', e => {
             const closeId = e.target.dataset.close ?? e.target.closest('[data-close]')?.dataset.close;
             if (closeId != null) {
@@ -1479,22 +798,31 @@ var HTML_TEMPLATE = `<!doctype html>
     </script>
   </body>
 </html>`;
-var MIME = {
+
+// ── MIME ──────────────────────────────────────────────────────────
+
+const MIME: Record<string, string> = {
   ".html": "text/html",
   ".js": "application/javascript",
   ".wasm": "application/wasm",
   ".css": "text/css",
-  ".json": "application/json"
+  ".json": "application/json",
 };
-var httpServer = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+
+// ── HTTP Server ──────────────────────────────────────────────────
+
+const httpServer = http.createServer((req, res) => {
+  const url = new URL(req.url!, `http://${req.headers.host}`);
+
+  // Handle password form submission
   if (url.pathname === "/auth" && req.method === "POST") {
     let body = "";
-    req.on("data", (chunk) => body += chunk);
+    req.on("data", (chunk: Buffer) => (body += chunk));
     req.on("end", () => {
       const params = new URLSearchParams(body);
       const submitted = params.get("password");
       if (PASSWORD && submitted === PASSWORD) {
+        // Generate a session token and redirect with it
         const sessionToken = generateToken();
         passwordTokens.add(sessionToken);
         res.writeHead(302, { Location: `/?token=${sessionToken}` });
@@ -1506,11 +834,16 @@ var httpServer = http.createServer((req, res) => {
     });
     return;
   }
+
   if (url.pathname === "/" || url.pathname === "/index.html") {
     const urlToken = url.searchParams.get("token");
-    const isAuthed = !TOKEN && !PASSWORD || // no auth configured (impossible after auto-gen, but safe)
-    TOKEN != null && urlToken === TOKEN || passwordTokens.has(urlToken);
+    const isAuthed =
+      (!TOKEN && !PASSWORD) || // no auth configured (impossible after auto-gen, but safe)
+      (TOKEN != null && urlToken === TOKEN) ||
+      passwordTokens.has(urlToken!);
+
     if (!isAuthed) {
+      // If password mode is active and no valid token, show login page
       if (PASSWORD) {
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(PASSWORD_PAGE);
@@ -1524,94 +857,113 @@ var httpServer = http.createServer((req, res) => {
     res.end(HTML_TEMPLATE);
     return;
   }
+
   if (url.pathname.startsWith("/dist/")) {
-    return serveFile(path2.join(distPath, url.pathname.slice(6)), res);
+    return serveFile(path.join(distPath, url.pathname.slice(6)), res);
   }
+
   if (url.pathname === "/ghostty-vt.wasm") {
     return serveFile(wasmPath, res);
   }
+
   res.writeHead(404);
   res.end("Not Found");
 });
-function serveFile(filePath, res) {
-  const ext = path2.extname(filePath);
-  fs3.readFile(filePath, (err, data) => {
+
+function serveFile(filePath: string, res: http.ServerResponse): void {
+  const ext = path.extname(filePath);
+  fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end("Not Found");
       return;
     }
     res.writeHead(200, {
-      "Content-Type": MIME[ext] || "application/octet-stream"
+      "Content-Type": MIME[ext] || "application/octet-stream",
     });
     res.end(data);
   });
 }
+
+// ── WebSocket Server ─────────────────────────────────────────────
+
 setupWebSocket(httpServer, TOKEN, PASSWORD);
-httpServer.listen(PORT2, () => {
-  let url = `http://localhost:${PORT2}`;
+
+// ── Start ────────────────────────────────────────────────────────
+
+httpServer.listen(PORT, () => {
+  let url = `http://localhost:${PORT}`;
   if (TOKEN) url += `?token=${TOKEN}`;
-  console.log(`
-  Remux running at ${url}
-`);
+
+  console.log(`\n  Remux running at ${url}\n`);
+
   if (PASSWORD) {
     console.log(`  Password authentication enabled`);
-    console.log(`  Login page: http://localhost:${PORT2}
-`);
+    console.log(`  Login page: http://localhost:${PORT}\n`);
   } else if (TOKEN) {
-    console.log(`  Token: ${TOKEN}
-`);
+    console.log(`  Token: ${TOKEN}\n`);
   }
-  qrcode.generate(url, { small: true }, (code) => {
+
+  // Print QR code for local URL
+  qrcode.generate(url, { small: true }, (code: string) => {
     console.log(code);
   });
+
+  // -- Tunnel: launch async after server is listening --
   launchTunnel();
 });
-async function launchTunnel() {
+
+async function launchTunnel(): Promise<void> {
   if (tunnelMode === "disable") return;
+
   const available = await isCloudflaredAvailable();
   if (!available) {
     if (tunnelMode === "enable") {
       console.log(
-        "\n  [tunnel] cloudflared not found -- install it for tunnel support"
+        "\n  [tunnel] cloudflared not found -- install it for tunnel support",
       );
       console.log(
-        "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
+        "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n",
       );
     }
     return;
   }
+
   console.log("  [tunnel] starting cloudflare tunnel...");
   try {
     const { url: tunnelUrl, process: child } = await startTunnel(
-      Number(PORT2)
+      Number(PORT),
     );
     tunnelProcess = child;
+
     const accessUrl = buildTunnelAccessUrl(tunnelUrl, TOKEN, PASSWORD);
-    console.log(`
-  Tunnel: ${accessUrl}
-`);
-    qrcode.generate(accessUrl, { small: true }, (code) => {
+    console.log(`\n  Tunnel: ${accessUrl}\n`);
+
+    // Print QR code for tunnel URL (great for mobile access)
+    qrcode.generate(accessUrl, { small: true }, (code: string) => {
       console.log(code);
     });
-    child.on("close", (code) => {
+
+    // Log if tunnel exits unexpectedly
+    child.on("close", (code: number | null) => {
       if (code !== null && code !== 0) {
         console.log(`  [tunnel] cloudflared exited (code ${code})`);
       }
       tunnelProcess = null;
     });
-  } catch (err) {
+  } catch (err: any) {
     console.log(`  [tunnel] failed to start: ${err.message}`);
     tunnelProcess = null;
   }
 }
-function shutdown() {
-  persistSessions();
+
+function shutdown(): void {
+  persistSessions(); // save before exit
+  // Kill cloudflared tunnel if running
   if (tunnelProcess) {
     try {
       tunnelProcess.kill("SIGTERM");
-    } catch {
-    }
+    } catch {}
     tunnelProcess = null;
   }
   for (const session of sessionMap.values()) {

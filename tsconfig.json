@@ -1,14 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "jsx": "react-jsx",
-    "types": ["node", "vitest/globals"]
-  }
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
 }
