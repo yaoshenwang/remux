@@ -19,8 +19,13 @@ export const AppearanceSection = ({
   showFollowFocus,
   theme
 }: AppearanceSectionProps) => (
-  <>
-    <h3>Appearance</h3>
+  <section className="sidebar-section" data-testid="appearance-section">
+    <div className="device-section-header">
+      <div>
+        <h3 className="sidebar-section-title">Appearance</h3>
+        <p className="device-section-subtitle">Adjust theme and inspect readability.</p>
+      </div>
+    </div>
     <div className="theme-toggle">
       <button className={theme === "dark" ? "active" : ""} onClick={() => onSetTheme("dark")}>Dark</button>
       <button className={theme === "light" ? "active" : ""} onClick={() => onSetTheme("light")}>Light</button>
@@ -28,7 +33,7 @@ export const AppearanceSection = ({
 
     {showFollowFocus && (
       <>
-        <h3>Focus Sync</h3>
+        <h3 className="sidebar-section-title">Focus Sync</h3>
         <div className="drawer-toggle-row">
           <button
             className={followBackendFocus ? "active" : ""}
@@ -44,12 +49,12 @@ export const AppearanceSection = ({
       </>
     )}
 
-    <h3>Font Size</h3>
+    <h3 className="sidebar-section-title">Font Size</h3>
     <div className="drawer-grid" style={{ gridTemplateColumns: "auto 1fr auto", alignItems: "center" }}>
       <button onClick={() => onUpdateInspectFontSize(Math.max(8, (inspectFontSize || 14) - 1))}>A-</button>
       <span style={{ textAlign: "center" }}>{inspectFontSize || "Auto"}</span>
       <button onClick={() => onUpdateInspectFontSize(Math.min(24, (inspectFontSize || 14) + 1))}>A+</button>
     </div>
     <button className="drawer-section-action" onClick={onResetInspectFontSize}>Reset to Auto</button>
-  </>
+  </section>
 );

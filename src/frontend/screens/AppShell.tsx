@@ -33,8 +33,12 @@ export const AppShell = ({
       "--app-offset-top": `${viewportOffsetTop}px`,
     } as CSSProperties}
   >
-    {children}
-    {sidebar}
+    <div className="app-shell-content">
+      {children}
+    </div>
+    <div className="app-shell-sidebar" data-testid="app-shell-sidebar">
+      {sidebar}
+    </div>
 
     {mobileLayout && drawerOpen && (
       <button

@@ -62,73 +62,77 @@ export const AppHeader = ({
 
   return (
     <header className="app-header" data-testid="app-header">
-      <div className="app-header-left">
-        {mobileLayout && (
-          <button className="header-btn hamburger-btn" onClick={onToggleDrawer} title="Menu">
-            <span className="material-icon">&#9776;</span>
-          </button>
-        )}
-        {!mobileLayout && (
-          <button className="header-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="Toggle sidebar">
-            {sidebarCollapsed ? "▸" : "◂"}
-          </button>
-        )}
-        <span className="session-name" title={sessionName}>{sessionName}</span>
-      </div>
+      <div className="app-header-meta">
+        <div className="app-header-left">
+          {mobileLayout && (
+            <button className="header-btn hamburger-btn" onClick={onToggleDrawer} title="Menu">
+              <span className="material-icon">&#9776;</span>
+            </button>
+          )}
+          {!mobileLayout && (
+            <button className="header-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="Toggle sidebar">
+              {sidebarCollapsed ? "▸" : "◂"}
+            </button>
+          )}
+          <div className="session-title-block">
+            <span className="session-eyebrow">Workspace</span>
+            <span className="session-name" title={sessionName}>{sessionName}</span>
+          </div>
+        </div>
 
-      {/* Tab bar */}
-      <nav className="tab-bar" data-testid="tab-bar">
-        {tabs.map((tab) => (
-          <button
-            key={tab.index}
-            className={`tab-item${tab.active ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
-            onClick={() => onSelectTab(tab.index)}
-            onDoubleClick={() => handleDoubleClick(tab.index)}
-            title={tab.name}
-          >
-            {renamingTab === tab.index ? (
-              <input
-                ref={renameInputRef}
-                className="tab-rename-input"
-                defaultValue={tab.name}
-                onBlur={commitRename}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename();
-                  if (e.key === "Escape") setRenamingTab(null);
-                }}
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <span className="tab-label">{tab.name}</span>
-            )}
-            {tabs.length > 1 && (
-              <span
-                className="tab-close"
-                onClick={(e) => { e.stopPropagation(); onCloseTab(tab.index); }}
-                title="Close tab"
-              >
-                ×
-              </span>
-            )}
-          </button>
-        ))}
-        <button className="tab-item tab-new" onClick={onNewTab} title="New tab">+</button>
-      </nav>
-
-      <div className="app-header-right">
-        {mobileLayout && (
-          <span className="connection-state-badge" data-testid="mobile-connection-state">
+        <div className="app-header-right">
+          <span className="connection-state-badge" data-testid="connection-state-badge">
             {connectionStateLabel}
           </span>
-        )}
-        <button
-          className={`client-mode-toggle ${clientMode === "observer" ? "observer" : "active"}`}
-          onClick={onToggleClientMode}
-          type="button"
-        >
-          {`Mode: ${clientMode === "active" ? "Active" : "Observer"}`}
-        </button>
-        {/* View mode toggle */}
+          <button
+            className={`client-mode-toggle ${clientMode === "observer" ? "observer" : "active"}`}
+            onClick={onToggleClientMode}
+            type="button"
+          >
+            {`Mode: ${clientMode === "active" ? "Active" : "Observer"}`}
+          </button>
+        </div>
+      </div>
+
+      <div className="app-header-main">
+        <nav className="tab-bar" data-testid="tab-bar">
+          {tabs.map((tab) => (
+            <button
+              key={tab.index}
+              className={`tab-item${tab.active ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
+              onClick={() => onSelectTab(tab.index)}
+              onDoubleClick={() => handleDoubleClick(tab.index)}
+              title={tab.name}
+            >
+              {renamingTab === tab.index ? (
+                <input
+                  ref={renameInputRef}
+                  className="tab-rename-input"
+                  defaultValue={tab.name}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") setRenamingTab(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="tab-label">{tab.name}</span>
+              )}
+              {tabs.length > 1 && (
+                <span
+                  className="tab-close"
+                  onClick={(e) => { e.stopPropagation(); onCloseTab(tab.index); }}
+                  title="Close tab"
+                >
+                  ×
+                </span>
+              )}
+            </button>
+          ))}
+          <button className="tab-item tab-new" onClick={onNewTab} title="New tab">+</button>
+        </nav>
+
         <div className="view-mode-toggle">
           <button
             className={viewMode === "terminal" ? "active" : ""}

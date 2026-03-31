@@ -52,5 +52,7 @@ describe("AppShell", () => {
     expect(shell?.style.getPropertyValue("--app-height")).toBe("402px");
     expect(shell?.style.getPropertyValue("--app-offset-left")).toBe("6px");
     expect(shell?.style.getPropertyValue("--app-offset-top")).toBe("118px");
+    expect(container.querySelector(".app-shell-content")?.textContent).toContain("content");
+    expect(container.querySelector("[data-testid='app-shell-sidebar']")?.textContent).toContain("sidebar");
   });
 });

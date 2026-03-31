@@ -47,7 +47,7 @@ export const App = () => {
   // --- Theme ---
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const stored = localStorage.getItem("remux-theme");
-    return stored === "light" ? "light" : "dark";
+    return stored === "dark" ? "dark" : "light";
   });
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -251,129 +251,133 @@ export const App = () => {
       viewportOffsetTop={viewportOffsetTop}
     >
       <div className="main-content">
-        {/* Header with tab bar */}
-        <AppHeader
-          mobileLayout={mobileLayout}
-          onToggleDrawer={() => setDrawerOpen((o) => !o)}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-          tabs={tabs}
-          activeTabIndex={activeTabIndex}
-          sessionName={sessionName}
-          onSelectTab={control.selectTab}
-          onCloseTab={control.closeTab}
-          onNewTab={() => control.newTab()}
-          onRenameTab={control.renameTab}
-          viewMode={viewMode}
-          onSetViewMode={setViewMode}
-          clientMode={control.clientMode}
-          onToggleClientMode={() => {
-            const nextMode = control.clientMode === "active" ? "observer" : "active";
-            const confirmed = window.confirm(
-              nextMode === "observer"
-                ? "Switch this client to Observer mode?"
-                : "Switch this client to Active mode?",
-            );
-            if (confirmed) {
-              control.setClientMode(nextMode);
-            }
-          }}
-          connectionStateLabel={connectionStateLabel}
-        />
+        <div className="workspace-frame">
+          {/* Header with tab bar */}
+          <AppHeader
+            mobileLayout={mobileLayout}
+            onToggleDrawer={() => setDrawerOpen((o) => !o)}
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+            tabs={tabs}
+            activeTabIndex={activeTabIndex}
+            sessionName={sessionName}
+            onSelectTab={control.selectTab}
+            onCloseTab={control.closeTab}
+            onNewTab={() => control.newTab()}
+            onRenameTab={control.renameTab}
+            viewMode={viewMode}
+            onSetViewMode={setViewMode}
+            clientMode={control.clientMode}
+            onToggleClientMode={() => {
+              const nextMode = control.clientMode === "active" ? "observer" : "active";
+              const confirmed = window.confirm(
+                nextMode === "observer"
+                  ? "Switch this client to Observer mode?"
+                  : "Switch this client to Active mode?",
+              );
+              if (confirmed) {
+                control.setClientMode(nextMode);
+              }
+            }}
+            connectionStateLabel={connectionStateLabel}
+          />
 
-        <div className="workspace-body">
-          {/* Terminal / Inspect */}
-          <main className="terminal-wrap">
-            <div className={`terminal-stage${viewMode === "inspect" ? " inspect-active" : " live-active"}`}>
-              <div className={`terminal-layer${viewMode !== "terminal" ? " is-hidden" : ""}`}>
-                <div
-                  className="terminal-host"
-                  ref={terminal.terminalContainerRef}
-                  data-testid="terminal-host"
-                  onPointerDownCapture={terminal.focusTerminal}
-                  onContextMenu={(event) => event.preventDefault()}
-                >
-                  {terminalStatusMessage && !showPassword && (
-                    <div className="terminal-status-overlay" data-testid="terminal-status-overlay">
-                      <span>{terminalStatusMessage}</span>
+          <div className="workspace-body">
+            {/* Terminal / Inspect */}
+            <section className={`workspace-surface workspace-surface--${viewMode}`}>
+              <main className="terminal-wrap">
+                <div className={`terminal-stage${viewMode === "inspect" ? " inspect-active" : " live-active"}`}>
+                  <div className={`terminal-layer${viewMode !== "terminal" ? " is-hidden" : ""}`}>
+                    <div
+                      className="terminal-host"
+                      ref={terminal.terminalContainerRef}
+                      data-testid="terminal-host"
+                      onPointerDownCapture={terminal.focusTerminal}
+                      onContextMenu={(event) => event.preventDefault()}
+                    >
+                      {terminalStatusMessage && !showPassword && (
+                        <div className="terminal-status-overlay" data-testid="terminal-status-overlay">
+                          <span>{terminalStatusMessage}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {viewMode === "inspect" && (
+                    <div className="inspect-layer is-active">
+                      <InspectView
+                        snapshot={control.inspectSnapshot}
+                        loading={control.inspectLoading}
+                        error={control.inspectError}
+                        scope={inspectScope}
+                        selectedPaneId={inspectPaneId}
+                        paneOptions={activeTab?.panes ?? []}
+                        searchQuery={inspectSearchInput}
+                        onRefresh={() => control.requestInspect({
+                          scope: inspectScope,
+                          paneId: inspectScope === "pane" ? inspectPaneId ?? undefined : undefined,
+                          tabIndex: inspectScope === "tab" ? activeTabIndex : undefined,
+                          query: debouncedInspectSearch || undefined,
+                        }, {
+                          preferCache: false,
+                        })}
+                        onLoadMore={control.loadMoreInspect}
+                        onScopeChange={setInspectScope}
+                        onPaneChange={setInspectPaneId}
+                        onSearchChange={setInspectSearchInput}
+                      />
                     </div>
                   )}
                 </div>
-              </div>
-              {viewMode === "inspect" && (
-                <div className="inspect-layer is-active">
-                  <InspectView
-                    snapshot={control.inspectSnapshot}
-                    loading={control.inspectLoading}
-                    error={control.inspectError}
-                    scope={inspectScope}
-                    selectedPaneId={inspectPaneId}
-                    paneOptions={activeTab?.panes ?? []}
-                    searchQuery={inspectSearchInput}
-                    onRefresh={() => control.requestInspect({
-                      scope: inspectScope,
-                      paneId: inspectScope === "pane" ? inspectPaneId ?? undefined : undefined,
-                      tabIndex: inspectScope === "tab" ? activeTabIndex : undefined,
-                      query: debouncedInspectSearch || undefined,
-                    }, {
-                      preferCache: false,
-                    })}
-                    onLoadMore={control.loadMoreInspect}
-                    onScopeChange={setInspectScope}
-                    onPaneChange={setInspectPaneId}
-                    onSearchChange={setInspectSearchInput}
-                  />
-                </div>
-              )}
-            </div>
-          </main>
+              </main>
+            </section>
 
-          {/* Hidden file input for toolbar Upload button */}
-          <input
-            ref={terminal.fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setStatusMessage("Uploading file…");
-              void uploadImage(file, file.type)
-                .then((result) => {
-                  connection.sendRaw(result.path);
-                  terminal.focusTerminal();
-                  setStatusMessage(`Uploaded (${Math.round(result.size / 1024)}KB)`);
-                })
-                .catch((err) => {
-                  setStatusMessage(`Upload failed: ${err instanceof Error ? err.message : "unknown"}`);
-                });
-              e.target.value = "";
-            }}
-          />
-
-          {/* Bottom rail: toolbar + compose */}
-          <div className="workspace-bottom-rail">
-            <Toolbar
-              ref={toolbarRef}
-              sendRaw={connection.sendRaw}
-              onFocusTerminal={terminal.focusTerminal}
-              fileInputRef={terminal.fileInputRef}
-              mobileLayout={mobileLayout}
-              setStatusMessage={setStatusMessage}
-              snippets={[]}
-              onExecuteSnippet={() => {}}
-              hidden={!isConnected}
+            {/* Hidden file input for toolbar Upload button */}
+            <input
+              ref={terminal.fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setStatusMessage("Uploading file…");
+                void uploadImage(file, file.type)
+                  .then((result) => {
+                    connection.sendRaw(result.path);
+                    terminal.focusTerminal();
+                    setStatusMessage(`Uploaded (${Math.round(result.size / 1024)}KB)`);
+                  })
+                  .catch((err) => {
+                    setStatusMessage(`Upload failed: ${err instanceof Error ? err.message : "unknown"}`);
+                  });
+                e.target.value = "";
+              }}
             />
 
-            {mobileLayout && isConnected && (
-              <ComposeBar
-                composeText={composeText}
-                onChange={setComposeText}
-                onFilePaste={handleComposePaste}
-                onKeyDown={handleComposeKeyDown}
-                onSend={sendCompose}
+            {/* Bottom rail: toolbar + compose */}
+            <div className="workspace-bottom-rail">
+              <Toolbar
+                ref={toolbarRef}
+                sendRaw={connection.sendRaw}
+                onFocusTerminal={terminal.focusTerminal}
+                fileInputRef={terminal.fileInputRef}
+                mobileLayout={mobileLayout}
+                setStatusMessage={setStatusMessage}
+                snippets={[]}
+                onExecuteSnippet={() => {}}
+                hidden={!isConnected}
               />
-            )}
+
+              {mobileLayout && isConnected && (
+                <ComposeBar
+                  composeText={composeText}
+                  onChange={setComposeText}
+                  onFilePaste={handleComposePaste}
+                  onKeyDown={handleComposeKeyDown}
+                  onSend={sendCompose}
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>
