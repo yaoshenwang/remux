@@ -239,154 +239,95 @@ const HTML_TEMPLATE = `<!doctype html>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #1e1e1e; color: #ccc;
-        height: 100vh; height: 100dvh;
-        display: flex;
-      }
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #1e1e1e; color: #ccc; height: 100vh; height: 100dvh; display: flex; }
 
-      /* ── Sidebar (Obsidian-style) ── */
-      .sidebar {
-        width: 220px; min-width: 220px;
-        background: #252526;
-        border-right: 1px solid #1a1a1a;
-        display: flex; flex-direction: column;
-        flex-shrink: 0;
-        transition: margin-left .2s;
-      }
+      /* ── Sidebar ── */
+      .sidebar { width: 220px; min-width: 220px; background: #252526; border-right: 1px solid #1a1a1a;
+        display: flex; flex-direction: column; flex-shrink: 0; transition: margin-left .2s; }
       .sidebar.collapsed { margin-left: -220px; }
+      .sidebar-header { padding: 10px 12px; font-size: 11px; font-weight: 600; color: #888;
+        text-transform: uppercase; letter-spacing: .5px; display: flex; align-items: center;
+        justify-content: space-between; }
+      .sidebar-header button { background: none; border: none; color: #666; cursor: pointer;
+        font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
+      .sidebar-header button:hover { color: #e5e5e5; background: #3a3a3a; }
 
-      .sidebar-header {
-        padding: 10px 12px;
-        font-size: 11px; font-weight: 600;
-        color: #888; text-transform: uppercase;
-        letter-spacing: .5px;
-        display: flex; align-items: center; justify-content: space-between;
-      }
-      .sidebar-header button {
-        background: none; border: none; color: #888; cursor: pointer;
-        font-size: 16px; line-height: 1; padding: 2px 4px;
-      }
-      .sidebar-header button:hover { color: #e5e5e5; }
-
-      .session-list {
-        flex: 1; overflow-y: auto; padding: 0 6px;
-      }
-      .session-item {
-        display: flex; align-items: center; gap: 8px;
-        padding: 6px 8px; border-radius: 4px;
-        font-size: 13px; cursor: pointer;
-        color: #aaa; border: none; background: none;
-        width: 100%; text-align: left; font-family: inherit;
-      }
+      .session-list { flex: 1; overflow-y: auto; padding: 4px 6px; }
+      .session-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 4px;
+        font-size: 13px; cursor: pointer; color: #aaa; border: none; background: none;
+        width: 100%; text-align: left; font-family: inherit; min-height: 32px; }
       .session-item:hover { background: #2a2d2e; color: #e5e5e5; }
       .session-item.active { background: #37373d; color: #fff; }
-      .session-item .dot {
-        width: 6px; height: 6px; border-radius: 50%;
-        background: #27c93f; flex-shrink: 0;
-      }
-      .session-item .dot.ended { background: #555; }
+      .session-item .dot { width: 6px; height: 6px; border-radius: 50%; background: #27c93f; flex-shrink: 0; }
       .session-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .session-item .clients { font-size: 10px; color: #666; }
-      .session-item .del {
-        opacity: 0; font-size: 11px; color: #888; background: none;
-        border: none; cursor: pointer; padding: 2px 4px; font-family: inherit;
-      }
+      .session-item .count { font-size: 10px; color: #555; min-width: 16px; text-align: center; }
+      .session-item .del { opacity: 0; font-size: 14px; color: #666; background: none; border: none;
+        cursor: pointer; padding: 0 4px; font-family: inherit; line-height: 1; border-radius: 3px; }
       .session-item:hover .del { opacity: 1; }
-      .session-item .del:hover { color: #ff5f56; }
+      .session-item .del:hover { color: #ff5f56; background: #3a3a3a; }
 
-      .sidebar-footer {
-        padding: 8px 12px;
-        border-top: 1px solid #1a1a1a;
-        display: flex; flex-direction: column; gap: 4px;
-      }
-      .sidebar-footer .status {
-        font-size: 11px; color: #888;
-        display: flex; align-items: center; gap: 6px;
-      }
-      .status-dot {
-        width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0;
-      }
+      .sidebar-footer { padding: 8px 12px; border-top: 1px solid #1a1a1a; }
+      .sidebar-footer .status { font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px; }
+      .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
       .status-dot.connected { background: #27c93f; }
       .status-dot.disconnected { background: #ff5f56; }
       .status-dot.connecting { background: #ffbd2e; animation: pulse 1s infinite; }
       @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
-      /* ── Main area ── */
-      .main {
-        flex: 1; display: flex; flex-direction: column;
-        min-width: 0;
-      }
+      /* ── Main ── */
+      .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
-      /* ── Tab bar ── */
-      .tab-bar {
-        background: #252526;
-        display: flex; align-items: center;
-        border-bottom: 1px solid #1a1a1a;
-        flex-shrink: 0; min-height: 34px;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .tab-toggle {
-        padding: 6px 10px; background: none; border: none;
-        color: #888; cursor: pointer; font-size: 16px;
-        flex-shrink: 0;
-      }
+      /* ── Tab bar (Chrome-style) ── */
+      .tab-bar { background: #2d2d2d; display: flex; align-items: flex-end; flex-shrink: 0;
+        min-height: 36px; padding: 0 0 0 0; }
+      .tab-toggle { padding: 8px 10px; background: none; border: none; color: #888;
+        cursor: pointer; font-size: 16px; flex-shrink: 0; align-self: center; }
       .tab-toggle:hover { color: #e5e5e5; }
-      .tab-list { display: flex; flex: 1; min-width: 0; }
-      .tab {
-        padding: 6px 14px; font-size: 12px;
-        color: #888; background: transparent;
-        border: none; border-bottom: 2px solid transparent;
-        cursor: pointer; white-space: nowrap; font-family: inherit;
-      }
-      .tab:hover { color: #ccc; background: #2a2d2e; }
-      .tab.active { color: #e5e5e5; border-bottom-color: #007acc; background: #1e1e1e; }
-      .tab .tab-close {
-        margin-left: 6px; font-size: 10px; opacity: 0;
-        padding: 1px 3px; border-radius: 3px;
-      }
-      .tab:hover .tab-close { opacity: .5; }
-      .tab .tab-close:hover { opacity: 1; background: #555; }
-      .tab-new {
-        padding: 6px 10px; font-size: 14px; color: #666;
-        background: none; border: none; cursor: pointer;
-        flex-shrink: 0;
-      }
-      .tab-new:hover { color: #ccc; }
+      .tab-list { display: flex; flex: 1; min-width: 0; align-items: flex-end; overflow-x: auto;
+        -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+      .tab-list::-webkit-scrollbar { display: none; }
+
+      .tab { position: relative; display: flex; align-items: center; gap: 0;
+        padding: 6px 8px 6px 12px; font-size: 12px; color: #999; background: #2d2d2d;
+        border: none; cursor: pointer; white-space: nowrap; font-family: inherit;
+        border-top: 2px solid transparent; margin-right: 1px; min-height: 32px; }
+      .tab:hover { color: #ddd; background: #383838; }
+      .tab.active { color: #fff; background: #1e1e1e; border-top-color: #007acc;
+        border-radius: 6px 6px 0 0; }
+      .tab .title { pointer-events: none; }
+      .tab .close { display: flex; align-items: center; justify-content: center;
+        width: 18px; height: 18px; margin-left: 6px; font-size: 12px; color: #666;
+        border-radius: 3px; border: none; background: none; cursor: pointer;
+        font-family: inherit; flex-shrink: 0; }
+      .tab .close:hover { color: #fff; background: #555; }
+      .tab:not(:hover) .close:not(:focus) { opacity: 0; }
+      .tab.active .close { opacity: 1; color: #888; }
+
+      .tab-new { display: flex; align-items: center; justify-content: center;
+        width: 28px; height: 28px; margin: 0 4px; font-size: 18px; color: #666;
+        background: none; border: none; cursor: pointer; border-radius: 4px;
+        flex-shrink: 0; align-self: center; }
+      .tab-new:hover { color: #ccc; background: #3a3a3a; }
 
       /* ── Terminal ── */
-      #terminal {
-        flex: 1; background: #1e1e1e; overflow: hidden;
-      }
+      #terminal { flex: 1; background: #1e1e1e; overflow: hidden; }
       #terminal canvas { display: block; }
 
       /* ── Compose bar ── */
-      .compose-bar {
-        display: none;
-        background: #252526;
-        border-top: 1px solid #1a1a1a;
-        padding: 5px 8px; gap: 5px;
-        flex-shrink: 0;
-      }
-      .compose-bar button {
-        padding: 8px 12px; font-size: 14px;
-        font-family: 'Menlo', 'Monaco', monospace;
-        color: #d4d4d4; background: #3a3a3a;
-        border: 1px solid #555; border-radius: 5px;
-        cursor: pointer; white-space: nowrap;
-        -webkit-tap-highlight-color: transparent;
-        touch-action: manipulation; min-width: 40px;
-        text-align: center; user-select: none;
-      }
+      .compose-bar { display: none; background: #252526; border-top: 1px solid #1a1a1a;
+        padding: 5px 8px; gap: 5px; flex-shrink: 0; overflow-x: auto;
+        -webkit-overflow-scrolling: touch; }
+      .compose-bar button { padding: 8px 12px; font-size: 14px;
+        font-family: 'Menlo','Monaco',monospace; color: #d4d4d4; background: #3a3a3a;
+        border: 1px solid #555; border-radius: 5px; cursor: pointer; white-space: nowrap;
+        -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+        min-width: 40px; text-align: center; user-select: none; }
       .compose-bar button:active { background: #555; }
       .compose-bar button.active { background: #4a6a9a; border-color: #6a9ade; }
-      @media (hover: none) and (pointer: coarse) {
-        .compose-bar { display: flex; }
-      }
+      @media (hover: none) and (pointer: coarse) { .compose-bar { display: flex; } }
 
-      /* ── Mobile: collapse sidebar by default ── */
+      /* ── Mobile ── */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
           margin-left: -220px; box-shadow: 4px 0 20px rgba(0,0,0,.5); }
@@ -394,12 +335,13 @@ const HTML_TEMPLATE = `<!doctype html>
         .sidebar-overlay { display: none; position: fixed; inset: 0;
           background: rgba(0,0,0,.4); z-index: 99; }
         .sidebar-overlay.visible { display: block; }
+        .session-item { min-height: 44px; } /* touch-friendly */
+        .tab { min-height: 36px; }
       }
     </style>
   </head>
   <body>
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
-
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <span>Sessions</span>
@@ -413,12 +355,11 @@ const HTML_TEMPLATE = `<!doctype html>
         </div>
       </div>
     </aside>
-
     <div class="main">
       <div class="tab-bar">
         <button class="tab-toggle" id="btn-sidebar" title="Toggle sidebar">☰</button>
         <div class="tab-list" id="tab-list"></div>
-        <button class="tab-new" id="btn-new-tab" title="New session">+</button>
+        <button class="tab-new" id="btn-new-tab" title="New tab">+</button>
       </div>
       <div id="terminal"></div>
       <div class="compose-bar" id="compose-bar">
@@ -439,13 +380,11 @@ const HTML_TEMPLATE = `<!doctype html>
       import { init, Terminal, FitAddon } from '/dist/ghostty-web.js';
       await init();
 
-      const term = new Terminal({
-        cols: 80, rows: 24,
+      const term = new Terminal({ cols: 80, rows: 24,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         fontSize: 14, cursorBlink: true,
         theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
-        scrollback: 10000,
-      });
+        scrollback: 10000 });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
       term.open(document.getElementById('terminal'));
@@ -453,114 +392,113 @@ const HTML_TEMPLATE = `<!doctype html>
       fitAddon.observeResize();
       window.addEventListener('resize', () => fitAddon.fit());
 
-      // ── State ──
-      // sessions = [{ name, tabs: [{ id, title, ended }] }]
-      let sessions = [];
-      let currentSession = 'main';
-      let currentTabId = null;
-      let ws = null;
-      let ctrlActive = false;
+      let sessions = [], currentSession = 'main', currentTabId = null, ws = null, ctrlActive = false;
+      const $ = id => document.getElementById(id);
+      const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
 
-      const $ = (s) => document.getElementById(s);
-      function setStatus(s, t) { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; }
-
-      // ── Sidebar toggle ──
-      const sidebar = $('sidebar');
-      const overlay = $('sidebar-overlay');
+      // ── Sidebar ──
+      const sidebar = $('sidebar'), overlay = $('sidebar-overlay');
       function toggleSidebar() {
         if (window.innerWidth <= 768) {
           sidebar.classList.toggle('open');
           overlay.classList.toggle('visible', sidebar.classList.contains('open'));
-        } else {
-          sidebar.classList.toggle('collapsed');
-        }
+        } else { sidebar.classList.toggle('collapsed'); }
         setTimeout(() => fitAddon.fit(), 250);
       }
-      $('btn-sidebar').addEventListener('pointerdown', (e) => { e.preventDefault(); toggleSidebar(); });
-      overlay.addEventListener('pointerdown', () => { sidebar.classList.remove('open'); overlay.classList.remove('visible'); });
+      function closeSidebarMobile() {
+        if (window.innerWidth <= 768) { sidebar.classList.remove('open'); overlay.classList.remove('visible'); }
+      }
+      $('btn-sidebar').addEventListener('pointerdown', e => { e.preventDefault(); toggleSidebar(); });
+      overlay.addEventListener('pointerdown', closeSidebarMobile);
 
-      // ── Render sidebar (sessions) ──
+      // ── Render sessions ──
       function renderSessions() {
-        const list = $('session-list');
-        list.innerHTML = '';
+        const list = $('session-list'); list.innerHTML = '';
         sessions.forEach(s => {
           const el = document.createElement('button');
           el.className = 'session-item' + (s.name === currentSession ? ' active' : '');
-          const tabCount = s.tabs.filter(t => !t.ended).length;
-          el.innerHTML = '<span class="dot"></span>'
-            + '<span class="name">' + s.name + '</span>'
-            + '<span class="clients">' + tabCount + '</span>'
+          const live = s.tabs.filter(t => !t.ended).length;
+          el.innerHTML = '<span class="dot"></span><span class="name">' + s.name
+            + '</span><span class="count">' + live + '</span>'
             + '<button class="del" data-del="' + s.name + '">×</button>';
-          el.addEventListener('pointerdown', (e) => {
+          el.addEventListener('pointerdown', e => {
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
+              if (sessions.length <= 1) return; // don't delete last session
               sendCtrl({ type: 'delete_session', name: e.target.dataset.del });
+              // if deleting current, switch to first other
+              if (e.target.dataset.del === currentSession) {
+                const other = sessions.find(x => x.name !== currentSession);
+                if (other) selectSession(other.name);
+              }
               return;
             }
             e.preventDefault();
             selectSession(s.name);
-            if (window.innerWidth <= 768) { sidebar.classList.remove('open'); overlay.classList.remove('visible'); }
+            closeSidebarMobile();
           });
           list.appendChild(el);
         });
       }
 
-      // ── Render tab bar (tabs of current session) ──
+      // ── Render tabs (Chrome-style) ──
       function renderTabs() {
-        const list = $('tab-list');
-        list.innerHTML = '';
+        const list = $('tab-list'); list.innerHTML = '';
         const sess = sessions.find(s => s.name === currentSession);
         if (!sess) return;
         sess.tabs.forEach(t => {
-          const btn = document.createElement('button');
-          btn.className = 'tab' + (t.id === currentTabId ? ' active' : '');
-          btn.innerHTML = '<span>' + t.title + (t.ended ? ' ✕' : '') + '</span>'
-            + '<span class="tab-close" data-close="' + t.id + '">×</span>';
-          btn.addEventListener('pointerdown', (e) => {
-            if (e.target.dataset.close != null) {
+          const el = document.createElement('button');
+          el.className = 'tab' + (t.id === currentTabId ? ' active' : '');
+          el.innerHTML = '<span class="title">' + t.title + '</span>'
+            + '<button class="close" data-close="' + t.id + '">×</button>';
+          el.addEventListener('pointerdown', e => {
+            const closeId = e.target.dataset.close ?? e.target.closest('[data-close]')?.dataset.close;
+            if (closeId != null) {
               e.stopPropagation(); e.preventDefault();
-              sendCtrl({ type: 'close_tab', tabId: Number(e.target.dataset.close) });
+              closeTab(Number(closeId));
               return;
             }
             e.preventDefault();
-            attachTab(t.id);
+            if (t.id !== currentTabId) attachTab(t.id);
           });
-          list.appendChild(btn);
+          list.appendChild(el);
         });
       }
 
-      // Select a session → attach to its first tab
       function selectSession(name) {
         currentSession = name;
         const sess = sessions.find(s => s.name === name);
-        if (sess && sess.tabs.length > 0) {
-          attachTab(sess.tabs[0].id);
-        }
-        renderSessions();
-        renderTabs();
+        if (sess && sess.tabs.length > 0) attachTab(sess.tabs[0].id);
+        renderSessions(); renderTabs();
       }
 
-      // Attach to a specific tab
       function attachTab(tabId) {
         currentTabId = tabId;
-        term.clear();
+        term.reset(); // full reset to avoid duplicate content
         sendCtrl({ type: 'attach_tab', tabId, cols: term.cols, rows: term.rows });
-        renderTabs();
+        renderTabs(); renderSessions();
       }
 
-      // New tab in current session
-      $('btn-new-tab').addEventListener('pointerdown', (e) => {
+      function closeTab(tabId) {
+        const sess = sessions.find(s => s.name === currentSession);
+        if (!sess) return;
+        // if closing active tab, switch to neighbor first
+        if (tabId === currentTabId) {
+          const idx = sess.tabs.findIndex(t => t.id === tabId);
+          const next = sess.tabs[idx + 1] || sess.tabs[idx - 1];
+          if (next) attachTab(next.id);
+        }
+        sendCtrl({ type: 'close_tab', tabId });
+      }
+
+      $('btn-new-tab').addEventListener('pointerdown', e => {
         e.preventDefault();
         sendCtrl({ type: 'new_tab', session: currentSession, cols: term.cols, rows: term.rows });
       });
-
-      // New session
-      $('btn-new-session').addEventListener('pointerdown', (e) => {
+      $('btn-new-session').addEventListener('pointerdown', e => {
         e.preventDefault();
         const name = prompt('Session name:');
-        if (name && name.trim()) {
-          sendCtrl({ type: 'new_session', name: name.trim(), cols: term.cols, rows: term.rows });
-        }
+        if (name && name.trim()) sendCtrl({ type: 'new_session', name: name.trim(), cols: term.cols, rows: term.rows });
       });
 
       // ── WebSocket ──
@@ -572,28 +510,18 @@ const HTML_TEMPLATE = `<!doctype html>
         ws = new WebSocket(proto + '//' + location.host + '/ws');
         ws.onopen = () => {
           if (urlToken) ws.send(JSON.stringify({ type: 'auth', token: urlToken }));
-          // Attach to first tab of default session (server creates it on startup)
           sendCtrl({ type: 'attach_first', session: 'main', cols: term.cols, rows: term.rows });
         };
-        ws.onmessage = (e) => {
+        ws.onmessage = e => {
           if (typeof e.data === 'string' && e.data[0] === '{') {
             try {
               const msg = JSON.parse(e.data);
               if (msg.type === 'auth_ok') return;
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
-              if (msg.type === 'state') {
-                sessions = msg.sessions;
-                renderSessions();
-                renderTabs();
-                return;
-              }
+              if (msg.type === 'state') { sessions = msg.sessions; renderSessions(); renderTabs(); return; }
               if (msg.type === 'attached') {
-                currentTabId = msg.tabId;
-                currentSession = msg.session;
-                setStatus('connected', msg.session);
-                renderSessions();
-                renderTabs();
-                return;
+                currentTabId = msg.tabId; currentSession = msg.session;
+                setStatus('connected', msg.session); renderSessions(); renderTabs(); return;
               }
             } catch {}
           }
@@ -603,47 +531,35 @@ const HTML_TEMPLATE = `<!doctype html>
         ws.onerror = () => setStatus('disconnected', 'Error');
       }
       connect();
+      function sendCtrl(msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
 
-      function sendCtrl(msg) {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-      }
-
-      // ── Input → server ──
-      term.onData((data) => {
+      // ── Terminal I/O ──
+      term.onData(data => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         if (ctrlActive) {
-          ctrlActive = false;
-          $('btn-ctrl').classList.remove('active');
+          ctrlActive = false; $('btn-ctrl').classList.remove('active');
           const ch = data.toLowerCase().charCodeAt(0);
           if (ch >= 0x61 && ch <= 0x7a) { ws.send(String.fromCharCode(ch - 0x60)); return; }
         }
         ws.send(data);
       });
-
       term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
 
       // ── Compose bar ──
       const SEQ = { esc: '\\x1b', tab: '\\t', up: '\\x1b[A', down: '\\x1b[B', left: '\\x1b[D', right: '\\x1b[C' };
-
-      $('compose-bar').addEventListener('pointerdown', (e) => {
-        const btn = e.target.closest('button');
-        if (!btn) return;
+      $('compose-bar').addEventListener('pointerdown', e => {
+        const btn = e.target.closest('button'); if (!btn) return;
         e.preventDefault();
-        if (btn.dataset.mod === 'ctrl') {
-          ctrlActive = !ctrlActive;
-          btn.classList.toggle('active', ctrlActive);
-          return;
-        }
-        const data = SEQ[btn.dataset.seq] || btn.dataset.ch;
-        if (data && ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+        if (btn.dataset.mod === 'ctrl') { ctrlActive = !ctrlActive; btn.classList.toggle('active', ctrlActive); return; }
+        const d = SEQ[btn.dataset.seq] || btn.dataset.ch;
+        if (d && ws && ws.readyState === WebSocket.OPEN) ws.send(d);
         term.focus();
       });
 
-      // ── Mobile keyboard ──
+      // ── Mobile ──
       if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', () => {
-          document.body.style.height = window.visualViewport.height + 'px';
-          fitAddon.fit();
+          document.body.style.height = window.visualViewport.height + 'px'; fitAddon.fit();
         });
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
