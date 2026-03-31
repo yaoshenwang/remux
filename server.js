@@ -15,6 +15,7 @@ import { fileURLToPath } from "url";
 import pty from "node-pty";
 import { WebSocketServer } from "ws";
 import qrcode from "qrcode-terminal";
+import { parseTunnelArgs, isCloudflaredAvailable, startTunnel, buildTunnelAccessUrl } from "./tunnel.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,10 @@ const PASSWORD = process.env.REMUX_PASSWORD || (function() {
   return (idx !== -1 && idx + 1 < process.argv.length) ? process.argv[idx + 1] : null;
 })();
 const TOKEN = process.env.REMUX_TOKEN || (PASSWORD ? null : crypto.randomBytes(16).toString("hex"));
+
+// ── Tunnel ────────────────────────────────────────────────────────
+const { tunnelMode } = parseTunnelArgs(process.argv);
+let tunnelProcess = null; // child_process handle, killed on shutdown
 
 // Tokens generated from password login (valid for the lifetime of the server)
 const passwordTokens = new Set();
@@ -1249,14 +1254,60 @@ httpServer.listen(PORT, () => {
     console.log(`  Token: ${TOKEN}\n`);
   }
 
-  // Print QR code for mobile access
+  // Print QR code for local URL
   qrcode.generate(url, { small: true }, (code) => {
     console.log(code);
   });
+
+  // ── Tunnel: launch async after server is listening ──
+  launchTunnel();
 });
+
+async function launchTunnel() {
+  if (tunnelMode === "disable") return;
+
+  const available = await isCloudflaredAvailable();
+  if (!available) {
+    if (tunnelMode === "enable") {
+      console.log("\n  [tunnel] cloudflared not found — install it for tunnel support");
+      console.log("  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n");
+    }
+    return;
+  }
+
+  console.log("  [tunnel] starting cloudflare tunnel...");
+  try {
+    const { url: tunnelUrl, process: child } = await startTunnel(PORT);
+    tunnelProcess = child;
+
+    const accessUrl = buildTunnelAccessUrl(tunnelUrl, TOKEN, PASSWORD);
+    console.log(`\n  Tunnel: ${accessUrl}\n`);
+
+    // Print QR code for tunnel URL (great for mobile access)
+    qrcode.generate(accessUrl, { small: true }, (code) => {
+      console.log(code);
+    });
+
+    // Log if tunnel exits unexpectedly
+    child.on("close", (code) => {
+      if (code !== null && code !== 0) {
+        console.log(`  [tunnel] cloudflared exited (code ${code})`);
+      }
+      tunnelProcess = null;
+    });
+  } catch (err) {
+    console.log(`  [tunnel] failed to start: ${err.message}`);
+    tunnelProcess = null;
+  }
+}
 
 function shutdown() {
   persistSessions(); // save before exit
+  // Kill cloudflared tunnel if running
+  if (tunnelProcess) {
+    try { tunnelProcess.kill("SIGTERM"); } catch {}
+    tunnelProcess = null;
+  }
   for (const session of sessionMap.values()) {
     for (const tab of session.tabs) {
       if (tab.vt) { tab.vt.dispose(); tab.vt = null; }
