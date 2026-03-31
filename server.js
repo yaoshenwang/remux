@@ -134,6 +134,37 @@ function createVtTerminal(cols, rows) {
       wasmExports.ghostty_wasm_free_u8_array(bufPtr, bufSize);
       return out;
     },
+    /** Extract plain text from viewport (for Inspect view). */
+    textSnapshot() {
+      wasmExports.ghostty_render_state_update(handle);
+      const cols = wasmExports.ghostty_render_state_get_cols(handle);
+      const rows = wasmExports.ghostty_render_state_get_rows(handle);
+      const cellSize = 16;
+      const bufSize = cols * rows * cellSize;
+      const bufPtr = wasmExports.ghostty_wasm_alloc_u8_array(bufSize);
+      wasmExports.ghostty_render_state_get_viewport(handle, bufPtr, bufSize);
+
+      const view = new DataView(wasmMemory.buffer);
+      const lines = [];
+
+      for (let row = 0; row < rows; row++) {
+        let line = "";
+        for (let col = 0; col < cols; col++) {
+          const off = bufPtr + (row * cols + col) * cellSize;
+          const cp = view.getUint32(off, true);
+          const width = view.getUint8(off + 11);
+          if (width === 0) continue; // continuation cell (wide char)
+          line += cp > 0 ? String.fromCodePoint(cp) : " ";
+        }
+        lines.push(line.trimEnd());
+      }
+
+      wasmExports.ghostty_wasm_free_u8_array(bufPtr, bufSize);
+
+      // Trim trailing empty lines
+      while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+      return { text: lines.join("\n"), cols, rows };
+    },
     dispose() {
       wasmExports.ghostty_terminal_free(handle);
     },
@@ -527,6 +558,27 @@ const HTML_TEMPLATE = `<!doctype html>
       /* ── Terminal ── */
       #terminal { flex: 1; background: #1e1e1e; overflow: hidden; }
       #terminal canvas { display: block; }
+      #terminal.hidden { display: none; }
+
+      /* ── View switcher ── */
+      .view-switch { display: flex; gap: 1px; margin-left: auto; margin-right: 8px;
+        align-self: center; background: #1a1a1a; border-radius: 4px; overflow: hidden; }
+      .view-switch button { padding: 4px 10px; font-size: 11px; font-family: inherit;
+        color: #888; background: #2d2d2d; border: none; cursor: pointer; }
+      .view-switch button:hover { color: #ccc; }
+      .view-switch button.active { color: #fff; background: #007acc; }
+
+      /* ── Inspect ── */
+      #inspect { flex: 1; background: #1e1e1e; overflow: auto; display: none;
+        padding: 12px 16px; -webkit-overflow-scrolling: touch; }
+      #inspect.visible { display: block; }
+      #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
+        line-height: 1.5; color: #d4d4d4; white-space: pre; tab-size: 8;
+        user-select: text; -webkit-user-select: text; }
+      #inspect-meta { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px;
+        color: #666; padding: 8px 0; border-bottom: 1px solid #333; margin-bottom: 8px;
+        display: flex; gap: 12px; flex-wrap: wrap; }
+      #inspect-meta span { white-space: nowrap; }
 
       /* ── Compose bar ── */
       .compose-bar { display: none; background: #252526; border-top: 1px solid #1a1a1a;
@@ -574,8 +626,16 @@ const HTML_TEMPLATE = `<!doctype html>
         <button class="tab-toggle" id="btn-sidebar" title="Toggle sidebar">☰</button>
         <div class="tab-list" id="tab-list"></div>
         <button class="tab-new" id="btn-new-tab" title="New tab">+</button>
+        <div class="view-switch">
+          <button id="btn-live" class="active">Live</button>
+          <button id="btn-inspect">Inspect</button>
+        </div>
       </div>
       <div id="terminal"></div>
+      <div id="inspect">
+        <div id="inspect-meta"></div>
+        <pre id="inspect-content"></pre>
+      </div>
       <div class="compose-bar" id="compose-bar">
         <button data-seq="esc">Esc</button>
         <button data-seq="tab">Tab</button>
@@ -737,6 +797,15 @@ const HTML_TEMPLATE = `<!doctype html>
                 currentTabId = msg.tabId; currentSession = msg.session;
                 setStatus('connected', msg.session); renderSessions(); renderTabs(); return;
               }
+              if (msg.type === 'inspect_result') {
+                $('inspect-content').textContent = msg.text || '(empty)';
+                const m = msg.meta || {};
+                $('inspect-meta').innerHTML =
+                  '<span>' + (m.session || '') + ' / ' + (m.tabTitle || 'Tab ' + m.tabId) + '</span>' +
+                  '<span>' + (m.cols || '?') + 'x' + (m.rows || '?') + '</span>' +
+                  '<span>' + new Date(m.timestamp || Date.now()).toLocaleTimeString() + '</span>';
+                return;
+              }
             } catch {}
           }
           term.write(e.data);
@@ -770,6 +839,26 @@ const HTML_TEMPLATE = `<!doctype html>
         term.focus();
       });
 
+      // ── Inspect view ──
+      let inspectMode = false, inspectTimer = null;
+      function setView(mode) {
+        inspectMode = mode === 'inspect';
+        $('btn-live').classList.toggle('active', !inspectMode);
+        $('btn-inspect').classList.toggle('active', inspectMode);
+        $('terminal').classList.toggle('hidden', inspectMode);
+        $('inspect').classList.toggle('visible', inspectMode);
+        if (inspectMode) {
+          sendCtrl({ type: 'inspect' });
+          inspectTimer = setInterval(() => sendCtrl({ type: 'inspect' }), 3000);
+        } else {
+          if (inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
+          term.focus();
+          fitAddon.fit();
+        }
+      }
+      $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); setView('live'); });
+      $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); setView('inspect'); });
+
       // ── Mobile ──
       if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', () => {
@@ -777,7 +866,7 @@ const HTML_TEMPLATE = `<!doctype html>
         });
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
-      document.getElementById('terminal').addEventListener('touchend', () => term.focus());
+      document.getElementById('terminal').addEventListener('touchend', () => { if (!inspectMode) term.focus(); });
     </script>
   </body>
 </html>`;
@@ -938,6 +1027,37 @@ wss.on("connection", (ws) => {
         // Delete entire session
         if (p.type === "delete_session") {
           if (p.name) { deleteSession(p.name); broadcastState(); }
+          return;
+        }
+
+        // Inspect: capture current tab's terminal content as text
+        if (p.type === "inspect") {
+          const found = findTab(ws._remuxTabId);
+          if (found && found.tab.vt && !found.tab.ended) {
+            const { text, cols, rows } = found.tab.vt.textSnapshot();
+            ws.send(JSON.stringify({
+              type: "inspect_result",
+              text,
+              meta: {
+                session: found.session.name,
+                tabId: found.tab.id,
+                tabTitle: found.tab.title,
+                cols, rows,
+                timestamp: Date.now(),
+              },
+            }));
+          } else {
+            // Fallback: raw scrollback as text
+            const found2 = findTab(ws._remuxTabId);
+            const raw = found2 ? found2.tab.scrollback.read().toString("utf8") : "";
+            // Strip ANSI escape sequences
+            const text = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+            ws.send(JSON.stringify({
+              type: "inspect_result",
+              text,
+              meta: { timestamp: Date.now() },
+            }));
+          }
           return;
         }
 
