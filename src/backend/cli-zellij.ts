@@ -161,7 +161,7 @@ const main = async (): Promise<void> => {
   );
 
   await runningServer.start();
-  logger.log(`Runtime mode: zellij (session=${args.zellijSession})`);
+  logger.log(`Runtime mode: direct-shell (session=${args.zellijSession})`);
 
   const isDevMode = process.env.VITE_DEV_MODE === "1";
 

@@ -24,37 +24,9 @@ type MockPty = {
 describe("multi-session control and terminal flow", () => {
   let server: RunningServer;
   let baseWsUrl = "";
-  let controllerStats = new Map<string, {
-    newTabCalls: number;
-    killSessionCalls: string[];
-    deleteSessionCalls: string[];
-  }>();
   let createdPtys: MockPty[] = [];
-  const attachedSessions = new Set<string>();
-  const workspaceWarmupFailures = new Map<string, number>();
 
   beforeAll(async () => {
-    const sessionList = [
-      { name: "alpha", createdAgo: "1h", isActive: true },
-      { name: "beta", createdAgo: "2h", isActive: true },
-      { name: "gamma", createdAgo: "3h", isActive: false },
-      { name: "delta", createdAgo: "4h", isActive: false },
-      { name: "old-project", createdAgo: "4d", isActive: false },
-    ];
-
-    const getControllerStats = (session: string) => {
-      let stats = controllerStats.get(session);
-      if (!stats) {
-        stats = {
-          newTabCalls: 0,
-          killSessionCalls: [],
-          deleteSessionCalls: [],
-        };
-        controllerStats.set(session, stats);
-      }
-      return stats;
-    };
-
     server = createZellijServer(
       {
         port: 0,
@@ -65,80 +37,8 @@ describe("multi-session control and terminal flow", () => {
       {
         authService: new AuthService({ token: TOKEN, deviceStore: createMemoryDeviceStore() as never }),
         logger: { log: () => {}, error: () => {} },
-        createController: (session: string) => {
-          const stats = getControllerStats(session);
-          return {
-            async queryWorkspaceState() {
-              if (session === "gamma" && !attachedSessions.has(session)) {
-                throw new Error("session not attached");
-              }
-              if (session === "delta") {
-                if (!attachedSessions.has(session)) {
-                  throw new Error("session not attached");
-                }
-                const failures = workspaceWarmupFailures.get(session) ?? 0;
-                if (failures < 2) {
-                  workspaceWarmupFailures.set(session, failures + 1);
-                  throw new Error("workspace warming up");
-                }
-              }
-              return {
-                session,
-                activeTabIndex: 0,
-                tabs: [
-                  {
-                    index: 0,
-                    name: `${session}-main`,
-                    active: true,
-                    isFullscreen: false,
-                    hasBell: false,
-                    panes: [
-                      {
-                        id: `terminal_${session}`,
-                        focused: true,
-                        title: `${session}-pane`,
-                        command: "npm run dev",
-                        cwd: `/tmp/${session}`,
-                        rows: 24,
-                        cols: 80,
-                        x: 0,
-                        y: 0,
-                      },
-                    ],
-                  },
-                ],
-              };
-            },
-            async listSessionsStructured() {
-              return sessionList;
-            },
-            async newTab() {
-              stats.newTabCalls += 1;
-            },
-            async closeTab() {},
-            async goToTab() {},
-            async renameTab() {},
-            async newPane() {},
-            async closePane() {},
-            async toggleFullscreen() {},
-            async dumpScreen() {
-              return `${session} inspect`;
-            },
-            async dumpPaneScreen() {
-              return `${session} pane`;
-            },
-            async renameSession() {},
-            async killSession(name: string) {
-              stats.killSessionCalls.push(name);
-            },
-            async deleteSession(name: string) {
-              stats.deleteSessionCalls.push(name);
-            },
-          };
-        },
         createPty: ({ session, cols, rows }) => {
           let exitHandler: ((info: { exitCode: number; signal?: number }) => void) | null = null;
-          attachedSessions.add(session);
           const pty: MockPty = {
             pid: createdPtys.length + 1,
             session,
@@ -189,35 +89,41 @@ describe("multi-session control and terminal flow", () => {
     alpha.__messageQueue.length = 0;
     beta.__messageQueue.length = 0;
 
+    // new_tab returns an error in direct-shell mode (no Zellij multiplexer).
     beta.send(JSON.stringify({ type: "new_tab", name: "from-alpha-should-not-leak" }));
-
-    expect(await expectWorkspace(beta, "alpha")).toMatchObject({ session: "alpha" });
-    expect(controllerStats.get("alpha")?.newTabCalls ?? 0).toBe(1);
-    await expectNoMessage(alpha, (payload) => payload.type === "workspace_state" && payload.session === "alpha");
+    expect(await expectMessage(beta, (payload) => payload.type === "error")).toMatchObject({
+      type: "error",
+      message: "tab/pane operations not available in direct-shell mode",
+    });
+    // No workspace_state broadcast should leak to alpha from beta's tab operation.
+    await expectNoMessage(alpha, (payload) => payload.type === "workspace_state");
 
     beta.send(JSON.stringify({ type: "switch_session", session: "beta" }));
     await expectMessage(beta, (payload) => payload.type === "session_switched" && payload.session === "beta");
     await expectWorkspace(beta, "beta");
 
+    // list_sessions returns known sessions (alpha + beta registered by switch_session).
     alpha.send(JSON.stringify({ type: "list_sessions" }));
-    expect(await expectMessage(alpha, (payload) => payload.type === "session_list")).toMatchObject({
-      type: "session_list",
-      sessions: [
-        { name: "alpha", createdAgo: "1h", isActive: true },
-        { name: "beta", createdAgo: "2h", isActive: true },
-        { name: "gamma", createdAgo: "3h", isActive: false },
-        { name: "delta", createdAgo: "4h", isActive: false },
-        { name: "old-project", createdAgo: "4d", isActive: false },
-      ],
-    });
+    const sessionList = await expectMessage(alpha, (payload) => payload.type === "session_list");
+    expect(sessionList.type).toBe("session_list");
+    expect(sessionList.sessions).toBeInstanceOf(Array);
+    const sessionNames = sessionList.sessions.map((s: any) => s.name);
+    expect(sessionNames).toContain("alpha");
+    expect(sessionNames).toContain("beta");
+
+    // Create a session we can delete.
+    alpha.send(JSON.stringify({ type: "create_session", name: "old-project" }));
+    await expectMessage(alpha, (payload) => payload.type === "session_switched" && payload.session === "old-project");
+    // Switch back to beta so we can delete old-project.
+    alpha.send(JSON.stringify({ type: "switch_session", session: "beta" }));
+    await expectMessage(alpha, (payload) => payload.type === "session_switched" && payload.session === "beta");
+    alpha.__messageQueue.length = 0;
 
     alpha.send(JSON.stringify({ type: "delete_session", session: "old-project" }));
     expect(await expectMessage(alpha, (payload) => payload.type === "session_deleted")).toMatchObject({
       type: "session_deleted",
       session: "old-project",
     });
-    expect(controllerStats.get("old-project")?.killSessionCalls).toEqual([]);
-    expect(controllerStats.get("old-project")?.deleteSessionCalls).toEqual(["old-project"]);
 
     alpha.close();
     beta.close();
@@ -254,54 +160,37 @@ describe("multi-session control and terminal flow", () => {
     ws.close();
   });
 
-  it("publishes workspace state after terminal attach resurrects the target session", async () => {
+  it("publishes workspace state immediately when switching to a new session", async () => {
     const control = await connectControlClient(baseWsUrl, { type: "auth", token: TOKEN });
-    const terminal = await connectTerminalClient(baseWsUrl, {
-      type: "auth",
-      token: TOKEN,
-      cols: 80,
-      rows: 24,
-    });
 
     await expectMessage(control, (payload) => payload.type === "auth_ok");
     control.send(JSON.stringify({ type: "subscribe_workspace" }));
     await expectWorkspace(control, "alpha");
     control.__messageQueue.length = 0;
 
+    // In direct-shell mode, workspace state is always available synchronously
+    // after switch_session (no need to wait for terminal attach).
     control.send(JSON.stringify({ type: "switch_session", session: "gamma" }));
     await expectMessage(control, (payload) => payload.type === "session_switched" && payload.session === "gamma");
-    await expectNoMessage(control, (payload) => payload.type === "workspace_state" && payload.session === "gamma");
-
-    terminal.send(JSON.stringify({ type: "switch_session", session: "gamma" }));
-
     expect(await expectWorkspace(control, "gamma")).toMatchObject({ session: "gamma" });
 
     control.close();
-    terminal.close();
   });
 
-  it("retries workspace sync until a newly created session is queryable", async () => {
+  it("creates a new session and immediately publishes workspace state", async () => {
     const control = await connectControlClient(baseWsUrl, { type: "auth", token: TOKEN });
-    const terminal = await connectTerminalClient(baseWsUrl, {
-      type: "auth",
-      token: TOKEN,
-      cols: 80,
-      rows: 24,
-    });
 
     await expectMessage(control, (payload) => payload.type === "auth_ok");
     control.send(JSON.stringify({ type: "subscribe_workspace" }));
     await expectWorkspace(control, "alpha");
     control.__messageQueue.length = 0;
 
+    // In direct-shell mode, create_session immediately switches and publishes state.
     control.send(JSON.stringify({ type: "create_session", name: "delta" }));
     await expectMessage(control, (payload) => payload.type === "session_switched" && payload.session === "delta");
     expect(await expectWorkspace(control, "delta")).toMatchObject({ session: "delta" });
 
-    terminal.send(JSON.stringify({ type: "switch_session", session: "delta" }));
-
     control.close();
-    terminal.close();
   });
 });
 

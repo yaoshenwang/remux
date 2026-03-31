@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
+import { Router } from "express";
 import { createZellijServer, type RunningServer } from "../../src/backend/server-zellij.js";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
 import { createMemoryDeviceStore } from "../helpers/memory-device-store.js";
@@ -13,50 +14,7 @@ describe("inspect control channel", () => {
   let baseWsUrl = "";
 
   beforeAll(async () => {
-    const controller = {
-      async queryWorkspaceState() {
-        return {
-          session: "inspect-control",
-          activeTabIndex: 0,
-          tabs: [
-            {
-              index: 0,
-              name: "main",
-              active: true,
-              isFullscreen: false,
-              hasBell: false,
-              panes: [
-                {
-                  id: "terminal_1",
-                  focused: true,
-                  title: "api",
-                  command: "npm run dev",
-                  cwd: "/tmp/api",
-                  rows: 24,
-                  cols: 80,
-                  x: 0,
-                  y: 0,
-                },
-              ],
-            },
-          ],
-        };
-      },
-      async dumpScreen() {
-        return "legacy inspect payload";
-      },
-      async dumpPaneScreen() {
-        return ["first line", "second line", "third line"].join("\n");
-      },
-      async newTab() {},
-      async closeTab() {},
-      async goToTab() {},
-      async renameTab() {},
-      async newPane() {},
-      async closePane() {},
-      async toggleFullscreen() {},
-      async renameSession() {},
-    };
+    const inspectLines = ["first line", "second line", "third line"];
 
     server = createZellijServer(
       {
@@ -71,7 +29,18 @@ describe("inspect control channel", () => {
           deviceStore: createMemoryDeviceStore("inspect-control") as never,
         }),
         logger: { log: () => {}, error: () => {} },
-        createController: () => controller,
+        extensions: {
+          getInspectLines: (_session: string, _from: number, _count: number) => inspectLines,
+          onTerminalData: () => {},
+          onSessionExit: () => {},
+          onSessionCreated: () => {},
+          onSessionResize: () => {},
+          getSnapshot: () => null,
+          getGastownInfo: () => ({}),
+          getBandwidthStats: () => ({}),
+          dispose: () => {},
+          notificationRoutes: Router(),
+        } as any,
       },
     );
 
@@ -105,13 +74,13 @@ describe("inspect control channel", () => {
     );
 
     const inspectSnapshot = await expectMessage(ws, "inspect_snapshot");
-    expect(inspectSnapshot.descriptor.scope).toBe("pane");
-    expect(inspectSnapshot.items).toHaveLength(2);
-    expect(inspectSnapshot.cursor).not.toBeNull();
+    expect(inspectSnapshot.lines).toBeInstanceOf(Array);
+    expect(inspectSnapshot.lines.length).toBeGreaterThan(0);
+    expect(inspectSnapshot.hasMore).toBe(false);
 
     ws.send(JSON.stringify({ type: "capture_inspect", full: true }));
     const legacyPayload = await expectMessage(ws, "inspect_content");
-    expect(legacyPayload.content).toBe("legacy inspect payload");
+    expect(legacyPayload.content).toBe("first line\nsecond line\nthird line");
 
     ws.close();
   });

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
+import { Router } from "express";
 import { createZellijServer, type RunningServer } from "../../src/backend/server-zellij.js";
 import { AuthService } from "../../src/backend/auth/auth-service.js";
 import { createEnvelope } from "../../src/backend/protocol/envelope.js";
@@ -17,50 +18,7 @@ describe("control protocol compatibility", () => {
   let baseWsUrl = "";
 
   beforeAll(async () => {
-    const controller = {
-      async queryWorkspaceState() {
-        return {
-          session: "protocol-compat",
-          activeTabIndex: 0,
-          tabs: [
-            {
-              index: 0,
-              name: "main",
-              active: true,
-              isFullscreen: false,
-              hasBell: false,
-              panes: [
-                {
-                  id: "terminal_1",
-                  focused: true,
-                  title: "api",
-                  command: "npm run dev",
-                  cwd: "/tmp/api",
-                  rows: 24,
-                  cols: 80,
-                  x: 0,
-                  y: 0,
-                },
-              ],
-            },
-          ],
-        };
-      },
-      async dumpScreen() {
-        return "legacy inspect payload";
-      },
-      async dumpPaneScreen() {
-        return ["first line", "second line", "third line"].join("\n");
-      },
-      async newTab() {},
-      async closeTab() {},
-      async goToTab() {},
-      async renameTab() {},
-      async newPane() {},
-      async closePane() {},
-      async toggleFullscreen() {},
-      async renameSession() {},
-    };
+    const inspectLines = ["first line", "second line", "third line"];
 
     server = createZellijServer(
       {
@@ -75,7 +33,18 @@ describe("control protocol compatibility", () => {
           deviceStore: createMemoryDeviceStore("control-protocol-compat") as never,
         }),
         logger: { log: () => {}, error: () => {} },
-        createController: () => controller,
+        extensions: {
+          getInspectLines: (_session: string, _from: number, _count: number) => inspectLines,
+          onTerminalData: () => {},
+          onSessionExit: () => {},
+          onSessionCreated: () => {},
+          onSessionResize: () => {},
+          getSnapshot: () => null,
+          getGastownInfo: () => ({}),
+          getBandwidthStats: () => ({}),
+          dispose: () => {},
+          notificationRoutes: Router(),
+        } as any,
       },
     );
 
@@ -158,8 +127,9 @@ describe("control protocol compatibility", () => {
       }),
     );
     const legacyInspect = await expectMessage(legacyClient, (payload) => payload.type === "inspect_snapshot");
-    expect(legacyInspect.descriptor.scope).toBe("pane");
-    expect(legacyInspect.items).toHaveLength(2);
+    expect(legacyInspect.lines).toBeInstanceOf(Array);
+    expect(legacyInspect.lines.length).toBeGreaterThan(0);
+    expect(legacyInspect.hasMore).toBe(false);
 
     envelopeClient.send(JSON.stringify(
       createEnvelope(
@@ -185,8 +155,9 @@ describe("control protocol compatibility", () => {
       version: 1,
       source: "server",
     });
-    expect(envelopeInspect.payload.descriptor.scope).toBe("pane");
-    expect(envelopeInspect.payload.items).toHaveLength(2);
+    expect(envelopeInspect.payload.lines).toBeInstanceOf(Array);
+    expect(envelopeInspect.payload.lines.length).toBeGreaterThan(0);
+    expect(envelopeInspect.payload.hasMore).toBe(false);
 
     envelopeClient.send(JSON.stringify({ type: "capture_inspect", full: true }));
     const legacyCapture = await expectMessage(
@@ -197,7 +168,7 @@ describe("control protocol compatibility", () => {
       domain: "core",
       type: "inspect_content",
       payload: {
-        content: "legacy inspect payload",
+        content: "first line\nsecond line\nthird line",
       },
     });
 
