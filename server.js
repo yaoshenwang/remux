@@ -652,14 +652,26 @@ const HTML_TEMPLATE = `<!doctype html>
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
         user-select: text; -webkit-user-select: text; }
-      #inspect-meta { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px;
+      #inspect-content mark { background: #ffbd2e; color: #1e1e1e; border-radius: 2px; }
+      #inspect-header { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px;
         color: var(--text-dim); padding: 8px 0; border-bottom: 1px solid var(--inspect-meta-border); margin-bottom: 8px;
-        display: flex; gap: 12px; flex-wrap: wrap; }
+        display: flex; flex-direction: column; gap: 8px; }
+      #inspect-meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
       #inspect-meta span { white-space: nowrap; }
+      #inspect-meta .inspect-btn { padding: 2px 10px; font-size: 11px; font-family: inherit;
+        color: var(--text-bright); background: var(--compose-bg); border: 1px solid var(--compose-border);
+        border-radius: 4px; cursor: pointer; white-space: nowrap; }
+      #inspect-meta .inspect-btn:hover { background: var(--compose-border); }
+      #inspect-search { display: flex; gap: 8px; align-items: center; }
+      #inspect-search input { padding: 4px 8px; font-size: 12px; font-family: inherit;
+        background: var(--bg); border: 1px solid var(--compose-border); border-radius: 4px;
+        color: var(--text); outline: none; flex: 1; max-width: 260px; }
+      #inspect-search input:focus { border-color: var(--accent); }
+      #inspect-search .match-count { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 
       /* ── Compose bar ── */
       .compose-bar { display: none; background: var(--bg-sidebar); border-top: 1px solid var(--border);
-        padding: 5px 8px; gap: 5px; flex-shrink: 0; overflow-x: auto;
+        padding: 5px 8px; gap: 5px; flex-shrink: 0; overflow-x: auto; flex-wrap: wrap;
         -webkit-overflow-scrolling: touch; }
       .compose-bar button { padding: 8px 12px; font-size: 14px;
         font-family: 'Menlo','Monaco',monospace; color: var(--text-bright); background: var(--compose-bg);
@@ -669,6 +681,11 @@ const HTML_TEMPLATE = `<!doctype html>
       .compose-bar button:active { background: var(--compose-border); }
       .compose-bar button.active { background: #4a6a9a; border-color: #6a9ade; }
       @media (hover: none) and (pointer: coarse) { .compose-bar { display: flex; } }
+
+      /* ── Tab rename input ── */
+      .tab .rename-input { background: var(--bg); border: 1px solid var(--accent); border-radius: 3px;
+        color: var(--text-bright); font-size: 12px; font-family: inherit; padding: 1px 4px;
+        outline: none; width: 80px; }
 
       /* ── Mobile ── */
       @media (max-width: 768px) {
@@ -712,7 +729,13 @@ const HTML_TEMPLATE = `<!doctype html>
       </div>
       <div id="terminal"></div>
       <div id="inspect">
-        <div id="inspect-meta"></div>
+        <div id="inspect-header">
+          <div id="inspect-meta"></div>
+          <div id="inspect-search">
+            <input type="text" id="inspect-search-input" placeholder="Search..." />
+            <span class="match-count" id="inspect-match-count"></span>
+          </div>
+        </div>
         <pre id="inspect-content"></pre>
       </div>
       <div class="compose-bar" id="compose-bar">
@@ -726,6 +749,13 @@ const HTML_TEMPLATE = `<!doctype html>
         <button data-ch="|">|</button>
         <button data-ch="~">~</button>
         <button data-ch="/">/ </button>
+        <button data-seq="ctrl-c">C-c</button>
+        <button data-seq="ctrl-d">C-d</button>
+        <button data-seq="ctrl-z">C-z</button>
+        <button data-seq="pgup">PgUp</button>
+        <button data-seq="pgdn">PgDn</button>
+        <button data-seq="home">Home</button>
+        <button data-seq="end">End</button>
       </div>
     </div>
 
@@ -987,12 +1017,21 @@ const HTML_TEMPLATE = `<!doctype html>
                 setStatus('connected', msg.session); renderSessions(); renderTabs(); return;
               }
               if (msg.type === 'inspect_result') {
-                $('inspect-content').textContent = msg.text || '(empty)';
+                window._inspectText = msg.text || '(empty)';
                 const m = msg.meta || {};
                 $('inspect-meta').innerHTML =
                   '<span>' + (m.session || '') + ' / ' + (m.tabTitle || 'Tab ' + m.tabId) + '</span>' +
                   '<span>' + (m.cols || '?') + 'x' + (m.rows || '?') + '</span>' +
-                  '<span>' + new Date(m.timestamp || Date.now()).toLocaleTimeString() + '</span>';
+                  '<span>' + new Date(m.timestamp || Date.now()).toLocaleTimeString() + '</span>' +
+                  '<button class="inspect-btn" id="btn-copy-inspect">Copy</button>';
+                $('btn-copy-inspect').addEventListener('click', () => {
+                  navigator.clipboard.writeText(window._inspectText).then(() => {
+                    $('btn-copy-inspect').textContent = 'Copied!';
+                    setTimeout(() => { const el = $('btn-copy-inspect'); if (el) el.textContent = 'Copy'; }, 1500);
+                  });
+                });
+                // Apply search highlight if active
+                applyInspectSearch();
                 return;
               }
             } catch {}
@@ -1018,7 +1057,12 @@ const HTML_TEMPLATE = `<!doctype html>
       term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
 
       // ── Compose bar ──
-      const SEQ = { esc: '\\x1b', tab: '\\t', up: '\\x1b[A', down: '\\x1b[B', left: '\\x1b[D', right: '\\x1b[C' };
+      const SEQ = {
+        esc: '\\x1b', tab: '\\t',
+        up: '\\x1b[A', down: '\\x1b[B', left: '\\x1b[D', right: '\\x1b[C',
+        'ctrl-c': '\\x03', 'ctrl-d': '\\x04', 'ctrl-z': '\\x1a',
+        pgup: '\\x1b[5~', pgdn: '\\x1b[6~', home: '\\x1b[H', end: '\\x1b[F',
+      };
       $('compose-bar').addEventListener('pointerdown', e => {
         const btn = e.target.closest('button'); if (!btn) return;
         e.preventDefault();
@@ -1048,13 +1092,87 @@ const HTML_TEMPLATE = `<!doctype html>
       $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); setView('live'); });
       $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); setView('inspect'); });
 
+      // ── Inspect search ──
+      function applyInspectSearch() {
+        const query = ($('inspect-search-input') || {}).value || '';
+        const text = window._inspectText || '';
+        if (!query) {
+          $('inspect-content').textContent = text;
+          $('inspect-match-count').textContent = '';
+          return;
+        }
+        // Simple case-insensitive text search with <mark> highlighting
+        // Work on raw text to avoid HTML entity issues, then escape each fragment
+        const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const q = query.toLowerCase();
+        const lower = text.toLowerCase();
+        let result = '', count = 0, pos = 0;
+        while (pos < text.length) {
+          const idx = lower.indexOf(q, pos);
+          if (idx === -1) { result += esc(text.slice(pos)); break; }
+          result += esc(text.slice(pos, idx)) + '<mark>' + esc(text.slice(idx, idx + q.length)) + '</mark>';
+          count++; pos = idx + q.length;
+        }
+        $('inspect-content').innerHTML = result;
+        $('inspect-match-count').textContent = count > 0 ? count + ' match' + (count !== 1 ? 'es' : '') : 'No matches';
+      }
+      $('inspect-search-input').addEventListener('input', applyInspectSearch);
+
+      // ── Tab rename (double-click) ──
+      $('tab-list').addEventListener('dblclick', e => {
+        const tabEl = e.target.closest('.tab');
+        if (!tabEl) return;
+        const titleSpan = tabEl.querySelector('.title');
+        if (!titleSpan) return;
+        // Find tab id from close button
+        const closeBtn = tabEl.querySelector('.close');
+        if (!closeBtn) return;
+        const tabId = Number(closeBtn.dataset.close);
+        const oldTitle = titleSpan.textContent;
+
+        const input = document.createElement('input');
+        input.className = 'rename-input';
+        input.value = oldTitle;
+        input.setAttribute('maxlength', '32');
+        titleSpan.replaceWith(input);
+        input.focus();
+        input.select();
+
+        function commit() {
+          const newTitle = input.value.trim() || oldTitle;
+          // Send rename to server
+          if (newTitle !== oldTitle) sendCtrl({ type: 'rename_tab', tabId, title: newTitle });
+          // Restore span immediately
+          const span = document.createElement('span');
+          span.className = 'title';
+          span.textContent = newTitle;
+          input.replaceWith(span);
+        }
+        function cancel() {
+          const span = document.createElement('span');
+          span.className = 'title';
+          span.textContent = oldTitle;
+          input.replaceWith(span);
+        }
+        input.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+          if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+        });
+        input.addEventListener('blur', commit);
+      });
+
       // ── Mobile ──
+      let fitDebounceTimer = null;
       if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', () => {
-          document.body.style.height = window.visualViewport.height + 'px'; fitAddon.fit();
+          document.body.style.height = window.visualViewport.height + 'px';
+          // Debounce fit() to avoid excessive recalculations during keyboard animation
+          clearTimeout(fitDebounceTimer);
+          fitDebounceTimer = setTimeout(() => { if (fitAddon) fitAddon.fit(); }, 100);
         });
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
+      // iOS Safari: touching terminal area focuses hidden textarea for input
       document.getElementById('terminal').addEventListener('touchend', () => { if (!inspectMode) term.focus(); });
     </script>
   </body>
@@ -1334,6 +1452,16 @@ wss.on("connection", (ws) => {
               text,
               meta: { timestamp: Date.now() },
             }));
+          }
+          return;
+        }
+
+        // Rename a tab
+        if (p.type === "rename_tab") {
+          const found = findTab(p.tabId);
+          if (found && typeof p.title === "string" && p.title.trim()) {
+            found.tab.title = p.title.trim().slice(0, 32);
+            broadcastState();
           }
           return;
         }
