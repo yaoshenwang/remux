@@ -101,6 +101,8 @@ export const useTerminalRuntime = ({
   const terminalVisibleRef = useRef(terminalVisible);
   const terminalWriteBufferRef = useRef<TerminalWriteBuffer | null>(null);
   const localEchoRef = useRef<LocalEchoPrediction | null>(null);
+  // Pre-init queue: buffer writes that arrive before async terminal init completes
+  const preInitQueueRef = useRef<TerminalWriteChunk[]>([]);
 
   sendRawToSocketRef.current = onSendRaw;
   setStatusMessageRef.current = setStatusMessage;
@@ -279,6 +281,20 @@ export const useTerminalRuntime = ({
     }
   }, [onBeforeReset, theme]);
 
+  /** Enqueue a chunk to the write buffer, or buffer it pre-init. */
+  const enqueueOrBuffer = useCallback((
+    chunk: TerminalWriteChunk,
+    options: TerminalWriteOptions = {},
+  ): void => {
+    if (terminalWriteBufferRef.current) {
+      terminalWriteBufferRef.current.enqueue(chunk, options);
+    } else {
+      // Terminal not yet initialized — queue for later flush
+      preInitQueueRef.current.push(chunk);
+      options.onComplete?.();
+    }
+  }, []);
+
   const writeToTerminal = useCallback((
     chunk: TerminalWriteChunk,
     onComplete?: () => void,
@@ -292,47 +308,30 @@ export const useTerminalRuntime = ({
       echo.detectAlternateScreen(chunk);
       const reconciled = echo.reconcileServerOutput(chunk);
       if (reconciled) {
-        terminalWriteBufferRef.current?.enqueue(reconciled, {
-          ...options,
-          onComplete: complete,
-        });
+        enqueueOrBuffer(reconciled, { ...options, onComplete: complete });
         return;
       }
       complete();
       return;
     }
     if (echo && chunk instanceof Uint8Array) {
-      // Fast path: no predictions pending — pass binary directly to xterm
-      // which has its own streaming UTF-8 decoder (handles multi-byte
-      // boundaries correctly across write() calls).
       if (echo.pending.length === 0) {
         echo.detectAlternateScreenBinary(chunk);
-        terminalWriteBufferRef.current?.enqueue(chunk, {
-          ...options,
-          onComplete: complete,
-        });
+        enqueueOrBuffer(chunk, { ...options, onComplete: complete });
         return;
       }
-      // Slow path: predictions pending — must decode to string for
-      // reconciliation against predicted characters.
       const text = new TextDecoder().decode(chunk);
       echo.detectAlternateScreen(text);
       const reconciled = echo.reconcileServerOutput(text);
       if (reconciled) {
-        terminalWriteBufferRef.current?.enqueue(reconciled, {
-          ...options,
-          onComplete: complete,
-        });
+        enqueueOrBuffer(reconciled, { ...options, onComplete: complete });
         return;
       }
       complete();
       return;
     }
-    terminalWriteBufferRef.current?.enqueue(chunk, {
-      ...options,
-      onComplete: complete,
-    });
-  }, []);
+    enqueueOrBuffer(chunk, { ...options, onComplete: complete });
+  }, [enqueueOrBuffer]);
 
   const copySelection = useCallback(async (): Promise<void> => {
     let text = window.getSelection()?.toString() || "";
@@ -450,6 +449,13 @@ export const useTerminalRuntime = ({
       terminalWriteBufferRef.current = createTerminalWriteBuffer((chunk, onWritten) => {
         terminal.write(chunk, onWritten);
       });
+      // Flush any data that arrived before terminal was ready
+      if (preInitQueueRef.current.length > 0) {
+        for (const queued of preInitQueueRef.current) {
+          terminalWriteBufferRef.current.enqueue(queued, {});
+        }
+        preInitQueueRef.current = [];
+      }
       localEchoRef.current = new LocalEchoPrediction({
         writeToTerminal: (data: string) => terminal.write(data),
       });
