@@ -104,6 +104,7 @@ export const createZellijServer = (
   const SESSION_BOOTSTRAP_COLS = 120;
   const SESSION_BOOTSTRAP_ROWS = 30;
   const SESSION_BOOTSTRAP_SETTLE_MS = 300;
+  const SESSION_BOOTSTRAP_TTL_MS = 5000;
 
   const resolveBearerToken = (req: express.Request): string => {
     const authHeader = req.headers.authorization ?? "";
@@ -362,6 +363,7 @@ export const createZellijServer = (
   const controlWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const terminalClients = new Set<TerminalClient>();
   const controlClients = new Set<ControlClient>();
+  const sessionBootstrapPtys = new Map<string, { pty: ZellijPty; timer: ReturnType<typeof setTimeout> }>();
   const connectedClients = new Map<string, ConnectedClientInfo>();
   let clientsChangedTimer: ReturnType<typeof setTimeout> | null = null;
   let pairingCleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -478,6 +480,13 @@ export const createZellijServer = (
       }
     });
 
+    const bootstrap = sessionBootstrapPtys.get(session);
+    if (bootstrap) {
+      clearTimeout(bootstrap.timer);
+      sessionBootstrapPtys.delete(session);
+      bootstrap.pty.kill();
+    }
+
     getController(session);
     extensions?.onSessionCreated(session, cols, rows);
     logger.log(`Client PTY started (pid=${pty.pid}, session=${session}, ${cols}x${rows})`);
@@ -486,6 +495,11 @@ export const createZellijServer = (
   };
 
   const ensureSessionExists = async (session: string): Promise<void> => {
+    const existingBootstrap = sessionBootstrapPtys.get(session);
+    if (existingBootstrap) {
+      return;
+    }
+
     const bootstrapPty = deps.createPty?.({
       session,
       cols: SESSION_BOOTSTRAP_COLS,
@@ -497,6 +511,25 @@ export const createZellijServer = (
       rows: SESSION_BOOTSTRAP_ROWS,
     });
 
+    const cleanup = () => {
+      const current = sessionBootstrapPtys.get(session);
+      if (!current || current.pty !== bootstrapPty) {
+        return;
+      }
+      clearTimeout(current.timer);
+      sessionBootstrapPtys.delete(session);
+    };
+
+    bootstrapPty.onExit(() => {
+      cleanup();
+    });
+
+    const ttlTimer = setTimeout(() => {
+      cleanup();
+      bootstrapPty.kill();
+    }, SESSION_BOOTSTRAP_TTL_MS);
+    sessionBootstrapPtys.set(session, { pty: bootstrapPty, timer: ttlTimer });
+
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, SESSION_BOOTSTRAP_SETTLE_MS);
       bootstrapPty.onExit(() => {
@@ -504,7 +537,6 @@ export const createZellijServer = (
         resolve();
       });
     });
-    bootstrapPty.kill();
   };
 
   const sendWorkspaceState = async (
@@ -1128,6 +1160,11 @@ export const createZellijServer = (
       for (const client of controlClients) {
         client.ws.close(1001, "server shutting down");
       }
+      for (const bootstrap of sessionBootstrapPtys.values()) {
+        clearTimeout(bootstrap.timer);
+        bootstrap.pty.kill();
+      }
+      sessionBootstrapPtys.clear();
       terminalClients.clear();
       controlClients.clear();
       connectedClients.clear();
