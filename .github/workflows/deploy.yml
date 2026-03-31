@@ -49,8 +49,9 @@ jobs:
         working-directory: ${{ steps.target.outputs.worktree }}
         run: pnpm run build
 
-      - name: Restart PM2 app
+      - name: Restart launchd service
         run: |
-          pm2 restart ${{ steps.target.outputs.app }} --update-env || \
-          pm2 start $HOME/dev/remux/ecosystem.config.cjs --only ${{ steps.target.outputs.app }}
-          pm2 save
+          SERVICE="com.remux.${{ steps.target.outputs.branch }}"
+          launchctl kickstart -k "gui/$(id -u)/${SERVICE}"
+          sleep 2
+          launchctl print "gui/$(id -u)/${SERVICE}" 2>&1 | head -5
