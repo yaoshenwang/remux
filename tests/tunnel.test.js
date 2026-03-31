@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseTunnelArgs, buildTunnelAccessUrl } from "../tunnel.js";
+import { parseTunnelArgs, buildTunnelAccessUrl } from "../src/tunnel.js";
 
 // ── parseTunnelArgs ─────────────────────────────────────────────
 
