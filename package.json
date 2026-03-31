@@ -31,7 +31,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "node-pty"
+      "node-pty",
+      "better-sqlite3"
     ]
   },
   "postinstall": "node --input-type=commonjs -e \"var fs=require('fs'),p=require('path');['darwin-arm64','darwin-x64'].forEach(function(d){var f=p.join('node_modules','node-pty','prebuilds',d,'spawn-helper');try{fs.chmodSync(f,0o755)}catch(e){}})\"",

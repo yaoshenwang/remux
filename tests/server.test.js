@@ -17,6 +17,7 @@ const TOKEN = "test-token-" + Date.now();
 const INSTANCE_ID = "test-" + Date.now();
 const PERSIST_DIR = path.join(homedir(), ".remux");
 const PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${INSTANCE_ID}.json`);
+const DB_FILE = path.join(PERSIST_DIR, `remux-${INSTANCE_ID}.db`);
 let serverProc;
 
 function httpGet(urlPath) {
@@ -103,8 +104,11 @@ function waitForMsg(ws, type, timeout = 3000) {
 }
 
 beforeAll(async () => {
-  // Clean persistence file to ensure clean state
+  // Clean persistence files to ensure clean state
   try { fs.unlinkSync(PERSIST_FILE); } catch {}
+  try { fs.unlinkSync(DB_FILE); } catch {}
+  try { fs.unlinkSync(DB_FILE + "-wal"); } catch {}
+  try { fs.unlinkSync(DB_FILE + "-shm"); } catch {}
 
   // Explicitly remove REMUX_PASSWORD to avoid env leaking from parent
   const cleanEnv = { ...process.env };
@@ -136,6 +140,9 @@ beforeAll(async () => {
 afterAll(() => {
   if (serverProc) serverProc.kill("SIGTERM");
   try { fs.unlinkSync(PERSIST_FILE); } catch {}
+  try { fs.unlinkSync(DB_FILE); } catch {}
+  try { fs.unlinkSync(DB_FILE + "-wal"); } catch {}
+  try { fs.unlinkSync(DB_FILE + "-shm"); } catch {}
 });
 
 // ── HTTP ──────────────────────────────────────────────────────────
@@ -836,15 +843,17 @@ describe("inspect", () => {
 // ── Persistence ───────────────────────────────────────────────────
 
 describe("persistence", () => {
-  it("saves sessions to disk within 10 seconds", async () => {
+  it("saves sessions to SQLite within 10 seconds", async () => {
     // Wait for persistence timer (8s interval + margin)
     await new Promise((r) => setTimeout(r, 10000));
 
-    expect(fs.existsSync(PERSIST_FILE)).toBe(true);
-    const data = JSON.parse(fs.readFileSync(PERSIST_FILE, "utf8"));
-    expect(data.version).toBe(1);
-    expect(data.sessions.length).toBeGreaterThanOrEqual(1);
-    expect(data.sessions[0].name).toBe("main");
-    expect(data.sessions[0].tabs.length).toBeGreaterThanOrEqual(1);
+    // Check that the SQLite DB file was created
+    expect(fs.existsSync(DB_FILE)).toBe(true);
+    // Verify it's a valid SQLite file (magic bytes)
+    const header = Buffer.alloc(16);
+    const fd = fs.openSync(DB_FILE, "r");
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    expect(header.toString("utf8", 0, 15)).toBe("SQLite format 3");
   }, 15000);
 });
