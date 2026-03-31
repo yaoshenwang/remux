@@ -36,6 +36,150 @@ function findGhosttyWeb() {
 
 const { distPath, wasmPath } = findGhosttyWeb();
 
+// ── Server-side ghostty-vt (WASM) — tsm-style VT tracking ────────
+
+let wasmExports = null;
+let wasmMemory = null;
+
+async function initGhosttyVt() {
+  const wasmBytes = fs.readFileSync(wasmPath);
+  const result = await WebAssembly.instantiate(wasmBytes, {
+    env: { log: () => {} },
+  });
+  wasmExports = result.instance.exports;
+  wasmMemory = wasmExports.memory;
+  console.log("[ghostty-vt] WASM loaded for server-side VT tracking");
+}
+
+function createVtTerminal(cols, rows) {
+  if (!wasmExports) return null;
+  const handle = wasmExports.ghostty_terminal_new(cols, rows);
+  if (!handle) return null;
+  return {
+    handle,
+    consume(data) {
+      const bytes = typeof data === "string" ? Buffer.from(data) : data;
+      const ptr = wasmExports.ghostty_wasm_alloc_u8_array(bytes.length);
+      new Uint8Array(wasmMemory.buffer).set(bytes, ptr);
+      wasmExports.ghostty_terminal_write(handle, ptr, bytes.length);
+      wasmExports.ghostty_wasm_free_u8_array(ptr, bytes.length);
+    },
+    resize(cols, rows) {
+      wasmExports.ghostty_terminal_resize(handle, cols, rows);
+    },
+    isAltScreen() {
+      return !!wasmExports.ghostty_terminal_is_alternate_screen(handle);
+    },
+    /** Build a VT escape sequence snapshot from viewport cells (tsm Snapshot equivalent). */
+    snapshot() {
+      wasmExports.ghostty_render_state_update(handle);
+      const cols = wasmExports.ghostty_render_state_get_cols(handle);
+      const rows = wasmExports.ghostty_render_state_get_rows(handle);
+      const cellSize = 16;
+      const bufSize = cols * rows * cellSize;
+      const bufPtr = wasmExports.ghostty_wasm_alloc_u8_array(bufSize);
+      const count = wasmExports.ghostty_render_state_get_viewport(handle, bufPtr, bufSize);
+
+      const view = new DataView(wasmMemory.buffer);
+      let out = "\x1b[H\x1b[2J"; // clear + home
+      let lastFg = null, lastBg = null, lastFlags = 0;
+
+      for (let row = 0; row < rows; row++) {
+        if (row > 0) out += "\r\n";
+        for (let col = 0; col < cols; col++) {
+          const off = bufPtr + (row * cols + col) * cellSize;
+          const cp = view.getUint32(off, true);
+          const fg_r = view.getUint8(off + 4);
+          const fg_g = view.getUint8(off + 5);
+          const fg_b = view.getUint8(off + 6);
+          const bg_r = view.getUint8(off + 7);
+          const bg_g = view.getUint8(off + 8);
+          const bg_b = view.getUint8(off + 9);
+          const flags = view.getUint8(off + 10);
+          const width = view.getUint8(off + 11);
+
+          if (width === 0) continue; // continuation cell (wide char)
+
+          // SGR: only emit changes
+          const fgKey = (fg_r << 16) | (fg_g << 8) | fg_b;
+          const bgKey = (bg_r << 16) | (bg_g << 8) | bg_b;
+          let sgr = "";
+          if (flags !== lastFlags) {
+            sgr += "\x1b[0m"; // reset, then re-apply
+            if (flags & 1) sgr += "\x1b[1m";  // bold
+            if (flags & 2) sgr += "\x1b[3m";  // italic
+            if (flags & 4) sgr += "\x1b[4m";  // underline
+            if (flags & 128) sgr += "\x1b[2m"; // faint
+            lastFg = null; lastBg = null; // force re-emit colors after reset
+            lastFlags = flags;
+          }
+          if (fgKey !== lastFg && fgKey !== 0) {
+            sgr += `\x1b[38;2;${fg_r};${fg_g};${fg_b}m`;
+            lastFg = fgKey;
+          }
+          if (bgKey !== lastBg && bgKey !== 0) {
+            sgr += `\x1b[48;2;${bg_r};${bg_g};${bg_b}m`;
+            lastBg = bgKey;
+          }
+          out += sgr;
+          out += cp > 0 ? String.fromCodePoint(cp) : " ";
+        }
+      }
+
+      // Restore cursor position
+      const cx = wasmExports.ghostty_render_state_get_cursor_x(handle);
+      const cy = wasmExports.ghostty_render_state_get_cursor_y(handle);
+      out += `\x1b[0m\x1b[${cy + 1};${cx + 1}H`;
+
+      wasmExports.ghostty_wasm_free_u8_array(bufPtr, bufSize);
+      return out;
+    },
+    dispose() {
+      wasmExports.ghostty_terminal_free(handle);
+    },
+  };
+}
+
+// ── Session Persistence ──────────────────────────────────────────
+
+const PERSIST_DIR = path.join(homedir(), ".remux");
+const PERSIST_FILE = path.join(PERSIST_DIR, "sessions.json");
+const PERSIST_INTERVAL_MS = 8000;
+
+function persistSessions() {
+  const data = [...sessionMap.values()].map(s => ({
+    name: s.name,
+    createdAt: s.createdAt,
+    tabs: s.tabs.map(t => ({
+      id: t.id,
+      title: t.title,
+      ended: t.ended,
+      scrollback: t.ended ? null : t.scrollback.read().toString("utf8").slice(-200000),
+    })),
+  }));
+  try {
+    if (!fs.existsSync(PERSIST_DIR)) fs.mkdirSync(PERSIST_DIR, { recursive: true });
+    fs.writeFileSync(PERSIST_FILE, JSON.stringify({ version: 1, sessions: data }));
+  } catch (e) {
+    console.error("[persist] save failed:", e.message);
+  }
+}
+
+function restoreSessions() {
+  try {
+    if (!fs.existsSync(PERSIST_FILE)) return false;
+    const raw = JSON.parse(fs.readFileSync(PERSIST_FILE, "utf8"));
+    if (raw.version !== 1 || !Array.isArray(raw.sessions)) return false;
+    console.log(`[persist] restoring ${raw.sessions.length} session(s)`);
+    // We don't restore PTY processes (they're gone), but we restore session/tab structure
+    // and scrollback so the user sees their history
+    return raw;
+  } catch (e) {
+    console.error("[persist] restore failed:", e.message);
+    return false;
+  }
+}
+
 // ── Data Model ────────────────────────────────────────────────────
 //
 //  Session "work"          ← sidebar (left)
@@ -100,11 +244,13 @@ function createTab(session, cols = 80, rows = 24) {
     env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" },
   });
 
+  const vtTerminal = createVtTerminal(cols, rows);
   const tab = {
     id,
     pty: ptyProcess,
     scrollback: new RingBuffer(),
-    clients: new Set(),   // ws clients viewing THIS tab
+    vt: vtTerminal,
+    clients: new Set(),
     cols, rows,
     ended: false,
     title: `Tab ${session.tabs.length + 1}`,
@@ -112,6 +258,7 @@ function createTab(session, cols = 80, rows = 24) {
 
   ptyProcess.onData((data) => {
     tab.scrollback.write(data);
+    if (tab.vt) tab.vt.consume(data);
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
@@ -119,6 +266,7 @@ function createTab(session, cols = 80, rows = 24) {
 
   ptyProcess.onExit(({ exitCode }) => {
     tab.ended = true;
+    if (tab.vt) { tab.vt.dispose(); tab.vt = null; }
     const msg = `\r\n\x1b[33mShell exited (code: ${exitCode})\x1b[0m\r\n`;
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(msg);
@@ -164,18 +312,37 @@ function getState() {
   }));
 }
 
-// Attach ws to a specific tab — detach from previous first
+// Attach ws to a specific tab — detach from previous first.
+// Uses tsm-style snapshot: if VT tracking available, send viewport
+// snapshot; otherwise fall back to raw scrollback.
+// After snapshot, resize PTY + send Ctrl+L to trigger app redraw.
 function attachToTab(tab, ws, cols, rows) {
   detachFromTab(ws);
-  const history = tab.scrollback.read();
-  if (history.length > 0 && ws.readyState === ws.OPEN) {
-    ws.send(history.toString("utf8"));
+
+  if (ws.readyState === ws.OPEN) {
+    if (tab.vt && !tab.ended) {
+      // tsm pattern: send VT snapshot (screen content with colors + cursor)
+      const snapshot = tab.vt.snapshot();
+      if (snapshot) ws.send(snapshot);
+    } else {
+      // fallback: raw scrollback
+      const history = tab.scrollback.read();
+      if (history.length > 0) ws.send(history.toString("utf8"));
+    }
   }
+
   tab.clients.add(ws);
   ws._remuxTabId = tab.id;
   ws._remuxCols = cols;
   ws._remuxRows = rows;
   recalcTabSize(tab);
+
+  // tsm pattern: after attach, resize + Ctrl+L to trigger running app redraw
+  if (!tab.ended) {
+    setTimeout(() => {
+      tab.pty.write("\x0c"); // Ctrl+L — forces shell/vim/etc to redraw
+    }, 50);
+  }
 }
 
 function detachFromTab(ws) {
@@ -211,6 +378,7 @@ function recalcTabSize(tab) {
     tab.cols = minCols;
     tab.rows = minRows;
     tab.pty.resize(minCols, minRows);
+    if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
 
@@ -224,9 +392,53 @@ function broadcastState() {
   }
 }
 
-// Default session with one tab
-const defaultSession = createSession("main");
-createTab(defaultSession);
+// Startup: init WASM, restore sessions, create default if needed
+let startupDone = false;
+async function startup() {
+  await initGhosttyVt();
+
+  // Try restoring saved sessions
+  const saved = restoreSessions();
+  if (saved && saved.sessions.length > 0) {
+    for (const s of saved.sessions) {
+      const session = createSession(s.name);
+      // Restore tabs — each tab gets a new PTY, but pre-fill scrollback with saved data
+      for (const t of s.tabs) {
+        if (t.ended) continue;
+        const tab = createTab(session);
+        tab.title = t.title || tab.title;
+        if (t.scrollback) {
+          // Write saved scrollback to the RingBuffer so it's available on attach
+          // Note: this goes to RingBuffer only, NOT to PTY or VT terminal
+          tab.scrollback.write(t.scrollback);
+        }
+      }
+      // If all tabs were ended, create a fresh one
+      if (session.tabs.length === 0) createTab(session);
+    }
+  }
+
+  // Ensure at least a "main" session exists
+  if (sessionMap.size === 0) {
+    const s = createSession("main");
+    createTab(s);
+  }
+
+  // Persistence timer (8s, like cmux)
+  setInterval(persistSessions, PERSIST_INTERVAL_MS);
+
+  startupDone = true;
+}
+
+startup().catch(e => {
+  console.error("[startup] fatal:", e);
+  // Fallback: create default session without VT tracking
+  if (sessionMap.size === 0) {
+    const s = createSession("main");
+    createTab(s);
+  }
+  startupDone = true;
+});
 
 // ── HTML Template ──────────────────────────────────────────────────
 
@@ -761,11 +973,15 @@ httpServer.listen(PORT, () => {
   console.log(`\n  Remux running at http://localhost:${PORT}\n`);
 });
 
-process.on("SIGINT", () => {
+function shutdown() {
+  persistSessions(); // save before exit
   for (const session of sessionMap.values()) {
     for (const tab of session.tabs) {
+      if (tab.vt) { tab.vt.dispose(); tab.vt = null; }
       if (!tab.ended) tab.pty.kill();
     }
   }
   process.exit(0);
-});
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
