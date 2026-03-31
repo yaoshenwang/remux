@@ -30,7 +30,18 @@ import {
   broadcastState,
   setBroadcastHooks,
 } from "./session.js";
-import { validateToken } from "./auth.js";
+import { validateToken, registerDevice } from "./auth.js";
+import {
+  listDevices,
+  updateDeviceTrust,
+  renameDevice,
+  deleteDevice,
+  findDeviceById,
+  createPairCode,
+  consumePairCode,
+  touchDevice,
+  type Device,
+} from "./store.js";
 
 // ── Protocol Envelope ───────────────────────────────────────────
 
@@ -164,6 +175,9 @@ export function getClientList(): Array<{
 /**
  * Create a WebSocketServer, wire up upgrade handling and message routing.
  */
+/** Map deviceId -> Set of connected WebSockets (for force-disconnect on revoke). */
+const deviceSockets = new Map<string, Set<RemuxWebSocket>>();
+
 export function setupWebSocket(
   httpServer: http.Server,
   TOKEN: string | null,
@@ -193,11 +207,12 @@ export function setupWebSocket(
     }
   }, HEARTBEAT_INTERVAL);
 
-  wss.on("connection", (rawWs: WebSocket) => {
+  wss.on("connection", (rawWs: WebSocket, req: http.IncomingMessage) => {
     const ws = rawWs as RemuxWebSocket;
     ws._remuxTabId = null;
     ws._remuxCols = 80;
     ws._remuxRows = 24;
+    ws._remuxDeviceId = null;
 
     // Auth: no auth needed only if neither token nor password is configured
     const requiresAuth = !!(TOKEN || PASSWORD);
@@ -214,6 +229,29 @@ export function setupWebSocket(
     };
     clientStates.set(ws, clientState);
 
+    // Register device from request headers
+    let deviceInfo: Device | null = null;
+    try {
+      const { device } = registerDevice(req);
+      deviceInfo = device;
+      ws._remuxDeviceId = device.id;
+
+      // Track socket for device disconnect
+      if (!deviceSockets.has(device.id)) {
+        deviceSockets.set(device.id, new Set());
+      }
+      deviceSockets.get(device.id)!.add(ws);
+
+      // Block connections from blocked devices
+      if (device.trust === "blocked") {
+        sendEnvelope(ws, "auth_error", { reason: "device blocked" });
+        ws.close(4003, "device blocked");
+        return;
+      }
+    } catch {
+      // Device registration failure is non-fatal
+    }
+
     if (!requiresAuth) controlClients.add(ws);
 
     ws.on("message", (raw) => {
@@ -228,7 +266,10 @@ export function setupWebSocket(
             if (validateToken(parsed.token, TOKEN)) {
               ws._remuxAuthed = true;
               controlClients.add(ws);
-              sendEnvelope(ws, "auth_ok", {});
+              sendEnvelope(ws, "auth_ok", {
+                deviceId: deviceInfo?.id ?? null,
+                trust: deviceInfo?.trust ?? null,
+              });
               sendEnvelope(ws, "state", {
                 sessions: getState(),
                 clients: getClientList(),
@@ -499,6 +540,124 @@ export function setupWebSocket(
             return;
           }
 
+          // ── Device management messages ──
+
+          if (p.type === "list_devices") {
+            const devices = listDevices();
+            sendEnvelope(ws, "device_list", { devices });
+            return;
+          }
+
+          if (p.type === "trust_device") {
+            // Only trusted devices can trust others
+            const sender = ws._remuxDeviceId
+              ? findDeviceById(ws._remuxDeviceId)
+              : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can trust others",
+              });
+              return;
+            }
+            if (p.deviceId) {
+              updateDeviceTrust(p.deviceId, "trusted");
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+
+          if (p.type === "block_device") {
+            // Only trusted devices can block others
+            const sender = ws._remuxDeviceId
+              ? findDeviceById(ws._remuxDeviceId)
+              : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can block others",
+              });
+              return;
+            }
+            if (p.deviceId) {
+              updateDeviceTrust(p.deviceId, "blocked");
+              // Force disconnect blocked device
+              forceDisconnectDevice(p.deviceId);
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+
+          if (p.type === "rename_device") {
+            if (p.deviceId && typeof p.name === "string" && p.name.trim()) {
+              renameDevice(p.deviceId, p.name.trim().slice(0, 32));
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+
+          if (p.type === "revoke_device") {
+            // Only trusted devices can revoke others
+            const sender = ws._remuxDeviceId
+              ? findDeviceById(ws._remuxDeviceId)
+              : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can revoke others",
+              });
+              return;
+            }
+            if (p.deviceId) {
+              forceDisconnectDevice(p.deviceId);
+              deleteDevice(p.deviceId);
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+
+          if (p.type === "generate_pair_code") {
+            // Only trusted devices can generate pair codes
+            const sender = ws._remuxDeviceId
+              ? findDeviceById(ws._remuxDeviceId)
+              : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can generate pair codes",
+              });
+              return;
+            }
+            const pairCode = createPairCode(sender.id);
+            sendEnvelope(ws, "pair_code", {
+              code: pairCode.code,
+              expiresAt: pairCode.expiresAt,
+            });
+            return;
+          }
+
+          if (p.type === "pair") {
+            if (typeof p.code === "string") {
+              const createdBy = consumePairCode(p.code);
+              if (createdBy && ws._remuxDeviceId) {
+                updateDeviceTrust(ws._remuxDeviceId, "trusted");
+                // Refresh device info
+                deviceInfo = findDeviceById(ws._remuxDeviceId);
+                sendEnvelope(ws, "pair_result", {
+                  success: true,
+                  deviceId: ws._remuxDeviceId,
+                });
+                broadcastDeviceList();
+              } else {
+                sendEnvelope(ws, "pair_result", {
+                  success: false,
+                  reason: "invalid or expired code",
+                });
+              }
+            }
+            return;
+          }
+
           return;
         } catch {
           /* not JSON */
@@ -519,6 +678,15 @@ export function setupWebSocket(
       const tabId = ws._remuxTabId;
       const wasActive = clientState.role === "active";
 
+      // Clean up device socket tracking
+      if (ws._remuxDeviceId) {
+        const sockets = deviceSockets.get(ws._remuxDeviceId);
+        if (sockets) {
+          sockets.delete(ws);
+          if (sockets.size === 0) deviceSockets.delete(ws._remuxDeviceId);
+        }
+      }
+
       detachFromTab(ws);
       controlClients.delete(ws);
       clientStates.delete(ws);
@@ -532,6 +700,31 @@ export function setupWebSocket(
 
     ws.on("error", () => {});
   });
+
+  /**
+   * Force disconnect all sockets belonging to a device.
+   */
+  function forceDisconnectDevice(deviceId: string): void {
+    const sockets = deviceSockets.get(deviceId);
+    if (!sockets) return;
+    for (const sock of sockets) {
+      sendEnvelope(sock, "auth_error", { reason: "device revoked" });
+      sock.close(4003, "device revoked");
+    }
+    deviceSockets.delete(deviceId);
+  }
+
+  /**
+   * Broadcast device list to all authenticated control clients.
+   */
+  function broadcastDeviceList(): void {
+    const devices = listDevices();
+    for (const client of controlClients) {
+      if (client.readyState === client.OPEN) {
+        sendEnvelope(client, "device_list", { devices });
+      }
+    }
+  }
 
   return wss;
 }

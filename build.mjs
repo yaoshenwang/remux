@@ -12,6 +12,6 @@ esbuild.buildSync({
   target: "node20",
   format: "esm",
   outfile: "server.js",
-  external: ["node-pty", "ws", "ghostty-web", "qrcode-terminal"],
+  external: ["node-pty", "ws", "ghostty-web", "qrcode-terminal", "better-sqlite3"],
   banner: { js: "#!/usr/bin/env node" },
 });

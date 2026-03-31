@@ -4,9 +4,15 @@
  */
 
 import fs from "fs";
-import path from "path";
 import { homedir } from "os";
 import pty from "node-pty";
+import {
+  upsertSession,
+  upsertTab,
+  loadSessions as loadSessionsFromDb,
+  removeSession as removeSessionFromDb,
+  removeStaleTab,
+} from "./store.js";
 import type { IPty } from "node-pty";
 import type WebSocket from "ws";
 import { createVtTerminal, type VtTerminal } from "./vt-tracker.js";
@@ -64,6 +70,7 @@ export interface RemuxWebSocket extends WebSocket {
   _remuxCols: number;
   _remuxRows: number;
   _remuxAuthed: boolean;
+  _remuxDeviceId: string | null;
 }
 
 export interface Tab {
@@ -330,41 +337,36 @@ export function broadcastState(): void {
   }
 }
 
-// ── Persistence ──────────────────────────────────────────────────
+// ── Persistence (SQLite via store.ts) ────────────────────────────
 
-const PERSIST_DIR = path.join(homedir(), ".remux");
-const PORT = process.env.PORT || 8767;
-const PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
-const PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${PERSIST_ID}.json`);
 export const PERSIST_INTERVAL_MS = 8000;
 
+/**
+ * Persist all live sessions and tabs to SQLite (scrollback as BLOB).
+ */
 export function persistSessions(): void {
-  const data = [...sessionMap.values()].map((s) => ({
-    name: s.name,
-    createdAt: s.createdAt,
-    tabs: s.tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      ended: t.ended,
-      scrollback: t.ended
-        ? null
-        : t.scrollback.read().toString("utf8").slice(-200000),
-    })),
-  }));
   try {
-    if (!fs.existsSync(PERSIST_DIR))
-      fs.mkdirSync(PERSIST_DIR, { recursive: true });
-    fs.writeFileSync(
-      PERSIST_FILE,
-      JSON.stringify({ version: 1, sessions: data }),
-    );
+    for (const session of sessionMap.values()) {
+      upsertSession(session.name, session.createdAt);
+      for (const tab of session.tabs) {
+        upsertTab({
+          id: tab.id,
+          sessionName: session.name,
+          title: tab.title,
+          scrollback: tab.ended ? null : tab.scrollback.read(),
+          ended: tab.ended,
+        });
+      }
+    }
   } catch (e: any) {
     console.error("[persist] save failed:", e.message);
   }
 }
 
+/**
+ * Restore sessions from SQLite. Returns saved data or false.
+ */
 export function restoreSessions(): {
-  version: number;
   sessions: Array<{
     name: string;
     createdAt: number;
@@ -372,16 +374,15 @@ export function restoreSessions(): {
       id: number;
       title: string;
       ended: boolean;
-      scrollback: string | null;
+      scrollback: Buffer | null;
     }>;
   }>;
 } | false {
   try {
-    if (!fs.existsSync(PERSIST_FILE)) return false;
-    const raw = JSON.parse(fs.readFileSync(PERSIST_FILE, "utf8"));
-    if (raw.version !== 1 || !Array.isArray(raw.sessions)) return false;
-    console.log(`[persist] restoring ${raw.sessions.length} session(s)`);
-    return raw;
+    const sessions = loadSessionsFromDb();
+    if (sessions.length === 0) return false;
+    console.log(`[persist] restoring ${sessions.length} session(s) from SQLite`);
+    return { sessions };
   } catch (e: any) {
     console.error("[persist] restore failed:", e.message);
     return false;
