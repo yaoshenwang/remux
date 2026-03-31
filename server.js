@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/server.ts
-import fs3 from "fs";
+import fs4 from "fs";
 import http from "http";
 import path2 from "path";
 import { createRequire } from "module";
@@ -9,7 +9,225 @@ import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
 
 // src/auth.ts
+import crypto2 from "crypto";
+
+// src/store.ts
+import Database from "better-sqlite3";
+import path from "path";
+import { homedir } from "os";
+import fs from "fs";
 import crypto from "crypto";
+var REMUX_DIR = path.join(homedir(), ".remux");
+var PORT = process.env.PORT || 8767;
+var PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
+function getDbPath() {
+  return path.join(REMUX_DIR, `remux-${PERSIST_ID}.db`);
+}
+var _db = null;
+function getDb() {
+  if (_db) return _db;
+  if (!fs.existsSync(REMUX_DIR)) {
+    fs.mkdirSync(REMUX_DIR, { recursive: true });
+  }
+  _db = new Database(getDbPath());
+  _db.pragma("journal_mode = WAL");
+  _db.pragma("foreign_keys = ON");
+  _db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      name TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tabs (
+      id INTEGER PRIMARY KEY,
+      session_name TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT 'Tab',
+      scrollback BLOB,
+      ended INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (session_name) REFERENCES sessions(name) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS devices (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      trust TEXT NOT NULL DEFAULT 'untrusted',
+      created_at INTEGER NOT NULL,
+      last_seen INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pair_codes (
+      code TEXT PRIMARY KEY,
+      created_by TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      FOREIGN KEY (created_by) REFERENCES devices(id) ON DELETE CASCADE
+    );
+  `);
+  return _db;
+}
+function closeDb() {
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
+}
+function upsertSession(name, createdAt) {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO sessions (name, created_at) VALUES (?, ?)
+     ON CONFLICT(name) DO UPDATE SET created_at = excluded.created_at`
+  ).run(name, createdAt);
+}
+function upsertTab(tab) {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO tabs (id, session_name, title, scrollback, ended) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       session_name = excluded.session_name,
+       title = excluded.title,
+       scrollback = excluded.scrollback,
+       ended = excluded.ended`
+  ).run(
+    tab.id,
+    tab.sessionName,
+    tab.title,
+    tab.scrollback,
+    tab.ended ? 1 : 0
+  );
+}
+function loadSessions() {
+  const db = getDb();
+  const sessions = db.prepare("SELECT name, created_at FROM sessions ORDER BY created_at").all();
+  return sessions.map((s) => {
+    const tabs = db.prepare(
+      "SELECT id, title, scrollback, ended FROM tabs WHERE session_name = ? ORDER BY id"
+    ).all(s.name);
+    return {
+      name: s.name,
+      createdAt: s.created_at,
+      tabs: tabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        scrollback: t.scrollback,
+        ended: t.ended === 1
+      }))
+    };
+  });
+}
+function generateDeviceId() {
+  return crypto.randomBytes(8).toString("hex");
+}
+function computeFingerprint(userAgent, acceptLanguage) {
+  const raw = `${userAgent}|${acceptLanguage}`;
+  return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
+}
+function hasAnyDevice() {
+  const db = getDb();
+  const row = db.prepare("SELECT COUNT(*) as cnt FROM devices").get();
+  return row.cnt > 0;
+}
+function createDevice(fingerprint, trust = "untrusted", name) {
+  const db = getDb();
+  const id = generateDeviceId();
+  const now = Date.now();
+  const deviceName = name || `Device-${id.slice(0, 4).toUpperCase()}`;
+  db.prepare(
+    `INSERT INTO devices (id, name, fingerprint, trust, created_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, deviceName, fingerprint, trust, now, now);
+  return {
+    id,
+    name: deviceName,
+    fingerprint,
+    trust,
+    createdAt: now,
+    lastSeen: now
+  };
+}
+function findDeviceByFingerprint(fingerprint) {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM devices WHERE fingerprint = ?").get(fingerprint);
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    fingerprint: row.fingerprint,
+    trust: row.trust,
+    createdAt: row.created_at,
+    lastSeen: row.last_seen
+  };
+}
+function findDeviceById(id) {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM devices WHERE id = ?").get(id);
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    fingerprint: row.fingerprint,
+    trust: row.trust,
+    createdAt: row.created_at,
+    lastSeen: row.last_seen
+  };
+}
+function listDevices() {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM devices ORDER BY last_seen DESC").all();
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    fingerprint: r.fingerprint,
+    trust: r.trust,
+    createdAt: r.created_at,
+    lastSeen: r.last_seen
+  }));
+}
+function updateDeviceTrust(id, trust) {
+  const db = getDb();
+  const result = db.prepare("UPDATE devices SET trust = ? WHERE id = ?").run(trust, id);
+  return result.changes > 0;
+}
+function renameDevice(id, name) {
+  const db = getDb();
+  const result = db.prepare("UPDATE devices SET name = ? WHERE id = ?").run(name, id);
+  return result.changes > 0;
+}
+function touchDevice(id) {
+  const db = getDb();
+  db.prepare("UPDATE devices SET last_seen = ? WHERE id = ?").run(
+    Date.now(),
+    id
+  );
+}
+function deleteDevice(id) {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM devices WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+function createPairCode(createdBy) {
+  const db = getDb();
+  const code = String(crypto.randomInt(1e5, 999999));
+  const expiresAt = Date.now() + 5 * 60 * 1e3;
+  db.prepare("DELETE FROM pair_codes WHERE expires_at < ?").run(Date.now());
+  db.prepare(
+    "INSERT INTO pair_codes (code, created_by, expires_at) VALUES (?, ?, ?)"
+  ).run(code, createdBy, expiresAt);
+  return { code, createdBy, expiresAt };
+}
+function consumePairCode(code) {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT created_by, expires_at FROM pair_codes WHERE code = ?"
+  ).get(code);
+  if (!row || row.expires_at < Date.now()) {
+    db.prepare("DELETE FROM pair_codes WHERE code = ?").run(code);
+    return null;
+  }
+  db.prepare("DELETE FROM pair_codes WHERE code = ?").run(code);
+  return row.created_by;
+}
+
+// src/auth.ts
 var passwordTokens = /* @__PURE__ */ new Set();
 function parseCliPassword(argv) {
   const idx = argv.indexOf("--password");
@@ -17,16 +235,30 @@ function parseCliPassword(argv) {
 }
 function resolveAuth(argv) {
   const PASSWORD2 = process.env.REMUX_PASSWORD || parseCliPassword(argv) || null;
-  const TOKEN2 = process.env.REMUX_TOKEN || (PASSWORD2 ? null : crypto.randomBytes(16).toString("hex"));
+  const TOKEN2 = process.env.REMUX_TOKEN || (PASSWORD2 ? null : crypto2.randomBytes(16).toString("hex"));
   return { TOKEN: TOKEN2, PASSWORD: PASSWORD2 };
 }
 function generateToken() {
-  return crypto.randomBytes(16).toString("hex");
+  return crypto2.randomBytes(16).toString("hex");
 }
 function validateToken(token, TOKEN2) {
   if (TOKEN2 && token === TOKEN2) return true;
   if (passwordTokens.has(token)) return true;
   return false;
+}
+function registerDevice(req) {
+  const ua = req.headers["user-agent"] || "";
+  const lang = req.headers["accept-language"] || "";
+  const fingerprint = computeFingerprint(ua, lang);
+  const existing = findDeviceByFingerprint(fingerprint);
+  if (existing) {
+    touchDevice(existing.id);
+    return { device: existing, isNew: false };
+  }
+  const isFirst = !hasAnyDevice();
+  const trust = isFirst ? "trusted" : "untrusted";
+  const device = createDevice(fingerprint, trust);
+  return { device, isNew: true };
 }
 var PASSWORD_PAGE = `<!doctype html>
 <html lang="en">
@@ -67,11 +299,11 @@ var PASSWORD_PAGE = `<!doctype html>
 </html>`;
 
 // src/vt-tracker.ts
-import fs from "fs";
+import fs2 from "fs";
 var wasmExports = null;
 var wasmMemory = null;
 async function initGhosttyVt(wasmPath2) {
-  const wasmBytes = fs.readFileSync(wasmPath2);
+  const wasmBytes = fs2.readFileSync(wasmPath2);
   const result = await WebAssembly.instantiate(wasmBytes, {
     env: { log: () => {
     } }
@@ -193,9 +425,8 @@ function createVtTerminal(cols, rows) {
 }
 
 // src/session.ts
-import fs2 from "fs";
-import path from "path";
-import { homedir } from "os";
+import fs3 from "fs";
+import { homedir as homedir2 } from "os";
 import pty from "node-pty";
 var RingBuffer = class {
   buf;
@@ -241,7 +472,7 @@ function getShell() {
   if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
   if (process.env.SHELL) return process.env.SHELL;
   try {
-    fs2.accessSync("/bin/zsh", fs2.constants.X_OK);
+    fs3.accessSync("/bin/zsh", fs3.constants.X_OK);
     return "/bin/zsh";
   } catch {
   }
@@ -256,7 +487,7 @@ function createTab(session, cols = 80, rows = 24) {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: homedir(),
+    cwd: homedir2(),
     env: {
       ...process.env,
       TERM: "xterm-256color",
@@ -406,40 +637,31 @@ function broadcastState() {
     }
   }
 }
-var PERSIST_DIR = path.join(homedir(), ".remux");
-var PORT = process.env.PORT || 8767;
-var PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
-var PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${PERSIST_ID}.json`);
 var PERSIST_INTERVAL_MS = 8e3;
 function persistSessions() {
-  const data = [...sessionMap.values()].map((s) => ({
-    name: s.name,
-    createdAt: s.createdAt,
-    tabs: s.tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      ended: t.ended,
-      scrollback: t.ended ? null : t.scrollback.read().toString("utf8").slice(-2e5)
-    }))
-  }));
   try {
-    if (!fs2.existsSync(PERSIST_DIR))
-      fs2.mkdirSync(PERSIST_DIR, { recursive: true });
-    fs2.writeFileSync(
-      PERSIST_FILE,
-      JSON.stringify({ version: 1, sessions: data })
-    );
+    for (const session of sessionMap.values()) {
+      upsertSession(session.name, session.createdAt);
+      for (const tab of session.tabs) {
+        upsertTab({
+          id: tab.id,
+          sessionName: session.name,
+          title: tab.title,
+          scrollback: tab.ended ? null : tab.scrollback.read(),
+          ended: tab.ended
+        });
+      }
+    }
   } catch (e) {
     console.error("[persist] save failed:", e.message);
   }
 }
 function restoreSessions() {
   try {
-    if (!fs2.existsSync(PERSIST_FILE)) return false;
-    const raw = JSON.parse(fs2.readFileSync(PERSIST_FILE, "utf8"));
-    if (raw.version !== 1 || !Array.isArray(raw.sessions)) return false;
-    console.log(`[persist] restoring ${raw.sessions.length} session(s)`);
-    return raw;
+    const sessions = loadSessions();
+    if (sessions.length === 0) return false;
+    console.log(`[persist] restoring ${sessions.length} session(s) from SQLite`);
+    return { sessions };
   } catch (e) {
     console.error("[persist] restore failed:", e.message);
     return false;
@@ -447,7 +669,7 @@ function restoreSessions() {
 }
 
 // src/ws-handler.ts
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 import { WebSocketServer } from "ws";
 function sendEnvelope(ws, type, payload) {
   if (ws.readyState === ws.OPEN) {
@@ -462,7 +684,7 @@ function unwrapMessage(parsed) {
 }
 var clientStates = /* @__PURE__ */ new Map();
 function generateClientId() {
-  return crypto2.randomBytes(4).toString("hex");
+  return crypto3.randomBytes(4).toString("hex");
 }
 function getActiveClientForTab(tabId) {
   for (const [ws, state] of clientStates) {
@@ -508,6 +730,7 @@ function getClientList() {
   }
   return list;
 }
+var deviceSockets = /* @__PURE__ */ new Map();
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList);
   const wss = new WebSocketServer({ noServer: true });
@@ -530,11 +753,12 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
       if (ws.readyState === ws.OPEN) ws.ping();
     }
   }, HEARTBEAT_INTERVAL);
-  wss.on("connection", (rawWs) => {
+  wss.on("connection", (rawWs, req) => {
     const ws = rawWs;
     ws._remuxTabId = null;
     ws._remuxCols = 80;
     ws._remuxRows = 24;
+    ws._remuxDeviceId = null;
     const requiresAuth = !!(TOKEN2 || PASSWORD2);
     ws._remuxAuthed = !requiresAuth;
     const clientId = generateClientId();
@@ -546,6 +770,22 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
       currentTabId: null
     };
     clientStates.set(ws, clientState);
+    let deviceInfo = null;
+    try {
+      const { device } = registerDevice(req);
+      deviceInfo = device;
+      ws._remuxDeviceId = device.id;
+      if (!deviceSockets.has(device.id)) {
+        deviceSockets.set(device.id, /* @__PURE__ */ new Set());
+      }
+      deviceSockets.get(device.id).add(ws);
+      if (device.trust === "blocked") {
+        sendEnvelope(ws, "auth_error", { reason: "device blocked" });
+        ws.close(4003, "device blocked");
+        return;
+      }
+    } catch {
+    }
     if (!requiresAuth) controlClients.add(ws);
     ws.on("message", (raw) => {
       const msg = raw.toString("utf8");
@@ -557,7 +797,10 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             if (validateToken(parsed.token, TOKEN2)) {
               ws._remuxAuthed = true;
               controlClients.add(ws);
-              sendEnvelope(ws, "auth_ok", {});
+              sendEnvelope(ws, "auth_ok", {
+                deviceId: deviceInfo?.id ?? null,
+                trust: deviceInfo?.trust ?? null
+              });
               sendEnvelope(ws, "state", {
                 sessions: getState(),
                 clients: getClientList()
@@ -779,6 +1022,101 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             }
             return;
           }
+          if (p.type === "list_devices") {
+            const devices = listDevices();
+            sendEnvelope(ws, "device_list", { devices });
+            return;
+          }
+          if (p.type === "trust_device") {
+            const sender = ws._remuxDeviceId ? findDeviceById(ws._remuxDeviceId) : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can trust others"
+              });
+              return;
+            }
+            if (p.deviceId) {
+              updateDeviceTrust(p.deviceId, "trusted");
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+          if (p.type === "block_device") {
+            const sender = ws._remuxDeviceId ? findDeviceById(ws._remuxDeviceId) : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can block others"
+              });
+              return;
+            }
+            if (p.deviceId) {
+              updateDeviceTrust(p.deviceId, "blocked");
+              forceDisconnectDevice(p.deviceId);
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+          if (p.type === "rename_device") {
+            if (p.deviceId && typeof p.name === "string" && p.name.trim()) {
+              renameDevice(p.deviceId, p.name.trim().slice(0, 32));
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+          if (p.type === "revoke_device") {
+            const sender = ws._remuxDeviceId ? findDeviceById(ws._remuxDeviceId) : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can revoke others"
+              });
+              return;
+            }
+            if (p.deviceId) {
+              forceDisconnectDevice(p.deviceId);
+              deleteDevice(p.deviceId);
+              sendEnvelope(ws, "device_list", { devices: listDevices() });
+              broadcastDeviceList();
+            }
+            return;
+          }
+          if (p.type === "generate_pair_code") {
+            const sender = ws._remuxDeviceId ? findDeviceById(ws._remuxDeviceId) : null;
+            if (!sender || sender.trust !== "trusted") {
+              sendEnvelope(ws, "error", {
+                reason: "only trusted devices can generate pair codes"
+              });
+              return;
+            }
+            const pairCode = createPairCode(sender.id);
+            sendEnvelope(ws, "pair_code", {
+              code: pairCode.code,
+              expiresAt: pairCode.expiresAt
+            });
+            return;
+          }
+          if (p.type === "pair") {
+            if (typeof p.code === "string") {
+              const createdBy = consumePairCode(p.code);
+              if (createdBy && ws._remuxDeviceId) {
+                updateDeviceTrust(ws._remuxDeviceId, "trusted");
+                deviceInfo = findDeviceById(ws._remuxDeviceId);
+                sendEnvelope(ws, "pair_result", {
+                  success: true,
+                  deviceId: ws._remuxDeviceId
+                });
+                broadcastDeviceList();
+              } else {
+                sendEnvelope(ws, "pair_result", {
+                  success: false,
+                  reason: "invalid or expired code"
+                });
+              }
+            }
+            return;
+          }
           return;
         } catch {
         }
@@ -792,6 +1130,13 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
     ws.on("close", () => {
       const tabId = ws._remuxTabId;
       const wasActive = clientState.role === "active";
+      if (ws._remuxDeviceId) {
+        const sockets = deviceSockets.get(ws._remuxDeviceId);
+        if (sockets) {
+          sockets.delete(ws);
+          if (sockets.size === 0) deviceSockets.delete(ws._remuxDeviceId);
+        }
+      }
       detachFromTab(ws);
       controlClients.delete(ws);
       clientStates.delete(ws);
@@ -803,6 +1148,23 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
     ws.on("error", () => {
     });
   });
+  function forceDisconnectDevice(deviceId) {
+    const sockets = deviceSockets.get(deviceId);
+    if (!sockets) return;
+    for (const sock of sockets) {
+      sendEnvelope(sock, "auth_error", { reason: "device revoked" });
+      sock.close(4003, "device revoked");
+    }
+    deviceSockets.delete(deviceId);
+  }
+  function broadcastDeviceList() {
+    const devices = listDevices();
+    for (const client of controlClients) {
+      if (client.readyState === client.OPEN) {
+        sendEnvelope(client, "device_list", { devices });
+      }
+    }
+  }
   return wss;
 }
 
@@ -888,7 +1250,7 @@ var __filename = fileURLToPath(import.meta.url);
 var __dirname = path2.dirname(__filename);
 var require2 = createRequire(import.meta.url);
 var PKG = JSON.parse(
-  fs3.readFileSync(path2.join(__dirname, "package.json"), "utf8")
+  fs4.readFileSync(path2.join(__dirname, "package.json"), "utf8")
 );
 var VERSION = PKG.version;
 var PORT2 = process.env.PORT || 8767;
@@ -900,7 +1262,7 @@ function findGhosttyWeb() {
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
   const distPath2 = path2.join(ghosttyWebRoot, "dist");
   const wasmPath2 = path2.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs3.existsSync(path2.join(distPath2, "ghostty-web.js")) && fs3.existsSync(wasmPath2)) {
+  if (fs4.existsSync(path2.join(distPath2, "ghostty-web.js")) && fs4.existsSync(wasmPath2)) {
     return { distPath: distPath2, wasmPath: wasmPath2 };
   }
   console.error("Error: ghostty-web package not found.");
@@ -909,6 +1271,7 @@ function findGhosttyWeb() {
 var { distPath, wasmPath } = findGhosttyWeb();
 var startupDone = false;
 async function startup() {
+  getDb();
   await initGhosttyVt(wasmPath);
   const saved = restoreSessions();
   if (saved && saved.sessions.length > 0) {
@@ -1143,6 +1506,46 @@ var HTML_TEMPLATE = `<!doctype html>
         color: var(--text-bright); font-size: 12px; font-family: inherit; padding: 1px 4px;
         outline: none; width: 80px; }
 
+      /* -- Devices section -- */
+      .devices-section { border-top: 1px solid var(--border); }
+      .devices-header { padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: .5px; cursor: pointer; display: flex;
+        align-items: center; justify-content: space-between; user-select: none; }
+      .devices-header:hover { color: var(--text-bright); }
+      .devices-toggle { font-size: 8px; transition: transform .2s; }
+      .devices-toggle.collapsed { transform: rotate(-90deg); }
+      .devices-list { padding: 2px 6px; max-height: 200px; overflow-y: auto; }
+      .devices-list.collapsed { display: none; }
+      .device-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 4px;
+        font-size: 12px; color: var(--text); }
+      .device-item:hover { background: var(--bg-hover); }
+      .device-item .device-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+      .device-dot.trusted { background: var(--dot-ok); }
+      .device-dot.untrusted { background: var(--dot-warn); }
+      .device-dot.blocked { background: var(--dot-err); }
+      .device-item .device-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .device-item .device-self { font-size: 9px; color: var(--accent); margin-left: 2px; }
+      .device-item .device-actions { display: flex; gap: 2px; opacity: 0; }
+      .device-item:hover .device-actions { opacity: 1; }
+      .device-actions button { background: none; border: none; color: var(--text-dim); cursor: pointer;
+        font-size: 11px; padding: 1px 4px; border-radius: 3px; font-family: inherit; }
+      .device-actions button:hover { color: var(--text-bright); background: var(--compose-bg); }
+      .devices-actions { padding: 4px 12px 8px; }
+      .pair-btn { width: 100%; padding: 5px 8px; font-size: 11px; font-family: inherit;
+        color: var(--text-bright); background: var(--compose-bg); border: 1px solid var(--compose-border);
+        border-radius: 4px; cursor: pointer; margin-bottom: 4px; }
+      .pair-btn:hover { background: var(--compose-border); }
+      .pair-code-display { text-align: center; padding: 6px; }
+      .pair-code { font-family: 'Menlo','Monaco',monospace; font-size: 24px; font-weight: bold;
+        color: var(--accent); letter-spacing: 4px; }
+      .pair-expires { display: block; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+      .pair-input-area { display: flex; gap: 4px; }
+      .pair-input-area input { flex: 1; padding: 5px 8px; font-size: 13px; font-family: 'Menlo','Monaco',monospace;
+        background: var(--bg); border: 1px solid var(--compose-border); border-radius: 4px;
+        color: var(--text); outline: none; text-align: center; letter-spacing: 2px; }
+      .pair-input-area input:focus { border-color: var(--accent); }
+      .pair-input-area .pair-btn { width: auto; }
+
       /* -- Mobile -- */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
@@ -1164,6 +1567,27 @@ var HTML_TEMPLATE = `<!doctype html>
         <button id="btn-new-session" title="New session">+</button>
       </div>
       <div class="session-list" id="session-list"></div>
+
+      <!-- Devices section (collapsible) -->
+      <div class="devices-section" id="devices-section">
+        <div class="devices-header" id="devices-header">
+          <span>Devices</span>
+          <span class="devices-toggle" id="devices-toggle">&#9660;</span>
+        </div>
+        <div class="devices-list" id="devices-list"></div>
+        <div class="devices-actions" id="devices-actions" style="display:none">
+          <button class="pair-btn" id="btn-pair">Generate Pair Code</button>
+          <div class="pair-code-display" id="pair-code-display" style="display:none">
+            <span class="pair-code" id="pair-code-value"></span>
+            <span class="pair-expires" id="pair-expires"></span>
+          </div>
+          <div class="pair-input-area" id="pair-input-area" style="display:none">
+            <input type="text" id="pair-code-input" placeholder="Enter 6-digit code" maxlength="6" />
+            <button class="pair-btn" id="btn-submit-pair">Pair</button>
+          </div>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div class="role-indicator" id="role-indicator">
           <span id="role-dot"></span>
@@ -1492,6 +1916,8 @@ var HTML_TEMPLATE = `<!doctype html>
           startHeartbeat();
           if (urlToken) ws.send(JSON.stringify({ type: 'auth', token: urlToken }));
           sendCtrl({ type: 'attach_first', session: currentSession || 'main', cols: term.cols, rows: term.rows });
+          // Request device list (works with or without auth)
+          sendCtrl({ type: 'list_devices' });
         };
         ws.onmessage = e => {
           lastMessageAt = Date.now();
@@ -1500,8 +1926,37 @@ var HTML_TEMPLATE = `<!doctype html>
               const parsed = JSON.parse(e.data);
               // Handle both envelope (v:1) and legacy messages
               const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
-              if (msg.type === 'auth_ok') return;
+              if (msg.type === 'auth_ok') {
+                if (msg.deviceId) myDeviceId = msg.deviceId;
+                // Request device list after auth
+                sendCtrl({ type: 'list_devices' });
+                return;
+              }
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
+              if (msg.type === 'device_list') {
+                devicesList = msg.devices || [];
+                renderDevices(); return;
+              }
+              if (msg.type === 'pair_code') {
+                const display = $('pair-code-display');
+                if (display) {
+                  display.style.display = 'block';
+                  $('pair-code-value').textContent = msg.code;
+                  const remaining = Math.max(0, Math.ceil((msg.expiresAt - Date.now()) / 1000));
+                  $('pair-expires').textContent = 'Expires in ' + Math.ceil(remaining / 60) + ' min';
+                  setTimeout(() => { display.style.display = 'none'; }, remaining * 1000);
+                }
+                return;
+              }
+              if (msg.type === 'pair_result') {
+                if (msg.success) {
+                  $('pair-code-input').value = '';
+                  sendCtrl({ type: 'list_devices' });
+                } else {
+                  alert('Pairing failed: ' + (msg.reason || 'invalid code'));
+                }
+                return;
+              }
               if (msg.type === 'state') {
                 sessions = msg.sessions || [];
                 clientsList = msg.clients || [];
@@ -1619,6 +2074,75 @@ var HTML_TEMPLATE = `<!doctype html>
       }
       $('inspect-search-input').addEventListener('input', applyInspectSearch);
 
+      // -- Devices section --
+      let devicesList = [], myDeviceId = null, devicesCollapsed = false;
+
+      function renderDevices() {
+        const list = $('devices-list');
+        const actions = $('devices-actions');
+        if (!list) return;
+        list.innerHTML = '';
+        devicesList.forEach(d => {
+          const el = document.createElement('div');
+          el.className = 'device-item';
+          const isSelf = d.id === myDeviceId;
+          el.innerHTML = '<span class="device-dot ' + d.trust + '"></span>'
+            + '<span class="device-name">' + d.name + (isSelf ? ' <span class="device-self">(you)</span>' : '') + '</span>'
+            + '<span class="device-actions">'
+            + (d.trust !== 'trusted' ? '<button data-trust="' + d.id + '" title="Trust">&#10003;</button>' : '')
+            + (d.trust !== 'blocked' ? '<button data-block="' + d.id + '" title="Block">&#10007;</button>' : '')
+            + '<button data-rename-dev="' + d.id + '" title="Rename">&#9998;</button>'
+            + (!isSelf ? '<button data-revoke="' + d.id + '" title="Revoke">&#128465;</button>' : '')
+            + '</span>';
+          el.addEventListener('click', e => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            if (btn.dataset.trust) sendCtrl({ type: 'trust_device', deviceId: btn.dataset.trust });
+            if (btn.dataset.block) sendCtrl({ type: 'block_device', deviceId: btn.dataset.block });
+            if (btn.dataset.renameDev) {
+              const newName = prompt('Device name:', d.name);
+              if (newName && newName.trim()) sendCtrl({ type: 'rename_device', deviceId: btn.dataset.renameDev, name: newName.trim() });
+            }
+            if (btn.dataset.revoke) {
+              if (confirm('Revoke device "' + d.name + '"?')) sendCtrl({ type: 'revoke_device', deviceId: btn.dataset.revoke });
+            }
+          });
+          list.appendChild(el);
+        });
+
+        // Show actions only for trusted devices
+        const isTrusted = devicesList.find(d => d.id === myDeviceId && d.trust === 'trusted');
+        if (actions) {
+          actions.style.display = isTrusted ? 'block' : 'none';
+          // Show pair input for untrusted devices
+          const pairInput = $('pair-input-area');
+          if (pairInput && !isTrusted) {
+            pairInput.style.display = 'flex';
+            actions.style.display = 'block';
+          }
+        }
+      }
+
+      $('devices-header').addEventListener('click', () => {
+        devicesCollapsed = !devicesCollapsed;
+        $('devices-list').classList.toggle('collapsed', devicesCollapsed);
+        $('devices-toggle').classList.toggle('collapsed', devicesCollapsed);
+        if ($('devices-actions')) $('devices-actions').style.display = devicesCollapsed ? 'none' : '';
+      });
+
+      $('btn-pair').addEventListener('click', () => {
+        sendCtrl({ type: 'generate_pair_code' });
+      });
+
+      $('btn-submit-pair').addEventListener('click', () => {
+        const code = $('pair-code-input').value.trim();
+        if (code.length === 6) sendCtrl({ type: 'pair', code });
+      });
+
+      $('pair-code-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); $('btn-submit-pair').click(); }
+      });
+
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {
         const tabEl = e.target.closest('.tab');
@@ -1734,7 +2258,7 @@ var httpServer = http.createServer((req, res) => {
 });
 function serveFile(filePath, res) {
   const ext = path2.extname(filePath);
-  fs3.readFile(filePath, (err, data) => {
+  fs4.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end("Not Found");
@@ -1806,6 +2330,7 @@ async function launchTunnel() {
 }
 function shutdown() {
   persistSessions();
+  closeDb();
   if (tunnelProcess) {
     try {
       tunnelProcess.kill("SIGTERM");

@@ -1,9 +1,20 @@
 /**
  * Authentication module for Remux.
- * Handles token auth, password auth, and session token management.
+ * Handles token auth, password auth, session token management,
+ * and device registration/trust.
  */
 
 import crypto from "crypto";
+import type http from "http";
+import {
+  computeFingerprint,
+  findDeviceByFingerprint,
+  createDevice,
+  hasAnyDevice,
+  touchDevice,
+  type Device,
+  type TrustLevel,
+} from "./store.js";
 
 // ── State ────────────────────────────────────────────────────────
 
@@ -57,6 +68,33 @@ export function validateToken(
   if (TOKEN && token === TOKEN) return true;
   if (passwordTokens.has(token)) return true;
   return false;
+}
+
+// ── Device registration ─────────────────────────────────────────
+
+/**
+ * Register or retrieve a device based on request headers.
+ * First device ever is auto-trusted (bootstrap trust).
+ * Returns the device and whether it was newly created.
+ */
+export function registerDevice(
+  req: http.IncomingMessage,
+): { device: Device; isNew: boolean } {
+  const ua = req.headers["user-agent"] || "";
+  const lang = req.headers["accept-language"] || "";
+  const fingerprint = computeFingerprint(ua, lang);
+
+  const existing = findDeviceByFingerprint(fingerprint);
+  if (existing) {
+    touchDevice(existing.id);
+    return { device: existing, isNew: false };
+  }
+
+  // First device gets auto-trusted (bootstrap trust)
+  const isFirst = !hasAnyDevice();
+  const trust: TrustLevel = isFirst ? "trusted" : "untrusted";
+  const device = createDevice(fingerprint, trust);
+  return { device, isNew: true };
 }
 
 // ── Password page HTML ──────────────────────────────────────────

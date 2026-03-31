@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
 import { resolveAuth, generateToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
 import { initGhosttyVt } from "./vt-tracker.js";
+import { getDb, closeDb } from "./store.js";
 import {
   sessionMap,
   createSession,
@@ -68,6 +69,9 @@ const { distPath, wasmPath } = findGhosttyWeb();
 let startupDone = false;
 
 async function startup(): Promise<void> {
+  // Initialize SQLite store (creates tables if needed)
+  getDb();
+
   await initGhosttyVt(wasmPath);
 
   // Try restoring saved sessions
@@ -318,6 +322,46 @@ const HTML_TEMPLATE = `<!doctype html>
         color: var(--text-bright); font-size: 12px; font-family: inherit; padding: 1px 4px;
         outline: none; width: 80px; }
 
+      /* -- Devices section -- */
+      .devices-section { border-top: 1px solid var(--border); }
+      .devices-header { padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: .5px; cursor: pointer; display: flex;
+        align-items: center; justify-content: space-between; user-select: none; }
+      .devices-header:hover { color: var(--text-bright); }
+      .devices-toggle { font-size: 8px; transition: transform .2s; }
+      .devices-toggle.collapsed { transform: rotate(-90deg); }
+      .devices-list { padding: 2px 6px; max-height: 200px; overflow-y: auto; }
+      .devices-list.collapsed { display: none; }
+      .device-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 4px;
+        font-size: 12px; color: var(--text); }
+      .device-item:hover { background: var(--bg-hover); }
+      .device-item .device-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+      .device-dot.trusted { background: var(--dot-ok); }
+      .device-dot.untrusted { background: var(--dot-warn); }
+      .device-dot.blocked { background: var(--dot-err); }
+      .device-item .device-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .device-item .device-self { font-size: 9px; color: var(--accent); margin-left: 2px; }
+      .device-item .device-actions { display: flex; gap: 2px; opacity: 0; }
+      .device-item:hover .device-actions { opacity: 1; }
+      .device-actions button { background: none; border: none; color: var(--text-dim); cursor: pointer;
+        font-size: 11px; padding: 1px 4px; border-radius: 3px; font-family: inherit; }
+      .device-actions button:hover { color: var(--text-bright); background: var(--compose-bg); }
+      .devices-actions { padding: 4px 12px 8px; }
+      .pair-btn { width: 100%; padding: 5px 8px; font-size: 11px; font-family: inherit;
+        color: var(--text-bright); background: var(--compose-bg); border: 1px solid var(--compose-border);
+        border-radius: 4px; cursor: pointer; margin-bottom: 4px; }
+      .pair-btn:hover { background: var(--compose-border); }
+      .pair-code-display { text-align: center; padding: 6px; }
+      .pair-code { font-family: 'Menlo','Monaco',monospace; font-size: 24px; font-weight: bold;
+        color: var(--accent); letter-spacing: 4px; }
+      .pair-expires { display: block; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+      .pair-input-area { display: flex; gap: 4px; }
+      .pair-input-area input { flex: 1; padding: 5px 8px; font-size: 13px; font-family: 'Menlo','Monaco',monospace;
+        background: var(--bg); border: 1px solid var(--compose-border); border-radius: 4px;
+        color: var(--text); outline: none; text-align: center; letter-spacing: 2px; }
+      .pair-input-area input:focus { border-color: var(--accent); }
+      .pair-input-area .pair-btn { width: auto; }
+
       /* -- Mobile -- */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
@@ -339,6 +383,27 @@ const HTML_TEMPLATE = `<!doctype html>
         <button id="btn-new-session" title="New session">+</button>
       </div>
       <div class="session-list" id="session-list"></div>
+
+      <!-- Devices section (collapsible) -->
+      <div class="devices-section" id="devices-section">
+        <div class="devices-header" id="devices-header">
+          <span>Devices</span>
+          <span class="devices-toggle" id="devices-toggle">&#9660;</span>
+        </div>
+        <div class="devices-list" id="devices-list"></div>
+        <div class="devices-actions" id="devices-actions" style="display:none">
+          <button class="pair-btn" id="btn-pair">Generate Pair Code</button>
+          <div class="pair-code-display" id="pair-code-display" style="display:none">
+            <span class="pair-code" id="pair-code-value"></span>
+            <span class="pair-expires" id="pair-expires"></span>
+          </div>
+          <div class="pair-input-area" id="pair-input-area" style="display:none">
+            <input type="text" id="pair-code-input" placeholder="Enter 6-digit code" maxlength="6" />
+            <button class="pair-btn" id="btn-submit-pair">Pair</button>
+          </div>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div class="role-indicator" id="role-indicator">
           <span id="role-dot"></span>
@@ -667,6 +732,8 @@ const HTML_TEMPLATE = `<!doctype html>
           startHeartbeat();
           if (urlToken) ws.send(JSON.stringify({ type: 'auth', token: urlToken }));
           sendCtrl({ type: 'attach_first', session: currentSession || 'main', cols: term.cols, rows: term.rows });
+          // Request device list (works with or without auth)
+          sendCtrl({ type: 'list_devices' });
         };
         ws.onmessage = e => {
           lastMessageAt = Date.now();
@@ -675,8 +742,37 @@ const HTML_TEMPLATE = `<!doctype html>
               const parsed = JSON.parse(e.data);
               // Handle both envelope (v:1) and legacy messages
               const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
-              if (msg.type === 'auth_ok') return;
+              if (msg.type === 'auth_ok') {
+                if (msg.deviceId) myDeviceId = msg.deviceId;
+                // Request device list after auth
+                sendCtrl({ type: 'list_devices' });
+                return;
+              }
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
+              if (msg.type === 'device_list') {
+                devicesList = msg.devices || [];
+                renderDevices(); return;
+              }
+              if (msg.type === 'pair_code') {
+                const display = $('pair-code-display');
+                if (display) {
+                  display.style.display = 'block';
+                  $('pair-code-value').textContent = msg.code;
+                  const remaining = Math.max(0, Math.ceil((msg.expiresAt - Date.now()) / 1000));
+                  $('pair-expires').textContent = 'Expires in ' + Math.ceil(remaining / 60) + ' min';
+                  setTimeout(() => { display.style.display = 'none'; }, remaining * 1000);
+                }
+                return;
+              }
+              if (msg.type === 'pair_result') {
+                if (msg.success) {
+                  $('pair-code-input').value = '';
+                  sendCtrl({ type: 'list_devices' });
+                } else {
+                  alert('Pairing failed: ' + (msg.reason || 'invalid code'));
+                }
+                return;
+              }
               if (msg.type === 'state') {
                 sessions = msg.sessions || [];
                 clientsList = msg.clients || [];
@@ -793,6 +889,75 @@ const HTML_TEMPLATE = `<!doctype html>
         $('inspect-match-count').textContent = count > 0 ? count + ' match' + (count !== 1 ? 'es' : '') : 'No matches';
       }
       $('inspect-search-input').addEventListener('input', applyInspectSearch);
+
+      // -- Devices section --
+      let devicesList = [], myDeviceId = null, devicesCollapsed = false;
+
+      function renderDevices() {
+        const list = $('devices-list');
+        const actions = $('devices-actions');
+        if (!list) return;
+        list.innerHTML = '';
+        devicesList.forEach(d => {
+          const el = document.createElement('div');
+          el.className = 'device-item';
+          const isSelf = d.id === myDeviceId;
+          el.innerHTML = '<span class="device-dot ' + d.trust + '"></span>'
+            + '<span class="device-name">' + d.name + (isSelf ? ' <span class="device-self">(you)</span>' : '') + '</span>'
+            + '<span class="device-actions">'
+            + (d.trust !== 'trusted' ? '<button data-trust="' + d.id + '" title="Trust">&#10003;</button>' : '')
+            + (d.trust !== 'blocked' ? '<button data-block="' + d.id + '" title="Block">&#10007;</button>' : '')
+            + '<button data-rename-dev="' + d.id + '" title="Rename">&#9998;</button>'
+            + (!isSelf ? '<button data-revoke="' + d.id + '" title="Revoke">&#128465;</button>' : '')
+            + '</span>';
+          el.addEventListener('click', e => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            if (btn.dataset.trust) sendCtrl({ type: 'trust_device', deviceId: btn.dataset.trust });
+            if (btn.dataset.block) sendCtrl({ type: 'block_device', deviceId: btn.dataset.block });
+            if (btn.dataset.renameDev) {
+              const newName = prompt('Device name:', d.name);
+              if (newName && newName.trim()) sendCtrl({ type: 'rename_device', deviceId: btn.dataset.renameDev, name: newName.trim() });
+            }
+            if (btn.dataset.revoke) {
+              if (confirm('Revoke device "' + d.name + '"?')) sendCtrl({ type: 'revoke_device', deviceId: btn.dataset.revoke });
+            }
+          });
+          list.appendChild(el);
+        });
+
+        // Show actions only for trusted devices
+        const isTrusted = devicesList.find(d => d.id === myDeviceId && d.trust === 'trusted');
+        if (actions) {
+          actions.style.display = isTrusted ? 'block' : 'none';
+          // Show pair input for untrusted devices
+          const pairInput = $('pair-input-area');
+          if (pairInput && !isTrusted) {
+            pairInput.style.display = 'flex';
+            actions.style.display = 'block';
+          }
+        }
+      }
+
+      $('devices-header').addEventListener('click', () => {
+        devicesCollapsed = !devicesCollapsed;
+        $('devices-list').classList.toggle('collapsed', devicesCollapsed);
+        $('devices-toggle').classList.toggle('collapsed', devicesCollapsed);
+        if ($('devices-actions')) $('devices-actions').style.display = devicesCollapsed ? 'none' : '';
+      });
+
+      $('btn-pair').addEventListener('click', () => {
+        sendCtrl({ type: 'generate_pair_code' });
+      });
+
+      $('btn-submit-pair').addEventListener('click', () => {
+        const code = $('pair-code-input').value.trim();
+        if (code.length === 6) sendCtrl({ type: 'pair', code });
+      });
+
+      $('pair-code-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); $('btn-submit-pair').click(); }
+      });
 
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {
@@ -1014,6 +1179,7 @@ async function launchTunnel(): Promise<void> {
 
 function shutdown(): void {
   persistSessions(); // save before exit
+  closeDb(); // close SQLite connection
   // Kill cloudflared tunnel if running
   if (tunnelProcess) {
     try {
