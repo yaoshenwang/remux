@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import type { WorkspaceTab } from "../hooks/useZellijControl";
-import type { ClientMode } from "../protocol/client-state";
 
 interface AppHeaderProps {
   mobileLayout: boolean;
@@ -11,7 +10,6 @@ interface AppHeaderProps {
   // Tab data
   tabs: WorkspaceTab[];
   activeTabIndex: number;
-  sessionName: string;
 
   // Tab actions
   onSelectTab: (tabIndex: number) => void;
@@ -22,9 +20,6 @@ interface AppHeaderProps {
   // View mode
   viewMode: "terminal" | "inspect";
   onSetViewMode: (mode: "terminal" | "inspect") => void;
-  clientMode: ClientMode;
-  onToggleClientMode: () => void;
-  connectionStateLabel: string;
 }
 
 export const AppHeader = ({
@@ -34,16 +29,12 @@ export const AppHeader = ({
   onToggleSidebar,
   tabs,
   activeTabIndex,
-  sessionName,
   onSelectTab,
   onCloseTab,
   onNewTab,
   onRenameTab,
   viewMode,
   onSetViewMode,
-  clientMode,
-  onToggleClientMode,
-  connectionStateLabel,
 }: AppHeaderProps) => {
   const [renamingTab, setRenamingTab] = useState<number | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -62,91 +53,68 @@ export const AppHeader = ({
 
   return (
     <header className="app-header" data-testid="app-header">
-      <div className="app-header-meta">
-        <div className="app-header-left">
-          {mobileLayout && (
-            <button className="header-btn hamburger-btn" onClick={onToggleDrawer} title="Menu">
-              <span className="material-icon">&#9776;</span>
-            </button>
-          )}
-          {!mobileLayout && (
-            <button className="header-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="Toggle sidebar">
-              {sidebarCollapsed ? "▸" : "◂"}
-            </button>
-          )}
-          <div className="session-title-block">
-            <span className="session-eyebrow">Workspace</span>
-            <span className="session-name" title={sessionName}>{sessionName}</span>
-          </div>
-        </div>
+      {mobileLayout && (
+        <button className="header-btn hamburger-btn" onClick={onToggleDrawer} title="Menu">
+          <span className="material-icon">&#9776;</span>
+        </button>
+      )}
+      {!mobileLayout && (
+        <button className="header-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="Toggle sidebar">
+          {sidebarCollapsed ? "▸" : "◂"}
+        </button>
+      )}
 
-        <div className="app-header-right">
-          <span className="connection-state-badge" data-testid="connection-state-badge">
-            {connectionStateLabel}
-          </span>
+      <nav className="tab-bar" data-testid="tab-bar">
+        {tabs.map((tab) => (
           <button
-            className={`client-mode-toggle ${clientMode === "observer" ? "observer" : "active"}`}
-            onClick={onToggleClientMode}
-            type="button"
+            key={tab.index}
+            className={`tab-item${tab.active ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
+            onClick={() => onSelectTab(tab.index)}
+            onDoubleClick={() => handleDoubleClick(tab.index)}
+            title={tab.name}
           >
-            {`Mode: ${clientMode === "active" ? "Active" : "Observer"}`}
+            {renamingTab === tab.index ? (
+              <input
+                ref={renameInputRef}
+                className="tab-rename-input"
+                defaultValue={tab.name}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  if (e.key === "Escape") setRenamingTab(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="tab-label">{tab.name}</span>
+            )}
+            {tabs.length > 1 && (
+              <span
+                className="tab-close"
+                onClick={(e) => { e.stopPropagation(); onCloseTab(tab.index); }}
+                title="Close tab"
+              >
+                ×
+              </span>
+            )}
           </button>
-        </div>
-      </div>
+        ))}
+        <button className="tab-item tab-new" onClick={onNewTab} title="New tab">+</button>
+      </nav>
 
-      <div className="app-header-main">
-        <nav className="tab-bar" data-testid="tab-bar">
-          {tabs.map((tab) => (
-            <button
-              key={tab.index}
-              className={`tab-item${tab.active ? " active" : ""}${tab.hasBell ? " bell" : ""}`}
-              onClick={() => onSelectTab(tab.index)}
-              onDoubleClick={() => handleDoubleClick(tab.index)}
-              title={tab.name}
-            >
-              {renamingTab === tab.index ? (
-                <input
-                  ref={renameInputRef}
-                  className="tab-rename-input"
-                  defaultValue={tab.name}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitRename();
-                    if (e.key === "Escape") setRenamingTab(null);
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <span className="tab-label">{tab.name}</span>
-              )}
-              {tabs.length > 1 && (
-                <span
-                  className="tab-close"
-                  onClick={(e) => { e.stopPropagation(); onCloseTab(tab.index); }}
-                  title="Close tab"
-                >
-                  ×
-                </span>
-              )}
-            </button>
-          ))}
-          <button className="tab-item tab-new" onClick={onNewTab} title="New tab">+</button>
-        </nav>
-
-        <div className="view-mode-toggle">
-          <button
-            className={viewMode === "terminal" ? "active" : ""}
-            onClick={() => onSetViewMode("terminal")}
-          >
-            Live
-          </button>
-          <button
-            className={viewMode === "inspect" ? "active" : ""}
-            onClick={() => onSetViewMode("inspect")}
-          >
-            Inspect
-          </button>
-        </div>
+      <div className="view-mode-toggle">
+        <button
+          className={viewMode === "terminal" ? "active" : ""}
+          onClick={() => onSetViewMode("terminal")}
+        >
+          Live
+        </button>
+        <button
+          className={viewMode === "inspect" ? "active" : ""}
+          onClick={() => onSetViewMode("inspect")}
+        >
+          Inspect
+        </button>
       </div>
     </header>
   );

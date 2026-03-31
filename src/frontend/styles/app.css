@@ -3687,3 +3687,237 @@ body {
     right: max(1rem, env(safe-area-inset-right));
   }
 }
+
+/* --- Simplified Sidebar (session panel) --- */
+.sidebar-session-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 0.5rem 0.65rem;
+}
+
+.sidebar-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--status-pending);
+}
+
+.sidebar-status-dot.status-connected {
+  background: var(--status-ok);
+  box-shadow: 0 0 6px var(--status-ok);
+}
+
+.sidebar-status-dot.status-disconnected,
+.sidebar-status-dot.status-connecting {
+  background: var(--status-warn);
+}
+
+.sidebar-status-dot.status-error {
+  background: var(--status-error);
+}
+
+.sidebar-session-name {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.sidebar-clients-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  margin: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-clients-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.sidebar-clients-list {
+  display: grid;
+  gap: 2px;
+  padding: 0.25rem 0;
+}
+
+.sidebar-client-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  border-radius: 4px;
+}
+
+.sidebar-client-row.is-self {
+  background: var(--accent-subtle);
+}
+
+.sidebar-client-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.sidebar-client-you {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.sidebar-client-meta {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+.sidebar-footer {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sidebar-settings-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-settings-btn .material-symbols-outlined {
+  font-size: 1.1rem;
+}
+
+/* --- Settings Modal --- */
+.settings-card {
+  width: min(92vw, 26rem);
+  max-height: min(90vh, 42rem);
+  overflow-y: auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.settings-close {
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.settings-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-section {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* --- AppHeader single-row layout --- */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 2.5rem;
+  padding: 0;
+  background: var(--bg-topbar);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header .header-btn {
+  height: 100%;
+  min-width: 2.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.7rem;
+}
+
+.app-header .header-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.app-header .tab-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-header .view-mode-toggle {
+  margin-left: auto;
+  margin-right: 0.35rem;
+}

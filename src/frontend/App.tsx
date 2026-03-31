@@ -3,10 +3,7 @@ import { Toolbar, type ToolbarHandle } from "./components/Toolbar";
 import { AppHeader } from "./components/AppHeader";
 import { InspectView } from "./components/InspectView";
 import { ComposeBar } from "./components/ComposeBar";
-import { SessionSection } from "./components/sidebar/SessionSection";
-import { DeviceSection } from "./components/sidebar/DeviceSection";
-import { NotificationsSection } from "./components/sidebar/NotificationsSection";
-import { AppearanceSection } from "./components/sidebar/AppearanceSection";
+import { SettingsModal } from "./components/SettingsModal";
 import { AppShell } from "./screens/AppShell";
 import { matchesMobileLayout, useViewportLayout } from "./mobile-layout";
 import { useTerminalRuntime } from "./hooks/useTerminalRuntime";
@@ -43,6 +40,7 @@ export const App = () => {
   const [inspectPaneId, setInspectPaneId] = useState<string | null>(null);
   const [inspectSearchInput, setInspectSearchInput] = useState("");
   const [debouncedInspectSearch, setDebouncedInspectSearch] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // --- Theme ---
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -199,12 +197,7 @@ export const App = () => {
   const showPassword = connection.needsPassword || control.needsPassword;
   const isConnected = connection.status === "connected";
   const sessionName = ws?.session ?? "remux";
-  const connectionStateLabel =
-    connection.status === "connected" ? "Connected" :
-    connection.status === "disconnected" ? "Reconnecting" :
-    connection.status === "error" ? "Disconnected" :
-    connection.status === "authenticating" ? "Authenticating" :
-    "Connecting";
+  const connectionStatus = connection.status;
 
   const terminalStatusMessage =
     connection.status === "connecting" ? "Connecting..." :
@@ -213,30 +206,54 @@ export const App = () => {
     connection.status === "error" && connection.errorMessage ? connection.errorMessage :
     statusMessage || undefined;
 
-  // --- Sidebar ---
+  // --- Sidebar (minimal session panel) ---
+  const clientCount = control.connectedClients.length;
+  const [clientsExpanded, setClientsExpanded] = useState(false);
+
   const sidebar = (
     <aside className={`sidebar${drawerOpen ? " drawer-open" : ""}`} data-testid="sidebar">
-      <SessionSection
-        sessionName={sessionName}
-        onRenameSession={control.renameSession}
-        connectionStateLabel={connectionStateLabel}
-        connectedClients={control.connectedClients}
-        selfClientId={control.selfClientId}
-      />
-      <DeviceSection />
-      <NotificationsSection />
-      <AppearanceSection
-        followBackendFocus={false}
-        onToggleFollowBackendFocus={() => {}}
-        onResetInspectFontSize={() => {}}
-        onSetTheme={setTheme}
-        onUpdateInspectFontSize={() => {}}
-        inspectFontSize={0}
-        showFollowFocus={false}
-        theme={theme}
-      />
-      <div className="drawer-footer-info" data-testid="sidebar-version">
-        <div className="drawer-version">
+      <div className="sidebar-session-header">
+        <span className={`sidebar-status-dot status-${connectionStatus}`} />
+        <span className="sidebar-session-name" title={sessionName}>{sessionName}</span>
+      </div>
+
+      <button
+        className="sidebar-clients-toggle"
+        onClick={() => setClientsExpanded((v) => !v)}
+        type="button"
+      >
+        <span>{`${clientCount} device${clientCount !== 1 ? "s" : ""}`}</span>
+        <span className="collapse-chevron">{clientsExpanded ? "▾" : "▸"}</span>
+      </button>
+
+      {clientsExpanded && (
+        <div className="sidebar-clients-list">
+          {control.connectedClients.map((client) => (
+            <div
+              key={client.clientId}
+              className={`sidebar-client-row${client.clientId === control.selfClientId ? " is-self" : ""}`}
+            >
+              <span className="sidebar-client-name">{client.deviceName}</span>
+              {client.clientId === control.selfClientId && <span className="sidebar-client-you">You</span>}
+              <span className="sidebar-client-meta">{client.mode}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="sidebar-spacer" />
+
+      <div className="sidebar-footer">
+        <button
+          className="sidebar-settings-btn"
+          onClick={() => setSettingsOpen(true)}
+          title="Settings"
+          type="button"
+        >
+          <span className="material-symbols-outlined">settings</span>
+          <span>Settings</span>
+        </button>
+        <div className="drawer-version" data-testid="sidebar-version">
           {connection.serverVersion ? `v${connection.serverVersion}` : ""}
           {connection.serverGitBranch ? ` · ${connection.serverGitBranch}` : ""}
           {connection.serverGitCommitSha ? ` · ${connection.serverGitCommitSha.slice(0, 7)}` : ""}
@@ -259,7 +276,6 @@ export const App = () => {
     >
       <div className="main-content">
         <div className="workspace-frame">
-          {/* Header with tab bar */}
           <AppHeader
             mobileLayout={mobileLayout}
             onToggleDrawer={() => setDrawerOpen((o) => !o)}
@@ -267,30 +283,15 @@ export const App = () => {
             onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
             tabs={tabs}
             activeTabIndex={activeTabIndex}
-            sessionName={sessionName}
             onSelectTab={control.selectTab}
             onCloseTab={control.closeTab}
             onNewTab={() => control.newTab()}
             onRenameTab={control.renameTab}
             viewMode={viewMode}
             onSetViewMode={setViewMode}
-            clientMode={control.clientMode}
-            onToggleClientMode={() => {
-              const nextMode = control.clientMode === "active" ? "observer" : "active";
-              const confirmed = window.confirm(
-                nextMode === "observer"
-                  ? "Switch this client to Observer mode?"
-                  : "Switch this client to Active mode?",
-              );
-              if (confirmed) {
-                control.setClientMode(nextMode);
-              }
-            }}
-            connectionStateLabel={connectionStateLabel}
           />
 
           <div className="workspace-body">
-            {/* Terminal / Inspect */}
             <section className={`workspace-surface workspace-surface--${viewMode}`}>
               <main className="terminal-wrap">
                 <div className={`terminal-stage${viewMode === "inspect" ? " inspect-active" : " live-active"}`}>
@@ -338,7 +339,6 @@ export const App = () => {
               </main>
             </section>
 
-            {/* Hidden file input for toolbar Upload button */}
             <input
               ref={terminal.fileInputRef}
               type="file"
@@ -361,7 +361,6 @@ export const App = () => {
               }}
             />
 
-            {/* Bottom rail: toolbar + compose */}
             <div className="workspace-bottom-rail">
               <Toolbar
                 ref={toolbarRef}
@@ -388,6 +387,27 @@ export const App = () => {
           </div>
         </div>
       </div>
+
+      {/* Settings modal */}
+      {settingsOpen && (
+        <SettingsModal
+          onClose={() => setSettingsOpen(false)}
+          theme={theme}
+          onSetTheme={setTheme}
+          clientMode={control.clientMode}
+          onToggleClientMode={() => {
+            const nextMode = control.clientMode === "active" ? "observer" : "active";
+            const confirmed = window.confirm(
+              nextMode === "observer"
+                ? "Switch this client to Observer mode?"
+                : "Switch this client to Active mode?",
+            );
+            if (confirmed) {
+              control.setClientMode(nextMode);
+            }
+          }}
+        />
+      )}
 
       {/* Password overlay */}
       {showPassword && (
