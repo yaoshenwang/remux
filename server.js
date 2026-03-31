@@ -754,17 +754,24 @@ const HTML_TEMPLATE = `<!doctype html>
       const initTheme = localStorage.getItem('remux-theme') ||
         (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
 
-      const term = new Terminal({ cols: 80, rows: 24,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        fontSize: 14, cursorBlink: true,
-        theme: THEMES[initTheme] || THEMES.dark,
-        scrollback: 10000 });
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(document.getElementById('terminal'));
-      fitAddon.fit();
-      fitAddon.observeResize();
-      window.addEventListener('resize', () => fitAddon.fit());
+      let term, fitAddon;
+      function createTerminal(themeMode) {
+        const container = document.getElementById('terminal');
+        if (term) { term.dispose(); container.innerHTML = ''; }
+        term = window._remuxTerm = new Terminal({ cols: 80, rows: 24,
+          fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+          fontSize: 14, cursorBlink: true,
+          theme: THEMES[themeMode] || THEMES.dark,
+          scrollback: 10000 });
+        fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(container);
+        fitAddon.fit();
+        fitAddon.observeResize();
+        return term;
+      }
+      createTerminal(initTheme);
+      window.addEventListener('resize', () => { if (fitAddon) fitAddon.fit(); });
 
       let sessions = [], currentSession = 'main', currentTabId = null, ws = null, ctrlActive = false;
       const $ = id => document.getElementById(id);
@@ -773,13 +780,30 @@ const HTML_TEMPLATE = `<!doctype html>
       // ── Theme switching ──
       function setTheme(mode) {
         document.documentElement.setAttribute('data-theme', mode);
-        term.options.theme = THEMES[mode];
         localStorage.setItem('remux-theme', mode);
         $('btn-theme').innerHTML = mode === 'dark' ? '&#9728;' : '&#9790;';
+        // Recreate terminal with new theme (ghostty-web doesn't support runtime theme change)
+        createTerminal(mode);
+        // Rebind terminal I/O
+        term.onData(data => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          if (ctrlActive) {
+            ctrlActive = false; $('btn-ctrl').classList.remove('active');
+            const ch = data.toLowerCase().charCodeAt(0);
+            if (ch >= 0x61 && ch <= 0x7a) { ws.send(String.fromCharCode(ch - 0x60)); return; }
+          }
+          ws.send(data);
+        });
+        term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
+        // Re-attach to current tab to get snapshot
+        if (currentTabId != null) {
+          sendCtrl({ type: 'attach_tab', tabId: currentTabId, cols: term.cols, rows: term.rows });
+        }
       }
-      setTheme(initTheme);
-      $('btn-theme').addEventListener('pointerdown', e => {
-        e.preventDefault();
+      // Apply initial theme CSS (terminal already created with correct theme)
+      document.documentElement.setAttribute('data-theme', initTheme);
+      $('btn-theme').innerHTML = initTheme === 'dark' ? '&#9728;' : '&#9790;';
+      $('btn-theme').addEventListener('click', () => {
         const current = document.documentElement.getAttribute('data-theme') || 'dark';
         setTheme(current === 'dark' ? 'light' : 'dark');
       });
