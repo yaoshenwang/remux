@@ -33,6 +33,7 @@ AGENTS.md
 # Build artifacts
 src/backend/zellij/plugin/target/
 native/zellij-bridge/target/
+native/android/build/
 
 # Go TUI binary
 remux-tui
