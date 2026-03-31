@@ -143,7 +143,8 @@ function createVtTerminal(cols, rows) {
 // ── Session Persistence ──────────────────────────────────────────
 
 const PERSIST_DIR = path.join(homedir(), ".remux");
-const PERSIST_FILE = path.join(PERSIST_DIR, "sessions.json");
+const PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
+const PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${PERSIST_ID}.json`);
 const PERSIST_INTERVAL_MS = 8000;
 
 function persistSessions() {
