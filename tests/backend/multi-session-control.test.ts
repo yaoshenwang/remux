@@ -31,12 +31,14 @@ describe("multi-session control and terminal flow", () => {
   }>();
   let createdPtys: MockPty[] = [];
   const attachedSessions = new Set<string>();
+  const workspaceWarmupFailures = new Map<string, number>();
 
   beforeAll(async () => {
     const sessionList = [
       { name: "alpha", createdAgo: "1h", isActive: true },
       { name: "beta", createdAgo: "2h", isActive: true },
       { name: "gamma", createdAgo: "3h", isActive: false },
+      { name: "delta", createdAgo: "4h", isActive: false },
       { name: "old-project", createdAgo: "4d", isActive: false },
     ];
 
@@ -69,6 +71,16 @@ describe("multi-session control and terminal flow", () => {
             async queryWorkspaceState() {
               if (session === "gamma" && !attachedSessions.has(session)) {
                 throw new Error("session not attached");
+              }
+              if (session === "delta") {
+                if (!attachedSessions.has(session)) {
+                  throw new Error("session not attached");
+                }
+                const failures = workspaceWarmupFailures.get(session) ?? 0;
+                if (failures < 2) {
+                  workspaceWarmupFailures.set(session, failures + 1);
+                  throw new Error("workspace warming up");
+                }
               }
               return {
                 session,
@@ -194,6 +206,7 @@ describe("multi-session control and terminal flow", () => {
         { name: "alpha", createdAgo: "1h", isActive: true },
         { name: "beta", createdAgo: "2h", isActive: true },
         { name: "gamma", createdAgo: "3h", isActive: false },
+        { name: "delta", createdAgo: "4h", isActive: false },
         { name: "old-project", createdAgo: "4d", isActive: false },
       ],
     });
@@ -262,6 +275,32 @@ describe("multi-session control and terminal flow", () => {
     terminal.send(JSON.stringify({ type: "switch_session", session: "gamma" }));
 
     expect(await expectWorkspace(control, "gamma")).toMatchObject({ session: "gamma" });
+
+    control.close();
+    terminal.close();
+  });
+
+  it("retries workspace sync until a newly created session is queryable", async () => {
+    const control = await connectControlClient(baseWsUrl, { type: "auth", token: TOKEN });
+    const terminal = await connectTerminalClient(baseWsUrl, {
+      type: "auth",
+      token: TOKEN,
+      cols: 80,
+      rows: 24,
+    });
+
+    await expectMessage(control, (payload) => payload.type === "auth_ok");
+    control.send(JSON.stringify({ type: "subscribe_workspace" }));
+    await expectWorkspace(control, "alpha");
+    control.__messageQueue.length = 0;
+
+    control.send(JSON.stringify({ type: "create_session", name: "delta" }));
+    await expectMessage(control, (payload) => payload.type === "session_switched" && payload.session === "delta");
+    await expectNoMessage(control, (payload) => payload.type === "workspace_state" && payload.session === "delta");
+
+    terminal.send(JSON.stringify({ type: "switch_session", session: "delta" }));
+
+    expect(await expectWorkspace(control, "delta")).toMatchObject({ session: "delta" });
 
     control.close();
     terminal.close();
