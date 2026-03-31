@@ -261,7 +261,7 @@ export class ZellijController implements ZellijControllerApi {
   }
 
   async deleteSession(name: string): Promise<void> {
-    await this.runGlobal(["delete-session", name]);
+    await this.runGlobal(["delete-session", "--force", name]);
   }
 
   // --- Internal ---

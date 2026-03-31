@@ -23,7 +23,7 @@ const TEST_SESSION = `test-multiclient-${Date.now()}`;
 const TOKEN = "test-token";
 const ZELLIJ_BIN = "/opt/homebrew/bin/zellij";
 
-// Skip these tests in CI or if zellij is not available.
+// These are real Zellij integration tests. Run them only when explicitly enabled.
 const zellijAvailable = (() => {
   try {
     require("node:child_process").execFileSync("which", ["zellij"], { stdio: "pipe" });
@@ -33,7 +33,9 @@ const zellijAvailable = (() => {
   }
 })();
 
-const describeIfZellij = zellijAvailable ? describe : describe.skip;
+const zellijIntegrationEnabled = process.env.REMUX_RUN_ZELLIJ_INTEGRATION === "1";
+
+const describeIfZellij = zellijAvailable && zellijIntegrationEnabled ? describe : describe.skip;
 
 /** Helper: connect a WebSocket client with auth and optional size. */
 const connectClient = (

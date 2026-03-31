@@ -925,9 +925,6 @@ export const createZellijServer = (
             }
 
             const targetController = getController(msg.session);
-            try {
-              await targetController.killSession(msg.session);
-            } catch {}
             await targetController.deleteSession(msg.session);
             controllers.delete(msg.session);
             sessionListCache = null;

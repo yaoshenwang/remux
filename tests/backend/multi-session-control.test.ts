@@ -216,7 +216,7 @@ describe("multi-session control and terminal flow", () => {
       type: "session_deleted",
       session: "old-project",
     });
-    expect(controllerStats.get("old-project")?.killSessionCalls).toEqual(["old-project"]);
+    expect(controllerStats.get("old-project")?.killSessionCalls).toEqual([]);
     expect(controllerStats.get("old-project")?.deleteSessionCalls).toEqual(["old-project"]);
 
     alpha.close();

@@ -40,7 +40,7 @@ describe("ZellijController session helpers", () => {
     ]);
   });
 
-  it("uses global zellij commands for kill and delete session", async () => {
+  it("uses global zellij commands for kill and force delete session", async () => {
     execFileMock.mockImplementation((_file, _args, _options, callback) => {
       callback(null, { stdout: "" });
     });
@@ -59,7 +59,7 @@ describe("ZellijController session helpers", () => {
     expect(execFileMock).toHaveBeenNthCalledWith(
       2,
       "zellij",
-      ["delete-session", "alpha"],
+      ["delete-session", "--force", "alpha"],
       { timeout: 5000 },
       expect.any(Function),
     );
