@@ -493,120 +493,175 @@ startup().catch(e => {
 // ── HTML Template ──────────────────────────────────────────────────
 
 const HTML_TEMPLATE = `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Remux</title>
     <style>
+      /* ── Theme Variables ── */
+      [data-theme="dark"] {
+        --bg: #1e1e1e;
+        --bg-sidebar: #252526;
+        --bg-tab-bar: #2d2d2d;
+        --bg-tab-active: #1e1e1e;
+        --bg-hover: #2a2d2e;
+        --bg-active: #37373d;
+        --border: #1a1a1a;
+        --text: #ccc;
+        --text-muted: #888;
+        --text-dim: #666;
+        --text-bright: #e5e5e5;
+        --text-on-active: #fff;
+        --accent: #007acc;
+        --dot-ok: #27c93f;
+        --dot-err: #ff5f56;
+        --dot-warn: #ffbd2e;
+        --compose-bg: #3a3a3a;
+        --compose-border: #555;
+        --tab-hover: #383838;
+        --view-switch-bg: #1a1a1a;
+        --inspect-meta-border: #333;
+      }
+
+      [data-theme="light"] {
+        --bg: #ffffff;
+        --bg-sidebar: #f3f3f3;
+        --bg-tab-bar: #e8e8e8;
+        --bg-tab-active: #ffffff;
+        --bg-hover: #e8e8e8;
+        --bg-active: #d6d6d6;
+        --border: #d4d4d4;
+        --text: #333333;
+        --text-muted: #666666;
+        --text-dim: #999999;
+        --text-bright: #1e1e1e;
+        --text-on-active: #000000;
+        --accent: #007acc;
+        --dot-ok: #16a34a;
+        --dot-err: #dc2626;
+        --dot-warn: #d97706;
+        --compose-bg: #e8e8e8;
+        --compose-border: #c0c0c0;
+        --tab-hover: #d6d6d6;
+        --view-switch-bg: #d4d4d4;
+        --inspect-meta-border: #d4d4d4;
+      }
+
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
       body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #1e1e1e; color: #ccc; height: 100vh; height: 100dvh; display: flex; }
+        background: var(--bg); color: var(--text); height: 100vh; height: 100dvh; display: flex; }
 
       /* ── Sidebar ── */
-      .sidebar { width: 220px; min-width: 220px; background: #252526; border-right: 1px solid #1a1a1a;
+      .sidebar { width: 220px; min-width: 220px; background: var(--bg-sidebar); border-right: 1px solid var(--border);
         display: flex; flex-direction: column; flex-shrink: 0; transition: margin-left .2s; }
       .sidebar.collapsed { margin-left: -220px; }
-      .sidebar-header { padding: 10px 12px; font-size: 11px; font-weight: 600; color: #888;
+      .sidebar-header { padding: 10px 12px; font-size: 11px; font-weight: 600; color: var(--text-muted);
         text-transform: uppercase; letter-spacing: .5px; display: flex; align-items: center;
         justify-content: space-between; }
-      .sidebar-header button { background: none; border: none; color: #666; cursor: pointer;
+      .sidebar-header button { background: none; border: none; color: var(--text-dim); cursor: pointer;
         font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
-      .sidebar-header button:hover { color: #e5e5e5; background: #3a3a3a; }
+      .sidebar-header button:hover { color: var(--text-bright); background: var(--compose-bg); }
 
       .session-list { flex: 1; overflow-y: auto; padding: 4px 6px; }
       .session-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 4px;
-        font-size: 13px; cursor: pointer; color: #aaa; border: none; background: none;
+        font-size: 13px; cursor: pointer; color: var(--text); border: none; background: none;
         width: 100%; text-align: left; font-family: inherit; min-height: 32px; }
-      .session-item:hover { background: #2a2d2e; color: #e5e5e5; }
-      .session-item.active { background: #37373d; color: #fff; }
-      .session-item .dot { width: 6px; height: 6px; border-radius: 50%; background: #27c93f; flex-shrink: 0; }
+      .session-item:hover { background: var(--bg-hover); color: var(--text-bright); }
+      .session-item.active { background: var(--bg-active); color: var(--text-on-active); }
+      .session-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dot-ok); flex-shrink: 0; }
       .session-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .session-item .count { font-size: 10px; color: #555; min-width: 16px; text-align: center; }
-      .session-item .del { opacity: 0; font-size: 14px; color: #666; background: none; border: none;
+      .session-item .count { font-size: 10px; color: var(--compose-border); min-width: 16px; text-align: center; }
+      .session-item .del { opacity: 0; font-size: 14px; color: var(--text-dim); background: none; border: none;
         cursor: pointer; padding: 0 4px; font-family: inherit; line-height: 1; border-radius: 3px; }
       .session-item:hover .del { opacity: 1; }
-      .session-item .del:hover { color: #ff5f56; background: #3a3a3a; }
+      .session-item .del:hover { color: var(--dot-err); background: var(--compose-bg); }
 
-      .sidebar-footer { padding: 8px 12px; border-top: 1px solid #1a1a1a; }
-      .sidebar-footer .status { font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px; }
-      .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
-      .status-dot.connected { background: #27c93f; }
-      .status-dot.disconnected { background: #ff5f56; }
-      .status-dot.connecting { background: #ffbd2e; animation: pulse 1s infinite; }
+      .sidebar-footer { padding: 8px 12px; border-top: 1px solid var(--border);
+        display: flex; align-items: center; gap: 8px; }
+      .sidebar-footer .status { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+      .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+      .status-dot.connected { background: var(--dot-ok); }
+      .status-dot.disconnected { background: var(--dot-err); }
+      .status-dot.connecting { background: var(--dot-warn); animation: pulse 1s infinite; }
       @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+      /* ── Theme toggle ── */
+      .theme-toggle { background: none; border: none; cursor: pointer; font-size: 16px;
+        color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
+      .theme-toggle:hover { color: var(--text-bright); background: var(--bg-hover); }
 
       /* ── Main ── */
       .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
       /* ── Tab bar (Chrome-style) ── */
-      .tab-bar { background: #2d2d2d; display: flex; align-items: flex-end; flex-shrink: 0;
+      .tab-bar { background: var(--bg-tab-bar); display: flex; align-items: flex-end; flex-shrink: 0;
         min-height: 36px; padding: 0 0 0 0; }
-      .tab-toggle { padding: 8px 10px; background: none; border: none; color: #888;
+      .tab-toggle { padding: 8px 10px; background: none; border: none; color: var(--text-muted);
         cursor: pointer; font-size: 16px; flex-shrink: 0; align-self: center; }
-      .tab-toggle:hover { color: #e5e5e5; }
+      .tab-toggle:hover { color: var(--text-bright); }
       .tab-list { display: flex; flex: 1; min-width: 0; align-items: flex-end; overflow-x: auto;
         -webkit-overflow-scrolling: touch; scrollbar-width: none; }
       .tab-list::-webkit-scrollbar { display: none; }
 
       .tab { position: relative; display: flex; align-items: center; gap: 0;
-        padding: 6px 8px 6px 12px; font-size: 12px; color: #999; background: #2d2d2d;
+        padding: 6px 8px 6px 12px; font-size: 12px; color: var(--text-dim); background: var(--bg-tab-bar);
         border: none; cursor: pointer; white-space: nowrap; font-family: inherit;
         border-top: 2px solid transparent; margin-right: 1px; min-height: 32px; }
-      .tab:hover { color: #ddd; background: #383838; }
-      .tab.active { color: #fff; background: #1e1e1e; border-top-color: #007acc;
+      .tab:hover { color: var(--text-bright); background: var(--tab-hover); }
+      .tab.active { color: var(--text-on-active); background: var(--bg-tab-active); border-top-color: var(--accent);
         border-radius: 6px 6px 0 0; }
       .tab .title { pointer-events: none; }
       .tab .close { display: flex; align-items: center; justify-content: center;
-        width: 18px; height: 18px; margin-left: 6px; font-size: 12px; color: #666;
+        width: 18px; height: 18px; margin-left: 6px; font-size: 12px; color: var(--text-dim);
         border-radius: 3px; border: none; background: none; cursor: pointer;
         font-family: inherit; flex-shrink: 0; }
-      .tab .close:hover { color: #fff; background: #555; }
+      .tab .close:hover { color: var(--text-on-active); background: var(--compose-border); }
       .tab:not(:hover) .close:not(:focus) { opacity: 0; }
-      .tab.active .close { opacity: 1; color: #888; }
+      .tab.active .close { opacity: 1; color: var(--text-muted); }
 
       .tab-new { display: flex; align-items: center; justify-content: center;
-        width: 28px; height: 28px; margin: 0 4px; font-size: 18px; color: #666;
+        width: 28px; height: 28px; margin: 0 4px; font-size: 18px; color: var(--text-dim);
         background: none; border: none; cursor: pointer; border-radius: 4px;
         flex-shrink: 0; align-self: center; }
-      .tab-new:hover { color: #ccc; background: #3a3a3a; }
+      .tab-new:hover { color: var(--text); background: var(--compose-bg); }
 
       /* ── Terminal ── */
-      #terminal { flex: 1; background: #1e1e1e; overflow: hidden; }
+      #terminal { flex: 1; background: var(--bg); overflow: hidden; }
       #terminal canvas { display: block; }
       #terminal.hidden { display: none; }
 
       /* ── View switcher ── */
       .view-switch { display: flex; gap: 1px; margin-left: auto; margin-right: 8px;
-        align-self: center; background: #1a1a1a; border-radius: 4px; overflow: hidden; }
+        align-self: center; background: var(--view-switch-bg); border-radius: 4px; overflow: hidden; }
       .view-switch button { padding: 4px 10px; font-size: 11px; font-family: inherit;
-        color: #888; background: #2d2d2d; border: none; cursor: pointer; }
-      .view-switch button:hover { color: #ccc; }
-      .view-switch button.active { color: #fff; background: #007acc; }
+        color: var(--text-muted); background: var(--bg-tab-bar); border: none; cursor: pointer; }
+      .view-switch button:hover { color: var(--text); }
+      .view-switch button.active { color: var(--text-on-active); background: var(--accent); }
 
       /* ── Inspect ── */
-      #inspect { flex: 1; background: #1e1e1e; overflow: auto; display: none;
+      #inspect { flex: 1; background: var(--bg); overflow: auto; display: none;
         padding: 12px 16px; -webkit-overflow-scrolling: touch; }
       #inspect.visible { display: block; }
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
-        line-height: 1.5; color: #d4d4d4; white-space: pre; tab-size: 8;
+        line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
         user-select: text; -webkit-user-select: text; }
       #inspect-meta { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px;
-        color: #666; padding: 8px 0; border-bottom: 1px solid #333; margin-bottom: 8px;
+        color: var(--text-dim); padding: 8px 0; border-bottom: 1px solid var(--inspect-meta-border); margin-bottom: 8px;
         display: flex; gap: 12px; flex-wrap: wrap; }
       #inspect-meta span { white-space: nowrap; }
 
       /* ── Compose bar ── */
-      .compose-bar { display: none; background: #252526; border-top: 1px solid #1a1a1a;
+      .compose-bar { display: none; background: var(--bg-sidebar); border-top: 1px solid var(--border);
         padding: 5px 8px; gap: 5px; flex-shrink: 0; overflow-x: auto;
         -webkit-overflow-scrolling: touch; }
       .compose-bar button { padding: 8px 12px; font-size: 14px;
-        font-family: 'Menlo','Monaco',monospace; color: #d4d4d4; background: #3a3a3a;
-        border: 1px solid #555; border-radius: 5px; cursor: pointer; white-space: nowrap;
+        font-family: 'Menlo','Monaco',monospace; color: var(--text-bright); background: var(--compose-bg);
+        border: 1px solid var(--compose-border); border-radius: 5px; cursor: pointer; white-space: nowrap;
         -webkit-tap-highlight-color: transparent; touch-action: manipulation;
         min-width: 40px; text-align: center; user-select: none; }
-      .compose-bar button:active { background: #555; }
+      .compose-bar button:active { background: var(--compose-border); }
       .compose-bar button.active { background: #4a6a9a; border-color: #6a9ade; }
       @media (hover: none) and (pointer: coarse) { .compose-bar { display: flex; } }
 
@@ -632,6 +687,7 @@ const HTML_TEMPLATE = `<!doctype html>
       </div>
       <div class="session-list" id="session-list"></div>
       <div class="sidebar-footer">
+        <button id="btn-theme" class="theme-toggle" title="Toggle theme">&#9728;</button>
         <div class="status">
           <div class="status-dot connecting" id="status-dot"></div>
           <span id="status-text">...</span>
@@ -671,10 +727,37 @@ const HTML_TEMPLATE = `<!doctype html>
       import { init, Terminal, FitAddon } from '/dist/ghostty-web.js';
       await init();
 
+      // ── Terminal color themes (ghostty-web ITheme) ──
+      const THEMES = {
+        dark: {
+          // ghostty-web default dark
+          background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#ffffff',
+          cursorAccent: '#1e1e1e', selectionBackground: '#264f78', selectionForeground: '#ffffff',
+          black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510',
+          blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
+          brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b',
+          brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6',
+          brightCyan: '#29b8db', brightWhite: '#ffffff',
+        },
+        light: {
+          // Ghostty-style light
+          background: '#ffffff', foreground: '#1d1f21', cursor: '#1d1f21',
+          cursorAccent: '#ffffff', selectionBackground: '#b4d5fe', selectionForeground: '#1d1f21',
+          black: '#1d1f21', red: '#c82829', green: '#718c00', yellow: '#eab700',
+          blue: '#4271ae', magenta: '#8959a8', cyan: '#3e999f', white: '#d6d6d6',
+          brightBlack: '#969896', brightRed: '#cc6666', brightGreen: '#b5bd68',
+          brightYellow: '#f0c674', brightBlue: '#81a2be', brightMagenta: '#b294bb',
+          brightCyan: '#8abeb7', brightWhite: '#ffffff',
+        },
+      };
+
+      const initTheme = localStorage.getItem('remux-theme') ||
+        (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+
       const term = new Terminal({ cols: 80, rows: 24,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         fontSize: 14, cursorBlink: true,
-        theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+        theme: THEMES[initTheme] || THEMES.dark,
         scrollback: 10000 });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
@@ -686,6 +769,20 @@ const HTML_TEMPLATE = `<!doctype html>
       let sessions = [], currentSession = 'main', currentTabId = null, ws = null, ctrlActive = false;
       const $ = id => document.getElementById(id);
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
+
+      // ── Theme switching ──
+      function setTheme(mode) {
+        document.documentElement.setAttribute('data-theme', mode);
+        term.options.theme = THEMES[mode];
+        localStorage.setItem('remux-theme', mode);
+        $('btn-theme').innerHTML = mode === 'dark' ? '&#9728;' : '&#9790;';
+      }
+      setTheme(initTheme);
+      $('btn-theme').addEventListener('pointerdown', e => {
+        e.preventDefault();
+        const current = document.documentElement.getAttribute('data-theme') || 'dark';
+        setTheme(current === 'dark' ? 'light' : 'dark');
+      });
 
       // ── Sidebar ──
       const sidebar = $('sidebar'), overlay = $('sidebar-overlay');
