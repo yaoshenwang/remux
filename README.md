@@ -1,191 +1,107 @@
 # Remux
 
-![Remux hero](./docs/assets/hero.svg)
-
-**Runtime Cockpit now, Agentic Workstation next, Collaboration OS later.**
+**Remote terminal workspace — powered by ghostty-web.**
 
 [![GitHub stars](https://img.shields.io/github/stars/yaoshenwang/remux?style=social)](https://github.com/yaoshenwang/remux/stargazers)
 ![GitHub contributors](https://img.shields.io/github/contributors/yaoshenwang/remux)
 
-Remux is a remote workspace cockpit for terminal-first work. It uses Zellij as the shared session backend and adds Inspect, Live, and Control surfaces for catching up, intervening, and navigating from another device.
-
-The product roadmap is deliberately staged:
-
-- `Runtime Cockpit`: today’s shipped path, centered on Zellij-backed Inspect, Live, and Control
-- `Agentic Workstation`: the next layer, where review, worktree, and agent-run workflows become first-class
-- `Collaboration OS`: the longer-horizon shell, where topics, artifacts, approvals, and handoff become durable workspace objects
-
-Remux does not try to replace Zellij. Zellij owns session, tab, pane, and attach truth; Remux adds web access, authentication, mobile-friendly controls, inspect views, and optional tunnel exposure on top.
+Remux lets you monitor and control terminal sessions from any device — phone, tablet, or another computer — through a web browser. It runs a lightweight Node.js server that manages shell sessions and streams them via WebSocket using [ghostty-web](https://github.com/coder/ghostty-web) for stable, high-quality terminal rendering.
 
 ## Why Remux
 
-- Catch up on the current workspace without relying only on the visible terminal viewport
-- Read, copy, and inspect terminal history more comfortably on mobile
-- Jump into Live only when direct intervention is necessary
-- Navigate sessions, tabs, and panes through a structured Control surface
-- Reuse the same shared Zellij session from multiple browsers without rebuilding the runtime stack
-- Protect access with token auth, optional password auth, and HTTPS tunnel exposure
-
-## Roadmap Arc
-
-Remux is being built in three explicit phases so the product can ship continuously without blocking on a rewrite:
-
-- `Runtime Cockpit`: harden the current Zellij + Node.js + Web stack and make Inspect the reliable catch-up surface
-- `Agentic Workstation`: add richer review, agent, worktree, and approval flows on top of the current runtime truth
-- `Collaboration OS`: grow from a terminal cockpit into a topic-first collaborative workspace shell
-
-## Product Surfaces
-
-![Remux surfaces](./docs/assets/surfaces.svg)
-
-- `Inspect`: readable history and context for catching up, copying, and understanding what happened
-- `Live`: direct terminal I/O for quick fixes, command entry, and interactive tools
-- `Control`: structured session, tab, and pane navigation plus workspace operations
-
-## Backend Model
-
-- The public and default backend is Zellij
-- `/ws/terminal` carries terminal I/O and resize messages
-- `/ws/control` carries workspace state, structured commands, inspect capture, and stats
-- Each browser client gets its own attach PTY, while Zellij remains the shared source of truth
-- Historical planning material is preserved under [docs/archive/README.md](./docs/archive/README.md)
+- Access your terminal sessions from any browser, including mobile
+- Multiple sessions and tabs, managed through a VS Code-style sidebar and tab bar
+- Stable rendering with ghostty-web (Ghostty VT engine compiled to WASM)
+- Server-side VT state tracking for instant session restore on reconnect
+- Mobile-friendly compose bar for special keys (Esc, Tab, Ctrl, arrows)
+- Token authentication for secure access
+- Session persistence across server restarts
+- Zero configuration — `npx remux` and go
 
 ## Quick Start
 
-### 1. Install prerequisites
+### Prerequisites
 
 - Node.js 20+
-- Zellij installed and available in `PATH`
 
-Verify Zellij first:
-
-```bash
-zellij --version
-```
-
-### 2. Run from npm
+### Run from npm
 
 ```bash
 npx remux
 ```
 
-Remux prints:
+Remux prints a local URL. Open it from any browser.
 
-- a local URL
-- a tunnel URL when tunnel mode is enabled
-- a password when password protection is enabled
-- a QR code for quick mobile access
+### Run with authentication
 
-### 3. Open from another device
+```bash
+REMUX_TOKEN=my-secret-token npx remux
+```
 
-- Browser: open the printed local or tunnel URL
-- Phone or tablet: scan the printed QR code
-- Shared access: use the printed password when password protection is enabled
+Access via `http://localhost:8767/?token=my-secret-token`.
 
-### 4. Run from source
+### Run from source
 
 ```bash
 git clone https://github.com/yaoshenwang/remux.git
 cd remux
-npm install
-npm start
+pnpm install
+pnpm start
 ```
-
-## Requirements
-
-- Node.js 20+
-- Zellij installed and available in `PATH` or passed via `--zellij-bin`
-- Optional `devtunnel` or `cloudflared` when tunnel mode is enabled
 
 ## Features
 
-- Session, tab, and pane management from the browser control drawer
-- Full terminal streaming through xterm.js for Live interaction
-- Inspect view for readable history and mobile-friendly text selection
-- Per-client PTY attach model for reconnect-friendly shared sessions
-- Compose input for native mobile keyboard entry
-- Drag-and-drop or picker-based image upload into the active workspace
-- Theme picker with built-in terminal themes
-- Automatic reconnect with keepalive
-- Optional Gastown metadata enrichment when running inside a Gastown workspace
+- **Multiple sessions** — create, switch, and delete named sessions from the sidebar
+- **Multiple tabs per session** — Chrome-style tab bar with create, close, and switch
+- **ghostty-web rendering** — Ghostty VT engine in WASM, stable truecolor Canvas rendering
+- **Server-side VT tracking** — ghostty-vt WASM tracks terminal state for instant snapshot restore
+- **Session persistence** — sessions and scrollback survive server restarts
+- **Multi-client support** — multiple browsers can connect simultaneously with coordinated terminal sizing
+- **Token authentication** — protect access with `REMUX_TOKEN` environment variable
+- **Mobile support** — responsive sidebar drawer, compose bar for special keys, viewport-aware layout
+- **Auto reconnect** — WebSocket reconnects automatically on disconnection
 
-## CLI
+## Architecture
 
-```text
-remux [options]
-
-Options:
-  -p, --port <port>                Local port (default: 8767)
-  --host <host>                    Bind address (default: 127.0.0.1)
-  --password <pass>                Authentication password
-  --[no-]require-password          Toggle password protection (default: true)
-  --[no-]tunnel                    Start a public tunnel (default: true)
-  --tunnel-provider <provider>     Tunnel provider: auto, devtunnel, cloudflare
-  --zellij-session <name>          Zellij session name (default: remux)
-  --zellij-bin <path>              Path to zellij binary
-  --debug-log <path>               Write backend debug logs to a file
+```
+Browser (ghostty-web Canvas)
+    │
+    └── WebSocket /ws (control + terminal data)
+            │
+            ▼
+    server.js (Node.js)
+    ├── HTTP server (serves app + ghostty-web assets)
+    ├── WebSocket server (session/tab control + terminal I/O)
+    ├── PTY management (node-pty, direct shell)
+    ├── VT tracking (ghostty-vt WASM, server-side snapshots)
+    └── Session persistence (JSON file, periodic save)
 ```
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `REMUX_DEBUG_LOG` | Debug log file path |
-| `REMUX_PASSWORD` | Password used when `--require-password` is enabled |
-| `REMUX_TOKEN` | Reuse a fixed auth token across restarts |
-| `VITE_DEV_MODE=1` | Backend knows frontend is served by Vite during development |
+| `PORT` | Server port (default: 8767) |
+| `REMUX_TOKEN` | Authentication token (optional; if set, required for access) |
+| `REMUX_INSTANCE_ID` | Instance identifier for persistence file isolation |
 
-## Security Defaults
+## Tech Stack
 
-- Token authentication is always required
-- Password protection is enabled by default
-- Control and terminal WebSockets authenticate independently
-- The server binds to `127.0.0.1` by default
-- Tunnel mode prefers HTTPS exposure through DevTunnel or Cloudflare instead of exposing the local port directly
-
-## Documentation
-
-- [docs/README.md](./docs/README.md): documentation entrypoint
-- [docs/CURRENT_BASELINE.md](./docs/CURRENT_BASELINE.md): current architecture truth
-- [docs/ACTIVE_DOCS_INDEX.md](./docs/ACTIVE_DOCS_INDEX.md): active, draft, and archive authority map
-- [docs/SPEC.md](./docs/SPEC.md): current Zellij-backed architecture, transport model, and API surface
-- [docs/TESTING.md](./docs/TESTING.md): current test loop and merge gate
-- [docs/archive/README.md](./docs/archive/README.md): archived legacy and transition documents
+- **Runtime**: Node.js 20+
+- **Terminal rendering**: [ghostty-web](https://github.com/coder/ghostty-web) (Ghostty VT engine, WASM + Canvas)
+- **PTY management**: [node-pty](https://github.com/niclas-niclas-niclas/node-pty)
+- **WebSocket**: [ws](https://github.com/websockets/ws)
+- **Server-side VT**: ghostty-vt WASM (same engine as browser, loaded server-side)
+- **Testing**: [Vitest](https://vitest.dev/)
+- **TUI companion**: Go + Bubbletea (in `tui/`)
 
 ## Development
 
 ```bash
-npm run dev
+pnpm install
+pnpm run dev      # start server
+pnpm test         # run tests
 ```
-
-Current validation commands:
-
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run test:e2e
-```
-
-The required pre-merge gate is:
-
-```bash
-npm run typecheck && npm test && npm run build
-```
-
-## Tech Stack
-
-- Backend gateway: Node.js, Express 5, `ws`, `node-pty`
-- Session backend: Zellij
-- Frontend: React 19, Vite, xterm.js
-- Testing: Vitest and Playwright
-- Language: TypeScript
-
-This stack maps to the current `Runtime Cockpit` phase. Future phases extend the same product line rather than replacing the shipped path wholesale.
-
-## Acknowledgments
-
-Remux was originally inspired by existing browser-based terminal access tools and then rewritten around a Zellij-backed, mobile-first control surface.
 
 ## Contributors
 
