@@ -206,23 +206,65 @@ export const App = () => {
     connection.status === "error" && connection.errorMessage ? connection.errorMessage :
     statusMessage || undefined;
 
-  // --- Sidebar (minimal session panel) ---
+  // --- Sidebar (session panel) ---
+  const connectionStateLabel =
+    connectionStatus === "connected" ? "Connected" :
+    connectionStatus === "disconnected" ? "Reconnecting" :
+    connectionStatus === "error" ? "Disconnected" :
+    connectionStatus === "authenticating" ? "Authenticating" :
+    "Connecting";
+
   const clientCount = control.connectedClients.length;
   const [clientsExpanded, setClientsExpanded] = useState(false);
+  const [editingSession, setEditingSession] = useState(false);
+  const sessionInputRef = useRef<HTMLInputElement>(null);
+
+  const commitSessionRename = useCallback(() => {
+    const value = sessionInputRef.current?.value.trim();
+    if (value && value !== sessionName) control.renameSession(value);
+    setEditingSession(false);
+  }, [sessionName, control.renameSession]);
 
   const sidebar = (
     <aside className={`sidebar${drawerOpen ? " drawer-open" : ""}`} data-testid="sidebar">
+      {/* Session section */}
+      <div className="sidebar-section-label">SESSION</div>
       <div className="sidebar-session-header">
         <span className={`sidebar-status-dot status-${connectionStatus}`} />
-        <span className="sidebar-session-name" title={sessionName}>{sessionName}</span>
+        {editingSession ? (
+          <input
+            ref={sessionInputRef}
+            className="sidebar-session-input"
+            defaultValue={sessionName}
+            autoFocus
+            onBlur={commitSessionRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitSessionRename();
+              if (e.key === "Escape") setEditingSession(false);
+            }}
+          />
+        ) : (
+          <span
+            className="sidebar-session-name"
+            title="Double-click to rename"
+            onDoubleClick={() => {
+              setEditingSession(true);
+              requestAnimationFrame(() => sessionInputRef.current?.select());
+            }}
+          >
+            {sessionName}
+          </span>
+        )}
+        <span className="sidebar-state-label">{connectionStateLabel}</span>
       </div>
 
+      {/* Connected clients (collapsed by default) */}
       <button
         className="sidebar-clients-toggle"
         onClick={() => setClientsExpanded((v) => !v)}
         type="button"
       >
-        <span>{`${clientCount} device${clientCount !== 1 ? "s" : ""}`}</span>
+        <span>{`${clientCount} device${clientCount !== 1 ? "s" : ""} connected`}</span>
         <span className="collapse-chevron">{clientsExpanded ? "▾" : "▸"}</span>
       </button>
 
@@ -243,6 +285,7 @@ export const App = () => {
 
       <div className="sidebar-spacer" />
 
+      {/* Footer */}
       <div className="sidebar-footer">
         <button
           className="sidebar-settings-btn"

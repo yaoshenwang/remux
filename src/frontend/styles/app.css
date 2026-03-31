@@ -194,7 +194,7 @@ button, input {
   grid-column: 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   min-height: 0;
 }
@@ -3689,11 +3689,22 @@ body {
 }
 
 /* --- Simplified Sidebar (session panel) --- */
+.sidebar-section-label {
+  padding: 0.75rem 0.6rem 0.25rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .sidebar-session-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 0.5rem 0.65rem;
+  gap: 0.45rem;
+  padding: 0.35rem 0.6rem 0.5rem;
+  flex-wrap: wrap;
 }
 
 .sidebar-status-dot {
@@ -3727,6 +3738,31 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  cursor: text;
+}
+
+.sidebar-session-input {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-active);
+  border-radius: 4px;
+  padding: 0.15rem 0.35rem;
+  min-width: 0;
+  flex: 1;
+  outline: none;
+}
+
+.sidebar-state-label {
+  margin-left: auto;
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .sidebar-clients-toggle {
