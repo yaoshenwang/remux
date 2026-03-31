@@ -63,6 +63,14 @@ function connectWs(port) {
   });
 }
 
+/** Unwrap envelope if present. */
+function unwrap(parsed) {
+  if (parsed && parsed.v === 1 && typeof parsed.type === "string") {
+    return { type: parsed.type, ...(parsed.payload || {}) };
+  }
+  return parsed;
+}
+
 function waitForMsg(ws, type, timeout = 3000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -71,7 +79,7 @@ function waitForMsg(ws, type, timeout = 3000) {
     }, timeout);
     const handler = (raw) => {
       try {
-        const msg = JSON.parse(raw.toString());
+        const msg = unwrap(JSON.parse(raw.toString()));
         if (msg.type === type) {
           clearTimeout(timer);
           ws.removeListener("message", handler);
