@@ -101,6 +101,9 @@ export const createZellijServer = (
     "image/svg+xml": "svg",
   };
   let cachedServerVersion: string | null = null;
+  const SESSION_BOOTSTRAP_COLS = 120;
+  const SESSION_BOOTSTRAP_ROWS = 30;
+  const SESSION_BOOTSTRAP_SETTLE_MS = 300;
 
   const resolveBearerToken = (req: express.Request): string => {
     const authHeader = req.headers.authorization ?? "";
@@ -480,6 +483,28 @@ export const createZellijServer = (
     logger.log(`Client PTY started (pid=${pty.pid}, session=${session}, ${cols}x${rows})`);
     scheduleWorkspaceSync(session);
     return pty;
+  };
+
+  const ensureSessionExists = async (session: string): Promise<void> => {
+    const bootstrapPty = deps.createPty?.({
+      session,
+      cols: SESSION_BOOTSTRAP_COLS,
+      rows: SESSION_BOOTSTRAP_ROWS,
+    }) ?? createZellijPty({
+      session,
+      zellijBin: config.zellijBin,
+      cols: SESSION_BOOTSTRAP_COLS,
+      rows: SESSION_BOOTSTRAP_ROWS,
+    });
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, SESSION_BOOTSTRAP_SETTLE_MS);
+      bootstrapPty.onExit(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    bootstrapPty.kill();
   };
 
   const sendWorkspaceState = async (
@@ -898,11 +923,13 @@ export const createZellijServer = (
               break;
             }
             client.currentSession = msg.name;
+            await ensureSessionExists(client.currentSession);
             getController(client.currentSession);
             sessionListCache = null;
             sendProtocolMessage(client, "runtime", "session_switched", {
               session: client.currentSession,
             });
+            scheduleWorkspaceSync(client.currentSession);
             await sendWorkspaceState(client);
             break;
           case "delete_session": {

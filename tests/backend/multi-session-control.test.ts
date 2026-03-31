@@ -296,11 +296,9 @@ describe("multi-session control and terminal flow", () => {
 
     control.send(JSON.stringify({ type: "create_session", name: "delta" }));
     await expectMessage(control, (payload) => payload.type === "session_switched" && payload.session === "delta");
-    await expectNoMessage(control, (payload) => payload.type === "workspace_state" && payload.session === "delta");
+    expect(await expectWorkspace(control, "delta")).toMatchObject({ session: "delta" });
 
     terminal.send(JSON.stringify({ type: "switch_session", session: "delta" }));
-
-    expect(await expectWorkspace(control, "delta")).toMatchObject({ session: "delta" });
 
     control.close();
     terminal.close();
