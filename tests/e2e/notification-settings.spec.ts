@@ -20,19 +20,38 @@ test("requests notification permission and syncs bell / exit preferences", async
   await page.goto(`${server!.baseUrl}/?token=${server!.token}`);
 
   await page.getByLabel("Bell alerts").check();
+  await page.waitForFunction(() => {
+    const state = window.__remuxNotificationTest;
+    return Array.isArray(state?.subscribeBodies) && state.subscribeBodies.length === 1;
+  });
   await page.getByLabel("Session exit").check();
   await expect(page.getByLabel("Session exit")).toBeChecked();
+  await page.waitForFunction(() => {
+    const state = window.__remuxNotificationTest;
+    return Array.isArray(state?.subscribeBodies) && state.subscribeBodies.length === 2;
+  });
 
   const debugState = await page.evaluate(() => window.__remuxNotificationTest);
   expect(debugState?.requestedPermissions).toBe(1);
-  expect(debugState?.subscribeBodies).toEqual([
+  expect(debugState?.subscribeBodies).toHaveLength(2);
+  expect(debugState?.subscribeBodies?.[0]).toEqual(
     expect.objectContaining({
+      id: expect.any(String),
       preferences: {
         bell: true,
         exit: false,
       },
     }),
-  ]);
+  );
+  expect(debugState?.subscribeBodies?.[1]).toEqual(
+    expect.objectContaining({
+      id: debugState?.subscribeBodies?.[0]?.id,
+      preferences: {
+        bell: true,
+        exit: true,
+      },
+    }),
+  );
 });
 
 const installNotificationMocks = async (page: import("@playwright/test").Page) => {
@@ -42,6 +61,7 @@ const installNotificationMocks = async (page: import("@playwright/test").Page) =
       subscribeBodies: [] as Array<Record<string, unknown>>,
     };
 
+    let currentSubscription: { endpoint: string; keys: { p256dh: string; auth: string } } | null = null;
     const subscription = {
       endpoint: "https://push.example/subscription",
       keys: {
@@ -59,8 +79,11 @@ const installNotificationMocks = async (page: import("@playwright/test").Page) =
 
     const registration = {
       pushManager: {
-        getSubscription: async () => null,
-        subscribe: async () => subscription,
+        getSubscription: async () => currentSubscription,
+        subscribe: async () => {
+          currentSubscription = subscription;
+          return subscription;
+        },
       },
     };
 
