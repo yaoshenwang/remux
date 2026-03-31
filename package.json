@@ -69,6 +69,7 @@
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
+    "ghostty-web": "^0.4.0",
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
