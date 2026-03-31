@@ -1,6 +1,6 @@
 {
   "name": "remux",
-  "version": "0.2.64",
+  "version": "0.2.65",
   "description": "Remote workspace cockpit for terminal-first work, powered by Zellij",
   "license": "MIT",
   "repository": {
