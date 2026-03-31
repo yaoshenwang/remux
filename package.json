@@ -22,6 +22,7 @@
   "dependencies": {
     "ghostty-web": "^0.4.0",
     "node-pty": "^1.1.0",
+    "qrcode-terminal": "^0.12.0",
     "ws": "^8.20.0"
   },
   "pnpm": {

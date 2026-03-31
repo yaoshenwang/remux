@@ -5,6 +5,7 @@
  * Adapted from coder/ghostty-web demo (MIT) + tsm session patterns.
  */
 
+import crypto from "crypto";
 import fs from "fs";
 import http from "http";
 import { homedir } from "os";
@@ -13,12 +14,23 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import pty from "node-pty";
 import { WebSocketServer } from "ws";
+import qrcode from "qrcode-terminal";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const PORT = process.env.PORT || 8767;
-const TOKEN = process.env.REMUX_TOKEN || null;
+
+// ── Authentication ────────────────────────────────────────────────
+// Priority: REMUX_TOKEN > REMUX_PASSWORD (+ --password CLI) > auto-generated token
+const PASSWORD = process.env.REMUX_PASSWORD || (function() {
+  const idx = process.argv.indexOf("--password");
+  return (idx !== -1 && idx + 1 < process.argv.length) ? process.argv[idx + 1] : null;
+})();
+const TOKEN = process.env.REMUX_TOKEN || (PASSWORD ? null : crypto.randomBytes(16).toString("hex"));
+
+// Tokens generated from password login (valid for the lifetime of the server)
+const passwordTokens = new Set();
 
 // ── Locate ghostty-web assets ──────────────────────────────────────
 
@@ -775,18 +787,63 @@ const HTML_TEMPLATE = `<!doctype html>
         if (name && name.trim()) sendCtrl({ type: 'new_session', name: name.trim(), cols: term.cols, rows: term.rows });
       });
 
-      // ── WebSocket ──
+      // ── WebSocket with exponential backoff + heartbeat ──
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const urlToken = new URLSearchParams(location.search).get('token');
 
+      // Exponential backoff: 1s -> 2s -> 4s -> 8s -> 16s -> 30s max
+      let backoffMs = 1000;
+      const BACKOFF_MAX = 30000;
+      let reconnectTimer = null;
+
+      // Heartbeat: if no message received for 45s, consider connection dead
+      const HEARTBEAT_TIMEOUT = 45000;
+      let lastMessageAt = Date.now();
+      let heartbeatChecker = null;
+
+      function startHeartbeat() {
+        lastMessageAt = Date.now();
+        if (heartbeatChecker) clearInterval(heartbeatChecker);
+        heartbeatChecker = setInterval(() => {
+          if (Date.now() - lastMessageAt > HEARTBEAT_TIMEOUT) {
+            console.log('[remux] heartbeat timeout, reconnecting');
+            if (ws) ws.close();
+          }
+        }, 5000);
+      }
+
+      function stopHeartbeat() {
+        if (heartbeatChecker) { clearInterval(heartbeatChecker); heartbeatChecker = null; }
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return;
+        const delay = backoffMs;
+        let remaining = Math.ceil(delay / 1000);
+        setStatus('disconnected', 'Reconnecting in ' + remaining + 's...');
+        const countdown = setInterval(() => {
+          remaining--;
+          if (remaining > 0) setStatus('disconnected', 'Reconnecting in ' + remaining + 's...');
+        }, 1000);
+        reconnectTimer = setTimeout(() => {
+          clearInterval(countdown);
+          reconnectTimer = null;
+          backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX);
+          connect();
+        }, delay);
+      }
+
       function connect() {
-        setStatus('connecting', '...');
+        setStatus('connecting', 'Connecting...');
         ws = new WebSocket(proto + '//' + location.host + '/ws');
         ws.onopen = () => {
+          backoffMs = 1000; // reset backoff on successful connection
+          startHeartbeat();
           if (urlToken) ws.send(JSON.stringify({ type: 'auth', token: urlToken }));
-          sendCtrl({ type: 'attach_first', session: 'main', cols: term.cols, rows: term.rows });
+          sendCtrl({ type: 'attach_first', session: currentSession || 'main', cols: term.cols, rows: term.rows });
         };
         ws.onmessage = e => {
+          lastMessageAt = Date.now();
           if (typeof e.data === 'string' && e.data[0] === '{') {
             try {
               const msg = JSON.parse(e.data);
@@ -810,7 +867,7 @@ const HTML_TEMPLATE = `<!doctype html>
           }
           term.write(e.data);
         };
-        ws.onclose = () => { setStatus('disconnected', 'Disconnected'); setTimeout(connect, 2000); };
+        ws.onclose = () => { stopHeartbeat(); scheduleReconnect(); };
         ws.onerror = () => setStatus('disconnected', 'Error');
       }
       connect();
@@ -881,14 +938,86 @@ const MIME = {
   ".json": "application/json",
 };
 
+// ── Password page HTML ────────────────────────────────────────────
+
+const PASSWORD_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remux — Login</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1e1e1e; color: #ccc; height: 100vh; display: flex;
+      align-items: center; justify-content: center; }
+    .login { background: #252526; border-radius: 8px; padding: 32px; width: 320px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.4); }
+    .login h1 { font-size: 18px; color: #e5e5e5; margin-bottom: 20px; text-align: center; }
+    .login input { width: 100%; padding: 10px 12px; font-size: 14px; background: #1e1e1e;
+      border: 1px solid #3a3a3a; border-radius: 4px; color: #d4d4d4;
+      font-family: inherit; outline: none; margin-bottom: 12px; }
+    .login input:focus { border-color: #007acc; }
+    .login button { width: 100%; padding: 10px; font-size: 14px; background: #007acc;
+      border: none; border-radius: 4px; color: #fff; cursor: pointer;
+      font-family: inherit; font-weight: 500; }
+    .login button:hover { background: #0098ff; }
+    .login .error { color: #f14c4c; font-size: 12px; margin-bottom: 12px; display: none; text-align: center; }
+  </style>
+</head>
+<body>
+  <form class="login" method="POST" action="/auth">
+    <h1>Remux</h1>
+    <div class="error" id="error">Incorrect password</div>
+    <input type="password" name="password" placeholder="Password" autofocus required />
+    <button type="submit">Login</button>
+  </form>
+  <script>
+    if (location.search.includes('error=1')) document.getElementById('error').style.display = 'block';
+  </script>
+</body>
+</html>`;
+
 // ── HTTP Server ────────────────────────────────────────────────────
 
 const httpServer = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // Handle password form submission
+  if (url.pathname === "/auth" && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const params = new URLSearchParams(body);
+      const submitted = params.get("password");
+      if (PASSWORD && submitted === PASSWORD) {
+        // Generate a session token and redirect with it
+        const sessionToken = crypto.randomBytes(16).toString("hex");
+        passwordTokens.add(sessionToken);
+        res.writeHead(302, { Location: `/?token=${sessionToken}` });
+        res.end();
+      } else {
+        res.writeHead(302, { Location: "/?error=1" });
+        res.end();
+      }
+    });
+    return;
+  }
+
   if (url.pathname === "/" || url.pathname === "/index.html") {
-    // If token is configured, require it in query string to serve the page
-    if (TOKEN && url.searchParams.get("token") !== TOKEN) {
+    const urlToken = url.searchParams.get("token");
+    const isAuthed = !TOKEN && !PASSWORD  // no auth configured (impossible after auto-gen, but safe)
+      || (TOKEN && urlToken === TOKEN)
+      || passwordTokens.has(urlToken);
+
+    if (!isAuthed) {
+      // If password mode is active and no valid token, show login page
+      if (PASSWORD) {
+        const showError = url.searchParams.has("error");
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(PASSWORD_PAGE);
+        return;
+      }
       res.writeHead(403, { "Content-Type": "text/plain" });
       res.end("Forbidden: invalid or missing token");
       return;
@@ -932,12 +1061,24 @@ httpServer.on("upgrade", (req, socket, head) => {
   }
 });
 
+// ── Heartbeat: ping authenticated clients every 30s ──────────────
+
+const HEARTBEAT_INTERVAL = 30_000;
+setInterval(() => {
+  for (const ws of controlClients) {
+    if (ws.readyState === ws.OPEN) ws.ping();
+  }
+}, HEARTBEAT_INTERVAL);
+
 wss.on("connection", (ws) => {
   ws._remuxTabId = null;
   ws._remuxCols = 80;
   ws._remuxRows = 24;
-  ws._remuxAuthed = !TOKEN;
-  if (!TOKEN) controlClients.add(ws); // auto-auth: register for broadcasts immediately
+
+  // Auth: no auth needed only if neither token nor password is configured
+  const requiresAuth = !!(TOKEN || PASSWORD);
+  ws._remuxAuthed = !requiresAuth;
+  if (!requiresAuth) controlClients.add(ws);
 
   ws.on("message", (raw) => {
     const msg = raw.toString("utf8");
@@ -946,12 +1087,16 @@ wss.on("connection", (ws) => {
     if (!ws._remuxAuthed) {
       try {
         const parsed = JSON.parse(msg);
-        if (parsed.type === "auth" && parsed.token === TOKEN) {
-          ws._remuxAuthed = true;
-          controlClients.add(ws);
-          ws.send(JSON.stringify({ type: "auth_ok" }));
-          ws.send(JSON.stringify({ type: "state", sessions: getState() }));
-          return;
+        if (parsed.type === "auth") {
+          const validToken = (TOKEN && parsed.token === TOKEN)
+            || passwordTokens.has(parsed.token);
+          if (validToken) {
+            ws._remuxAuthed = true;
+            controlClients.add(ws);
+            ws.send(JSON.stringify({ type: "auth_ok" }));
+            ws.send(JSON.stringify({ type: "state", sessions: getState() }));
+            return;
+          }
         }
       } catch {}
       ws.send(JSON.stringify({ type: "auth_error", reason: "invalid token" }));
@@ -1092,7 +1237,22 @@ wss.on("connection", (ws) => {
 // ── Start ──────────────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {
-  console.log(`\n  Remux running at http://localhost:${PORT}\n`);
+  let url = `http://localhost:${PORT}`;
+  if (TOKEN) url += `?token=${TOKEN}`;
+
+  console.log(`\n  Remux running at ${url}\n`);
+
+  if (PASSWORD) {
+    console.log(`  Password authentication enabled`);
+    console.log(`  Login page: http://localhost:${PORT}\n`);
+  } else if (TOKEN) {
+    console.log(`  Token: ${TOKEN}\n`);
+  }
+
+  // Print QR code for mobile access
+  qrcode.generate(url, { small: true }, (code) => {
+    console.log(code);
+  });
 });
 
 function shutdown() {
