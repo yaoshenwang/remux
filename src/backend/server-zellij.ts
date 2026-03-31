@@ -103,7 +103,7 @@ export const createZellijServer = (
   let cachedServerVersion: string | null = null;
   const SESSION_BOOTSTRAP_COLS = 120;
   const SESSION_BOOTSTRAP_ROWS = 30;
-  const SESSION_BOOTSTRAP_SETTLE_MS = 300;
+  const SESSION_BOOTSTRAP_SETTLE_MS = 1500;
   const SESSION_BOOTSTRAP_TTL_MS = 5000;
 
   const resolveBearerToken = (req: express.Request): string => {
@@ -531,10 +531,21 @@ export const createZellijServer = (
     sessionBootstrapPtys.set(session, { pty: bootstrapPty, timer: ttlTimer });
 
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, SESSION_BOOTSTRAP_SETTLE_MS);
-      bootstrapPty.onExit(() => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         clearTimeout(timer);
         resolve();
+      };
+      const timer = setTimeout(finish, SESSION_BOOTSTRAP_SETTLE_MS);
+      bootstrapPty.onData(() => {
+        finish();
+      });
+      bootstrapPty.onExit(() => {
+        finish();
       });
     });
   };
