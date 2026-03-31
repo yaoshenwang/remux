@@ -94,9 +94,12 @@ beforeAll(async () => {
   // Clean persistence file to ensure clean state
   try { fs.unlinkSync(PERSIST_FILE); } catch {}
 
+  // Explicitly remove REMUX_PASSWORD to avoid env leaking from parent
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.REMUX_PASSWORD;
   serverProc = spawn("node", ["server.js"], {
     env: {
-      ...process.env,
+      ...cleanEnv,
       PORT: String(PORT),
       REMUX_TOKEN: TOKEN,
       REMUX_INSTANCE_ID: INSTANCE_ID,
