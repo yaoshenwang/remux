@@ -1042,16 +1042,14 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'note_created' || msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
               // Commands
               if (msg.type === 'command_list') { wsCommands = msg.commands || []; renderCommands(); return; }
-              // Unrecognized JSON control message — log and discard, never write to terminal
-              if (typeof msg.type === 'string') {
+              // Unrecognized enveloped control message — discard, never write to terminal
+              if (parsed.v === 1) {
                 console.warn('[remux] unhandled message type:', msg.type);
                 return;
               }
+              // Non-enveloped JSON (e.g. PTY output that looks like JSON) — fall through to term.write
             } catch {}
-            // JSON parse succeeded but had no type, or parse failed — don't write JSON to terminal
-            return;
           }
-          // Only write non-JSON data (raw terminal output) to xterm
           term.write(e.data);
         };
         ws.onclose = () => { stopHeartbeat(); scheduleReconnect(); };
