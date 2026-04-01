@@ -1,18 +1,17 @@
 import SwiftUI
 import RemuxKit
 
-/// SwiftUI wrapper for GhosttyNativeView (libghostty Metal renderer, MANUAL io_mode).
-/// Uses Coordinator to maintain a reference to the underlying NSView for processOutput().
+/// SwiftUI wrapper for GhosttyNativeView (libghostty Metal renderer).
+/// The relay socket path is used to create the ghostty surface with `nc -U` as its command.
 struct GhosttyNativeTerminalView: NSViewRepresentable {
+    let socketPath: String
     @Binding var viewRef: GhosttyNativeView?
-    var onWrite: ((Data) -> Void)?
     var onResize: ((Int, Int) -> Void)?
     var onBell: (() -> Void)?
     var onTitle: ((String) -> Void)?
 
     func makeNSView(context: Context) -> GhosttyNativeView {
-        let view = GhosttyNativeView(frame: .zero)
-        view.onWrite = onWrite
+        let view = GhosttyNativeView(frame: .zero, socketPath: socketPath)
         view.onResize = onResize
         view.onBell = onBell
         view.onTitle = onTitle
@@ -21,7 +20,6 @@ struct GhosttyNativeTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: GhosttyNativeView, context: Context) {
-        nsView.onWrite = onWrite
         nsView.onResize = onResize
         nsView.onBell = onBell
         nsView.onTitle = onTitle

@@ -2,18 +2,19 @@ import AppKit
 import GhosttyKit
 
 /// NSView subclass wrapping libghostty's native Metal terminal renderer.
-/// Uses MANUAL io_mode: no local shell spawned. Data flows via callbacks:
-///   PTY output (from WebSocket) → ghostty_surface_process_output() → VT parser → Metal render
-///   User keystrokes → io_write_cb → onWrite callback → WebSocket → remote PTY
+/// Adapted for ghostty v1.3.1 API: uses `command` field to spawn a relay
+/// process (`nc -U <socket>`) that bridges Unix socket ↔ PTY stdio.
 ///
-/// Architecture ref: cmux GhosttyTerminalView.swift (GPL — design patterns only, no code copied)
+/// Data flow:
+///   Remote PTY → WebSocket → TerminalRelay.writeToTerminal() → socket → nc stdout → ghostty renders
+///   User types → ghostty → nc stdin → socket → TerminalRelay.onDataFromClient → WebSocket → remote PTY
+///
+/// Architecture ref: Calyx, Kytos (libghostty-based terminal apps)
 @MainActor
 final class GhosttyNativeView: NSView {
 
     // MARK: - Callbacks
 
-    /// Called when user types — data should be sent to remote PTY via WebSocket
-    var onWrite: ((Data) -> Void)?
     var onResize: ((Int, Int) -> Void)?
     var onBell: (() -> Void)?
     var onTitle: ((String) -> Void)?
@@ -23,14 +24,26 @@ final class GhosttyNativeView: NSView {
     nonisolated(unsafe) private var ghosttyApp: ghostty_app_t?
     nonisolated(unsafe) private var surface: ghostty_surface_t?
 
+    /// The relay command spawned by ghostty as its "shell" process.
+    private(set) var relayCommand: String?
+
     // MARK: - Init
+
+    /// Create the view with a relay socket path. Ghostty will spawn `nc -U <socketPath>`.
+    init(frame frameRect: NSRect, socketPath: String) {
+        self.relayCommand = "nc -U \(socketPath)"
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.isOpaque = true
+        layer?.backgroundColor = NSColor.black.cgColor
+        initGhostty()
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.isOpaque = true
         layer?.backgroundColor = NSColor.black.cgColor
-        initGhostty()
     }
 
     required init?(coder: NSCoder) {
@@ -65,9 +78,7 @@ final class GhosttyNativeView: NSView {
         }
 
         rtConfig.action_cb = { _, _, _ in false }
-
         rtConfig.read_clipboard_cb = { _, _, _ in false }
-
         rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in }
 
         rtConfig.write_clipboard_cb = { _, _, content, count, _ in
@@ -84,7 +95,7 @@ final class GhosttyNativeView: NSView {
         ghostty_config_free(config)
         guard let ghosttyApp else { return }
 
-        // Surface config with MANUAL io_mode
+        // Surface config — relay command as the "shell"
         var surfaceConfig = ghostty_surface_config_new()
         surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceConfig.platform = ghostty_platform_u(
@@ -98,35 +109,14 @@ final class GhosttyNativeView: NSView {
             surfaceConfig.scale_factor = screen.backingScaleFactor
         }
 
-        // MANUAL mode: don't spawn a shell, use callbacks for I/O
-        surfaceConfig.io_mode = 1 // GHOSTTY_SURFACE_IO_MANUAL
-        surfaceConfig.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
-        surfaceConfig.io_write_cb = { ud, data, len in
-            // User typed something → forward to remote PTY
-            guard let ud, let data, len > 0 else { return }
-            let view = Unmanaged<GhosttyNativeView>.fromOpaque(ud).takeUnretainedValue()
-            let bytes = Data(bytes: data, count: Int(len))
-            DispatchQueue.main.async {
-                view.onWrite?(bytes)
+        // Set relay command: nc connects to the Unix socket and pipes stdio
+        if let cmd = relayCommand {
+            cmd.withCString { ptr in
+                surfaceConfig.command = ptr
+                surface = ghostty_surface_new(ghosttyApp, &surfaceConfig)
             }
-        }
-
-        surface = ghostty_surface_new(ghosttyApp, &surfaceConfig)
-    }
-
-    // MARK: - Public API: feed PTY data from remote server
-
-    /// Feed remote PTY output into the terminal for rendering.
-    /// Call this with data received from the WebSocket.
-    func processOutput(_ data: Data) {
-        guard let surface else { return }
-        data.withUnsafeBytes { ptr in
-            guard let baseAddr = ptr.baseAddress else { return }
-            ghostty_surface_process_output(
-                surface,
-                baseAddr.assumingMemoryBound(to: CChar.self),
-                UInt(ptr.count)
-            )
+        } else {
+            surface = ghostty_surface_new(ghosttyApp, &surfaceConfig)
         }
     }
 
@@ -156,10 +146,25 @@ final class GhosttyNativeView: NSView {
         surface.flatMap { ghostty_surface_draw($0) }
     }
 
-    // MARK: - Keyboard input
+    // MARK: - Keyboard input (ghostty handles forwarding to PTY → nc stdin → socket)
 
     override func keyDown(with event: NSEvent) {
-        interpretKeyEvents([event])
+        guard let surface else { return }
+        var key = ghostty_input_key_s()
+        key.action = GHOSTTY_ACTION_PRESS
+        key.keycode = UInt32(event.keyCode)
+        key.composing = false
+        if event.isARepeat { key.action = GHOSTTY_ACTION_REPEAT }
+        _ = ghostty_surface_key(surface, key)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard let surface else { return }
+        var key = ghostty_input_key_s()
+        key.action = GHOSTTY_ACTION_RELEASE
+        key.keycode = UInt32(event.keyCode)
+        key.composing = false
+        _ = ghostty_surface_key(surface, key)
     }
 
     func insertText(_ string: Any, replacementRange: NSRange) {
