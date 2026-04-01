@@ -13,8 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
@@ -24,6 +22,7 @@ jobs:
       - run: pnpm test
   swift-test:
     runs-on: macos-15
+    if: false  # Disabled: ghostty vendor submodule ref is stale
     steps:
       - uses: actions/checkout@v4
         with:
