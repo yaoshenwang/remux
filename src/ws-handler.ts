@@ -62,11 +62,19 @@ import {
   createApproval,
   listApprovals,
   resolveApproval,
+  searchEntities,
+  createNote,
+  listNotes,
+  updateNote,
+  deleteNote,
+  togglePinNote,
+  listCommands,
 } from "./store.js";
 import {
   captureSnapshot,
   createCommandCard,
   getTopicSummary,
+  generateHandoffBundle,
 } from "./workspace.js";
 
 // ── Protocol Envelope ───────────────────────────────────────────
@@ -888,6 +896,75 @@ export function setupWebSocket(
                   });
                 }
               }
+            }
+            return;
+          }
+
+          // ── Search ──
+
+          if (p.type === "search") {
+            if (typeof p.query === "string") {
+              const results = searchEntities(p.query, p.limit || 20);
+              sendEnvelope(ws, "search_results", { query: p.query, results });
+            }
+            return;
+          }
+
+          // ── Handoff Bundle ──
+
+          if (p.type === "get_handoff") {
+            const bundle = generateHandoffBundle();
+            sendEnvelope(ws, "handoff_bundle", bundle);
+            return;
+          }
+
+          // ── Memory Notes ──
+
+          if (p.type === "create_note") {
+            if (typeof p.content === "string" && p.content.trim()) {
+              const note = createNote(p.content.trim());
+              sendEnvelope(ws, "note_created", note);
+            }
+            return;
+          }
+
+          if (p.type === "list_notes") {
+            const notes = listNotes();
+            sendEnvelope(ws, "note_list", { notes });
+            return;
+          }
+
+          if (p.type === "update_note") {
+            if (p.noteId && typeof p.content === "string" && p.content.trim()) {
+              const ok = updateNote(p.noteId, p.content.trim());
+              sendEnvelope(ws, "note_updated", { noteId: p.noteId, success: ok });
+            }
+            return;
+          }
+
+          if (p.type === "delete_note") {
+            if (p.noteId) {
+              const ok = deleteNote(p.noteId);
+              sendEnvelope(ws, "note_deleted", { noteId: p.noteId, success: ok });
+            }
+            return;
+          }
+
+          if (p.type === "pin_note") {
+            if (p.noteId) {
+              const ok = togglePinNote(p.noteId);
+              sendEnvelope(ws, "note_pinned", { noteId: p.noteId, success: ok });
+            }
+            return;
+          }
+
+          // ── Shell Integration: Commands ──
+
+          if (p.type === "list_commands") {
+            const tabId = p.tabId ?? ws._remuxTabId;
+            if (tabId != null) {
+              const commands = listCommands(tabId, p.limit || 50);
+              sendEnvelope(ws, "command_list", { tabId, commands });
             }
             return;
           }

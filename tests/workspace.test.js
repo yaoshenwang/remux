@@ -102,6 +102,27 @@ function createTestDb() {
       created_at INTEGER NOT NULL,
       resolved_at INTEGER
     );
+    CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+      entity_type, entity_id, title, content,
+      tokenize='porter unicode61'
+    );
+    CREATE TABLE IF NOT EXISTS memory_notes (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      pinned INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS commands (
+      id TEXT PRIMARY KEY,
+      session_name TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      command TEXT,
+      exit_code INTEGER,
+      cwd TEXT,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER
+    );
   `);
   return db;
 }
