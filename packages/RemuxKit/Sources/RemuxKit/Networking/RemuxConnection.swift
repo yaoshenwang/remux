@@ -1,7 +1,7 @@
 import Foundation
 
 /// Connection status for the remux server
-public enum ConnectionStatus: Sendable {
+public enum ConnectionStatus: Sendable, Equatable {
     case disconnected
     case connecting
     case authenticating

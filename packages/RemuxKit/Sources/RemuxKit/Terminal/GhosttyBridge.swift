@@ -96,11 +96,11 @@ public final class GhosttyBridge: NSObject, WKScriptMessageHandler {
     // MARK: - HTML loading
 
     private func loadTerminalHTML() {
-        // Load from bundle resources
-        if let resourceURL = Bundle.module.url(forResource: "ghostty-terminal", withExtension: "html", subdirectory: "Terminal/Resources") {
+        // Load from main bundle (app must include ghostty-terminal.html)
+        if let resourceURL = Bundle.main.url(forResource: "ghostty-terminal", withExtension: "html") {
             webView.loadFileURL(resourceURL, allowingReadAccessTo: resourceURL.deletingLastPathComponent())
         } else {
-            // Fallback: load inline minimal HTML for development
+            // Fallback: inline HTML for development/testing
             let html = Self.fallbackHTML
             webView.loadHTMLString(html, baseURL: nil)
         }

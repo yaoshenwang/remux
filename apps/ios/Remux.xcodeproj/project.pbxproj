@@ -1,0 +1,456 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		04EE3BCAD2C297F8696C82C2 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2A531BFD8446B4BCB5A0B2 /* QRScannerView.swift */; };
+		346FBA7A7057F163D7CC8F03 /* RemuxiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662FEE0E78ADAADEA731106C /* RemuxiOSApp.swift */; };
+		622B8BA7525C80F0416F5E1B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3120562997C5EB5D054DAB21 /* OnboardingView.swift */; };
+		622F7BF35D6BB2E6C7715426 /* MeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7269AB643DAA5051FBDACE /* MeView.swift */; };
+		78E3310D198D772C606FBB0B /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D548B0C91D3AABA26641D898 /* ControlView.swift */; };
+		810D705F63FBA1B407B0FBC1 /* FaceIDManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5056D67965667A307294CFB1 /* FaceIDManager.swift */; };
+		BBCF34D61B0F6B8CFB234965 /* InspectCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEEEA01EB80CE2C1601F6228 /* InspectCache.swift */; };
+		CA2151750F645DA9BC49C7C8 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48C3DD287E421F1077A8923A /* MainTabView.swift */; };
+		CB45E538B1DF947F0C8D9542 /* NowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBE379B0C119DDC9C8B324E5 /* NowView.swift */; };
+		D32ABBB3E21D0344B3B9455C /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FAA68E03D60CC5F0A92A1DB /* RootView.swift */; };
+		DD0F6EA123F2BCF28AAA676A /* LiveTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734A97B1146E816099903C0D /* LiveTerminalView.swift */; };
+		ECAFCC766BD77CCD21821612 /* ManualConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E3AE7922D1E43AE099D1D40 /* ManualConnectView.swift */; };
+		EE0A712F52F48C1AB61D7AEC /* RemuxKit in Frameworks */ = {isa = PBXBuildFile; productRef = EF63343AE24B477D7365EE17 /* RemuxKit */; };
+		F136D905F6E9BA7F2C1816F2 /* InspectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED7C2F66BB76FB8DE51725E /* InspectView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0B7269AB643DAA5051FBDACE /* MeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeView.swift; sourceTree = "<group>"; };
+		1ED7C2F66BB76FB8DE51725E /* InspectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectView.swift; sourceTree = "<group>"; };
+		3120562997C5EB5D054DAB21 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		48C3DD287E421F1077A8923A /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		5056D67965667A307294CFB1 /* FaceIDManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceIDManager.swift; sourceTree = "<group>"; };
+		662FEE0E78ADAADEA731106C /* RemuxiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemuxiOSApp.swift; sourceTree = "<group>"; };
+		6C491FD55D84AC2BED5C5EBD /* Remux.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Remux.entitlements; sourceTree = "<group>"; };
+		6E3AE7922D1E43AE099D1D40 /* ManualConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualConnectView.swift; sourceTree = "<group>"; };
+		734A97B1146E816099903C0D /* LiveTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTerminalView.swift; sourceTree = "<group>"; };
+		8FAA68E03D60CC5F0A92A1DB /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		A47FAD14E232D67C4163B551 /* RemuxKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = RemuxKit; path = ../../packages/RemuxKit; sourceTree = SOURCE_ROOT; };
+		BF2A531BFD8446B4BCB5A0B2 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		C6233E6291A38BAAE86C727D /* Remux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Remux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D548B0C91D3AABA26641D898 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
+		DBE379B0C119DDC9C8B324E5 /* NowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowView.swift; sourceTree = "<group>"; };
+		DEEEA01EB80CE2C1601F6228 /* InspectCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectCache.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		03BDC461530EDD09CDB7FF29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EE0A712F52F48C1AB61D7AEC /* RemuxKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		02177B1EEEF3A70CA8B1DC00 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				6E3AE7922D1E43AE099D1D40 /* ManualConnectView.swift */,
+				3120562997C5EB5D054DAB21 /* OnboardingView.swift */,
+				BF2A531BFD8446B4BCB5A0B2 /* QRScannerView.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
+		0E70947CCFEAEFEDCCF14E35 /* Remux */ = {
+			isa = PBXGroup;
+			children = (
+				48C3DD287E421F1077A8923A /* MainTabView.swift */,
+				6C491FD55D84AC2BED5C5EBD /* Remux.entitlements */,
+				662FEE0E78ADAADEA731106C /* RemuxiOSApp.swift */,
+				8FAA68E03D60CC5F0A92A1DB /* RootView.swift */,
+				E0BAA4E34FA2A6985DF4C973 /* Extensions */,
+				34F4D5A768A03291C3584961 /* Views */,
+			);
+			name = Remux;
+			path = Sources/Remux;
+			sourceTree = "<group>";
+		};
+		34F4D5A768A03291C3584961 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				89F7EBDCDA60DF5612AE9A65 /* Control */,
+				E3592A5F25FDAC99767AF4F0 /* Inspect */,
+				E6ABC817B70CA54DD2647104 /* Live */,
+				DBC76E38E5D91242FED6C091 /* Now */,
+				02177B1EEEF3A70CA8B1DC00 /* Onboarding */,
+				E77261034A2F42E559D8BC9E /* Settings */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		89F7EBDCDA60DF5612AE9A65 /* Control */ = {
+			isa = PBXGroup;
+			children = (
+				D548B0C91D3AABA26641D898 /* ControlView.swift */,
+			);
+			path = Control;
+			sourceTree = "<group>";
+		};
+		9383E7B61F907BDA3838C6DA /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				A47FAD14E232D67C4163B551 /* RemuxKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		D5B969C9596603CB720FBE0D = {
+			isa = PBXGroup;
+			children = (
+				9383E7B61F907BDA3838C6DA /* Packages */,
+				0E70947CCFEAEFEDCCF14E35 /* Remux */,
+				F94500072A3763A6590AF480 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DBC76E38E5D91242FED6C091 /* Now */ = {
+			isa = PBXGroup;
+			children = (
+				DBE379B0C119DDC9C8B324E5 /* NowView.swift */,
+			);
+			path = Now;
+			sourceTree = "<group>";
+		};
+		E0BAA4E34FA2A6985DF4C973 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				5056D67965667A307294CFB1 /* FaceIDManager.swift */,
+				DEEEA01EB80CE2C1601F6228 /* InspectCache.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		E3592A5F25FDAC99767AF4F0 /* Inspect */ = {
+			isa = PBXGroup;
+			children = (
+				1ED7C2F66BB76FB8DE51725E /* InspectView.swift */,
+			);
+			path = Inspect;
+			sourceTree = "<group>";
+		};
+		E6ABC817B70CA54DD2647104 /* Live */ = {
+			isa = PBXGroup;
+			children = (
+				734A97B1146E816099903C0D /* LiveTerminalView.swift */,
+			);
+			path = Live;
+			sourceTree = "<group>";
+		};
+		E77261034A2F42E559D8BC9E /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				0B7269AB643DAA5051FBDACE /* MeView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		F94500072A3763A6590AF480 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C6233E6291A38BAAE86C727D /* Remux.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7125659F6728FEF22F3FDFB5 /* Remux */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9EB61A159DAC867ECA3B9D /* Build configuration list for PBXNativeTarget "Remux" */;
+			buildPhases = (
+				204B591A381758166DA82963 /* Sources */,
+				03BDC461530EDD09CDB7FF29 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Remux;
+			packageProductDependencies = (
+				EF63343AE24B477D7365EE17 /* RemuxKit */,
+			);
+			productName = Remux;
+			productReference = C6233E6291A38BAAE86C727D /* Remux.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AB9B0F665DE3D1CF4BE38CF5 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					7125659F6728FEF22F3FDFB5 = {
+						DevelopmentTeam = LY8QD6TJN6;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = F118F8E44563891091219E31 /* Build configuration list for PBXProject "Remux" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D5B969C9596603CB720FBE0D;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4F0952D532975C4F55CAE590 /* XCLocalSwiftPackageReference "../../packages/RemuxKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7125659F6728FEF22F3FDFB5 /* Remux */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		204B591A381758166DA82963 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				78E3310D198D772C606FBB0B /* ControlView.swift in Sources */,
+				810D705F63FBA1B407B0FBC1 /* FaceIDManager.swift in Sources */,
+				BBCF34D61B0F6B8CFB234965 /* InspectCache.swift in Sources */,
+				F136D905F6E9BA7F2C1816F2 /* InspectView.swift in Sources */,
+				DD0F6EA123F2BCF28AAA676A /* LiveTerminalView.swift in Sources */,
+				CA2151750F645DA9BC49C7C8 /* MainTabView.swift in Sources */,
+				ECAFCC766BD77CCD21821612 /* ManualConnectView.swift in Sources */,
+				622F7BF35D6BB2E6C7715426 /* MeView.swift in Sources */,
+				CB45E538B1DF947F0C8D9542 /* NowView.swift in Sources */,
+				622B8BA7525C80F0416F5E1B /* OnboardingView.swift in Sources */,
+				04EE3BCAD2C297F8696C82C2 /* QRScannerView.swift in Sources */,
+				346FBA7A7057F163D7CC8F03 /* RemuxiOSApp.swift in Sources */,
+				D32ABBB3E21D0344B3B9455C /* RootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		4CDD0720CAFFE2E1481FBFA7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = LY8QD6TJN6;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		89E46C713EAC3CEC87DDEBC6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = LY8QD6TJN6;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A8EBDFB043CD42C757E3F876 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Sources/Remux/Remux.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Remux uses the camera to scan QR codes for server pairing.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Remux uses Face ID to protect your terminal sessions.";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.remux.ios;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C0E5593BA2CFEE44A2B659DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Sources/Remux/Remux.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Remux uses the camera to scan QR codes for server pairing.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Remux uses Face ID to protect your terminal sessions.";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.remux.ios;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9A9EB61A159DAC867ECA3B9D /* Build configuration list for PBXNativeTarget "Remux" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A8EBDFB043CD42C757E3F876 /* Debug */,
+				C0E5593BA2CFEE44A2B659DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F118F8E44563891091219E31 /* Build configuration list for PBXProject "Remux" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4CDD0720CAFFE2E1481FBFA7 /* Debug */,
+				89E46C713EAC3CEC87DDEBC6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4F0952D532975C4F55CAE590 /* XCLocalSwiftPackageReference "../../packages/RemuxKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../packages/RemuxKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		EF63343AE24B477D7365EE17 /* RemuxKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RemuxKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = AB9B0F665DE3D1CF4BE38CF5 /* Project object */;
+}
