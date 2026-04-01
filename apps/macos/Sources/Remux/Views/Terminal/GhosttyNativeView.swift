@@ -2,12 +2,18 @@ import AppKit
 import GhosttyKit
 
 /// NSView subclass wrapping libghostty's native Metal terminal renderer.
+/// Uses MANUAL io_mode: no local shell spawned. Data flows via callbacks:
+///   PTY output (from WebSocket) → ghostty_surface_process_output() → VT parser → Metal render
+///   User keystrokes → io_write_cb → onWrite callback → WebSocket → remote PTY
+///
 /// Architecture ref: cmux GhosttyTerminalView.swift (GPL — design patterns only, no code copied)
 @MainActor
 final class GhosttyNativeView: NSView {
 
     // MARK: - Callbacks
 
+    /// Called when user types — data should be sent to remote PTY via WebSocket
+    var onWrite: ((Data) -> Void)?
     var onResize: ((Int, Int) -> Void)?
     var onBell: (() -> Void)?
     var onTitle: ((String) -> Void)?
@@ -41,12 +47,11 @@ final class GhosttyNativeView: NSView {
     private func initGhostty() {
         ghostty_init(0, nil)
 
-        // Create and load config
         let config = ghostty_config_new()!
         ghostty_config_load_default_files(config)
         ghostty_config_finalize(config)
 
-        // Setup runtime callbacks
+        // Runtime callbacks
         var rtConfig = ghostty_runtime_config_s()
         rtConfig.userdata = Unmanaged.passUnretained(self).toOpaque()
         rtConfig.supports_selection_clipboard = false
@@ -56,48 +61,30 @@ final class GhosttyNativeView: NSView {
             let view = Unmanaged<GhosttyNativeView>.fromOpaque(ud).takeUnretainedValue()
             DispatchQueue.main.async {
                 view.needsDisplay = true
-                view.surface.flatMap { ghostty_surface_draw($0) }
             }
         }
 
-        rtConfig.action_cb = { app, target, action in
-            // Handle ghostty actions (title change, bell, etc.)
-            // For now, return false to indicate unhandled
-            return false
-        }
+        rtConfig.action_cb = { _, _, _ in false }
 
-        rtConfig.read_clipboard_cb = { ud, clipboardType, state in
-            let pb = NSPasteboard.general
-            guard let str = pb.string(forType: .string) else { return false }
-            // TODO: complete clipboard read callback
-            return false
-        }
+        rtConfig.read_clipboard_cb = { _, _, _ in false }
 
-        rtConfig.confirm_read_clipboard_cb = { ud, text, state, request in
-            // Auto-confirm clipboard reads for now
-        }
+        rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in }
 
-        rtConfig.write_clipboard_cb = { ud, clipboardType, content, count, confirm in
-            guard let content, count > 0 else { return }
+        rtConfig.write_clipboard_cb = { _, _, content, count, _ in
+            guard let content, count > 0, let data = content.pointee.data else { return }
+            let str = String(cString: data)
             let pb = NSPasteboard.general
             pb.clearContents()
-            // Read first content item
-            if let data = content.pointee.data {
-                let str = String(cString: data)
-                pb.setString(str, forType: .string)
-            }
+            pb.setString(str, forType: .string)
         }
 
-        rtConfig.close_surface_cb = { ud, processAlive in
-            // Surface wants to close
-        }
+        rtConfig.close_surface_cb = { _, _ in }
 
-        // Create ghostty app
         ghosttyApp = ghostty_app_new(&rtConfig, config)
         ghostty_config_free(config)
         guard let ghosttyApp else { return }
 
-        // Create surface
+        // Surface config with MANUAL io_mode
         var surfaceConfig = ghostty_surface_config_new()
         surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceConfig.platform = ghostty_platform_u(
@@ -111,7 +98,36 @@ final class GhosttyNativeView: NSView {
             surfaceConfig.scale_factor = screen.backingScaleFactor
         }
 
+        // MANUAL mode: don't spawn a shell, use callbacks for I/O
+        surfaceConfig.io_mode = 1 // GHOSTTY_SURFACE_IO_MANUAL
+        surfaceConfig.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
+        surfaceConfig.io_write_cb = { ud, data, len in
+            // User typed something → forward to remote PTY
+            guard let ud, let data, len > 0 else { return }
+            let view = Unmanaged<GhosttyNativeView>.fromOpaque(ud).takeUnretainedValue()
+            let bytes = Data(bytes: data, count: Int(len))
+            DispatchQueue.main.async {
+                view.onWrite?(bytes)
+            }
+        }
+
         surface = ghostty_surface_new(ghosttyApp, &surfaceConfig)
+    }
+
+    // MARK: - Public API: feed PTY data from remote server
+
+    /// Feed remote PTY output into the terminal for rendering.
+    /// Call this with data received from the WebSocket.
+    func processOutput(_ data: Data) {
+        guard let surface else { return }
+        data.withUnsafeBytes { ptr in
+            guard let baseAddr = ptr.baseAddress else { return }
+            ghostty_surface_process_output(
+                surface,
+                baseAddr.assumingMemoryBound(to: CChar.self),
+                UInt(ptr.count)
+            )
+        }
     }
 
     // MARK: - View lifecycle
@@ -153,9 +169,7 @@ final class GhosttyNativeView: NSView {
         }
     }
 
-    override func doCommand(by selector: Selector) {
-        // Prevent NSBeep
-    }
+    override func doCommand(by selector: Selector) {}
 
     // MARK: - Mouse input
 

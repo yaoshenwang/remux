@@ -1,28 +1,36 @@
 import SwiftUI
 import RemuxKit
 
-/// Container that connects GhosttyNativeTerminalView to RemuxState.
-/// Handles PTY data forwarding and resize notifications.
+/// Container connecting GhosttyNativeTerminalView to RemuxState.
+/// Data flow:
+///   Remote PTY → WebSocket → RemuxState → processOutput() → ghostty Metal render
+///   User types → ghostty io_write_cb → onWrite → WebSocket → Remote PTY
 struct TerminalContainerView: View {
     @Environment(RemuxState.self) private var state
+    @State private var terminalCoordinator: GhosttyNativeTerminalView.Coordinator?
 
     var body: some View {
         GhosttyNativeTerminalView(
+            onWrite: { data in
+                // User typed in terminal → send to remote PTY via WebSocket
+                state.sendTerminalData(data)
+            },
             onResize: { cols, rows in
-                // Send resize to server
                 state.sendTerminalInput("{\"type\":\"resize\",\"cols\":\(cols),\"rows\":\(rows)}")
             },
             onBell: {
-                // TODO: trigger notification via E07-B-24
+                // TODO: trigger notification
             },
             onTitle: { title in
-                // Update window title
                 NSApp.mainWindow?.title = "Remux — \(title)"
             }
         )
         .onReceive(NotificationCenter.default.publisher(for: .remuxTerminalData)) { notification in
-            // TODO: forward PTY data to GhosttyNativeView.write()
-            // This requires a reference to the NSView — will be handled via Coordinator pattern
+            // Remote PTY data arrived → feed into ghostty for rendering
+            if let data = notification.userInfo?["data"] as? Data,
+               let coordinator = terminalCoordinator {
+                coordinator.terminalView?.processOutput(data)
+            }
         }
     }
 }
