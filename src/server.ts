@@ -1366,6 +1366,7 @@ const HTML_TEMPLATE = `<!doctype html>
       let wsNotes = [], wsCommands = [];
 
       function refreshWorkspace() {
+        if (!currentSession) return; // Wait until bootstrap resolves a session
         sendCtrl({ type: 'list_topics', sessionName: currentSession });
         sendCtrl({ type: 'list_runs' });
         sendCtrl({ type: 'list_artifacts', sessionName: currentSession });

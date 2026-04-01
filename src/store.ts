@@ -150,6 +150,13 @@ export function getDb(): Database.Database {
     );
   `);
 
+  // ── Migrations for existing databases ──
+  // Add session_name to artifacts if missing (introduced in v0.3.6)
+  const artifactCols = _db.prepare("PRAGMA table_info(artifacts)").all() as any[];
+  if (!artifactCols.find((c: any) => c.name === "session_name")) {
+    _db.exec("ALTER TABLE artifacts ADD COLUMN session_name TEXT");
+  }
+
   return _db;
 }
 

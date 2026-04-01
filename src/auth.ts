@@ -8,6 +8,7 @@ import crypto from "crypto";
 import type http from "http";
 import {
   computeFingerprint,
+  findDeviceById,
   findDeviceByFingerprint,
   createDevice,
   hasAnyDevice,

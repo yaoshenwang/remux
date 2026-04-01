@@ -324,9 +324,15 @@ export function setupWebSocket(
             if (validateToken(parsed.token, TOKEN)) {
               ws._remuxAuthed = true;
               controlClients.add(ws);
-              // Re-register device with client-provided ID if available
+              // If client provides a persistent device ID, re-register with it
+              // (replaces the initial header-fingerprint registration)
               if (parsed.deviceId) {
                 try {
+                  // Clean up old fingerprint-based device socket tracking
+                  if (ws._remuxDeviceId && ws._remuxDeviceId !== parsed.deviceId) {
+                    const oldSockets = deviceSockets.get(ws._remuxDeviceId);
+                    if (oldSockets) { oldSockets.delete(ws); if (oldSockets.size === 0) deviceSockets.delete(ws._remuxDeviceId); }
+                  }
                   const { device } = registerDevice(req, parsed.deviceId);
                   deviceInfo = device;
                   ws._remuxDeviceId = device.id;
