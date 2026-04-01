@@ -3532,9 +3532,11 @@ var init_server = __esm({
             } else if (c === 0x7f && this.preds.length > 0) {
               this.preds.pop();
               this.term.write('\\x1b[D \\x1b[D');
-            } else {
+            } else if (c < 0x20 || c === 0x7f) {
+              // Control characters \u2014 rollback predictions (terminal state may change)
               this._rollback();
             }
+            // Non-ASCII (CJK, emoji, etc.) \u2014 skip prediction, don't rollback
           }
         }
         onServerData(data) {
