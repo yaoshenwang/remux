@@ -1007,6 +1007,17 @@ export function setupWebSocket(
             return;
           }
 
+          // ── E10: Adapter Platform ──
+
+          if (p.type === "request_adapter_state") {
+            // E10-007: return all adapter states
+            // Lazy import to avoid circular dependency with server.ts
+            const { adapterRegistry } = require("./server.js");
+            const states = adapterRegistry?.getAllStates() ?? [];
+            sendEnvelope(ws, "adapter_state", { adapters: states });
+            return;
+          }
+
           return;
         } catch (err) {
           // Log JSON parse errors for debugging (e.g. createNote DB failures)

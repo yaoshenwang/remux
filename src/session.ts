@@ -283,6 +283,12 @@ export function createTab(
     // Shell integration: parse OSC 133 / OSC 7 sequences
     processShellIntegration(data, tab, session.name);
 
+    // E10: dispatch terminal data to adapters
+    try {
+      const { adapterRegistry } = require("./server.js");
+      adapterRegistry?.dispatchTerminalData(session.name, data);
+    } catch { /* adapter not initialized yet */ }
+
     // Idle activity tracking: notify on resume after >5 min silence
     const now = Date.now();
     if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS && !isIdle) {

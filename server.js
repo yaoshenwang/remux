@@ -1,15 +1,24 @@
 #!/usr/bin/env node
-
-// src/server.ts
-import fs4 from "fs";
-import http from "http";
-import path2 from "path";
-import { createRequire } from "module";
-import { fileURLToPath } from "url";
-import qrcode from "qrcode-terminal";
-
-// src/auth.ts
-import crypto2 from "crypto";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/store.ts
 import Database from "better-sqlite3";
@@ -17,13 +26,9 @@ import path from "path";
 import { homedir } from "os";
 import fs from "fs";
 import crypto from "crypto";
-var REMUX_DIR = path.join(homedir(), ".remux");
-var PORT = process.env.PORT || 8767;
-var PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
 function getDbPath() {
   return path.join(REMUX_DIR, `remux-${PERSIST_ID}.db`);
 }
-var _db = null;
 function getDb() {
   if (_db) return _db;
   if (!fs.existsSync(REMUX_DIR)) {
@@ -678,9 +683,19 @@ function listCommands(tabId, limit = 50) {
     endedAt: r.ended_at
   }));
 }
+var REMUX_DIR, PORT, PERSIST_ID, _db;
+var init_store = __esm({
+  "src/store.ts"() {
+    "use strict";
+    REMUX_DIR = path.join(homedir(), ".remux");
+    PORT = process.env.PORT || 8767;
+    PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
+    _db = null;
+  }
+});
 
 // src/auth.ts
-var passwordTokens = /* @__PURE__ */ new Set();
+import crypto2 from "crypto";
 function parseCliPassword(argv) {
   const idx = argv.indexOf("--password");
   return idx !== -1 && idx + 1 < argv.length ? argv[idx + 1] : null;
@@ -712,7 +727,13 @@ function registerDevice(req) {
   const device = createDevice(fingerprint, trust);
   return { device, isNew: true };
 }
-var PASSWORD_PAGE = `<!doctype html>
+var passwordTokens, PASSWORD_PAGE;
+var init_auth = __esm({
+  "src/auth.ts"() {
+    "use strict";
+    init_store();
+    passwordTokens = /* @__PURE__ */ new Set();
+    PASSWORD_PAGE = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -749,11 +770,11 @@ var PASSWORD_PAGE = `<!doctype html>
   </script>
 </body>
 </html>`;
+  }
+});
 
 // src/vt-tracker.ts
 import fs2 from "fs";
-var wasmExports = null;
-var wasmMemory = null;
 async function initGhosttyVt(wasmPath2) {
   const wasmBytes = fs2.readFileSync(wasmPath2);
   const result = await WebAssembly.instantiate(wasmBytes, {
@@ -875,14 +896,17 @@ function createVtTerminal(cols, rows) {
     }
   };
 }
+var wasmExports, wasmMemory;
+var init_vt_tracker = __esm({
+  "src/vt-tracker.ts"() {
+    "use strict";
+    wasmExports = null;
+    wasmMemory = null;
+  }
+});
 
 // src/push.ts
 import webpush from "web-push";
-var VAPID_PUBLIC_KEY = "vapid_public_key";
-var VAPID_PRIVATE_KEY = "vapid_private_key";
-var VAPID_SUBJECT = "mailto:remux@localhost";
-var vapidPublicKey = null;
-var vapidReady = false;
 function initPush() {
   let pubKey = getSetting(VAPID_PUBLIC_KEY);
   let privKey = getSetting(VAPID_PRIVATE_KEY);
@@ -936,54 +960,23 @@ async function broadcastPush(title, body, excludeDeviceIds = []) {
   const promises = subs.filter((s) => !excludeSet.has(s.deviceId)).map((s) => sendPushNotification(s.deviceId, title, body));
   await Promise.allSettled(promises);
 }
+var VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, vapidPublicKey, vapidReady;
+var init_push = __esm({
+  "src/push.ts"() {
+    "use strict";
+    init_store();
+    VAPID_PUBLIC_KEY = "vapid_public_key";
+    VAPID_PRIVATE_KEY = "vapid_private_key";
+    VAPID_SUBJECT = "mailto:remux@localhost";
+    vapidPublicKey = null;
+    vapidReady = false;
+  }
+});
 
 // src/session.ts
 import fs3 from "fs";
 import { homedir as homedir2 } from "os";
 import pty from "node-pty";
-var IDLE_THRESHOLD_MS = 5 * 60 * 1e3;
-var lastOutputTimestamp = Date.now();
-var isIdle = false;
-var RingBuffer = class {
-  buf;
-  maxBytes;
-  writePos;
-  length;
-  constructor(maxBytes = 10 * 1024 * 1024) {
-    this.buf = Buffer.alloc(maxBytes);
-    this.maxBytes = maxBytes;
-    this.writePos = 0;
-    this.length = 0;
-  }
-  write(data) {
-    const bytes = typeof data === "string" ? Buffer.from(data) : data;
-    if (bytes.length >= this.maxBytes) {
-      bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
-      this.writePos = 0;
-      this.length = this.maxBytes;
-      return;
-    }
-    const space = this.maxBytes - this.writePos;
-    if (bytes.length <= space) {
-      bytes.copy(this.buf, this.writePos);
-    } else {
-      bytes.copy(this.buf, this.writePos, 0, space);
-      bytes.copy(this.buf, 0, space);
-    }
-    this.writePos = (this.writePos + bytes.length) % this.maxBytes;
-    this.length = Math.min(this.length + bytes.length, this.maxBytes);
-  }
-  read() {
-    if (this.length === 0) return Buffer.alloc(0);
-    if (this.length < this.maxBytes) {
-      return this.buf.subarray(this.writePos - this.length, this.writePos);
-    }
-    return Buffer.concat([
-      this.buf.subarray(this.writePos),
-      this.buf.subarray(0, this.writePos)
-    ]);
-  }
-};
 function getShell() {
   if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
   if (process.env.SHELL) return process.env.SHELL;
@@ -994,9 +987,6 @@ function getShell() {
   }
   return "/bin/bash";
 }
-var tabIdCounter = 0;
-var sessionMap = /* @__PURE__ */ new Map();
-var controlClients = /* @__PURE__ */ new Set();
 function processShellIntegration(data, tab, sessionName) {
   const si = tab.shellIntegration;
   const osc7Re = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
@@ -1093,6 +1083,11 @@ function createTab(session, cols = 80, rows = 24) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
     processShellIntegration(data, tab, session.name);
+    try {
+      const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
+      adapterRegistry2?.dispatchTerminalData(session.name, data);
+    } catch {
+    }
     const now = Date.now();
     if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS && !isIdle) {
       isIdle = true;
@@ -1189,10 +1184,13 @@ function attachToTab(tab, ws, cols, rows) {
   ws._remuxCols = cols;
   ws._remuxRows = rows;
   recalcTabSize(tab);
-  if (!tab.ended) {
-    setTimeout(() => {
-      tab.pty.write("\f");
-    }, 50);
+  if (!tab.ended && tab.vt) {
+    const { text } = tab.vt.textSnapshot();
+    if (text && text.trim().length > 0) {
+      setTimeout(() => {
+        tab.pty.write("\f");
+      }, 50);
+    }
   }
 }
 function detachFromTab(ws) {
@@ -1222,8 +1220,6 @@ function recalcTabSize(tab) {
     if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
-var _sendEnvelopeFn = null;
-var _getClientListFn = null;
 function setBroadcastHooks(sendFn, clientListFn) {
   _sendEnvelopeFn = sendFn;
   _getClientListFn = clientListFn;
@@ -1241,7 +1237,6 @@ function broadcastState() {
     }
   }
 }
-var PERSIST_INTERVAL_MS = 8e3;
 function persistSessions() {
   try {
     for (const session of sessionMap.values()) {
@@ -1271,10 +1266,64 @@ function restoreSessions() {
     return false;
   }
 }
-
-// src/ws-handler.ts
-import crypto3 from "crypto";
-import { WebSocketServer } from "ws";
+var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, PERSIST_INTERVAL_MS;
+var init_session = __esm({
+  "src/session.ts"() {
+    "use strict";
+    init_store();
+    init_push();
+    init_vt_tracker();
+    IDLE_THRESHOLD_MS = 5 * 60 * 1e3;
+    lastOutputTimestamp = Date.now();
+    isIdle = false;
+    RingBuffer = class {
+      buf;
+      maxBytes;
+      writePos;
+      length;
+      constructor(maxBytes = 10 * 1024 * 1024) {
+        this.buf = Buffer.alloc(maxBytes);
+        this.maxBytes = maxBytes;
+        this.writePos = 0;
+        this.length = 0;
+      }
+      write(data) {
+        const bytes = typeof data === "string" ? Buffer.from(data) : data;
+        if (bytes.length >= this.maxBytes) {
+          bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
+          this.writePos = 0;
+          this.length = this.maxBytes;
+          return;
+        }
+        const space = this.maxBytes - this.writePos;
+        if (bytes.length <= space) {
+          bytes.copy(this.buf, this.writePos);
+        } else {
+          bytes.copy(this.buf, this.writePos, 0, space);
+          bytes.copy(this.buf, 0, space);
+        }
+        this.writePos = (this.writePos + bytes.length) % this.maxBytes;
+        this.length = Math.min(this.length + bytes.length, this.maxBytes);
+      }
+      read() {
+        if (this.length === 0) return Buffer.alloc(0);
+        if (this.length < this.maxBytes) {
+          return this.buf.subarray(this.writePos - this.length, this.writePos);
+        }
+        return Buffer.concat([
+          this.buf.subarray(this.writePos),
+          this.buf.subarray(0, this.writePos)
+        ]);
+      }
+    };
+    tabIdCounter = 0;
+    sessionMap = /* @__PURE__ */ new Map();
+    controlClients = /* @__PURE__ */ new Set();
+    _sendEnvelopeFn = null;
+    _getClientListFn = null;
+    PERSIST_INTERVAL_MS = 8e3;
+  }
+});
 
 // src/workspace.ts
 function captureSnapshot(sessionName, tabId, topicId) {
@@ -1324,8 +1373,17 @@ function generateHandoffBundle() {
     keyArtifacts
   };
 }
+var init_workspace = __esm({
+  "src/workspace.ts"() {
+    "use strict";
+    init_store();
+    init_session();
+  }
+});
 
 // src/ws-handler.ts
+import crypto3 from "crypto";
+import { WebSocketServer } from "ws";
 function sendEnvelope(ws, type, payload) {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify({ v: 1, type, payload }));
@@ -1337,7 +1395,6 @@ function unwrapMessage(parsed) {
   }
   return parsed;
 }
-var clientStates = /* @__PURE__ */ new Map();
 function generateClientId() {
   return crypto3.randomBytes(4).toString("hex");
 }
@@ -1353,8 +1410,21 @@ function assignRole(ws, tabId) {
   const existingActive = getActiveClientForTab(tabId);
   if (!existingActive || existingActive === ws) {
     state.role = "active";
+    state.lastActiveAt = Date.now();
   } else {
-    state.role = "observer";
+    const activeState = clientStates.get(existingActive);
+    const isIdle2 = activeState && Date.now() - activeState.lastActiveAt > ACTIVE_IDLE_TIMEOUT_MS;
+    if (isIdle2) {
+      activeState.role = "observer";
+      sendEnvelope(existingActive, "role_changed", {
+        clientId: activeState.clientId,
+        role: "observer"
+      });
+      state.role = "active";
+      state.lastActiveAt = Date.now();
+    } else {
+      state.role = "observer";
+    }
   }
   state.currentTabId = tabId;
 }
@@ -1385,18 +1455,17 @@ function getClientList() {
   }
   return list;
 }
-var deviceSockets = /* @__PURE__ */ new Map();
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList);
-  const wss = new WebSocketServer({ noServer: true });
+  const wss2 = new WebSocketServer({ noServer: true });
   httpServer2.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === "/ws") {
-      wss.handleUpgrade(
+      wss2.handleUpgrade(
         req,
         socket,
         head,
-        (ws) => wss.emit("connection", ws, req)
+        (ws) => wss2.emit("connection", ws, req)
       );
     } else {
       socket.destroy();
@@ -1405,10 +1474,10 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   const HEARTBEAT_INTERVAL = 3e4;
   setInterval(() => {
     for (const ws of controlClients) {
-      if (ws.readyState === ws.OPEN) ws.ping();
+      if (ws.readyState === ws.OPEN) sendEnvelope(ws, "ping", {});
     }
   }, HEARTBEAT_INTERVAL);
-  wss.on("connection", (rawWs, req) => {
+  wss2.on("connection", (rawWs, req) => {
     const ws = rawWs;
     ws._remuxTabId = null;
     ws._remuxCols = 80;
@@ -1421,6 +1490,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
       clientId,
       role: "observer",
       connectedAt: Date.now(),
+      lastActiveAt: Date.now(),
       currentSession: null,
       currentTabId: null
     };
@@ -1552,7 +1622,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               found2.session.tabs = found2.session.tabs.filter(
                 (t) => t.id !== p.tabId
               );
-              if (found2.session.tabs.length === 0 && found2.session.name !== "main") {
+              if (found2.session.tabs.length === 0) {
                 sessionMap.delete(found2.session.name);
               }
             }
@@ -1609,10 +1679,19 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             } else {
               const found22 = findTab(ws._remuxTabId);
               const rawText = found22 ? found22.tab.scrollback.read().toString("utf8") : "";
-              const text = rawText.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+              const text = rawText.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "").replace(/\x1b[()][A-Z0-9]/g, "").replace(/\x1b[A-Z=><78]/gi, "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").replace(/\x7f/g, "");
+              const session = found22 ? found22.session : null;
+              const tab = found22 ? found22.tab : null;
               sendEnvelope(ws, "inspect_result", {
                 text,
-                meta: { timestamp: Date.now() }
+                meta: {
+                  session: session?.name || "",
+                  tabId: tab?.id || null,
+                  tabTitle: tab?.title || "",
+                  cols: ws._remuxCols || 80,
+                  rows: ws._remuxRows || 24,
+                  timestamp: Date.now()
+                }
               });
             }
             return;
@@ -1647,6 +1726,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               }
             }
             clientState.role = "active";
+            clientState.lastActiveAt = Date.now();
             sendEnvelope(ws, "role_changed", {
               clientId: clientState.clientId,
               role: "active"
@@ -1994,11 +2074,23 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             }
             return;
           }
+          if (p.type === "request_adapter_state") {
+            const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
+            const states = adapterRegistry2?.getAllStates() ?? [];
+            sendEnvelope(ws, "adapter_state", { adapters: states });
+            return;
+          }
           return;
-        } catch {
+        } catch (err) {
+          if (msg.startsWith("{")) {
+            console.error("[remux] JSON handler error:", err);
+            return;
+          }
         }
       }
       if (clientState.role !== "active") return;
+      clientState.lastActiveAt = Date.now();
+      if (msg.startsWith("{") && msg.includes('"type"')) return;
       const found = findTab(ws._remuxTabId);
       if (found && !found.tab.ended) {
         found.tab.pty.write(msg);
@@ -2042,8 +2134,269 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
       }
     }
   }
-  return wss;
+  return wss2;
 }
+var ACTIVE_IDLE_TIMEOUT_MS, clientStates, deviceSockets;
+var init_ws_handler = __esm({
+  "src/ws-handler.ts"() {
+    "use strict";
+    init_session();
+    init_auth();
+    init_store();
+    init_push();
+    init_store();
+    init_workspace();
+    ACTIVE_IDLE_TIMEOUT_MS = 12e4;
+    clientStates = /* @__PURE__ */ new Map();
+    deviceSockets = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/adapters/registry.ts
+var AdapterRegistry;
+var init_registry = __esm({
+  "src/adapters/registry.ts"() {
+    "use strict";
+    AdapterRegistry = class {
+      adapters = /* @__PURE__ */ new Map();
+      eventSeq = 0;
+      listeners = [];
+      register(adapter) {
+        this.adapters.set(adapter.id, adapter);
+        adapter.start?.();
+      }
+      unregister(id) {
+        const adapter = this.adapters.get(id);
+        adapter?.stop?.();
+        this.adapters.delete(id);
+      }
+      get(id) {
+        return this.adapters.get(id);
+      }
+      getAll() {
+        return Array.from(this.adapters.values());
+      }
+      getAllStates() {
+        return this.getAll().map((a) => a.getCurrentState());
+      }
+      /** Subscribe to adapter events */
+      onEvent(listener) {
+        this.listeners.push(listener);
+        return () => {
+          this.listeners = this.listeners.filter((l) => l !== listener);
+        };
+      }
+      /** Emit an event from an adapter */
+      emit(adapterId, type, data) {
+        const event = {
+          type,
+          seq: ++this.eventSeq,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          data,
+          adapterId
+        };
+        for (const listener of this.listeners) {
+          listener(event);
+        }
+      }
+      /** Forward terminal data to all passive adapters */
+      dispatchTerminalData(sessionName, data) {
+        for (const adapter of this.adapters.values()) {
+          if (adapter.mode === "passive" && adapter.onTerminalData) {
+            try {
+              adapter.onTerminalData(sessionName, data);
+            } catch {
+            }
+          }
+        }
+      }
+      /** Forward event file data to all passive adapters */
+      dispatchEventFile(path4, event) {
+        for (const adapter of this.adapters.values()) {
+          if (adapter.mode === "passive" && adapter.onEventFile) {
+            try {
+              adapter.onEventFile(path4, event);
+            } catch {
+            }
+          }
+        }
+      }
+    };
+  }
+});
+
+// src/adapters/generic-shell.ts
+var GenericShellAdapter;
+var init_generic_shell = __esm({
+  "src/adapters/generic-shell.ts"() {
+    "use strict";
+    GenericShellAdapter = class {
+      id = "generic-shell";
+      name = "Shell";
+      mode = "passive";
+      capabilities = ["cwd", "last-command", "exit-code"];
+      state = {
+        adapterId: "generic-shell",
+        name: "Shell",
+        mode: "passive",
+        capabilities: this.capabilities,
+        currentState: "idle"
+      };
+      lastCwd = null;
+      lastCommand = null;
+      onTerminalData(sessionName, data) {
+        const osc7Match = data.match(/\x1b\]7;file:\/\/[^/]*([^\x07\x1b]+)/);
+        if (osc7Match) {
+          this.lastCwd = decodeURIComponent(osc7Match[1]);
+        }
+        const osc133B = data.match(/\x1b\]133;B\x07/);
+        if (osc133B) {
+          this.state.currentState = "running";
+        }
+        const osc133D = data.match(/\x1b\]133;D;?(\d*)\x07/);
+        if (osc133D) {
+          this.state.currentState = "idle";
+        }
+      }
+      getCurrentState() {
+        return {
+          ...this.state,
+          lastEvent: this.lastCwd ? {
+            type: "cwd",
+            seq: 0,
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            data: { cwd: this.lastCwd, lastCommand: this.lastCommand },
+            adapterId: this.id
+          } : void 0
+        };
+      }
+    };
+  }
+});
+
+// src/adapters/claude-code.ts
+import * as fs4 from "fs";
+import * as path2 from "path";
+import * as os from "os";
+var ClaudeCodeAdapter;
+var init_claude_code = __esm({
+  "src/adapters/claude-code.ts"() {
+    "use strict";
+    ClaudeCodeAdapter = class {
+      id = "claude-code";
+      name = "Claude Code";
+      mode = "passive";
+      capabilities = ["run-status", "conversation-events", "tool-use"];
+      state = {
+        adapterId: "claude-code",
+        name: "Claude Code",
+        mode: "passive",
+        capabilities: this.capabilities,
+        currentState: "idle"
+      };
+      watcher = null;
+      lastFileSize = 0;
+      eventsDir;
+      onEmit;
+      constructor(onEmit) {
+        this.onEmit = onEmit;
+        this.eventsDir = path2.join(os.homedir(), ".claude", "projects");
+      }
+      start() {
+        this.watchForEvents();
+      }
+      stop() {
+        this.watcher?.close();
+        this.watcher = null;
+      }
+      onTerminalData(sessionName, data) {
+        if (data.includes("claude") || data.includes("Claude")) {
+          if (data.includes("Thinking...") || data.includes("\u23F3")) {
+            this.updateState("running");
+          } else if (data.includes("Done") || data.includes("\u2713") || data.includes("Complete")) {
+            this.updateState("idle");
+          } else if (data.includes("Permission") || data.includes("approve") || data.includes("Allow")) {
+            this.updateState("waiting_approval");
+          }
+        }
+      }
+      getCurrentState() {
+        return { ...this.state };
+      }
+      updateState(newState) {
+        if (this.state.currentState !== newState) {
+          this.state.currentState = newState;
+          if (this.onEmit) {
+            this.onEmit({
+              type: "state_change",
+              seq: Date.now(),
+              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+              data: { state: newState },
+              adapterId: this.id
+            });
+          }
+        }
+      }
+      watchForEvents() {
+        if (!fs4.existsSync(this.eventsDir)) return;
+        try {
+          this.watcher = fs4.watch(
+            this.eventsDir,
+            { recursive: true },
+            (eventType, filename) => {
+              if (filename && (filename.endsWith("events.jsonl") || filename.endsWith("conversation.jsonl"))) {
+                this.processEventFile(path2.join(this.eventsDir, filename));
+              }
+            }
+          );
+        } catch {
+        }
+      }
+      processEventFile(filePath) {
+        try {
+          const stat = fs4.statSync(filePath);
+          if (stat.size <= this.lastFileSize) return;
+          const fd = fs4.openSync(filePath, "r");
+          const buffer = Buffer.alloc(stat.size - this.lastFileSize);
+          fs4.readSync(fd, buffer, 0, buffer.length, this.lastFileSize);
+          fs4.closeSync(fd);
+          this.lastFileSize = stat.size;
+          const lines = buffer.toString().split("\n").filter((l) => l.trim());
+          for (const line of lines) {
+            try {
+              const event = JSON.parse(line);
+              this.handleConversationEvent(event);
+            } catch {
+            }
+          }
+        } catch {
+        }
+      }
+      handleConversationEvent(event) {
+        const type = event.type;
+        if (type === "assistant" || type === "tool_use") {
+          this.updateState("running");
+        } else if (type === "result" || type === "end_turn") {
+          this.updateState("idle");
+        } else if (type === "permission_request") {
+          this.updateState("waiting_approval");
+        } else if (type === "error") {
+          this.updateState("error");
+        }
+      }
+    };
+  }
+});
+
+// src/adapters/index.ts
+var init_adapters = __esm({
+  "src/adapters/index.ts"() {
+    "use strict";
+    init_registry();
+    init_generic_shell();
+    init_claude_code();
+  }
+});
 
 // src/tunnel.ts
 import { spawn, execFile } from "child_process";
@@ -2059,7 +2412,6 @@ function isCloudflaredAvailable() {
     });
   });
 }
-var TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 function startTunnel(port, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -2121,32 +2473,36 @@ function buildTunnelAccessUrl(tunnelUrl, token, password) {
   if (token) return `${tunnelUrl}?token=${token}`;
   return tunnelUrl;
 }
+var TUNNEL_URL_RE;
+var init_tunnel = __esm({
+  "src/tunnel.ts"() {
+    "use strict";
+    TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+  }
+});
 
 // src/server.ts
-var __filename = fileURLToPath(import.meta.url);
-var __dirname = path2.dirname(__filename);
-var require2 = createRequire(import.meta.url);
-var PKG = JSON.parse(
-  fs4.readFileSync(path2.join(__dirname, "package.json"), "utf8")
-);
-var VERSION = PKG.version;
-var PORT2 = process.env.PORT || 8767;
-var { TOKEN, PASSWORD } = resolveAuth(process.argv);
-var { tunnelMode } = parseTunnelArgs(process.argv);
-var tunnelProcess = null;
+var server_exports = {};
+__export(server_exports, {
+  adapterRegistry: () => adapterRegistry
+});
+import fs5 from "fs";
+import http from "http";
+import path3 from "path";
+import { createRequire } from "module";
+import { fileURLToPath } from "url";
+import qrcode from "qrcode-terminal";
 function findGhosttyWeb() {
   const ghosttyWebMain = require2.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
-  const distPath2 = path2.join(ghosttyWebRoot, "dist");
-  const wasmPath2 = path2.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs4.existsSync(path2.join(distPath2, "ghostty-web.js")) && fs4.existsSync(wasmPath2)) {
+  const distPath2 = path3.join(ghosttyWebRoot, "dist");
+  const wasmPath2 = path3.join(ghosttyWebRoot, "ghostty-vt.wasm");
+  if (fs5.existsSync(path3.join(distPath2, "ghostty-web.js")) && fs5.existsSync(wasmPath2)) {
     return { distPath: distPath2, wasmPath: wasmPath2 };
   }
   console.error("Error: ghostty-web package not found.");
   process.exit(1);
 }
-var { distPath, wasmPath } = findGhosttyWeb();
-var startupDone = false;
 async function startup() {
   getDb();
   initPush();
@@ -2171,22 +2527,129 @@ async function startup() {
     createTab(s);
   }
   setInterval(persistSessions, PERSIST_INTERVAL_MS);
+  initAdapters();
   startupDone = true;
 }
-startup().catch((e) => {
-  console.error("[startup] fatal:", e);
-  if (sessionMap.size === 0) {
-    const s = createSession("main");
-    createTab(s);
+function initAdapters() {
+  adapterRegistry.register(new GenericShellAdapter());
+  const claudeAdapter = new ClaudeCodeAdapter((event) => {
+    adapterRegistry.emit(event.adapterId, event.type, event.data);
+  });
+  adapterRegistry.register(claudeAdapter);
+}
+function serveFile(filePath, res) {
+  const ext = path3.extname(filePath);
+  fs5.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": MIME[ext] || "application/octet-stream"
+    });
+    res.end(data);
+  });
+}
+async function launchTunnel() {
+  if (tunnelMode === "disable") return;
+  const available = await isCloudflaredAvailable();
+  if (!available) {
+    if (tunnelMode === "enable") {
+      console.log(
+        "\n  [tunnel] cloudflared not found -- install it for tunnel support"
+      );
+      console.log(
+        "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
+      );
+    }
+    return;
   }
-  startupDone = true;
-});
-var HTML_TEMPLATE = `<!doctype html>
+  console.log("  [tunnel] starting cloudflare tunnel...");
+  try {
+    const { url: tunnelUrl, process: child } = await startTunnel(
+      Number(PORT2)
+    );
+    tunnelProcess = child;
+    const accessUrl = buildTunnelAccessUrl(tunnelUrl, TOKEN, PASSWORD);
+    console.log(`
+  Tunnel: ${accessUrl}
+`);
+    qrcode.generate(accessUrl, { small: true }, (code) => {
+      console.log(code);
+    });
+    child.on("close", (code) => {
+      if (code !== null && code !== 0) {
+        console.log(`  [tunnel] cloudflared exited (code ${code})`);
+      }
+      tunnelProcess = null;
+    });
+  } catch (err) {
+    console.log(`  [tunnel] failed to start: ${err.message}`);
+    tunnelProcess = null;
+  }
+}
+function shutdown() {
+  persistSessions();
+  closeDb();
+  if (tunnelProcess) {
+    try {
+      tunnelProcess.kill("SIGTERM");
+    } catch {
+    }
+    tunnelProcess = null;
+  }
+  for (const session of sessionMap.values()) {
+    for (const tab of session.tabs) {
+      if (tab.vt) {
+        tab.vt.dispose();
+        tab.vt = null;
+      }
+      if (!tab.ended) tab.pty.kill();
+    }
+  }
+  process.exit(0);
+}
+var __filename, __dirname, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
+var init_server = __esm({
+  "src/server.ts"() {
+    init_auth();
+    init_vt_tracker();
+    init_store();
+    init_push();
+    init_session();
+    init_ws_handler();
+    init_adapters();
+    init_tunnel();
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path3.dirname(__filename);
+    require2 = createRequire(import.meta.url);
+    PKG = JSON.parse(
+      fs5.readFileSync(path3.join(__dirname, "package.json"), "utf8")
+    );
+    VERSION = PKG.version;
+    PORT2 = process.env.PORT || 8767;
+    ({ TOKEN, PASSWORD } = resolveAuth(process.argv));
+    ({ tunnelMode } = parseTunnelArgs(process.argv));
+    tunnelProcess = null;
+    ({ distPath, wasmPath } = findGhosttyWeb());
+    startupDone = false;
+    adapterRegistry = new AdapterRegistry();
+    startup().catch((e) => {
+      console.error("[startup] fatal:", e);
+      if (sessionMap.size === 0) {
+        const s = createSession("main");
+        createTab(s);
+      }
+      startupDone = true;
+    });
+    HTML_TEMPLATE = `<!doctype html>
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Remux</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u2B1B</text></svg>">
     <style>
       /* -- Theme Variables -- */
       [data-theme="dark"] {
@@ -2296,7 +2759,7 @@ var HTML_TEMPLATE = `<!doctype html>
 
       /* -- Tab bar (Chrome-style) -- */
       .tab-bar { background: var(--bg-tab-bar); display: flex; align-items: flex-end; flex-shrink: 0;
-        min-height: 36px; padding: 0 0 0 0; }
+        min-height: 36px; padding: 0 0 0 0; position: relative; z-index: 101; }
       .tab-toggle { padding: 8px 10px; background: none; border: none; color: var(--text-muted);
         cursor: pointer; font-size: 16px; flex-shrink: 0; align-self: center; }
       .tab-toggle:hover { color: var(--text-bright); }
@@ -2443,8 +2906,8 @@ var HTML_TEMPLATE = `<!doctype html>
       .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
       .ws-handoff-list li { margin-bottom: 2px; }
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
-        line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
-        user-select: text; -webkit-user-select: text; }
+        line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
+        tab-size: 8; user-select: text; -webkit-user-select: text; }
       #inspect-content mark { background: #ffbd2e; color: #1e1e1e; border-radius: 2px; }
       #inspect-header { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px;
         color: var(--text-dim); padding: 8px 0; border-bottom: 1px solid var(--inspect-meta-border); margin-bottom: 8px;
@@ -2806,12 +3269,17 @@ var HTML_TEMPLATE = `<!doctype html>
           el.addEventListener('pointerdown', e => {
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
-              if (sessions.length <= 1) return; // don't delete last session
+              if (!confirm('Delete session "' + e.target.dataset.del + '"? All tabs will be closed.')) return;
               sendCtrl({ type: 'delete_session', name: e.target.dataset.del });
-              // if deleting current, switch to first other
+              // if deleting current, switch to another or create fresh
               if (e.target.dataset.del === currentSession) {
                 const other = sessions.find(x => x.name !== currentSession);
-                if (other) selectSession(other.name);
+                if (other) {
+                  selectSession(other.name);
+                } else {
+                  // Last session deleted \u2014 server will create a new one on next attach
+                  sendCtrl({ type: 'new_session', name: 'main', cols: term.cols, rows: term.rows });
+                }
               }
               return;
             }
@@ -2862,6 +3330,8 @@ var HTML_TEMPLATE = `<!doctype html>
           text.textContent = 'Active';
           btn.textContent = 'Release';
           btn.style.display = 'inline-block';
+          // Auto-focus terminal when becoming active so keystrokes reach xterm
+          if (currentView === 'live') setTimeout(() => term.focus(), 50);
         } else {
           dot.textContent = '\u25CB';
           text.textContent = 'Observer';
@@ -2975,14 +3445,26 @@ var HTML_TEMPLATE = `<!doctype html>
             try {
               const parsed = JSON.parse(e.data);
               // Handle both envelope (v:1) and legacy messages
-              const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
+              // Unwrap envelope: spread payload first, then override type with the
+              // envelope's type to prevent payload.type (e.g. artifact type "snapshot")
+              // from colliding with the message type (e.g. "snapshot_captured")
+              const msg = parsed.v === 1 ? { ...(parsed.payload || {}), type: parsed.type } : parsed;
+              // Server heartbeat \u2014 just keep connection alive (lastMessageAt already updated)
+              if (msg.type === 'ping') return;
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
-                // Request device list after auth
+                // Request device list and workspace data after auth
                 sendCtrl({ type: 'list_devices' });
+                sendCtrl({ type: 'list_notes' });
                 return;
               }
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
+              // Generic server error \u2014 show to user (e.g. pair code trust errors)
+              if (msg.type === 'error') {
+                console.warn('[remux] server error:', msg.reason || 'unknown');
+                alert('Error: ' + (msg.reason || 'unknown error'));
+                return;
+              }
               if (msg.type === 'device_list') {
                 devicesList = msg.devices || [];
                 renderDevices(); return;
@@ -3041,6 +3523,11 @@ var HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'state') {
                 sessions = msg.sessions || [];
                 clientsList = msg.clients || [];
+                // Re-derive own role from authoritative server state
+                if (myClientId) {
+                  const me = clientsList.find(c => c.clientId === myClientId);
+                  if (me) myRole = me.role;
+                }
                 renderSessions(); renderTabs(); renderRole(); return;
               }
               if (msg.type === 'attached') {
@@ -3073,12 +3560,22 @@ var HTML_TEMPLATE = `<!doctype html>
               }
               // Workspace message handlers
               if (msg.type === 'topic_list') { wsTopics = msg.topics || []; renderWorkspaceTopics(); return; }
-              if (msg.type === 'topic_created') { refreshWorkspace(); return; }
+              if (msg.type === 'topic_created') {
+                // Optimistic render: add topic directly
+                if (msg.id && msg.title) wsTopics.unshift({ id: msg.id, sessionName: msg.sessionName, title: msg.title, createdAt: msg.createdAt, updatedAt: msg.updatedAt });
+                renderWorkspaceTopics();
+                return;
+              }
               if (msg.type === 'topic_deleted') { refreshWorkspace(); return; }
               if (msg.type === 'run_list') { wsRuns = msg.runs || []; renderWorkspaceRuns(); return; }
               if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
-              if (msg.type === 'snapshot_captured') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'snapshot_captured') {
+                // Optimistic render: add artifact directly
+                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, createdAt: msg.createdAt || Date.now() });
+                renderWorkspaceArtifacts();
+                return;
+              }
               if (msg.type === 'approval_list') { wsApprovals = msg.approvals || []; renderWorkspaceApprovals(); return; }
               if (msg.type === 'approval_created') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'approval_resolved') { if (currentView === 'workspace') refreshWorkspace(); return; }
@@ -3088,9 +3585,21 @@ var HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'handoff_bundle') { renderHandoffBundle(msg); return; }
               // Notes
               if (msg.type === 'note_list') { wsNotes = msg.notes || []; renderNotes(); return; }
-              if (msg.type === 'note_created' || msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
+              if (msg.type === 'note_created') {
+                // Optimistic render: add note directly without waiting for list refresh
+                if (msg.id && msg.content) wsNotes.unshift({ id: msg.id, content: msg.content, pinned: msg.pinned || false, createdAt: msg.createdAt, updatedAt: msg.updatedAt });
+                renderNotes();
+                return;
+              }
+              if (msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
               // Commands
               if (msg.type === 'command_list') { wsCommands = msg.commands || []; renderCommands(); return; }
+              // Unrecognized enveloped control message \u2014 discard, never write to terminal
+              if (parsed.v === 1) {
+                console.warn('[remux] unhandled message type:', msg.type);
+                return;
+              }
+              // Non-enveloped JSON (e.g. PTY output that looks like JSON) \u2014 fall through to term.write
             } catch {}
           }
           term.write(e.data);
@@ -3153,9 +3662,9 @@ var HTML_TEMPLATE = `<!doctype html>
         }
         if (mode === 'live') { term.focus(); fitAddon.fit(); }
       }
-      $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); setView('live'); });
-      $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); setView('inspect'); });
-      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); setView('workspace'); });
+      $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('live'); });
+      $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('inspect'); });
+      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('workspace'); });
 
       // -- Inspect search --
       function applyInspectSearch() {
@@ -3306,7 +3815,9 @@ var HTML_TEMPLATE = `<!doctype html>
         } catch (err) {
           console.error('[push] subscribe failed:', err);
           if (Notification.permission === 'denied') {
-            alert('Notification permission denied. Please enable in browser settings.');
+            $('push-label').textContent = 'Permission Denied';
+          } else {
+            $('push-label').textContent = 'Not Available';
           }
         }
       }
@@ -3430,7 +3941,11 @@ var HTML_TEMPLATE = `<!doctype html>
       function renderWorkspaceArtifacts() {
         const el = $('ws-artifacts');
         if (!el) return;
-        const recent = wsArtifacts.slice(-10).reverse();
+        // Filter artifacts to current session (title contains "session / Tab")
+        const sessionArtifacts = wsArtifacts.filter(a =>
+          !a.title || a.title.includes(currentSession + ' /') || a.title.includes(currentSession + '/')
+        );
+        const recent = sessionArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
         el.innerHTML = recent.map(a =>
           '<div class="ws-card">' +
@@ -3447,13 +3962,13 @@ var HTML_TEMPLATE = `<!doctype html>
         const title = prompt('Topic title:');
         if (title && title.trim()) {
           sendCtrl({ type: 'create_topic', sessionName: currentSession, title: title.trim() });
-          setTimeout(refreshWorkspace, 200);
+          // Optimistic render in topic_created handler, no delayed refresh needed
         }
       });
 
       $('btn-capture-snapshot').addEventListener('click', () => {
         sendCtrl({ type: 'capture_snapshot' });
-        setTimeout(refreshWorkspace, 500);
+        // Optimistic render in snapshot_captured handler, no delayed refresh needed
       });
 
       // -- Search --
@@ -3546,6 +4061,15 @@ var HTML_TEMPLATE = `<!doctype html>
         if (!content) return;
         sendCtrl({ type: 'create_note', content });
         input.value = '';
+        // Feedback: show saving indicator, revert if no response in 3s
+        const el = $('ws-notes');
+        const prevHtml = el.innerHTML;
+        el.innerHTML = '<div class="ws-empty">Saving...</div>';
+        setTimeout(() => {
+          if (el.innerHTML.includes('Saving...')) {
+            el.innerHTML = '<div class="ws-empty" style="color:var(--text-dim)">Note may not have saved \u2014 check server logs</div>';
+          }
+        }, 3000);
       });
       $('ws-note-input').addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); $('btn-add-note').click(); }
@@ -3636,7 +4160,7 @@ var HTML_TEMPLATE = `<!doctype html>
     </script>
   </body>
 </html>`;
-var SW_SCRIPT = `self.addEventListener('push', function(event) {
+    SW_SCRIPT = `self.addEventListener('push', function(event) {
   if (!event.data) return;
   try {
     var data = event.data.json();
@@ -3673,160 +4197,110 @@ self.addEventListener('notificationclick', function(event) {
   );
 });
 `;
-var MIME = {
-  ".html": "text/html",
-  ".js": "application/javascript",
-  ".wasm": "application/wasm",
-  ".css": "text/css",
-  ".json": "application/json"
-};
-var httpServer = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname === "/auth" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => body += chunk);
-    req.on("end", () => {
-      const params = new URLSearchParams(body);
-      const submitted = params.get("password");
-      if (PASSWORD && submitted === PASSWORD) {
-        const sessionToken = generateToken();
-        passwordTokens.add(sessionToken);
-        res.writeHead(302, { Location: `/?token=${sessionToken}` });
-        res.end();
-      } else {
-        res.writeHead(302, { Location: "/?error=1" });
-        res.end();
-      }
-    });
-    return;
-  }
-  if (url.pathname === "/" || url.pathname === "/index.html") {
-    const urlToken = url.searchParams.get("token");
-    const isAuthed = !TOKEN && !PASSWORD || // no auth configured (impossible after auto-gen, but safe)
-    TOKEN != null && urlToken === TOKEN || passwordTokens.has(urlToken);
-    if (!isAuthed) {
-      if (PASSWORD) {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(PASSWORD_PAGE);
+    MIME = {
+      ".html": "text/html",
+      ".js": "application/javascript",
+      ".wasm": "application/wasm",
+      ".css": "text/css",
+      ".json": "application/json"
+    };
+    httpServer = http.createServer((req, res) => {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (url.pathname === "/auth" && req.method === "POST") {
+        let body = "";
+        req.on("data", (chunk) => body += chunk);
+        req.on("end", () => {
+          const params = new URLSearchParams(body);
+          const submitted = params.get("password");
+          if (PASSWORD && submitted === PASSWORD) {
+            const sessionToken = generateToken();
+            passwordTokens.add(sessionToken);
+            res.writeHead(302, { Location: `/?token=${sessionToken}` });
+            res.end();
+          } else {
+            res.writeHead(302, { Location: "/?error=1" });
+            res.end();
+          }
+        });
         return;
       }
-      res.writeHead(403, { "Content-Type": "text/plain" });
-      res.end("Forbidden: invalid or missing token");
-      return;
-    }
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(HTML_TEMPLATE);
-    return;
-  }
-  if (url.pathname.startsWith("/dist/")) {
-    return serveFile(path2.join(distPath, url.pathname.slice(6)), res);
-  }
-  if (url.pathname === "/ghostty-vt.wasm") {
-    return serveFile(wasmPath, res);
-  }
-  if (url.pathname === "/sw.js") {
-    res.writeHead(200, {
-      "Content-Type": "application/javascript",
-      "Service-Worker-Allowed": "/"
-    });
-    res.end(SW_SCRIPT);
-    return;
-  }
-  res.writeHead(404);
-  res.end("Not Found");
-});
-function serveFile(filePath, res) {
-  const ext = path2.extname(filePath);
-  fs4.readFile(filePath, (err, data) => {
-    if (err) {
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        const urlToken = url.searchParams.get("token");
+        const isAuthed = !TOKEN && !PASSWORD || // no auth configured (impossible after auto-gen, but safe)
+        TOKEN != null && urlToken === TOKEN || passwordTokens.has(urlToken);
+        if (!isAuthed) {
+          if (PASSWORD) {
+            res.writeHead(200, { "Content-Type": "text/html" });
+            res.end(PASSWORD_PAGE);
+            return;
+          }
+          res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remux</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u2B1B</text></svg>"><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1e1e1e;color:#ccc}div{text-align:center;max-width:400px;padding:2rem}h1{font-size:1.5rem;margin:0 0 1rem}p{color:#888;line-height:1.6}code{background:#333;padding:2px 6px;border-radius:3px;font-size:0.9em}</style></head><body><div><h1>Remux</h1><p>Access requires a valid token.</p><p>Add <code>?token=YOUR_TOKEN</code> to the URL.</p></div></body></html>`);
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(HTML_TEMPLATE);
+        return;
+      }
+      if (url.pathname.startsWith("/dist/")) {
+        return serveFile(path3.join(distPath, url.pathname.slice(6)), res);
+      }
+      if (url.pathname === "/ghostty-vt.wasm") {
+        return serveFile(wasmPath, res);
+      }
+      if (url.pathname === "/sw.js") {
+        res.writeHead(200, {
+          "Content-Type": "application/javascript",
+          "Service-Worker-Allowed": "/"
+        });
+        res.end(SW_SCRIPT);
+        return;
+      }
       res.writeHead(404);
       res.end("Not Found");
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Type": MIME[ext] || "application/octet-stream"
     });
-    res.end(data);
-  });
-}
-setupWebSocket(httpServer, TOKEN, PASSWORD);
-httpServer.listen(PORT2, () => {
-  let url = `http://localhost:${PORT2}`;
-  if (TOKEN) url += `?token=${TOKEN}`;
-  console.log(`
+    wss = setupWebSocket(httpServer, TOKEN, PASSWORD);
+    adapterRegistry.onEvent((event) => {
+      const envelope = JSON.stringify({
+        v: 1,
+        type: "adapter_event",
+        domain: "semantic",
+        emittedAt: event.timestamp,
+        source: "server",
+        payload: event
+      });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) {
+          if (client._remuxAuthed) {
+            client.send(envelope);
+          }
+        }
+      }
+    });
+    httpServer.listen(PORT2, () => {
+      let url = `http://localhost:${PORT2}`;
+      if (TOKEN) url += `?token=${TOKEN}`;
+      console.log(`
   Remux running at ${url}
 `);
-  if (PASSWORD) {
-    console.log(`  Password authentication enabled`);
-    console.log(`  Login page: http://localhost:${PORT2}
+      if (PASSWORD) {
+        console.log(`  Password authentication enabled`);
+        console.log(`  Login page: http://localhost:${PORT2}
 `);
-  } else if (TOKEN) {
-    console.log(`  Token: ${TOKEN}
+      } else if (TOKEN) {
+        console.log(`  Token: ${TOKEN}
 `);
+      }
+      qrcode.generate(url, { small: true }, (code) => {
+        console.log(code);
+      });
+      launchTunnel();
+    });
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
   }
-  qrcode.generate(url, { small: true }, (code) => {
-    console.log(code);
-  });
-  launchTunnel();
 });
-async function launchTunnel() {
-  if (tunnelMode === "disable") return;
-  const available = await isCloudflaredAvailable();
-  if (!available) {
-    if (tunnelMode === "enable") {
-      console.log(
-        "\n  [tunnel] cloudflared not found -- install it for tunnel support"
-      );
-      console.log(
-        "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
-      );
-    }
-    return;
-  }
-  console.log("  [tunnel] starting cloudflare tunnel...");
-  try {
-    const { url: tunnelUrl, process: child } = await startTunnel(
-      Number(PORT2)
-    );
-    tunnelProcess = child;
-    const accessUrl = buildTunnelAccessUrl(tunnelUrl, TOKEN, PASSWORD);
-    console.log(`
-  Tunnel: ${accessUrl}
-`);
-    qrcode.generate(accessUrl, { small: true }, (code) => {
-      console.log(code);
-    });
-    child.on("close", (code) => {
-      if (code !== null && code !== 0) {
-        console.log(`  [tunnel] cloudflared exited (code ${code})`);
-      }
-      tunnelProcess = null;
-    });
-  } catch (err) {
-    console.log(`  [tunnel] failed to start: ${err.message}`);
-    tunnelProcess = null;
-  }
-}
-function shutdown() {
-  persistSessions();
-  closeDb();
-  if (tunnelProcess) {
-    try {
-      tunnelProcess.kill("SIGTERM");
-    } catch {
-    }
-    tunnelProcess = null;
-  }
-  for (const session of sessionMap.values()) {
-    for (const tab of session.tabs) {
-      if (tab.vt) {
-        tab.vt.dispose();
-        tab.vt = null;
-      }
-      if (!tab.ended) tab.pty.kill();
-    }
-  }
-  process.exit(0);
-}
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+init_server();
+export {
+  adapterRegistry
+};
