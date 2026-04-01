@@ -7,6 +7,7 @@ import RemuxKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
+    private var menuBarManager: MenuBarManager?
 
     @MainActor
     let state = RemuxState()
@@ -14,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainWindow()
         setupStatusItem()
+        menuBarManager = MenuBarManager(state: state)
         // Auto-connect after a brief delay to ensure UI is ready
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             Task { @MainActor in

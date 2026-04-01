@@ -1,0 +1,112 @@
+import AppKit
+import RemuxKit
+
+/// Manages the native macOS menu bar.
+@MainActor
+final class MenuBarManager {
+    private weak var state: RemuxState?
+
+    init(state: RemuxState) {
+        self.state = state
+        setupMenuBar()
+    }
+
+    private func setupMenuBar() {
+        let mainMenu = NSMenu()
+
+        // App menu
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "About Remux", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings...", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Remux", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Remux", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appMenuItem = NSMenuItem()
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // File menu
+        let fileMenu = NSMenu(title: "File")
+        let newTab = fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
+        newTab.target = self
+        let closeTab = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeCurrentTab(_:)), keyEquivalent: "w")
+        closeTab.target = self
+        fileMenu.addItem(.separator())
+        let newSession = fileMenu.addItem(withTitle: "New Session", action: #selector(newSession(_:)), keyEquivalent: "n")
+        newSession.keyEquivalentModifierMask = [.command, .shift]
+        newSession.target = self
+        let fileMenuItem = NSMenuItem()
+        fileMenuItem.submenu = fileMenu
+        mainMenu.addItem(fileMenuItem)
+
+        // Edit menu
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editMenuItem = NSMenuItem()
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        // View menu
+        let viewMenu = NSMenu(title: "View")
+        let toggleSidebar = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+        toggleSidebar.keyEquivalentModifierMask = [.command, .control]
+        toggleSidebar.target = self
+        let viewMenuItem = NSMenuItem()
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
+        // Window menu
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        let windowMenuItem = NSMenuItem()
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+        NSApp.windowsMenu = windowMenu
+
+        // Help menu
+        let helpMenu = NSMenu(title: "Help")
+        let helpMenuItem = NSMenuItem()
+        helpMenuItem.submenu = helpMenu
+        mainMenu.addItem(helpMenuItem)
+        NSApp.helpMenu = helpMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func showSettings(_ sender: Any?) {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    @objc private func newTab(_ sender: Any?) {
+        state?.createTab()
+    }
+
+    @objc private func closeCurrentTab(_ sender: Any?) {
+        guard let state, !state.tabs.isEmpty else { return }
+        let activeTab = state.tabs.first { $0.index == state.activeTabIndex }
+        if let pane = activeTab?.panes.first {
+            state.closeTab(id: pane.id)
+        }
+    }
+
+    @objc private func newSession(_ sender: Any?) {
+        let name = "session-\(Int.random(in: 1000...9999))"
+        state?.createSession(name: name)
+    }
+
+    @objc private func toggleSidebar(_ sender: Any?) {
+        NSApp.keyWindow?.contentView?.window?.firstResponder?.tryToPerform(
+            #selector(NSSplitViewController.toggleSidebar(_:)), with: nil
+        )
+    }
+}

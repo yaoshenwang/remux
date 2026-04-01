@@ -7,7 +7,7 @@ struct RemuxApp: App {
 
     var body: some Scene {
         Settings {
-            Text("Remux Settings")
+            SettingsView()
         }
     }
 }
