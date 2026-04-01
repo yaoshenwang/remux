@@ -1007,6 +1007,32 @@ export function setupWebSocket(
             return;
           }
 
+          // ── E11: Git / Review ──
+
+          if (p.type === "git_status") {
+            const { getGitStatus } = require("./git-service.js");
+            getGitStatus().then((status: any) => sendEnvelope(ws, "git_status_result", status)).catch(() => {});
+            return;
+          }
+
+          if (p.type === "git_diff") {
+            const { getGitDiff } = require("./git-service.js");
+            getGitDiff(p.base).then((diff: any) => sendEnvelope(ws, "git_diff_result", diff)).catch(() => {});
+            return;
+          }
+
+          if (p.type === "git_worktrees") {
+            const { getWorktrees } = require("./git-service.js");
+            getWorktrees().then((worktrees: any) => sendEnvelope(ws, "git_worktrees_result", { worktrees })).catch(() => {});
+            return;
+          }
+
+          if (p.type === "git_compare") {
+            const { compareBranches } = require("./git-service.js");
+            compareBranches(p.base || "main", p.head || "HEAD").then((result: any) => sendEnvelope(ws, "git_compare_result", result)).catch(() => {});
+            return;
+          }
+
           // ── E10: Adapter Platform ──
 
           if (p.type === "request_adapter_state") {
