@@ -24,13 +24,20 @@ final class NotificationManager: NSObject {
     private var lastSystemNotification = Date.distantPast
     private let systemNotificationCooldown: TimeInterval = 30
 
+    /// Whether UNUserNotificationCenter is available (requires app bundle context)
+    private let notificationsAvailable: Bool
+
     override init() {
+        // UNUserNotificationCenter.current() crashes if not running inside an app bundle
+        notificationsAvailable = Bundle.main.bundleIdentifier != nil
         super.init()
+        guard notificationsAvailable else { return }
         UNUserNotificationCenter.current().delegate = self
         requestPermission()
     }
 
     private func requestPermission() {
+        guard notificationsAvailable else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
@@ -54,6 +61,7 @@ final class NotificationManager: NSObject {
     }
 
     private func sendSystemNotification(_ notification: TerminalNotification) {
+        guard notificationsAvailable else { return }
         let now = Date()
         guard now.timeIntervalSince(lastSystemNotification) > systemNotificationCooldown else { return }
         lastSystemNotification = now

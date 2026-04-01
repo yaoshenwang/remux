@@ -3295,13 +3295,14 @@ var init_server = __esm({
       /* -- Mobile -- */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
-          margin-left: 0; transform: translateX(-100%); box-shadow: none;
-          transition: transform .2s ease, box-shadow .2s ease; }
+          width: 260px; margin-left: 0; transform: translateX(-100%); box-shadow: none;
+          transition: transform .2s ease, box-shadow .2s ease; overflow-y: auto; }
         .sidebar.open { transform: translateX(0); box-shadow: 4px 0 20px rgba(0,0,0,.5); }
         .sidebar-overlay { display: none; position: fixed; inset: 0;
-          background: rgba(0,0,0,.4); z-index: 99; }
-        .sidebar-overlay.visible { display: block; }
-        .main { width: 100vw; min-width: 0; }
+          background: rgba(0,0,0,.4); z-index: 99; pointer-events: none; }
+        .sidebar-overlay.visible { display: block; pointer-events: auto; }
+        .main { margin-left: 0 !important; width: 100vw; min-width: 0; }
+        .tab-bar { overflow-x: auto; }
         .session-item { min-height: 44px; } /* touch-friendly */
         .tab { min-height: 36px; }
       }
