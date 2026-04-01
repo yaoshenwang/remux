@@ -1148,6 +1148,7 @@ function createTab(session, cols = 80, rows = 24) {
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
+    if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
     processShellIntegration(data, tab, session.name);
     try {
       const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
@@ -1298,6 +1299,10 @@ function setBroadcastHooks(sendFn, clientListFn) {
   _sendEnvelopeFn = sendFn;
   _getClientListFn = clientListFn;
 }
+function setBufferHooks(bufferTabOutputFn, bufferStateFn) {
+  _bufferTabOutputFn = bufferTabOutputFn;
+  _bufferStateForDisconnectedFn = bufferStateFn;
+}
 function broadcastState() {
   const state = getState();
   const clients = _getClientListFn ? _getClientListFn() : [];
@@ -1310,6 +1315,7 @@ function broadcastState() {
       }
     }
   }
+  if (_bufferStateForDisconnectedFn) _bufferStateForDisconnectedFn();
 }
 function persistSessions() {
   try {
@@ -1340,7 +1346,7 @@ function restoreSessions() {
     return false;
   }
 }
-var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, PERSIST_INTERVAL_MS;
+var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
 var init_session = __esm({
   "src/session.ts"() {
     "use strict";
@@ -1395,7 +1401,116 @@ var init_session = __esm({
     controlClients = /* @__PURE__ */ new Set();
     _sendEnvelopeFn = null;
     _getClientListFn = null;
+    _bufferTabOutputFn = null;
+    _bufferStateForDisconnectedFn = null;
     PERSIST_INTERVAL_MS = 8e3;
+  }
+});
+
+// src/message-buffer.ts
+var MessageBuffer, BufferRegistry;
+var init_message_buffer = __esm({
+  "src/message-buffer.ts"() {
+    "use strict";
+    MessageBuffer = class {
+      buffer = [];
+      maxSize;
+      maxAgeMs;
+      constructor(maxSize = 1e3, maxAgeMs = 10 * 60 * 1e3) {
+        this.maxSize = maxSize;
+        this.maxAgeMs = maxAgeMs;
+      }
+      /**
+       * Add a message to the buffer.
+       * Evicts the oldest message if buffer is at capacity.
+       */
+      push(data) {
+        if (this.buffer.length >= this.maxSize) {
+          this.buffer.shift();
+        }
+        this.buffer.push({ timestamp: Date.now(), data });
+      }
+      /**
+       * Return all messages (optionally since a given timestamp).
+       * Filters out expired messages (older than maxAgeMs).
+       * Clears returned messages from the buffer.
+       */
+      drain(since) {
+        const now = Date.now();
+        const cutoff = now - this.maxAgeMs;
+        let result = this.buffer.filter((m) => m.timestamp > cutoff);
+        if (since !== void 0) {
+          result = result.filter((m) => m.timestamp > since);
+        }
+        this.buffer = [];
+        return result;
+      }
+      /**
+       * Clear all messages from the buffer.
+       */
+      clear() {
+        this.buffer = [];
+      }
+      /**
+       * Number of messages currently in the buffer.
+       */
+      get size() {
+        return this.buffer.length;
+      }
+      /**
+       * Remove messages older than maxAgeMs.
+       */
+      pruneExpired() {
+        const cutoff = Date.now() - this.maxAgeMs;
+        this.buffer = this.buffer.filter((m) => m.timestamp > cutoff);
+      }
+    };
+    BufferRegistry = class {
+      buffers = /* @__PURE__ */ new Map();
+      cleanupInterval = null;
+      constructor() {
+        this.cleanupInterval = setInterval(() => this.cleanup(), 6e4);
+      }
+      /**
+       * Get or create a MessageBuffer for a device.
+       */
+      getOrCreate(deviceId) {
+        let buf = this.buffers.get(deviceId);
+        if (!buf) {
+          buf = new MessageBuffer();
+          this.buffers.set(deviceId, buf);
+        }
+        return buf;
+      }
+      /**
+       * Remove the buffer for a device.
+       */
+      remove(deviceId) {
+        this.buffers.delete(deviceId);
+      }
+      /**
+       * Remove empty buffers that have no messages (stale).
+       * Prune expired messages in all remaining buffers.
+       */
+      cleanup() {
+        for (const [deviceId, buf] of this.buffers) {
+          buf.pruneExpired();
+          if (buf.size === 0) {
+            this.buffers.delete(deviceId);
+          }
+        }
+      }
+      /**
+       * Tear down: clear the cleanup interval and all buffers.
+       */
+      destroy() {
+        if (this.cleanupInterval) {
+          clearInterval(this.cleanupInterval);
+          this.cleanupInterval = null;
+        }
+        this.buffers.clear();
+      }
+    };
   }
 });
 
@@ -1594,6 +1709,31 @@ var init_git_service = __esm({
 // src/ws-handler.ts
 import crypto3 from "crypto";
 import { WebSocketServer } from "ws";
+function bufferForDevice(deviceId, type, payload) {
+  if (!disconnectedDevices.has(deviceId)) return;
+  const buf = bufferRegistry.getOrCreate(deviceId);
+  buf.push(JSON.stringify({ v: 1, type, payload }));
+}
+function bufferRawForDevice(deviceId, data) {
+  if (!disconnectedDevices.has(deviceId)) return;
+  const buf = bufferRegistry.getOrCreate(deviceId);
+  buf.push(data);
+}
+function bufferTabOutput(tabId, data) {
+  for (const [deviceId, watchingTabId] of disconnectedDeviceTab) {
+    if (watchingTabId === tabId) {
+      bufferRawForDevice(deviceId, data);
+    }
+  }
+}
+function bufferStateForDisconnected() {
+  if (disconnectedDevices.size === 0) return;
+  const state = getState();
+  const clients = getClientList();
+  for (const deviceId of disconnectedDevices) {
+    bufferForDevice(deviceId, "state", { sessions: state, clients });
+  }
+}
 function sendEnvelope(ws, type, payload) {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify({ v: 1, type, payload }));
@@ -1667,6 +1807,7 @@ function getClientList() {
 }
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList);
+  setBufferHooks(bufferTabOutput, bufferStateForDisconnected);
   const wss2 = new WebSocketServer({ noServer: true });
   httpServer2.on("upgrade", (req, socket, head) => {
     if ("setNoDelay" in socket) socket.setNoDelay(true);
@@ -1776,6 +1917,27 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
         try {
           const rawParsed = JSON.parse(msg);
           const p = unwrapMessage(rawParsed);
+          if (p.type === "resume") {
+            const resumeDeviceId = p.deviceId || ws._remuxDeviceId;
+            if (resumeDeviceId && disconnectedDevices.has(resumeDeviceId)) {
+              const buf = bufferRegistry.getOrCreate(resumeDeviceId);
+              const messages = buf.drain(p.lastTimestamp || void 0);
+              for (const m of messages) {
+                if (ws.readyState === ws.OPEN) {
+                  ws.send(m.data);
+                }
+              }
+              disconnectedDevices.delete(resumeDeviceId);
+              disconnectedDeviceTab.delete(resumeDeviceId);
+              bufferRegistry.remove(resumeDeviceId);
+              sendEnvelope(ws, "resume_complete", {
+                replayed: messages.length
+              });
+            } else {
+              sendEnvelope(ws, "resume_complete", { replayed: 0 });
+            }
+            return;
+          }
           if (p.type === "attach_first") {
             const name = p.session || getFirstSessionName() || "default";
             const session = createSession(name);
@@ -2363,7 +2525,16 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
         const sockets = deviceSockets.get(ws._remuxDeviceId);
         if (sockets) {
           sockets.delete(ws);
-          if (sockets.size === 0) deviceSockets.delete(ws._remuxDeviceId);
+          if (sockets.size === 0) {
+            deviceSockets.delete(ws._remuxDeviceId);
+            if (ws._remuxAuthed) {
+              disconnectedDevices.add(ws._remuxDeviceId);
+              bufferRegistry.getOrCreate(ws._remuxDeviceId);
+              if (tabId != null) {
+                disconnectedDeviceTab.set(ws._remuxDeviceId, tabId);
+              }
+            }
+          }
         }
       }
       detachFromTab(ws);
@@ -2397,16 +2568,20 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   }
   return wss2;
 }
-var ACTIVE_IDLE_TIMEOUT_MS, clientStates, deviceSockets;
+var bufferRegistry, disconnectedDevices, disconnectedDeviceTab, ACTIVE_IDLE_TIMEOUT_MS, clientStates, deviceSockets;
 var init_ws_handler = __esm({
   "src/ws-handler.ts"() {
     "use strict";
+    init_message_buffer();
     init_session();
     init_auth();
     init_store();
     init_push();
     init_store();
     init_workspace();
+    bufferRegistry = new BufferRegistry();
+    disconnectedDevices = /* @__PURE__ */ new Set();
+    disconnectedDeviceTab = /* @__PURE__ */ new Map();
     ACTIVE_IDLE_TIMEOUT_MS = 12e4;
     clientStates = /* @__PURE__ */ new Map();
     deviceSockets = /* @__PURE__ */ new Map();
@@ -3775,6 +3950,10 @@ var init_server = __esm({
       let lastMessageAt = Date.now();
       let heartbeatChecker = null;
 
+      // Track last received message timestamp for session recovery
+      let lastReceivedTimestamp = 0;
+      let isResuming = false;
+
       function startHeartbeat() {
         lastMessageAt = Date.now();
         if (heartbeatChecker) clearInterval(heartbeatChecker);
@@ -3821,6 +4000,13 @@ var init_server = __esm({
             }
             ws.send(JSON.stringify({ type: 'auth', token: urlToken, deviceId: localStorage.getItem('remux-device-id') }));
           }
+          // Session recovery: if we have a previous timestamp, request buffered messages
+          const deviceId = localStorage.getItem('remux-device-id');
+          if (lastReceivedTimestamp > 0 && deviceId) {
+            isResuming = true;
+            setStatus('connecting', 'Resuming session...');
+            sendCtrl({ type: 'resume', deviceId: deviceId, lastTimestamp: lastReceivedTimestamp });
+          }
           // Let server pick the session if we have none (bootstrap flow)
           sendCtrl({ type: 'attach_first', session: currentSession || undefined, cols: term.cols, rows: term.rows });
           // Request device list (works with or without auth)
@@ -3840,6 +4026,16 @@ var init_server = __esm({
               const msg = parsed.v === 1 ? { ...(parsed.payload || {}), type: parsed.type } : parsed;
               // Server heartbeat \u2014 just keep connection alive (lastMessageAt already updated)
               if (msg.type === 'ping') return;
+              // Session recovery complete
+              if (msg.type === 'resume_complete') {
+                isResuming = false;
+                if (msg.replayed > 0) {
+                  console.log('[remux] session recovered: ' + msg.replayed + ' buffered messages replayed');
+                }
+                return;
+              }
+              // Track timestamp for session recovery on reconnect
+              lastReceivedTimestamp = Date.now();
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
                 // Request device list and workspace data after auth
