@@ -386,8 +386,8 @@ const HTML_TEMPLATE = `<!doctype html>
       .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
       .ws-handoff-list li { margin-bottom: 2px; }
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
-        line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
-        user-select: text; -webkit-user-select: text; }
+        line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
+        tab-size: 8; user-select: text; -webkit-user-select: text; }
       #inspect-content mark { background: #ffbd2e; color: #1e1e1e; border-radius: 2px; }
       #inspect-header { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px;
         color: var(--text-dim); padding: 8px 0; border-bottom: 1px solid var(--inspect-meta-border); margin-bottom: 8px;
@@ -806,6 +806,8 @@ const HTML_TEMPLATE = `<!doctype html>
           text.textContent = 'Active';
           btn.textContent = 'Release';
           btn.style.display = 'inline-block';
+          // Auto-focus terminal when becoming active so keystrokes reach xterm
+          if (currentView === 'live') setTimeout(() => term.focus(), 50);
         } else {
           dot.textContent = '\u25cb';
           text.textContent = 'Observer';
@@ -1127,9 +1129,9 @@ const HTML_TEMPLATE = `<!doctype html>
         }
         if (mode === 'live') { term.focus(); fitAddon.fit(); }
       }
-      $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); setView('live'); });
-      $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); setView('inspect'); });
-      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); setView('workspace'); });
+      $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('live'); });
+      $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('inspect'); });
+      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('workspace'); });
 
       // -- Inspect search --
       function applyInspectSearch() {
@@ -1520,6 +1522,15 @@ const HTML_TEMPLATE = `<!doctype html>
         if (!content) return;
         sendCtrl({ type: 'create_note', content });
         input.value = '';
+        // Feedback: show saving indicator, revert if no response in 3s
+        const el = $('ws-notes');
+        const prevHtml = el.innerHTML;
+        el.innerHTML = '<div class="ws-empty">Saving...</div>';
+        setTimeout(() => {
+          if (el.innerHTML.includes('Saving...')) {
+            el.innerHTML = '<div class="ws-empty" style="color:var(--text-dim)">Note may not have saved — check server logs</div>';
+          }
+        }, 3000);
       });
       $('ws-note-input').addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); $('btn-add-note').click(); }
@@ -1701,8 +1712,8 @@ const httpServer = http.createServer((req, res) => {
         res.end(PASSWORD_PAGE);
         return;
       }
-      res.writeHead(403, { "Content-Type": "text/plain" });
-      res.end("Forbidden: invalid or missing token");
+      res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
+      res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remux</title><link rel="icon" href="data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><text y=\'.9em\' font-size=\'90\'>⬛</text></svg>"><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1e1e1e;color:#ccc}div{text-align:center;max-width:400px;padding:2rem}h1{font-size:1.5rem;margin:0 0 1rem}p{color:#888;line-height:1.6}code{background:#333;padding:2px 6px;border-radius:3px;font-size:0.9em}</style></head><body><div><h1>Remux</h1><p>Access requires a valid token.</p><p>Add <code>?token=YOUR_TOKEN</code> to the URL.</p></div></body></html>');
       return;
     }
     res.writeHead(200, { "Content-Type": "text/html" });
