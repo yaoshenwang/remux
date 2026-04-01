@@ -1456,6 +1456,322 @@ var init_workspace = __esm({
   }
 });
 
+// src/renderers.ts
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function detectContentType(text) {
+  if (!text) return "plain";
+  if (/^diff --git /m.test(text)) return "diff";
+  if (/^--- .+\n\+\+\+ .+\n@@/m.test(text))
+    return "diff";
+  if (/\x1b\[[\d;]*m/.test(text)) return "ansi";
+  if (/^#{1,6}\s+\S/m.test(text)) return "markdown";
+  if (/\*\*[^*]+\*\*/.test(text)) return "markdown";
+  if (/```[\s\S]*?```/.test(text)) return "markdown";
+  if (/\[[^\]]+\]\([^)]+\)/.test(text)) return "markdown";
+  return "plain";
+}
+function renderDiff(diffText) {
+  const lines = diffText.split("\n");
+  const out = ['<div class="diff-container">'];
+  let oldLine = 0;
+  let newLine = 0;
+  for (const raw of lines) {
+    const escaped = escapeHtml(raw);
+    if (raw.startsWith("diff --git") || raw.startsWith("index ") || raw.startsWith("---") || raw.startsWith("+++")) {
+      out.push(
+        `<div class="diff-header">${escaped}</div>`
+      );
+    } else if (raw.startsWith("@@")) {
+      const m = raw.match(/@@ -(\d+)/);
+      if (m) {
+        oldLine = parseInt(m[1], 10);
+        const m2 = raw.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+        newLine = m2 ? parseInt(m2[1], 10) : oldLine;
+      }
+      out.push(
+        `<div class="diff-hunk">${escaped}</div>`
+      );
+    } else if (raw.startsWith("+")) {
+      out.push(
+        `<div class="diff-add"><span class="diff-line-num">${newLine}</span>${escaped}</div>`
+      );
+      newLine++;
+    } else if (raw.startsWith("-")) {
+      out.push(
+        `<div class="diff-del"><span class="diff-line-num">${oldLine}</span>${escaped}</div>`
+      );
+      oldLine++;
+    } else {
+      out.push(
+        `<div class="diff-ctx"><span class="diff-line-num">${oldLine}</span>${escaped}</div>`
+      );
+      oldLine++;
+      newLine++;
+    }
+  }
+  out.push("</div>");
+  return out.join("\n");
+}
+function renderMarkdown(md) {
+  const lines = md.split("\n");
+  const out = ['<div class="rendered-md">'];
+  let inCodeBlock = false;
+  let codeLang = "";
+  let codeLines = [];
+  let inList = null;
+  let inBlockquote = false;
+  let paragraph = [];
+  function flushParagraph() {
+    if (paragraph.length > 0) {
+      const text = paragraph.join(" ");
+      out.push(`<p>${inlineFormat(text)}</p>`);
+      paragraph = [];
+    }
+  }
+  function flushList() {
+    if (inList) {
+      out.push(`</${inList}>`);
+      inList = null;
+    }
+  }
+  function flushBlockquote() {
+    if (inBlockquote) {
+      out.push("</blockquote>");
+      inBlockquote = false;
+    }
+  }
+  function inlineFormat(raw) {
+    const parts = raw.split(/(`[^`]+`)/);
+    return parts.map((part) => {
+      if (part.startsWith("`") && part.endsWith("`")) {
+        const code = part.slice(1, -1);
+        return `<code>${escapeHtml(code)}</code>`;
+      }
+      let escaped = escapeHtml(part);
+      escaped = escaped.replace(
+        /\*\*([^*]+)\*\*/g,
+        "<strong>$1</strong>"
+      );
+      escaped = escaped.replace(
+        /(?<!\*)\*([^*]+)\*(?!\*)/g,
+        "<em>$1</em>"
+      );
+      escaped = escaped.replace(
+        /\[([^\]]+)\]\(([^)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener">$1</a>'
+      );
+      return escaped;
+    }).join("");
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      if (!inCodeBlock) {
+        flushParagraph();
+        flushList();
+        flushBlockquote();
+        inCodeBlock = true;
+        codeLang = line.slice(3).trim();
+        codeLines = [];
+        continue;
+      } else {
+        const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
+        out.push(
+          `<pre><code${langAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`
+        );
+        inCodeBlock = false;
+        codeLang = "";
+        codeLines = [];
+        continue;
+      }
+    }
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+    if (/^---+$/.test(line.trim())) {
+      flushParagraph();
+      flushList();
+      flushBlockquote();
+      out.push("<hr>");
+      continue;
+    }
+    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
+    if (headerMatch) {
+      flushParagraph();
+      flushList();
+      flushBlockquote();
+      const level = headerMatch[1].length;
+      const text = escapeHtml(headerMatch[2]);
+      out.push(`<h${level}>${text}</h${level}>`);
+      continue;
+    }
+    if (line.startsWith("> ")) {
+      flushParagraph();
+      flushList();
+      if (!inBlockquote) {
+        inBlockquote = true;
+        out.push("<blockquote>");
+      }
+      out.push(inlineFormat(line.slice(2)));
+      continue;
+    } else if (inBlockquote) {
+      flushBlockquote();
+    }
+    if (/^[-*]\s+/.test(line)) {
+      flushParagraph();
+      flushBlockquote();
+      if (inList !== "ul") {
+        flushList();
+        inList = "ul";
+        out.push("<ul>");
+      }
+      const text = line.replace(/^[-*]\s+/, "");
+      out.push(`<li>${inlineFormat(text)}</li>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      flushParagraph();
+      flushBlockquote();
+      if (inList !== "ol") {
+        flushList();
+        inList = "ol";
+        out.push("<ol>");
+      }
+      const text = line.replace(/^\d+\.\s+/, "");
+      out.push(`<li>${inlineFormat(text)}</li>`);
+      continue;
+    }
+    if (inList && !/^\s*$/.test(line)) {
+      flushList();
+    }
+    if (line.trim() === "") {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    paragraph.push(line);
+  }
+  if (inCodeBlock) {
+    const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
+    out.push(
+      `<pre><code${langAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`
+    );
+  }
+  flushParagraph();
+  flushList();
+  flushBlockquote();
+  out.push("</div>");
+  return out.join("\n");
+}
+function renderAnsi(ansiText) {
+  let cleaned = ansiText.replace(/\x1b\][^\x07]*\x07/g, "");
+  cleaned = cleaned.replace(/\x1b\[[\d;]*[A-LN-Za-ln-z]/g, "");
+  if (!/\x1b\[[\d;]*m/.test(cleaned)) {
+    return escapeHtml(cleaned);
+  }
+  const state = {
+    bold: false,
+    dim: false,
+    italic: false,
+    underline: false,
+    fgColor: null
+  };
+  const parts = [];
+  let spanOpen = false;
+  const re = /\x1b\[([\d;]*)m/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = re.exec(cleaned)) !== null) {
+    const text = cleaned.slice(lastIndex, match.index);
+    if (text) {
+      parts.push(escapeHtml(text));
+    }
+    lastIndex = match.index + match[0].length;
+    const codes = match[1] ? match[1].split(";").map(Number) : [0];
+    for (const code of codes) {
+      if (code === 0) {
+        if (spanOpen) {
+          parts.push("</span>");
+          spanOpen = false;
+        }
+        state.bold = false;
+        state.dim = false;
+        state.italic = false;
+        state.underline = false;
+        state.fgColor = null;
+      } else if (code === 1) {
+        state.bold = true;
+      } else if (code === 2) {
+        state.dim = true;
+      } else if (code === 3) {
+        state.italic = true;
+      } else if (code === 4) {
+        state.underline = true;
+      } else if (code >= 30 && code <= 37) {
+        state.fgColor = ANSI_COLORS[code] || null;
+      } else if (code >= 90 && code <= 97) {
+        state.fgColor = ANSI_BRIGHT_COLORS[code] || null;
+      }
+    }
+    if (spanOpen) {
+      parts.push("</span>");
+      spanOpen = false;
+    }
+    const classes = [];
+    const styles = [];
+    if (state.bold) classes.push("ansi-bold");
+    if (state.dim) classes.push("ansi-dim");
+    if (state.italic) classes.push("ansi-italic");
+    if (state.underline) classes.push("ansi-underline");
+    if (state.fgColor) styles.push(`color:${state.fgColor}`);
+    if (classes.length > 0 || styles.length > 0) {
+      let tag = "<span";
+      if (classes.length > 0) tag += ` class="${classes.join(" ")}"`;
+      if (styles.length > 0) tag += ` style="${styles.join(";")}"`;
+      tag += ">";
+      parts.push(tag);
+      spanOpen = true;
+    }
+  }
+  const remainder = cleaned.slice(lastIndex);
+  if (remainder) {
+    parts.push(escapeHtml(remainder));
+  }
+  if (spanOpen) {
+    parts.push("</span>");
+  }
+  return parts.join("");
+}
+var ANSI_COLORS, ANSI_BRIGHT_COLORS;
+var init_renderers = __esm({
+  "src/renderers.ts"() {
+    "use strict";
+    ANSI_COLORS = {
+      30: "#000000",
+      31: "#cc0000",
+      32: "#00cc00",
+      33: "#cccc00",
+      34: "#0000cc",
+      35: "#cc00cc",
+      36: "#00cccc",
+      37: "#cccccc"
+    };
+    ANSI_BRIGHT_COLORS = {
+      90: "#555555",
+      91: "#ff5555",
+      92: "#55ff55",
+      93: "#ffff55",
+      94: "#5555ff",
+      95: "#ff55ff",
+      96: "#55ffff",
+      97: "#ffffff"
+    };
+  }
+});
+
 // src/git-service.ts
 var git_service_exports = {};
 __export(git_service_exports, {
@@ -2197,7 +2513,15 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                 p.topicId || void 0
               );
               if (result) {
-                sendEnvelope(ws, "snapshot_captured", result.artifact);
+                const a = result.artifact;
+                const contentType = a.content ? detectContentType(a.content) : "plain";
+                let renderedHtml;
+                if (a.content) {
+                  if (contentType === "diff") renderedHtml = renderDiff(a.content);
+                  else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
+                  else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
+                }
+                sendEnvelope(ws, "snapshot_captured", { ...a, contentType, renderedHtml });
               } else {
                 sendEnvelope(ws, "error", {
                   reason: "no tab attached for snapshot"
@@ -2212,7 +2536,16 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               runId: p.runId || void 0,
               sessionName: p.sessionName || clientState.currentSession || void 0
             });
-            sendEnvelope(ws, "artifact_list", { artifacts });
+            const enriched = artifacts.map((a) => {
+              if (!a.content) return a;
+              const contentType = detectContentType(a.content);
+              let renderedHtml;
+              if (contentType === "diff") renderedHtml = renderDiff(a.content);
+              else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
+              else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
+              return { ...a, contentType, renderedHtml };
+            });
+            sendEnvelope(ws, "artifact_list", { artifacts: enriched });
             return;
           }
           if (p.type === "create_approval") {
@@ -2407,6 +2740,7 @@ var init_ws_handler = __esm({
     init_push();
     init_store();
     init_workspace();
+    init_renderers();
     ACTIVE_IDLE_TIMEOUT_MS = 12e4;
     clientStates = /* @__PURE__ */ new Map();
     deviceSockets = /* @__PURE__ */ new Map();
@@ -3296,6 +3630,9 @@ var init_server = __esm({
       .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
       .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
       .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
+      .ws-badge.diff { background: #2a2a1a; color: #ddbb55; }
+      .ws-badge.markdown { background: #1a2a2a; color: #55bbdd; }
+      .ws-badge.ansi { background: #2a1a2a; color: #dd88bb; }
       .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
       .ws-card-actions button { background: none; border: 1px solid var(--border);
         color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
@@ -3360,6 +3697,63 @@ var init_server = __esm({
         letter-spacing: .5px; margin-bottom: 4px; }
       .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
       .ws-handoff-list li { margin-bottom: 2px; }
+
+      /* -- Rich content rendering (diff, markdown, ANSI) -- */
+      .ws-card-content { margin-top: 6px; font-size: 12px; max-height: 200px; overflow: auto;
+        border-top: 1px solid var(--border); padding-top: 6px; }
+      .ws-card-content.expanded { max-height: none; }
+      .ws-card-toggle { font-size: 11px; color: var(--text-dim); background: none; border: none;
+        cursor: pointer; padding: 2px 6px; font-family: inherit; border-radius: 3px; }
+      .ws-card-toggle:hover { color: var(--text-bright); background: var(--bg-hover); }
+
+      /* Diff */
+      .diff-container { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 11px;
+        line-height: 1.5; overflow-x: auto; }
+      .diff-container > div { padding: 0 8px; white-space: pre; }
+      .diff-add { background: #1a3a1a; color: #4eff4e; }
+      .diff-del { background: #3a1a1a; color: #ff4e4e; }
+      .diff-hunk { color: #6a9eff; font-style: italic; }
+      .diff-header { color: #888; font-style: italic; }
+      .diff-ctx { color: var(--text-muted); }
+      .diff-line-num { display: inline-block; width: 32px; text-align: right; margin-right: 8px;
+        color: var(--text-dim); user-select: none; }
+
+      /* Markdown */
+      .rendered-md { font-size: 13px; line-height: 1.6; color: var(--text-bright); }
+      .rendered-md h1 { font-size: 18px; margin: 0.5em 0 0.3em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+      .rendered-md h2 { font-size: 15px; margin: 0.5em 0 0.3em; }
+      .rendered-md h3 { font-size: 13px; margin: 0.5em 0 0.3em; font-weight: 600; }
+      .rendered-md p { margin: 0.4em 0; }
+      .rendered-md code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px;
+        font-family: 'Menlo','Monaco',monospace; font-size: 11px; }
+      .rendered-md pre { background: #1e1e1e; padding: 12px; border-radius: 6px;
+        overflow-x: auto; margin: 0.4em 0; }
+      .rendered-md pre code { background: none; padding: 0; font-size: 11px; }
+      .rendered-md blockquote { border-left: 3px solid #555; padding-left: 12px; color: #aaa;
+        margin: 0.4em 0; }
+      .rendered-md ul, .rendered-md ol { padding-left: 20px; margin: 0.3em 0; }
+      .rendered-md li { margin: 0.15em 0; }
+      .rendered-md a { color: var(--accent); text-decoration: none; }
+      .rendered-md a:hover { text-decoration: underline; }
+      .rendered-md hr { border: none; border-top: 1px solid var(--border); margin: 0.5em 0; }
+      .rendered-md strong { color: var(--text-on-active); }
+
+      /* ANSI */
+      .ansi-bold { font-weight: bold; }
+      .ansi-dim { opacity: 0.6; }
+      .ansi-italic { font-style: italic; }
+      .ansi-underline { text-decoration: underline; }
+
+      /* Light theme overrides */
+      [data-theme="light"] .diff-add { background: #e6ffec; color: #1a7f37; }
+      [data-theme="light"] .diff-del { background: #ffebe9; color: #cf222e; }
+      [data-theme="light"] .diff-hunk { color: #0969da; }
+      [data-theme="light"] .diff-header { color: #6e7781; }
+      [data-theme="light"] .diff-ctx { color: #57606a; }
+      [data-theme="light"] .rendered-md code { background: #eee; }
+      [data-theme="light"] .rendered-md pre { background: #f6f8fa; }
+      [data-theme="light"] .rendered-md blockquote { border-left-color: #ccc; color: #666; }
+
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
         tab-size: 8; user-select: text; -webkit-user-select: text; }
@@ -4120,8 +4514,8 @@ var init_server = __esm({
               if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
               if (msg.type === 'snapshot_captured') {
-                // Optimistic render: add artifact directly
-                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, createdAt: msg.createdAt || Date.now() });
+                // Optimistic render: add artifact directly (with server-rendered HTML)
+                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, contentType: msg.contentType || 'plain', renderedHtml: msg.renderedHtml, createdAt: msg.createdAt || Date.now() });
                 renderWorkspaceArtifacts();
                 return;
               }
@@ -4496,15 +4890,34 @@ var init_server = __esm({
         // Artifacts are already filtered by session_name on the server side
         const recent = wsArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
-        el.innerHTML = recent.map(a =>
-          '<div class="ws-card">' +
+        el.innerHTML = recent.map((a, idx) => {
+          var hasContent = a.content && a.content.trim();
+          var ct = a.contentType || 'plain';
+          var badge = (ct !== 'plain') ? ' <span class="ws-badge ' + esc(ct) + '">' + esc(ct) + '</span>' : '';
+          // Use server-rendered HTML if available, otherwise show raw text
+          var rendered = a.renderedHtml || (hasContent ? '<pre style="margin:0;font-size:11px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">' + esc(a.content) + '</pre>' : '');
+          return '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
+              badge +
               '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+              (hasContent ? '<button class="ws-card-toggle" data-toggle-idx="' + idx + '">Show</button>' : '') +
             '</div>' +
-          '</div>'
-        ).join('');
+            (hasContent ? '<div class="ws-card-content" id="ws-art-content-' + idx + '" style="display:none">' + rendered + '</div>' : '') +
+          '</div>';
+        }).join('');
+        // Wire up toggle buttons
+        el.querySelectorAll('[data-toggle-idx]').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var idx = btn.getAttribute('data-toggle-idx');
+            var contentEl = document.getElementById('ws-art-content-' + idx);
+            if (!contentEl) return;
+            var visible = contentEl.style.display !== 'none';
+            contentEl.style.display = visible ? 'none' : 'block';
+            btn.textContent = visible ? 'Show' : 'Hide';
+          });
+        });
       }
 
       $('btn-new-topic').addEventListener('click', () => {

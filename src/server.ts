@@ -350,6 +350,9 @@ const HTML_TEMPLATE = `<!doctype html>
       .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
       .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
       .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
+      .ws-badge.diff { background: #2a2a1a; color: #ddbb55; }
+      .ws-badge.markdown { background: #1a2a2a; color: #55bbdd; }
+      .ws-badge.ansi { background: #2a1a2a; color: #dd88bb; }
       .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
       .ws-card-actions button { background: none; border: 1px solid var(--border);
         color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
@@ -414,6 +417,63 @@ const HTML_TEMPLATE = `<!doctype html>
         letter-spacing: .5px; margin-bottom: 4px; }
       .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
       .ws-handoff-list li { margin-bottom: 2px; }
+
+      /* -- Rich content rendering (diff, markdown, ANSI) -- */
+      .ws-card-content { margin-top: 6px; font-size: 12px; max-height: 200px; overflow: auto;
+        border-top: 1px solid var(--border); padding-top: 6px; }
+      .ws-card-content.expanded { max-height: none; }
+      .ws-card-toggle { font-size: 11px; color: var(--text-dim); background: none; border: none;
+        cursor: pointer; padding: 2px 6px; font-family: inherit; border-radius: 3px; }
+      .ws-card-toggle:hover { color: var(--text-bright); background: var(--bg-hover); }
+
+      /* Diff */
+      .diff-container { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 11px;
+        line-height: 1.5; overflow-x: auto; }
+      .diff-container > div { padding: 0 8px; white-space: pre; }
+      .diff-add { background: #1a3a1a; color: #4eff4e; }
+      .diff-del { background: #3a1a1a; color: #ff4e4e; }
+      .diff-hunk { color: #6a9eff; font-style: italic; }
+      .diff-header { color: #888; font-style: italic; }
+      .diff-ctx { color: var(--text-muted); }
+      .diff-line-num { display: inline-block; width: 32px; text-align: right; margin-right: 8px;
+        color: var(--text-dim); user-select: none; }
+
+      /* Markdown */
+      .rendered-md { font-size: 13px; line-height: 1.6; color: var(--text-bright); }
+      .rendered-md h1 { font-size: 18px; margin: 0.5em 0 0.3em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+      .rendered-md h2 { font-size: 15px; margin: 0.5em 0 0.3em; }
+      .rendered-md h3 { font-size: 13px; margin: 0.5em 0 0.3em; font-weight: 600; }
+      .rendered-md p { margin: 0.4em 0; }
+      .rendered-md code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px;
+        font-family: 'Menlo','Monaco',monospace; font-size: 11px; }
+      .rendered-md pre { background: #1e1e1e; padding: 12px; border-radius: 6px;
+        overflow-x: auto; margin: 0.4em 0; }
+      .rendered-md pre code { background: none; padding: 0; font-size: 11px; }
+      .rendered-md blockquote { border-left: 3px solid #555; padding-left: 12px; color: #aaa;
+        margin: 0.4em 0; }
+      .rendered-md ul, .rendered-md ol { padding-left: 20px; margin: 0.3em 0; }
+      .rendered-md li { margin: 0.15em 0; }
+      .rendered-md a { color: var(--accent); text-decoration: none; }
+      .rendered-md a:hover { text-decoration: underline; }
+      .rendered-md hr { border: none; border-top: 1px solid var(--border); margin: 0.5em 0; }
+      .rendered-md strong { color: var(--text-on-active); }
+
+      /* ANSI */
+      .ansi-bold { font-weight: bold; }
+      .ansi-dim { opacity: 0.6; }
+      .ansi-italic { font-style: italic; }
+      .ansi-underline { text-decoration: underline; }
+
+      /* Light theme overrides */
+      [data-theme="light"] .diff-add { background: #e6ffec; color: #1a7f37; }
+      [data-theme="light"] .diff-del { background: #ffebe9; color: #cf222e; }
+      [data-theme="light"] .diff-hunk { color: #0969da; }
+      [data-theme="light"] .diff-header { color: #6e7781; }
+      [data-theme="light"] .diff-ctx { color: #57606a; }
+      [data-theme="light"] .rendered-md code { background: #eee; }
+      [data-theme="light"] .rendered-md pre { background: #f6f8fa; }
+      [data-theme="light"] .rendered-md blockquote { border-left-color: #ccc; color: #666; }
+
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
         tab-size: 8; user-select: text; -webkit-user-select: text; }
@@ -1304,8 +1364,8 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
               if (msg.type === 'snapshot_captured') {
-                // Optimistic render: add artifact directly
-                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, createdAt: msg.createdAt || Date.now() });
+                // Optimistic render: add artifact directly (with server-rendered HTML)
+                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, contentType: msg.contentType || 'plain', renderedHtml: msg.renderedHtml, createdAt: msg.createdAt || Date.now() });
                 renderWorkspaceArtifacts();
                 return;
               }
@@ -1696,15 +1756,34 @@ const HTML_TEMPLATE = `<!doctype html>
         // Artifacts are already filtered by session_name on the server side
         const recent = wsArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
-        el.innerHTML = recent.map(a =>
-          '<div class="ws-card">' +
+        el.innerHTML = recent.map((a, idx) => {
+          var hasContent = a.content && a.content.trim();
+          var ct = a.contentType || 'plain';
+          var badge = (ct !== 'plain') ? ' <span class="ws-badge ' + esc(ct) + '">' + esc(ct) + '</span>' : '';
+          // Use server-rendered HTML if available, otherwise show raw text
+          var rendered = a.renderedHtml || (hasContent ? '<pre style="margin:0;font-size:11px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">' + esc(a.content) + '</pre>' : '');
+          return '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
+              badge +
               '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+              (hasContent ? '<button class="ws-card-toggle" data-toggle-idx="' + idx + '">Show</button>' : '') +
             '</div>' +
-          '</div>'
-        ).join('');
+            (hasContent ? '<div class="ws-card-content" id="ws-art-content-' + idx + '" style="display:none">' + rendered + '</div>' : '') +
+          '</div>';
+        }).join('');
+        // Wire up toggle buttons
+        el.querySelectorAll('[data-toggle-idx]').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var idx = btn.getAttribute('data-toggle-idx');
+            var contentEl = document.getElementById('ws-art-content-' + idx);
+            if (!contentEl) return;
+            var visible = contentEl.style.display !== 'none';
+            contentEl.style.display = visible ? 'none' : 'block';
+            btn.textContent = visible ? 'Show' : 'Hide';
+          });
+        });
       }
 
       $('btn-new-topic').addEventListener('click', () => {
