@@ -1146,7 +1146,7 @@ function createTab(session, cols = 80, rows = 24) {
     tab.scrollback.write(data);
     if (tab.vt) tab.vt.consume(data);
     for (const ws of tab.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(data);
+      sendData(ws, data);
     }
     if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
     processShellIntegration(data, tab, session.name);
@@ -1185,7 +1185,7 @@ function createTab(session, cols = 80, rows = 24) {
 \x1B[33mShell exited (code: ${exitCode})\x1B[0m\r
 `;
     for (const ws of tab.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(msg);
+      sendData(ws, msg);
     }
     broadcastState();
     broadcastPush(
@@ -1246,10 +1246,10 @@ function attachToTab(tab, ws, cols, rows) {
   if (ws.readyState === ws.OPEN) {
     if (tab.vt && !tab.ended) {
       const snapshot = tab.vt.snapshot();
-      if (snapshot) ws.send(snapshot);
+      if (snapshot) sendData(ws, snapshot);
     } else {
       const history = tab.scrollback.read();
-      if (history.length > 0) ws.send(history.toString("utf8"));
+      if (history.length > 0) sendData(ws, history.toString("utf8"));
     }
   }
   tab.clients.add(ws);
@@ -1295,9 +1295,17 @@ function recalcTabSize(tab) {
     if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
-function setBroadcastHooks(sendFn, clientListFn) {
+function setBroadcastHooks(sendFn, clientListFn, sendDataFn) {
   _sendEnvelopeFn = sendFn;
   _getClientListFn = clientListFn;
+  if (sendDataFn) _sendDataFn = sendDataFn;
+}
+function sendData(ws, data) {
+  if (_sendDataFn) {
+    _sendDataFn(ws, data);
+  } else if (ws.readyState === ws.OPEN) {
+    ws.send(data);
+  }
 }
 function setBufferHooks(bufferTabOutputFn, bufferStateFn) {
   _bufferTabOutputFn = bufferTabOutputFn;
@@ -1346,7 +1354,7 @@ function restoreSessions() {
     return false;
   }
 }
-var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
+var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _sendDataFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
 var init_session = __esm({
   "src/session.ts"() {
     "use strict";
@@ -1401,9 +1409,153 @@ var init_session = __esm({
     controlClients = /* @__PURE__ */ new Set();
     _sendEnvelopeFn = null;
     _getClientListFn = null;
+    _sendDataFn = null;
     _bufferTabOutputFn = null;
     _bufferStateForDisconnectedFn = null;
     PERSIST_INTERVAL_MS = 8e3;
+  }
+});
+
+// src/e2ee.ts
+import crypto3 from "crypto";
+function generateKeyPair() {
+  const { publicKey, privateKey } = crypto3.generateKeyPairSync("x25519", {
+    publicKeyEncoding: { type: "spki", format: "der" },
+    privateKeyEncoding: { type: "pkcs8", format: "der" }
+  });
+  const rawPublic = publicKey.subarray(publicKey.length - 32);
+  const rawPrivate = privateKey.subarray(privateKey.length - 32);
+  return {
+    publicKey: Buffer.from(rawPublic),
+    privateKey: Buffer.from(rawPrivate)
+  };
+}
+function deriveSharedSecret(privateKey, peerPublicKey) {
+  const privKeyObj = crypto3.createPrivateKey({
+    key: buildPkcs8(privateKey),
+    format: "der",
+    type: "pkcs8"
+  });
+  const pubKeyObj = crypto3.createPublicKey({
+    key: buildSpki(peerPublicKey),
+    format: "der",
+    type: "spki"
+  });
+  const rawSecret = crypto3.diffieHellman({
+    privateKey: privKeyObj,
+    publicKey: pubKeyObj
+  });
+  const salt = Buffer.from(HKDF_SALT, "utf8");
+  const info = Buffer.from(HKDF_INFO, "utf8");
+  const derived = crypto3.hkdfSync("sha256", rawSecret, salt, info, AES_KEY_LENGTH);
+  return Buffer.from(derived);
+}
+function buildPkcs8(rawKey) {
+  const header = Buffer.from(
+    "302e020100300506032b656e04220420",
+    "hex"
+  );
+  return Buffer.concat([header, rawKey]);
+}
+function buildSpki(rawKey) {
+  const header = Buffer.from("302a300506032b656e032100", "hex");
+  return Buffer.concat([header, rawKey]);
+}
+function encrypt(key, plaintext, counter) {
+  const iv = Buffer.alloc(IV_LENGTH);
+  crypto3.randomFillSync(iv, 0, IV_PREFIX_LENGTH);
+  iv.writeBigUInt64BE(counter, IV_PREFIX_LENGTH);
+  const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return { ciphertext: encrypted, tag, iv };
+}
+function decrypt(key, ciphertext, tag, iv) {
+  const decipher = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+var HKDF_SALT, HKDF_INFO, AES_KEY_LENGTH, IV_LENGTH, IV_PREFIX_LENGTH, AUTH_TAG_LENGTH, E2EESession;
+var init_e2ee = __esm({
+  "src/e2ee.ts"() {
+    "use strict";
+    HKDF_SALT = "remux-e2ee-v1";
+    HKDF_INFO = "aes-256-gcm";
+    AES_KEY_LENGTH = 32;
+    IV_LENGTH = 12;
+    IV_PREFIX_LENGTH = 4;
+    AUTH_TAG_LENGTH = 16;
+    E2EESession = class {
+      sharedKey = null;
+      sendCounter = 0n;
+      recvCounter = -1n;
+      // last received counter; -1 means none yet
+      localKeyPair;
+      constructor() {
+        this.localKeyPair = generateKeyPair();
+      }
+      /** Get our public key as a base64-encoded string for transmission. */
+      getPublicKey() {
+        return this.localKeyPair.publicKey.toString("base64");
+      }
+      /**
+       * Complete the ECDH handshake with the peer's base64-encoded public key.
+       * After this, encrypt/decrypt operations become available.
+       */
+      completeHandshake(peerPublicKeyB64) {
+        const peerPublicKey = Buffer.from(peerPublicKeyB64, "base64");
+        this.sharedKey = deriveSharedSecret(
+          this.localKeyPair.privateKey,
+          peerPublicKey
+        );
+      }
+      /**
+       * Encrypt a plaintext string for sending.
+       * Returns a base64-encoded string containing: iv (12) + ciphertext (variable) + tag (16).
+       * Increments the send counter after each call.
+       */
+      encryptMessage(plaintext) {
+        if (!this.sharedKey) {
+          throw new Error("E2EE handshake not completed");
+        }
+        const plaintextBuf = Buffer.from(plaintext, "utf8");
+        const { ciphertext, tag, iv } = encrypt(
+          this.sharedKey,
+          plaintextBuf,
+          this.sendCounter
+        );
+        this.sendCounter++;
+        const packed = Buffer.concat([iv, ciphertext, tag]);
+        return packed.toString("base64");
+      }
+      /**
+       * Decrypt a base64-encoded encrypted message.
+       * Validates that the counter is monotonically increasing (anti-replay).
+       */
+      decryptMessage(encrypted) {
+        if (!this.sharedKey) {
+          throw new Error("E2EE handshake not completed");
+        }
+        const packed = Buffer.from(encrypted, "base64");
+        if (packed.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+          throw new Error("E2EE message too short");
+        }
+        const iv = packed.subarray(0, IV_LENGTH);
+        const ciphertext = packed.subarray(IV_LENGTH, packed.length - AUTH_TAG_LENGTH);
+        const tag = packed.subarray(packed.length - AUTH_TAG_LENGTH);
+        const counter = iv.readBigUInt64BE(IV_PREFIX_LENGTH);
+        if (counter <= this.recvCounter) {
+          throw new Error("E2EE replay detected: counter not monotonically increasing");
+        }
+        const decrypted = decrypt(this.sharedKey, ciphertext, tag, iv);
+        this.recvCounter = counter;
+        return decrypted.toString("utf8");
+      }
+      /** Whether the handshake has been completed and encryption is available. */
+      isEstablished() {
+        return this.sharedKey !== null;
+      }
+    };
   }
 });
 
@@ -1571,6 +1723,322 @@ var init_workspace = __esm({
   }
 });
 
+// src/renderers.ts
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function detectContentType(text) {
+  if (!text) return "plain";
+  if (/^diff --git /m.test(text)) return "diff";
+  if (/^--- .+\n\+\+\+ .+\n@@/m.test(text))
+    return "diff";
+  if (/\x1b\[[\d;]*m/.test(text)) return "ansi";
+  if (/^#{1,6}\s+\S/m.test(text)) return "markdown";
+  if (/\*\*[^*]+\*\*/.test(text)) return "markdown";
+  if (/```[\s\S]*?```/.test(text)) return "markdown";
+  if (/\[[^\]]+\]\([^)]+\)/.test(text)) return "markdown";
+  return "plain";
+}
+function renderDiff(diffText) {
+  const lines = diffText.split("\n");
+  const out = ['<div class="diff-container">'];
+  let oldLine = 0;
+  let newLine = 0;
+  for (const raw of lines) {
+    const escaped = escapeHtml(raw);
+    if (raw.startsWith("diff --git") || raw.startsWith("index ") || raw.startsWith("---") || raw.startsWith("+++")) {
+      out.push(
+        `<div class="diff-header">${escaped}</div>`
+      );
+    } else if (raw.startsWith("@@")) {
+      const m = raw.match(/@@ -(\d+)/);
+      if (m) {
+        oldLine = parseInt(m[1], 10);
+        const m2 = raw.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+        newLine = m2 ? parseInt(m2[1], 10) : oldLine;
+      }
+      out.push(
+        `<div class="diff-hunk">${escaped}</div>`
+      );
+    } else if (raw.startsWith("+")) {
+      out.push(
+        `<div class="diff-add"><span class="diff-line-num">${newLine}</span>${escaped}</div>`
+      );
+      newLine++;
+    } else if (raw.startsWith("-")) {
+      out.push(
+        `<div class="diff-del"><span class="diff-line-num">${oldLine}</span>${escaped}</div>`
+      );
+      oldLine++;
+    } else {
+      out.push(
+        `<div class="diff-ctx"><span class="diff-line-num">${oldLine}</span>${escaped}</div>`
+      );
+      oldLine++;
+      newLine++;
+    }
+  }
+  out.push("</div>");
+  return out.join("\n");
+}
+function renderMarkdown(md) {
+  const lines = md.split("\n");
+  const out = ['<div class="rendered-md">'];
+  let inCodeBlock = false;
+  let codeLang = "";
+  let codeLines = [];
+  let inList = null;
+  let inBlockquote = false;
+  let paragraph = [];
+  function flushParagraph() {
+    if (paragraph.length > 0) {
+      const text = paragraph.join(" ");
+      out.push(`<p>${inlineFormat(text)}</p>`);
+      paragraph = [];
+    }
+  }
+  function flushList() {
+    if (inList) {
+      out.push(`</${inList}>`);
+      inList = null;
+    }
+  }
+  function flushBlockquote() {
+    if (inBlockquote) {
+      out.push("</blockquote>");
+      inBlockquote = false;
+    }
+  }
+  function inlineFormat(raw) {
+    const parts = raw.split(/(`[^`]+`)/);
+    return parts.map((part) => {
+      if (part.startsWith("`") && part.endsWith("`")) {
+        const code = part.slice(1, -1);
+        return `<code>${escapeHtml(code)}</code>`;
+      }
+      let escaped = escapeHtml(part);
+      escaped = escaped.replace(
+        /\*\*([^*]+)\*\*/g,
+        "<strong>$1</strong>"
+      );
+      escaped = escaped.replace(
+        /(?<!\*)\*([^*]+)\*(?!\*)/g,
+        "<em>$1</em>"
+      );
+      escaped = escaped.replace(
+        /\[([^\]]+)\]\(([^)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener">$1</a>'
+      );
+      return escaped;
+    }).join("");
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      if (!inCodeBlock) {
+        flushParagraph();
+        flushList();
+        flushBlockquote();
+        inCodeBlock = true;
+        codeLang = line.slice(3).trim();
+        codeLines = [];
+        continue;
+      } else {
+        const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
+        out.push(
+          `<pre><code${langAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`
+        );
+        inCodeBlock = false;
+        codeLang = "";
+        codeLines = [];
+        continue;
+      }
+    }
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+    if (/^---+$/.test(line.trim())) {
+      flushParagraph();
+      flushList();
+      flushBlockquote();
+      out.push("<hr>");
+      continue;
+    }
+    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
+    if (headerMatch) {
+      flushParagraph();
+      flushList();
+      flushBlockquote();
+      const level = headerMatch[1].length;
+      const text = escapeHtml(headerMatch[2]);
+      out.push(`<h${level}>${text}</h${level}>`);
+      continue;
+    }
+    if (line.startsWith("> ")) {
+      flushParagraph();
+      flushList();
+      if (!inBlockquote) {
+        inBlockquote = true;
+        out.push("<blockquote>");
+      }
+      out.push(inlineFormat(line.slice(2)));
+      continue;
+    } else if (inBlockquote) {
+      flushBlockquote();
+    }
+    if (/^[-*]\s+/.test(line)) {
+      flushParagraph();
+      flushBlockquote();
+      if (inList !== "ul") {
+        flushList();
+        inList = "ul";
+        out.push("<ul>");
+      }
+      const text = line.replace(/^[-*]\s+/, "");
+      out.push(`<li>${inlineFormat(text)}</li>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      flushParagraph();
+      flushBlockquote();
+      if (inList !== "ol") {
+        flushList();
+        inList = "ol";
+        out.push("<ol>");
+      }
+      const text = line.replace(/^\d+\.\s+/, "");
+      out.push(`<li>${inlineFormat(text)}</li>`);
+      continue;
+    }
+    if (inList && !/^\s*$/.test(line)) {
+      flushList();
+    }
+    if (line.trim() === "") {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    paragraph.push(line);
+  }
+  if (inCodeBlock) {
+    const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
+    out.push(
+      `<pre><code${langAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`
+    );
+  }
+  flushParagraph();
+  flushList();
+  flushBlockquote();
+  out.push("</div>");
+  return out.join("\n");
+}
+function renderAnsi(ansiText) {
+  let cleaned = ansiText.replace(/\x1b\][^\x07]*\x07/g, "");
+  cleaned = cleaned.replace(/\x1b\[[\d;]*[A-LN-Za-ln-z]/g, "");
+  if (!/\x1b\[[\d;]*m/.test(cleaned)) {
+    return escapeHtml(cleaned);
+  }
+  const state = {
+    bold: false,
+    dim: false,
+    italic: false,
+    underline: false,
+    fgColor: null
+  };
+  const parts = [];
+  let spanOpen = false;
+  const re = /\x1b\[([\d;]*)m/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = re.exec(cleaned)) !== null) {
+    const text = cleaned.slice(lastIndex, match.index);
+    if (text) {
+      parts.push(escapeHtml(text));
+    }
+    lastIndex = match.index + match[0].length;
+    const codes = match[1] ? match[1].split(";").map(Number) : [0];
+    for (const code of codes) {
+      if (code === 0) {
+        if (spanOpen) {
+          parts.push("</span>");
+          spanOpen = false;
+        }
+        state.bold = false;
+        state.dim = false;
+        state.italic = false;
+        state.underline = false;
+        state.fgColor = null;
+      } else if (code === 1) {
+        state.bold = true;
+      } else if (code === 2) {
+        state.dim = true;
+      } else if (code === 3) {
+        state.italic = true;
+      } else if (code === 4) {
+        state.underline = true;
+      } else if (code >= 30 && code <= 37) {
+        state.fgColor = ANSI_COLORS[code] || null;
+      } else if (code >= 90 && code <= 97) {
+        state.fgColor = ANSI_BRIGHT_COLORS[code] || null;
+      }
+    }
+    if (spanOpen) {
+      parts.push("</span>");
+      spanOpen = false;
+    }
+    const classes = [];
+    const styles = [];
+    if (state.bold) classes.push("ansi-bold");
+    if (state.dim) classes.push("ansi-dim");
+    if (state.italic) classes.push("ansi-italic");
+    if (state.underline) classes.push("ansi-underline");
+    if (state.fgColor) styles.push(`color:${state.fgColor}`);
+    if (classes.length > 0 || styles.length > 0) {
+      let tag = "<span";
+      if (classes.length > 0) tag += ` class="${classes.join(" ")}"`;
+      if (styles.length > 0) tag += ` style="${styles.join(";")}"`;
+      tag += ">";
+      parts.push(tag);
+      spanOpen = true;
+    }
+  }
+  const remainder = cleaned.slice(lastIndex);
+  if (remainder) {
+    parts.push(escapeHtml(remainder));
+  }
+  if (spanOpen) {
+    parts.push("</span>");
+  }
+  return parts.join("");
+}
+var ANSI_COLORS, ANSI_BRIGHT_COLORS;
+var init_renderers = __esm({
+  "src/renderers.ts"() {
+    "use strict";
+    ANSI_COLORS = {
+      30: "#000000",
+      31: "#cc0000",
+      32: "#00cc00",
+      33: "#cccc00",
+      34: "#0000cc",
+      35: "#cc00cc",
+      36: "#00cccc",
+      37: "#cccccc"
+    };
+    ANSI_BRIGHT_COLORS = {
+      90: "#555555",
+      91: "#ff5555",
+      92: "#55ff55",
+      93: "#ffff55",
+      94: "#5555ff",
+      95: "#ff55ff",
+      96: "#55ffff",
+      97: "#ffffff"
+    };
+  }
+});
+
 // src/git-service.ts
 var git_service_exports = {};
 __export(git_service_exports, {
@@ -1678,11 +2146,11 @@ async function compareBranches(base, head) {
   };
 }
 function watchGitChanges(onChange) {
-  const fs6 = __require("fs");
-  const path4 = __require("path");
-  const gitDir = path4.join(process.cwd(), ".git");
+  const fs8 = __require("fs");
+  const path6 = __require("path");
+  const gitDir = path6.join(process.cwd(), ".git");
   try {
-    const watcher = fs6.watch(
+    const watcher = fs8.watch(
       gitDir,
       { recursive: false },
       (eventType, filename) => {
@@ -1706,8 +2174,171 @@ var init_git_service = __esm({
   }
 });
 
+// src/adapters/agent-events.ts
+var agent_events_exports = {};
+__export(agent_events_exports, {
+  parseClaudeCodeEvent: () => parseClaudeCodeEvent,
+  parseCodexEvent: () => parseCodexEvent
+});
+function parseClaudeCodeEvent(event) {
+  const type = event.type;
+  if (!type) return null;
+  switch (type) {
+    case "assistant": {
+      const message = event.message;
+      const contentBlocks = message?.content ?? [];
+      const textParts = contentBlocks.filter((b) => b.type === "text").map((b) => b.text);
+      return {
+        role: "assistant",
+        content: textParts.join("\n") || "",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "tool_use": {
+      const toolCall = {
+        tool: event.name ?? "unknown",
+        args: event.input ?? {},
+        status: "running"
+      };
+      return {
+        role: "assistant",
+        content: "",
+        toolCalls: [toolCall],
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "tool_result": {
+      const toolCall = {
+        tool: event.name ?? "unknown",
+        args: {},
+        status: "completed",
+        output: typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "")
+      };
+      return {
+        role: "assistant",
+        content: "",
+        toolCalls: [toolCall],
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "permission_request": {
+      const approval = {
+        id: event.id ?? `perm-${Date.now()}`,
+        tool: event.tool ?? "unknown",
+        description: event.description ?? "",
+        status: "pending"
+      };
+      return {
+        role: "assistant",
+        content: "",
+        approvals: [approval],
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "result":
+    case "end_turn":
+      return {
+        role: "assistant",
+        content: typeof event.result === "string" ? event.result : "",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    case "error":
+      return {
+        role: "assistant",
+        content: `Error: ${event.error ?? "unknown error"}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    default:
+      return null;
+  }
+}
+function parseCodexEvent(event) {
+  const type = event.type;
+  if (!type) return null;
+  switch (type) {
+    case "item.created": {
+      const item = event.item;
+      if (!item) return null;
+      const role = item.role === "user" ? "user" : "assistant";
+      const contentBlocks = item.content ?? [];
+      const textParts = contentBlocks.filter((b) => b.type === "text" || b.type === "output_text").map((b) => b.text ?? b.output ?? "");
+      return {
+        role,
+        content: textParts.join("\n") || "",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "tool_use": {
+      const toolCall = {
+        tool: event.name ?? "unknown",
+        args: event.input ?? {},
+        status: "running"
+      };
+      return {
+        role: "assistant",
+        content: "",
+        toolCalls: [toolCall],
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "tool_result": {
+      const toolCall = {
+        tool: event.name ?? "unknown",
+        args: {},
+        status: "completed",
+        output: typeof event.output === "string" ? event.output : JSON.stringify(event.output ?? "")
+      };
+      return {
+        role: "assistant",
+        content: "",
+        toolCalls: [toolCall],
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "permission_request": {
+      const approval = {
+        id: event.id ?? `perm-${Date.now()}`,
+        tool: event.command ?? "unknown",
+        description: event.description ?? "",
+        status: "pending"
+      };
+      return {
+        role: "assistant",
+        content: "",
+        approvals: [approval],
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    case "turn.started":
+      return {
+        role: "assistant",
+        content: "",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    case "turn.completed":
+      return {
+        role: "assistant",
+        content: "",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    case "error":
+      return {
+        role: "assistant",
+        content: `Error: ${event.message ?? "unknown error"}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    default:
+      return null;
+  }
+}
+var init_agent_events = __esm({
+  "src/adapters/agent-events.ts"() {
+    "use strict";
+  }
+});
+
 // src/ws-handler.ts
-import crypto3 from "crypto";
+import crypto4 from "crypto";
 import { WebSocketServer } from "ws";
 function bufferForDevice(deviceId, type, payload) {
   if (!disconnectedDevices.has(deviceId)) return;
@@ -1745,8 +2376,18 @@ function unwrapMessage(parsed) {
   }
   return parsed;
 }
+function e2eeSend(ws, data) {
+  if (ws.readyState !== ws.OPEN) return;
+  const session = e2eeSessions.get(ws);
+  if (session && session.isEstablished()) {
+    const encrypted = session.encryptMessage(data);
+    ws.send(JSON.stringify({ v: 1, type: "e2ee_msg", payload: { data: encrypted } }));
+  } else {
+    ws.send(data);
+  }
+}
 function generateClientId() {
-  return crypto3.randomBytes(4).toString("hex");
+  return crypto4.randomBytes(4).toString("hex");
 }
 function getActiveClientForTab(tabId) {
   for (const [ws, state] of clientStates) {
@@ -1806,7 +2447,7 @@ function getClientList() {
   return list;
 }
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
-  setBroadcastHooks(sendEnvelope, getClientList);
+  setBroadcastHooks(sendEnvelope, getClientList, e2eeSend);
   setBufferHooks(bufferTabOutput, bufferStateForDisconnected);
   const wss2 = new WebSocketServer({ noServer: true });
   httpServer2.on("upgrade", (req, socket, head) => {
@@ -1917,6 +2558,56 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
         try {
           const rawParsed = JSON.parse(msg);
           const p = unwrapMessage(rawParsed);
+          if (p.type === "e2ee_init") {
+            if (typeof p.publicKey === "string") {
+              const session = new E2EESession();
+              session.completeHandshake(p.publicKey);
+              e2eeSessions.set(ws, session);
+              sendEnvelope(ws, "e2ee_init", {
+                publicKey: session.getPublicKey()
+              });
+              sendEnvelope(ws, "e2ee_ready", { established: true });
+            }
+            return;
+          }
+          if (p.type === "e2ee_msg") {
+            const e2ee = e2eeSessions.get(ws);
+            if (!e2ee || !e2ee.isEstablished()) {
+              sendEnvelope(ws, "error", { reason: "E2EE not established" });
+              return;
+            }
+            try {
+              const decrypted = e2ee.decryptMessage(p.data);
+              if (decrypted.startsWith("{")) {
+                const innerParsed = JSON.parse(decrypted);
+                const inner = unwrapMessage(innerParsed);
+                if (inner.type === "input") {
+                  if (clientState.role === "active") {
+                    clientState.lastActiveAt = Date.now();
+                    const found2 = findTab(ws._remuxTabId);
+                    if (found2 && !found2.tab.ended) {
+                      found2.tab.pty.write(inner.data);
+                    }
+                  }
+                  return;
+                }
+                ws.emit("message", Buffer.from(decrypted, "utf8"));
+              } else {
+                if (clientState.role === "active") {
+                  clientState.lastActiveAt = Date.now();
+                  const found2 = findTab(ws._remuxTabId);
+                  if (found2 && !found2.tab.ended) {
+                    found2.tab.pty.write(decrypted);
+                  }
+                }
+              }
+            } catch (err) {
+              sendEnvelope(ws, "error", {
+                reason: "E2EE decrypt failed"
+              });
+            }
+            return;
+          }
           if (p.type === "resume") {
             const resumeDeviceId = p.deviceId || ws._remuxDeviceId;
             if (resumeDeviceId && disconnectedDevices.has(resumeDeviceId)) {
@@ -2359,7 +3050,15 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                 p.topicId || void 0
               );
               if (result) {
-                sendEnvelope(ws, "snapshot_captured", result.artifact);
+                const a = result.artifact;
+                const contentType = a.content ? detectContentType(a.content) : "plain";
+                let renderedHtml;
+                if (a.content) {
+                  if (contentType === "diff") renderedHtml = renderDiff(a.content);
+                  else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
+                  else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
+                }
+                sendEnvelope(ws, "snapshot_captured", { ...a, contentType, renderedHtml });
               } else {
                 sendEnvelope(ws, "error", {
                   reason: "no tab attached for snapshot"
@@ -2374,7 +3073,16 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               runId: p.runId || void 0,
               sessionName: p.sessionName || clientState.currentSession || void 0
             });
-            sendEnvelope(ws, "artifact_list", { artifacts });
+            const enriched = artifacts.map((a) => {
+              if (!a.content) return a;
+              const contentType = detectContentType(a.content);
+              let renderedHtml;
+              if (contentType === "diff") renderedHtml = renderDiff(a.content);
+              else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
+              else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
+              return { ...a, contentType, renderedHtml };
+            });
+            sendEnvelope(ws, "artifact_list", { artifacts: enriched });
             return;
           }
           if (p.type === "create_approval") {
@@ -2502,6 +3210,21 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             sendEnvelope(ws, "adapter_state", { adapters: states });
             return;
           }
+          if (p.type === "request_agent_summary") {
+            const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
+            const { AgentSessionSummary: AgentSessionSummary2 } = (init_agent_events(), __toCommonJS(agent_events_exports));
+            const states = adapterRegistry2?.getAllStates() ?? [];
+            const summaries = states.map((s) => ({
+              agentId: s.adapterId,
+              agentName: s.name,
+              state: s.currentState,
+              currentTurn: void 0,
+              recentToolCalls: [],
+              pendingApprovals: []
+            }));
+            sendEnvelope(ws, "agent_summary", { agents: summaries });
+            return;
+          }
           return;
         } catch (err) {
           if (msg.startsWith("{")) {
@@ -2540,6 +3263,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
       detachFromTab(ws);
       controlClients.delete(ws);
       clientStates.delete(ws);
+      e2eeSessions.delete(ws);
       if (tabId != null) {
         reassignRolesAfterDetach(tabId, wasActive);
         broadcastState();
@@ -2568,10 +3292,11 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   }
   return wss2;
 }
-var bufferRegistry, disconnectedDevices, disconnectedDeviceTab, ACTIVE_IDLE_TIMEOUT_MS, clientStates, deviceSockets;
+var bufferRegistry, disconnectedDevices, disconnectedDeviceTab, ACTIVE_IDLE_TIMEOUT_MS, clientStates, e2eeSessions, deviceSockets;
 var init_ws_handler = __esm({
   "src/ws-handler.ts"() {
     "use strict";
+    init_e2ee();
     init_message_buffer();
     init_session();
     init_auth();
@@ -2579,11 +3304,13 @@ var init_ws_handler = __esm({
     init_push();
     init_store();
     init_workspace();
+    init_renderers();
     bufferRegistry = new BufferRegistry();
     disconnectedDevices = /* @__PURE__ */ new Set();
     disconnectedDeviceTab = /* @__PURE__ */ new Map();
     ACTIVE_IDLE_TIMEOUT_MS = 12e4;
     clientStates = /* @__PURE__ */ new Map();
+    e2eeSessions = /* @__PURE__ */ new Map();
     deviceSockets = /* @__PURE__ */ new Map();
   }
 });
@@ -2665,11 +3392,11 @@ var init_registry = __esm({
         }
       }
       /** Forward event file data to all passive adapters */
-      dispatchEventFile(path4, event) {
+      dispatchEventFile(path6, event) {
         for (const adapter of this.adapters.values()) {
           if (adapter.mode === "passive" && adapter.onEventFile) {
             try {
-              adapter.onEventFile(path4, event);
+              adapter.onEventFile(path6, event);
             } catch (err) {
               console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
             }
@@ -2848,6 +3575,138 @@ var init_claude_code = __esm({
   }
 });
 
+// src/adapters/codex.ts
+import * as fs5 from "fs";
+import * as path3 from "path";
+import * as os2 from "os";
+var CodexAdapter;
+var init_codex = __esm({
+  "src/adapters/codex.ts"() {
+    "use strict";
+    CodexAdapter = class {
+      id = "codex";
+      name = "OpenAI Codex";
+      mode = "passive";
+      capabilities = ["run-status", "conversation-events", "tool-use"];
+      state = {
+        adapterId: "codex",
+        name: "OpenAI Codex",
+        mode: "passive",
+        capabilities: this.capabilities,
+        currentState: "idle"
+      };
+      watcher = null;
+      fileSizes = /* @__PURE__ */ new Map();
+      eventsDir;
+      onEmit;
+      constructor(onEmit) {
+        this.onEmit = onEmit;
+        this.eventsDir = path3.join(os2.homedir(), ".codex");
+      }
+      start() {
+        this.watchForEvents();
+      }
+      stop() {
+        this.watcher?.close();
+        this.watcher = null;
+      }
+      onTerminalData(sessionName, data) {
+        if (data.includes("Thinking...") || data.includes("Working...") || data.includes("\u280B") || data.includes("\u2819") || data.includes("\u2839") || data.includes("\u2838") || data.includes("\u283C") || data.includes("\u2834") || data.includes("\u2826") || data.includes("\u2827") || data.includes("\u2807") || data.includes("\u280F")) {
+          this.updateState("running");
+          return;
+        }
+        if (data.includes("Reading file:") || data.includes("Writing file:") || data.includes("Editing file:") || data.includes("Running:") || data.includes("Patch:") || data.includes("[tool_use]")) {
+          this.updateState("running");
+          return;
+        }
+        if (data.includes("Approve?") || data.includes("[y/N]") || data.includes("[y/n]") || data.includes("Allow this?") || data.includes("Run command?")) {
+          this.updateState("waiting_approval");
+          return;
+        }
+        if (data.includes("Error:") || data.includes("Failed:")) {
+          if (data.includes("codex") || data.includes("Codex") || data.includes("codex>")) {
+            this.updateState("error");
+            return;
+          }
+        }
+        if (data.includes("codex>") || data.includes("Done")) {
+          this.updateState("idle");
+          return;
+        }
+      }
+      getCurrentState() {
+        return { ...this.state };
+      }
+      updateState(newState) {
+        if (this.state.currentState !== newState) {
+          this.state.currentState = newState;
+          if (this.onEmit) {
+            this.onEmit({
+              type: "state_change",
+              seq: Date.now(),
+              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+              data: { state: newState },
+              adapterId: this.id
+            });
+          }
+        }
+      }
+      watchForEvents() {
+        if (!fs5.existsSync(this.eventsDir)) return;
+        try {
+          this.watcher = fs5.watch(
+            this.eventsDir,
+            { recursive: true },
+            (eventType, filename) => {
+              if (filename && (filename.endsWith(".jsonl") || filename.endsWith(".json"))) {
+                this.processEventFile(path3.join(this.eventsDir, filename));
+              }
+            }
+          );
+        } catch {
+        }
+      }
+      processEventFile(filePath) {
+        try {
+          const stat = fs5.statSync(filePath);
+          const lastSize = this.fileSizes.get(filePath) ?? 0;
+          if (stat.size <= lastSize) return;
+          let newData;
+          const fd = fs5.openSync(filePath, "r");
+          try {
+            newData = Buffer.alloc(stat.size - lastSize);
+            fs5.readSync(fd, newData, 0, newData.length, lastSize);
+            this.fileSizes.set(filePath, stat.size);
+          } finally {
+            fs5.closeSync(fd);
+          }
+          const lines = newData.toString().split("\n").filter((l) => l.trim());
+          for (const line of lines) {
+            try {
+              const event = JSON.parse(line);
+              this.handleSessionEvent(event);
+            } catch {
+            }
+          }
+        } catch {
+        }
+      }
+      handleSessionEvent(event) {
+        const type = event.type;
+        if (type === "item.created" || type === "tool_use" || type === "turn.started") {
+          this.updateState("running");
+        } else if (type === "turn.completed" || type === "done") {
+          this.updateState("idle");
+        } else if (type === "permission_request") {
+          this.updateState("waiting_approval");
+        } else if (type === "error") {
+          this.updateState("error");
+        }
+      }
+    };
+  }
+});
+
 // src/adapters/index.ts
 var init_adapters = __esm({
   "src/adapters/index.ts"() {
@@ -2855,6 +3714,8 @@ var init_adapters = __esm({
     init_registry();
     init_generic_shell();
     init_claude_code();
+    init_codex();
+    init_agent_events();
   }
 });
 
@@ -2944,23 +3805,179 @@ var init_tunnel = __esm({
   }
 });
 
+// src/service.ts
+import fs6 from "fs";
+import path4 from "path";
+import { homedir as homedir5 } from "os";
+import { execSync } from "child_process";
+import { fileURLToPath } from "url";
+function escapeXml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function generatePlist(options = {}) {
+  const { port, args = [] } = options;
+  const programArgs = [process.execPath, SERVER_JS, ...args];
+  const programArgsXml = programArgs.map((a) => `    <string>${escapeXml(a)}</string>`).join("\n");
+  const envVars = {};
+  if (port) envVars.PORT = String(port);
+  if (process.env.REMUX_TOKEN) envVars.REMUX_TOKEN = process.env.REMUX_TOKEN;
+  let envXml = "";
+  if (Object.keys(envVars).length > 0) {
+    const entries = Object.entries(envVars).map(
+      ([k, v]) => `      <key>${escapeXml(k)}</key>
+      <string>${escapeXml(v)}</string>`
+    ).join("\n");
+    envXml = `
+  <key>EnvironmentVariables</key>
+  <dict>
+${entries}
+  </dict>`;
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${programArgsXml}
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>${escapeXml(__dirname)}</string>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(path4.join(LOG_DIR, "remux.log"))}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(path4.join(LOG_DIR, "remux.err"))}</string>${envXml}
+</dict>
+</plist>
+`;
+}
+function installService(options = {}) {
+  fs6.mkdirSync(LOG_DIR, { recursive: true });
+  if (fs6.existsSync(PLIST_PATH)) {
+    try {
+      execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: "pipe" });
+    } catch {
+    }
+  }
+  const xml = generatePlist(options);
+  fs6.writeFileSync(PLIST_PATH, xml);
+  execSync(`launchctl load "${PLIST_PATH}"`, { stdio: "pipe" });
+  console.log(`[remux] Service installed and started.`);
+  console.log(`[remux]   Plist: ${PLIST_PATH}`);
+  console.log(`[remux]   Logs:  ${LOG_DIR}/`);
+}
+function uninstallService() {
+  if (!fs6.existsSync(PLIST_PATH)) {
+    console.log(`[remux] Service is not installed.`);
+    return;
+  }
+  try {
+    execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: "pipe" });
+  } catch {
+  }
+  fs6.unlinkSync(PLIST_PATH);
+  console.log(`[remux] Service uninstalled.`);
+}
+function serviceStatus() {
+  if (!fs6.existsSync(PLIST_PATH)) {
+    return { installed: false, running: false };
+  }
+  try {
+    const output = execSync(`launchctl list ${LABEL}`, {
+      stdio: "pipe",
+      encoding: "utf8"
+    });
+    const firstLine = output.trim().split("\n").pop();
+    const pid = firstLine?.split("	")[0];
+    if (pid && pid !== "-" && !isNaN(Number(pid))) {
+      return { installed: true, running: true, pid: Number(pid) };
+    }
+    return { installed: true, running: false };
+  } catch {
+    return { installed: true, running: false };
+  }
+}
+function handleServiceCommand(argv) {
+  if (argv.length < 4 || argv[2] !== "service") return false;
+  const subcommand = argv[3];
+  switch (subcommand) {
+    case "install": {
+      const opts = {};
+      const portIdx = argv.indexOf("--port");
+      if (portIdx !== -1 && argv[portIdx + 1]) {
+        opts.port = Number(argv[portIdx + 1]);
+      }
+      const extra = [];
+      for (let i = 4; i < argv.length; i++) {
+        if (argv[i] === "--port") {
+          i++;
+          continue;
+        }
+        extra.push(argv[i]);
+      }
+      if (extra.length) opts.args = extra;
+      installService(opts);
+      return true;
+    }
+    case "uninstall":
+      uninstallService();
+      return true;
+    case "status": {
+      const st = serviceStatus();
+      if (!st.installed) {
+        console.log("[remux] Service is not installed.");
+      } else if (st.running) {
+        console.log(`[remux] Service is running (PID ${st.pid}).`);
+      } else {
+        console.log("[remux] Service is installed but not running.");
+      }
+      return true;
+    }
+    default:
+      console.error(
+        `[remux] Unknown service command: ${subcommand}
+Usage: remux service <install|uninstall|status>`
+      );
+      return true;
+  }
+}
+var __filename, __dirname, LABEL, PLIST_DIR, PLIST_PATH, LOG_DIR, SERVER_JS;
+var init_service = __esm({
+  "src/service.ts"() {
+    "use strict";
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path4.dirname(__filename);
+    LABEL = "com.remux.agent";
+    PLIST_DIR = path4.join(homedir5(), "Library", "LaunchAgents");
+    PLIST_PATH = path4.join(PLIST_DIR, `${LABEL}.plist`);
+    LOG_DIR = path4.join(homedir5(), ".remux", "logs");
+    SERVER_JS = path4.join(__dirname, "server.js");
+  }
+});
+
 // src/server.ts
 var server_exports = {};
 __export(server_exports, {
   adapterRegistry: () => adapterRegistry
 });
-import fs5 from "fs";
+import fs7 from "fs";
 import http from "http";
-import path3 from "path";
+import path5 from "path";
 import { createRequire } from "module";
-import { fileURLToPath } from "url";
+import { fileURLToPath as fileURLToPath2 } from "url";
 import qrcode from "qrcode-terminal";
 function findGhosttyWeb() {
   const ghosttyWebMain = require2.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
-  const distPath2 = path3.join(ghosttyWebRoot, "dist");
-  const wasmPath2 = path3.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs5.existsSync(path3.join(distPath2, "ghostty-web.js")) && fs5.existsSync(wasmPath2)) {
+  const distPath2 = path5.join(ghosttyWebRoot, "dist");
+  const wasmPath2 = path5.join(ghosttyWebRoot, "ghostty-vt.wasm");
+  if (fs7.existsSync(path5.join(distPath2, "ghostty-web.js")) && fs7.existsSync(wasmPath2)) {
     return { distPath: distPath2, wasmPath: wasmPath2 };
   }
   console.error("Error: ghostty-web package not found.");
@@ -3001,10 +4018,14 @@ function initAdapters() {
     adapterRegistry.emit(event.adapterId, event.type, event.data);
   });
   adapterRegistry.register(claudeAdapter);
+  const codexAdapter = new CodexAdapter((event) => {
+    adapterRegistry.emit(event.adapterId, event.type, event.data);
+  });
+  adapterRegistry.register(codexAdapter);
 }
 function serveFile(filePath, res) {
-  const ext = path3.extname(filePath);
-  fs5.readFile(filePath, (err, data) => {
+  const ext = path5.extname(filePath);
+  fs7.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end("Not Found");
@@ -3080,7 +4101,7 @@ function shutdown() {
   }
   process.exit(0);
 }
-var __filename, __dirname, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
+var __filename2, __dirname2, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
 var init_server = __esm({
   "src/server.ts"() {
     init_auth();
@@ -3092,11 +4113,15 @@ var init_server = __esm({
     init_adapters();
     init_git_service();
     init_tunnel();
-    __filename = fileURLToPath(import.meta.url);
-    __dirname = path3.dirname(__filename);
+    init_service();
+    __filename2 = fileURLToPath2(import.meta.url);
+    __dirname2 = path5.dirname(__filename2);
+    if (handleServiceCommand(process.argv)) {
+      process.exit(0);
+    }
     require2 = createRequire(import.meta.url);
     PKG = JSON.parse(
-      fs5.readFileSync(path3.join(__dirname, "package.json"), "utf8")
+      fs7.readFileSync(path5.join(__dirname2, "package.json"), "utf8")
     );
     VERSION = PKG.version;
     PORT2 = process.env.PORT || 8767;
@@ -3311,6 +4336,9 @@ var init_server = __esm({
       .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
       .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
       .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
+      .ws-badge.diff { background: #2a2a1a; color: #ddbb55; }
+      .ws-badge.markdown { background: #1a2a2a; color: #55bbdd; }
+      .ws-badge.ansi { background: #2a1a2a; color: #dd88bb; }
       .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
       .ws-card-actions button { background: none; border: 1px solid var(--border);
         color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
@@ -3375,6 +4403,63 @@ var init_server = __esm({
         letter-spacing: .5px; margin-bottom: 4px; }
       .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
       .ws-handoff-list li { margin-bottom: 2px; }
+
+      /* -- Rich content rendering (diff, markdown, ANSI) -- */
+      .ws-card-content { margin-top: 6px; font-size: 12px; max-height: 200px; overflow: auto;
+        border-top: 1px solid var(--border); padding-top: 6px; }
+      .ws-card-content.expanded { max-height: none; }
+      .ws-card-toggle { font-size: 11px; color: var(--text-dim); background: none; border: none;
+        cursor: pointer; padding: 2px 6px; font-family: inherit; border-radius: 3px; }
+      .ws-card-toggle:hover { color: var(--text-bright); background: var(--bg-hover); }
+
+      /* Diff */
+      .diff-container { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 11px;
+        line-height: 1.5; overflow-x: auto; }
+      .diff-container > div { padding: 0 8px; white-space: pre; }
+      .diff-add { background: #1a3a1a; color: #4eff4e; }
+      .diff-del { background: #3a1a1a; color: #ff4e4e; }
+      .diff-hunk { color: #6a9eff; font-style: italic; }
+      .diff-header { color: #888; font-style: italic; }
+      .diff-ctx { color: var(--text-muted); }
+      .diff-line-num { display: inline-block; width: 32px; text-align: right; margin-right: 8px;
+        color: var(--text-dim); user-select: none; }
+
+      /* Markdown */
+      .rendered-md { font-size: 13px; line-height: 1.6; color: var(--text-bright); }
+      .rendered-md h1 { font-size: 18px; margin: 0.5em 0 0.3em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+      .rendered-md h2 { font-size: 15px; margin: 0.5em 0 0.3em; }
+      .rendered-md h3 { font-size: 13px; margin: 0.5em 0 0.3em; font-weight: 600; }
+      .rendered-md p { margin: 0.4em 0; }
+      .rendered-md code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px;
+        font-family: 'Menlo','Monaco',monospace; font-size: 11px; }
+      .rendered-md pre { background: #1e1e1e; padding: 12px; border-radius: 6px;
+        overflow-x: auto; margin: 0.4em 0; }
+      .rendered-md pre code { background: none; padding: 0; font-size: 11px; }
+      .rendered-md blockquote { border-left: 3px solid #555; padding-left: 12px; color: #aaa;
+        margin: 0.4em 0; }
+      .rendered-md ul, .rendered-md ol { padding-left: 20px; margin: 0.3em 0; }
+      .rendered-md li { margin: 0.15em 0; }
+      .rendered-md a { color: var(--accent); text-decoration: none; }
+      .rendered-md a:hover { text-decoration: underline; }
+      .rendered-md hr { border: none; border-top: 1px solid var(--border); margin: 0.5em 0; }
+      .rendered-md strong { color: var(--text-on-active); }
+
+      /* ANSI */
+      .ansi-bold { font-weight: bold; }
+      .ansi-dim { opacity: 0.6; }
+      .ansi-italic { font-style: italic; }
+      .ansi-underline { text-decoration: underline; }
+
+      /* Light theme overrides */
+      [data-theme="light"] .diff-add { background: #e6ffec; color: #1a7f37; }
+      [data-theme="light"] .diff-del { background: #ffebe9; color: #cf222e; }
+      [data-theme="light"] .diff-hunk { color: #0969da; }
+      [data-theme="light"] .diff-header { color: #6e7781; }
+      [data-theme="light"] .diff-ctx { color: #57606a; }
+      [data-theme="light"] .rendered-md code { background: #eee; }
+      [data-theme="light"] .rendered-md pre { background: #f6f8fa; }
+      [data-theme="light"] .rendered-md blockquote { border-left-color: #ccc; color: #666; }
+
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
         tab-size: 8; user-select: text; -webkit-user-select: text; }
@@ -3776,10 +4861,10 @@ var init_server = __esm({
           if (ctrlActive) {
             ctrlActive = false; $('btn-ctrl').classList.remove('active');
             const ch = data.toLowerCase().charCodeAt(0);
-            if (ch >= 0x61 && ch <= 0x7a) { ws.send(String.fromCharCode(ch - 0x60)); return; }
+            if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
           }
           pe.onInput(data);
-          ws.send(data);
+          sendTermData(data);
         });
         term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
         // Re-attach to current tab to get snapshot
@@ -3936,6 +5021,105 @@ var init_server = __esm({
         if (name && name.trim()) sendCtrl({ type: 'new_session', name: name.trim(), cols: term.cols, rows: term.rows });
       });
 
+      // -- E2EE client (Web Crypto API) --
+      // Adapted from Signal Protocol X25519+AES-GCM pattern
+      const e2ee = {
+        established: false,
+        sendCounter: 0n,
+        recvCounter: -1n,
+        localKeyPair: null,  // { publicKey: CryptoKey, privateKey: CryptoKey, rawPublic: Uint8Array }
+        sharedKey: null,     // CryptoKey (AES-GCM)
+        available: !!(crypto && crypto.subtle),
+
+        async init() {
+          if (!this.available) return;
+          try {
+            const kp = await crypto.subtle.generateKey('X25519', false, ['deriveBits']);
+            const rawPub = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+            this.localKeyPair = { publicKey: kp.publicKey, privateKey: kp.privateKey, rawPublic: rawPub };
+          } catch (e) {
+            console.warn('[e2ee] X25519 not available:', e);
+            this.available = false;
+          }
+        },
+
+        getPublicKeyB64() {
+          if (!this.localKeyPair) return null;
+          return btoa(String.fromCharCode(...this.localKeyPair.rawPublic));
+        },
+
+        async completeHandshake(peerPubKeyB64) {
+          if (!this.localKeyPair) return;
+          try {
+            const peerRaw = Uint8Array.from(atob(peerPubKeyB64), c => c.charCodeAt(0));
+            const peerKey = await crypto.subtle.importKey('raw', peerRaw, 'X25519', false, []);
+            // ECDH: derive raw shared bits
+            const rawBits = await crypto.subtle.deriveBits(
+              { name: 'X25519', public: peerKey },
+              this.localKeyPair.privateKey,
+              256
+            );
+            // HKDF-SHA256 to derive AES-256-GCM key
+            const hkdfKey = await crypto.subtle.importKey('raw', rawBits, 'HKDF', false, ['deriveBits']);
+            const salt = new TextEncoder().encode('remux-e2ee-v1');
+            const info = new TextEncoder().encode('aes-256-gcm');
+            const derived = await crypto.subtle.deriveBits(
+              { name: 'HKDF', hash: 'SHA-256', salt, info },
+              hkdfKey,
+              256
+            );
+            this.sharedKey = await crypto.subtle.importKey('raw', derived, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+            this.established = true;
+            this.sendCounter = 0n;
+            this.recvCounter = -1n;
+            console.log('[e2ee] handshake complete');
+          } catch (e) {
+            console.error('[e2ee] handshake failed:', e);
+            this.available = false;
+          }
+        },
+
+        async encryptMessage(plaintext) {
+          if (!this.sharedKey) throw new Error('E2EE not established');
+          const plaintextBuf = new TextEncoder().encode(plaintext);
+          // IV: 4 random bytes + 8 byte counter (big-endian)
+          const iv = new Uint8Array(12);
+          crypto.getRandomValues(iv.subarray(0, 4));
+          const counterView = new DataView(iv.buffer, iv.byteOffset + 4, 8);
+          counterView.setBigUint64(0, this.sendCounter, false);
+          this.sendCounter++;
+          const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv, tagLength: 128 },
+            this.sharedKey,
+            plaintextBuf
+          );
+          // AES-GCM returns ciphertext + tag concatenated
+          const result = new Uint8Array(12 + encrypted.byteLength);
+          result.set(iv, 0);
+          result.set(new Uint8Array(encrypted), 12);
+          return btoa(String.fromCharCode(...result));
+        },
+
+        async decryptMessage(encryptedB64) {
+          if (!this.sharedKey) throw new Error('E2EE not established');
+          const packed = Uint8Array.from(atob(encryptedB64), c => c.charCodeAt(0));
+          if (packed.length < 28) throw new Error('E2EE message too short'); // 12 iv + 16 tag minimum
+          const iv = packed.subarray(0, 12);
+          const ciphertextWithTag = packed.subarray(12);
+          // Anti-replay: check counter is monotonically increasing
+          const counterView = new DataView(iv.buffer, iv.byteOffset + 4, 8);
+          const counter = counterView.getBigUint64(0, false);
+          if (counter <= this.recvCounter) throw new Error('E2EE replay detected');
+          const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv, tagLength: 128 },
+            this.sharedKey,
+            ciphertextWithTag
+          );
+          this.recvCounter = counter;
+          return new TextDecoder().decode(decrypted);
+        }
+      };
+
       // -- WebSocket with exponential backoff + heartbeat --
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const urlToken = new URLSearchParams(location.search).get('token');
@@ -3988,8 +5172,10 @@ var init_server = __esm({
 
       function connect() {
         setStatus('connecting', 'Connecting...');
+        e2ee.established = false;
+        e2ee.sharedKey = null;
         ws = new WebSocket(proto + '//' + location.host + '/ws');
-        ws.onopen = () => {
+        ws.onopen = async () => {
           backoffMs = 1000; // reset backoff on successful connection
           startHeartbeat();
           if (urlToken) {
@@ -3999,6 +5185,14 @@ var init_server = __esm({
               localStorage.setItem('remux-device-id', 'dev-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36));
             }
             ws.send(JSON.stringify({ type: 'auth', token: urlToken, deviceId: localStorage.getItem('remux-device-id') }));
+          }
+          // Initiate E2EE handshake if Web Crypto API is available
+          if (e2ee.available) {
+            await e2ee.init();
+            const pubKey = e2ee.getPublicKeyB64();
+            if (pubKey) {
+              ws.send(JSON.stringify({ v: 1, type: 'e2ee_init', payload: { publicKey: pubKey } }));
+            }
           }
           // Session recovery: if we have a previous timestamp, request buffered messages
           const deviceId = localStorage.getItem('remux-device-id');
@@ -4026,6 +5220,27 @@ var init_server = __esm({
               const msg = parsed.v === 1 ? { ...(parsed.payload || {}), type: parsed.type } : parsed;
               // Server heartbeat \u2014 just keep connection alive (lastMessageAt already updated)
               if (msg.type === 'ping') return;
+              // E2EE handshake: server responds with its public key
+              if (msg.type === 'e2ee_init') {
+                if (msg.publicKey && e2ee.available && e2ee.localKeyPair) {
+                  e2ee.completeHandshake(msg.publicKey);
+                }
+                return;
+              }
+              if (msg.type === 'e2ee_ready') {
+                console.log('[e2ee] server confirmed E2EE established');
+                return;
+              }
+              // E2EE encrypted message (terminal output from server)
+              if (msg.type === 'e2ee_msg') {
+                if (e2ee.established && msg.data) {
+                  e2ee.decryptMessage(msg.data).then(decrypted => {
+                    const filtered = pe.onServerData(decrypted);
+                    if (filtered) term.write(filtered);
+                  }).catch(err => console.error('[e2ee] decrypt failed:', err));
+                }
+                return;
+              }
               // Session recovery complete
               if (msg.type === 'resume_complete') {
                 isResuming = false;
@@ -4156,8 +5371,8 @@ var init_server = __esm({
               if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
               if (msg.type === 'snapshot_captured') {
-                // Optimistic render: add artifact directly
-                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, createdAt: msg.createdAt || Date.now() });
+                // Optimistic render: add artifact directly (with server-rendered HTML)
+                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, contentType: msg.contentType || 'plain', renderedHtml: msg.renderedHtml, createdAt: msg.createdAt || Date.now() });
                 renderWorkspaceArtifacts();
                 return;
               }
@@ -4195,6 +5410,22 @@ var init_server = __esm({
       }
       connect();
       function sendCtrl(msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+      // Send terminal data, encrypting if E2EE is established
+      function sendTermData(data) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (e2ee.established) {
+          e2ee.encryptMessage(data).then(encrypted => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ v: 1, type: 'e2ee_msg', payload: { data: encrypted } }));
+            }
+          }).catch(err => {
+            console.error('[e2ee] encrypt failed, sending plaintext:', err);
+            ws.send(data);
+          });
+        } else {
+          ws.send(data);
+        }
+      }
 
       // -- Terminal I/O --
       term.onData(data => {
@@ -4202,10 +5433,10 @@ var init_server = __esm({
         if (ctrlActive) {
           ctrlActive = false; $('btn-ctrl').classList.remove('active');
           const ch = data.toLowerCase().charCodeAt(0);
-          if (ch >= 0x61 && ch <= 0x7a) { ws.send(String.fromCharCode(ch - 0x60)); return; }
+          if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
         }
         pe.onInput(data);
-        ws.send(data);
+        sendTermData(data);
       });
       term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
 
@@ -4221,7 +5452,7 @@ var init_server = __esm({
         e.preventDefault();
         if (btn.dataset.mod === 'ctrl') { ctrlActive = !ctrlActive; btn.classList.toggle('active', ctrlActive); return; }
         const d = SEQ[btn.dataset.seq] || btn.dataset.ch;
-        if (d && ws && ws.readyState === WebSocket.OPEN) ws.send(d);
+        if (d) sendTermData(d);
         term.focus();
       });
 
@@ -4532,15 +5763,34 @@ var init_server = __esm({
         // Artifacts are already filtered by session_name on the server side
         const recent = wsArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
-        el.innerHTML = recent.map(a =>
-          '<div class="ws-card">' +
+        el.innerHTML = recent.map((a, idx) => {
+          var hasContent = a.content && a.content.trim();
+          var ct = a.contentType || 'plain';
+          var badge = (ct !== 'plain') ? ' <span class="ws-badge ' + esc(ct) + '">' + esc(ct) + '</span>' : '';
+          // Use server-rendered HTML if available, otherwise show raw text
+          var rendered = a.renderedHtml || (hasContent ? '<pre style="margin:0;font-size:11px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">' + esc(a.content) + '</pre>' : '');
+          return '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
+              badge +
               '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+              (hasContent ? '<button class="ws-card-toggle" data-toggle-idx="' + idx + '">Show</button>' : '') +
             '</div>' +
-          '</div>'
-        ).join('');
+            (hasContent ? '<div class="ws-card-content" id="ws-art-content-' + idx + '" style="display:none">' + rendered + '</div>' : '') +
+          '</div>';
+        }).join('');
+        // Wire up toggle buttons
+        el.querySelectorAll('[data-toggle-idx]').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var idx = btn.getAttribute('data-toggle-idx');
+            var contentEl = document.getElementById('ws-art-content-' + idx);
+            if (!contentEl) return;
+            var visible = contentEl.style.display !== 'none';
+            contentEl.style.display = visible ? 'none' : 'block';
+            btn.textContent = visible ? 'Show' : 'Hide';
+          });
+        });
       }
 
       $('btn-new-topic').addEventListener('click', () => {
@@ -4828,9 +6078,9 @@ self.addEventListener('notificationclick', function(event) {
         return;
       }
       if (url.pathname.startsWith("/dist/")) {
-        const resolved = path3.resolve(distPath, url.pathname.slice(6));
-        const rel = path3.relative(distPath, resolved);
-        if (rel.startsWith("..") || path3.isAbsolute(rel)) {
+        const resolved = path5.resolve(distPath, url.pathname.slice(6));
+        const rel = path5.relative(distPath, resolved);
+        if (rel.startsWith("..") || path5.isAbsolute(rel)) {
           res.writeHead(403);
           res.end("Forbidden");
           return;
