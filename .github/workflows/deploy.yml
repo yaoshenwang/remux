@@ -49,7 +49,7 @@ jobs:
           # for the correct NODE_MODULE_VERSION
           export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
           node --version
-          pnpm install --frozen-lockfile
+          pnpm install
 
       - name: Build
         working-directory: ${{ steps.target.outputs.worktree }}
