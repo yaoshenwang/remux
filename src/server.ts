@@ -22,6 +22,7 @@ import {
   PERSIST_INTERVAL_MS,
 } from "./session.js";
 import { setupWebSocket } from "./ws-handler.js";
+import { AdapterRegistry, GenericShellAdapter, ClaudeCodeAdapter } from "./adapters/index.js";
 import {
   parseTunnelArgs,
   isCloudflaredAvailable,
@@ -108,7 +109,24 @@ async function startup(): Promise<void> {
   // Persistence timer (8s, like cmux)
   setInterval(persistSessions, PERSIST_INTERVAL_MS);
 
+  // Initialize adapter registry (E10)
+  initAdapters();
+
   startupDone = true;
+}
+
+// ── Adapter Registry (E10) ──────────────────────────────────────
+export const adapterRegistry = new AdapterRegistry();
+
+function initAdapters(): void {
+  // E10-004: generic-shell adapter (always available)
+  adapterRegistry.register(new GenericShellAdapter());
+
+  // E10-005: claude-code adapter (passive, watches events.jsonl)
+  const claudeAdapter = new ClaudeCodeAdapter((event) => {
+    adapterRegistry.emit(event.adapterId, event.type, event.data);
+  });
+  adapterRegistry.register(claudeAdapter);
 }
 
 startup().catch((e) => {
@@ -1779,7 +1797,27 @@ function serveFile(filePath: string, res: http.ServerResponse): void {
 
 // ── WebSocket Server ─────────────────────────────────────────────
 
-setupWebSocket(httpServer, TOKEN, PASSWORD);
+const wss = setupWebSocket(httpServer, TOKEN, PASSWORD);
+
+// E10-006: broadcast adapter events to all authenticated WebSocket clients
+adapterRegistry.onEvent((event) => {
+  const envelope = JSON.stringify({
+    v: 1,
+    type: "adapter_event",
+    domain: "semantic",
+    emittedAt: event.timestamp,
+    source: "server",
+    payload: event,
+  });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      // Only send to authenticated clients (they have _remuxAuthed flag)
+      if ((client as any)._remuxAuthed) {
+        client.send(envelope);
+      }
+    }
+  }
+});
 
 // ── Start ────────────────────────────────────────────────────────
 
