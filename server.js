@@ -3556,7 +3556,7 @@ var init_server = __esm({
               this.total++; this.correct++;
               this.accuracy = this.correct / this.total;
               // Un-dim confirmed char
-              this.term.write('\\x1b7\\x1b[' + (p.y+1) + ';' + (p.x+1) + 'H\\x1b[22m' + p.ch + '\\x1b8');
+              this.term.write('\\x1b[s\\x1b[' + (p.y+1) + ';' + (p.x+1) + 'H\\x1b[22m' + p.ch + '\\x1b[u');
             } else {
               this._rollback(); return data.slice(consumed);
             }
@@ -3566,7 +3566,7 @@ var init_server = __esm({
         }
         _rollback() {
           if (this.preds.length === 0) return;
-          this.term.write('\\x1b7');
+          this.term.write('\\x1b[s');
           for (let i = this.preds.length - 1; i >= 0; i--) {
             const p = this.preds[i];
             this.term.write('\\x1b[' + (p.y+1) + ';' + (p.x+1) + 'H ');
