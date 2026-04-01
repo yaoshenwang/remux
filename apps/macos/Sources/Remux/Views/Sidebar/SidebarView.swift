@@ -2,6 +2,7 @@ import SwiftUI
 import RemuxKit
 
 /// Workspace sidebar showing sessions, tabs, connection status, and update banner.
+/// Supports git branch display, drag-to-reorder, and pin/unpin.
 /// Design ref: cmux TabManager/Workspace sidebar pattern
 struct SidebarView: View {
     @Environment(RemuxState.self) private var state
@@ -21,6 +22,18 @@ struct SidebarView: View {
     /// Update checker instance (shared across views).
     @State private var updateChecker = UpdateChecker()
 
+    /// Ordered tab indices for drag-to-reorder.
+    @State private var tabOrder: [Int] = []
+
+    /// Set of pinned tab indices.
+    @State private var pinnedTabs: Set<Int> = []
+
+    /// Git branch per tab (parsed from CWD's .git/HEAD).
+    @State private var tabGitBranches: [Int: String] = [:]
+
+    /// Port scanner (passed from parent).
+    var portScanner: PortScanner?
+
     /// Preset colors for workspace color picker.
     private let presetColors: [Color] = [
         .red, .orange, .yellow, .green, .mint, .teal,
@@ -28,6 +41,14 @@ struct SidebarView: View {
         .gray, Color(nsColor: .systemTeal), Color(nsColor: .systemIndigo),
         Color(nsColor: .controlAccentColor),
     ]
+
+    /// Sorted tabs: pinned first, then ordered.
+    private var sortedTabs: [WorkspaceTab] {
+        let tabs = state.tabs
+        let pinned = tabs.filter { pinnedTabs.contains($0.index) }
+        let unpinned = tabs.filter { !pinnedTabs.contains($0.index) }
+        return pinned + unpinned
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,22 +65,24 @@ struct SidebarView: View {
                     }
                 }
 
-                // Tab list
+                // Tab list with drag-to-reorder
                 Section("Tabs") {
-                    ForEach(state.tabs, id: \.index) { tab in
+                    ForEach(sortedTabs, id: \.index) { tab in
                         SidebarTabRow(
                             tab: tab,
                             isActive: tab.active,
                             tabColor: tabColors[tab.index],
                             isUnread: unreadTabs.contains(tab.index),
                             isRenaming: renamingTabIndex == tab.index,
+                            isPinned: pinnedTabs.contains(tab.index),
+                            gitBranch: tabGitBranches[tab.index],
                             renameText: renamingTabIndex == tab.index ? $renameText : .constant(""),
                             presetColors: presetColors,
+                            detectedPorts: portScanner?.ports ?? [],
                             onSelect: {
                                 if let pane = tab.panes.first {
                                     state.switchTab(id: pane.id)
                                 }
-                                // Clear unread when user switches to tab
                                 unreadTabs.remove(tab.index)
                             },
                             onRename: {
@@ -77,8 +100,21 @@ struct SidebarView: View {
                             },
                             onColorSelect: { color in
                                 tabColors[tab.index] = color
-                            }
+                            },
+                            onTogglePin: {
+                                if pinnedTabs.contains(tab.index) {
+                                    pinnedTabs.remove(tab.index)
+                                } else {
+                                    pinnedTabs.insert(tab.index)
+                                }
+                            },
+                            onOpenPort: { _ in }
                         )
+                    }
+                    .onMove { source, destination in
+                        var ordered = sortedTabs.map(\.index)
+                        ordered.move(fromOffsets: source, toOffset: destination)
+                        tabOrder = ordered
                     }
                 }
 
@@ -106,6 +142,30 @@ struct SidebarView: View {
         .navigationTitle(state.currentSession.isEmpty ? "Remux" : state.currentSession)
         .onAppear {
             updateChecker.start()
+            refreshGitBranches()
+        }
+        .onChange(of: state.tabs) { _, _ in
+            refreshGitBranches()
+        }
+    }
+
+    // MARK: - Git branch detection
+
+    /// Parse .git/HEAD from each tab's CWD to get the current branch.
+    private func refreshGitBranches() {
+        for tab in state.tabs {
+            guard let cwd = tab.panes.first?.cwd, !cwd.isEmpty else { continue }
+            let gitHead = (cwd as NSString).appendingPathComponent(".git/HEAD")
+            if let content = try? String(contentsOfFile: gitHead, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("ref: refs/heads/") {
+                    let branch = String(trimmed.dropFirst("ref: refs/heads/".count))
+                    tabGitBranches[tab.index] = branch
+                } else {
+                    // Detached HEAD — show short hash
+                    tabGitBranches[tab.index] = String(trimmed.prefix(7))
+                }
+            }
         }
     }
 
@@ -131,63 +191,116 @@ struct SidebarView: View {
 
 // MARK: - Sidebar Tab Row
 
-/// A single tab row in the sidebar with color indicator, unread dot, and inline rename.
+/// A single tab row in the sidebar with color indicator, unread dot, pin, git branch, and inline rename.
 struct SidebarTabRow: View {
     let tab: WorkspaceTab
     let isActive: Bool
     let tabColor: Color?
     let isUnread: Bool
     let isRenaming: Bool
+    let isPinned: Bool
+    let gitBranch: String?
     @Binding var renameText: String
     let presetColors: [Color]
+    let detectedPorts: [PortScanner.DetectedPort]
     var onSelect: () -> Void
     var onRename: () -> Void
     var onCommitRename: () -> Void
     var onCancelRename: () -> Void
     var onColorSelect: (Color) -> Void
+    var onTogglePin: () -> Void
+    var onOpenPort: (Int) -> Void
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                // Workspace color dot
-                if let color = tabColor {
-                    Circle()
-                        .fill(color)
-                        .frame(width: 6, height: 6)
+        VStack(alignment: .leading, spacing: 2) {
+            Button(action: onSelect) {
+                HStack(spacing: 6) {
+                    // Pin indicator
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.orange)
+                    }
+
+                    // Workspace color dot
+                    if let color = tabColor {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 6, height: 6)
+                    }
+
+                    Image(systemName: "terminal")
+                        .foregroundStyle(isActive ? .primary : .secondary)
+
+                    // Tab name (editable or static)
+                    if isRenaming {
+                        TextField("Tab Name", text: $renameText, onCommit: onCommitRename)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 120)
+                            .onExitCommand(perform: onCancelRename)
+                    } else {
+                        Text(tab.name)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    // Unread activity indicator
+                    if isUnread && !isActive {
+                        UnreadDot()
+                    }
+
+                    // Bell indicator
+                    if tab.hasBell {
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 6, height: 6)
+                    }
                 }
+            }
+            .buttonStyle(.plain)
 
-                Image(systemName: "terminal")
-                    .foregroundStyle(isActive ? .primary : .secondary)
-
-                // Tab name (editable or static)
-                if isRenaming {
-                    TextField("Tab Name", text: $renameText, onCommit: onCommitRename)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 120)
-                        .onExitCommand(perform: onCancelRename)
-                } else {
-                    Text(tab.name)
+            // Git branch display
+            if let branch = gitBranch {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.purple)
+                    Text(branch)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.purple.opacity(0.8))
                         .lineLimit(1)
                 }
+                .padding(.leading, isPinned ? 20 : 14)
+            }
 
-                Spacer()
-
-                // Unread activity indicator
-                if isUnread && !isActive {
-                    UnreadDot()
-                }
-
-                // Bell indicator
-                if tab.hasBell {
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 6, height: 6)
+            // Detected ports for this tab
+            let tabPorts = detectedPorts
+            if !tabPorts.isEmpty && isActive {
+                ForEach(tabPorts) { port in
+                    Button(action: { onOpenPort(port.port) }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "network")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.blue)
+                            Text(":\(port.port)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.blue)
+                            Text(port.processName)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, isPinned ? 20 : 14)
                 }
             }
         }
-        .buttonStyle(.plain)
         .padding(.vertical, 2)
         .contextMenu {
+            // Pin/Unpin
+            Button(isPinned ? "Unpin Tab" : "Pin Tab") { onTogglePin() }
+
             // Rename
             Button("Rename Tab") { onRename() }
 

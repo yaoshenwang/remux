@@ -7,14 +7,20 @@ import RemuxKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var additionalWindows: [NSWindow] = []
+    private var detachedWindows: [UUID: NSWindow] = [:]
     private var statusItem: NSStatusItem?
     private var menuBarManager: MenuBarManager?
     private(set) var notificationManager: NotificationManager?
+    private var socketController: SocketController?
+    private var finderIntegration: FinderIntegration?
 
     @MainActor
     let state = RemuxState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Install crash reporter first
+        CrashReporter.shared.install()
+
         // Load saved session (if any)
         let savedSession = SessionPersistence.shared.load()
 
@@ -23,6 +29,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager = MenuBarManager(state: state)
         notificationManager = NotificationManager()
         setupGlobalShortcut()
+
+        // Start socket controller for CLI scripting
+        socketController = SocketController(state: state)
+        socketController?.start()
+
+        // Setup Finder integration
+        finderIntegration = FinderIntegration(state: state)
+        finderIntegration?.registerServices()
 
         // Start autosave
         SessionPersistence.shared.startAutosave { [weak self] in
@@ -38,9 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.autoConnectIfConfigured(savedSession: savedSession)
             }
         }
+
+        // Check for crash reports from previous launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            CrashReporter.shared.checkForPendingReports()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Stop socket controller
+        socketController?.stop()
+
         // Save session on quit
         Task { @MainActor in
             let session = buildCurrentSession()
@@ -192,5 +214,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
+    }
+
+    // MARK: - Window Portal (Detach Pane to Window)
+
+    /// Detach a terminal panel to its own standalone window.
+    /// The panel is displayed in a new NSWindow.
+    func detachPaneToWindow() {
+        let panelID = UUID()
+        let contentView = TerminalContainerView()
+            .environment(state)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.minSize = NSSize(width: 400, height: 300)
+        window.title = "Remux (Detached)"
+        window.contentView = NSHostingView(rootView: contentView)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+
+        detachedWindows[panelID] = window
+
+        // When the window closes, clean up
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.detachedWindows.removeValue(forKey: panelID)
+        }
+    }
+
+    /// Close all detached windows and return their panels to the main window.
+    func attachAllBack() {
+        for (_, window) in detachedWindows {
+            window.close()
+        }
+        detachedWindows.removeAll()
     }
 }

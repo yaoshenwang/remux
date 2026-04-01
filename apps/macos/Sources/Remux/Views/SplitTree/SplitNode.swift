@@ -9,10 +9,12 @@ indirect enum SplitNode: Identifiable, Sendable {
     struct LeafData: Identifiable, Sendable {
         var id: UUID
         var tabIndex: Int
+        var panelType: PanelType
 
-        init(id: UUID = UUID(), tabIndex: Int) {
+        init(id: UUID = UUID(), tabIndex: Int, panelType: PanelType = .terminal) {
             self.id = id
             self.tabIndex = tabIndex
+            self.panelType = panelType
         }
     }
 
@@ -73,11 +75,11 @@ indirect enum SplitNode: Identifiable, Sendable {
     }
 
     /// Split a leaf node into a branch with the original leaf and a new leaf.
-    func split(leafID: UUID, orientation: Orientation, newTabIndex: Int) -> SplitNode {
+    func split(leafID: UUID, orientation: Orientation, newTabIndex: Int, panelType: PanelType = .terminal) -> SplitNode {
         switch self {
         case .leaf(let data):
             guard data.id == leafID else { return self }
-            let newLeaf = SplitNode.leaf(LeafData(tabIndex: newTabIndex))
+            let newLeaf = SplitNode.leaf(LeafData(tabIndex: newTabIndex, panelType: panelType))
             return .branch(BranchData(
                 orientation: orientation,
                 first: self,
@@ -85,8 +87,8 @@ indirect enum SplitNode: Identifiable, Sendable {
             ))
 
         case .branch(var data):
-            data.first = data.first.split(leafID: leafID, orientation: orientation, newTabIndex: newTabIndex)
-            data.second = data.second.split(leafID: leafID, orientation: orientation, newTabIndex: newTabIndex)
+            data.first = data.first.split(leafID: leafID, orientation: orientation, newTabIndex: newTabIndex, panelType: panelType)
+            data.second = data.second.split(leafID: leafID, orientation: orientation, newTabIndex: newTabIndex, panelType: panelType)
             return .branch(data)
         }
     }

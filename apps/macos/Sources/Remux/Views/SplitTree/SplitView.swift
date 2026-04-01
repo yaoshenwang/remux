@@ -34,14 +34,19 @@ struct SplitView: View {
     }
 }
 
-/// Renders a single terminal leaf in the split tree.
+/// Renders a single leaf in the split tree — dispatches by panel type.
 struct SplitLeafView: View {
     let data: SplitNode.LeafData
     let isFocused: Bool
     var onFocus: () -> Void
 
+    /// Browser panels keyed by leaf ID (kept alive across re-renders).
+    @State private var browserPanel: BrowserPanel?
+    /// Markdown panels keyed by leaf ID.
+    @State private var markdownPanel: MarkdownPanel?
+
     var body: some View {
-        TerminalContainerView()
+        panelContent
             .overlay(alignment: .topLeading) {
                 if isFocused {
                     RoundedRectangle(cornerRadius: 0)
@@ -53,6 +58,36 @@ struct SplitLeafView: View {
             .onTapGesture {
                 onFocus()
             }
+    }
+
+    @ViewBuilder
+    private var panelContent: some View {
+        switch data.panelType {
+        case .terminal:
+            TerminalContainerView()
+
+        case .browser:
+            let panel = getBrowserPanel()
+            BrowserPanelView(panel: panel)
+
+        case .markdown:
+            let panel = getMarkdownPanel()
+            MarkdownPanelView(panel: panel)
+        }
+    }
+
+    private func getBrowserPanel() -> BrowserPanel {
+        if let existing = browserPanel { return existing }
+        let panel = BrowserPanel(id: data.id)
+        DispatchQueue.main.async { browserPanel = panel }
+        return panel
+    }
+
+    private func getMarkdownPanel() -> MarkdownPanel {
+        if let existing = markdownPanel { return existing }
+        let panel = MarkdownPanel(id: data.id)
+        DispatchQueue.main.async { markdownPanel = panel }
+        return panel
     }
 }
 
