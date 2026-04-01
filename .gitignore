@@ -25,10 +25,11 @@ AGENTS.md
 /*.jpeg
 /*.gif
 
-# Snapshot/config artifacts from playwright-cli or debug sessions
-*.yaml
-*.yml
+# Snapshot/config artifacts from playwright-cli or debug sessions (root only)
+/*.yaml
+/*.yml
 !pnpm-lock.yaml
+!.github/workflows/*.yml
 
 # Docs (planning docs, not tracked)
 docs/
