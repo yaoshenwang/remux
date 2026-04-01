@@ -61,7 +61,7 @@ function createTestDb() {
     );
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY, run_id TEXT REFERENCES runs(id), topic_id TEXT REFERENCES topics(id),
-      type TEXT NOT NULL, title TEXT, content TEXT, created_at INTEGER NOT NULL
+      session_name TEXT, type TEXT NOT NULL, title TEXT, content TEXT, created_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY, run_id TEXT REFERENCES runs(id), topic_id TEXT REFERENCES topics(id),

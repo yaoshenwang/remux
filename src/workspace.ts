@@ -42,6 +42,7 @@ export function captureSnapshot(
 
   const artifact = createArtifact({
     topicId,
+    sessionName,
     type: "snapshot",
     title: `Snapshot: ${found.session.name} / ${found.tab.title}`,
     content: text,
@@ -67,6 +68,7 @@ export function createCommandCard(run: Run): ReturnType<typeof createArtifact> {
   return createArtifact({
     runId: run.id,
     topicId: run.topicId ?? undefined,
+    sessionName: run.sessionName,
     type: "command-card",
     title: run.command || "Run",
     content: summary,

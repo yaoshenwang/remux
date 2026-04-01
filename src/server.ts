@@ -101,9 +101,10 @@ async function startup(): Promise<void> {
     }
   }
 
-  // Ensure at least a "main" session exists
+  // If no sessions were restored, create an initial one.
+  // The name "default" is not privileged — it's just the bootstrap name.
   if (sessionMap.size === 0) {
-    const s = createSession("main");
+    const s = createSession("default");
     createTab(s);
   }
 
@@ -707,7 +708,7 @@ const HTML_TEMPLATE = `<!doctype html>
       createTerminal(initTheme);
       window.addEventListener('resize', () => { if (fitAddon) fitAddon.fit(); });
 
-      let sessions = [], currentSession = 'main', currentTabId = null, ws = null, ctrlActive = false;
+      let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
       const $ = id => document.getElementById(id);
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
@@ -779,8 +780,9 @@ const HTML_TEMPLATE = `<!doctype html>
                 if (other) {
                   selectSession(other.name);
                 } else {
-                  // Last session deleted — server will create a new one on next attach
-                  sendCtrl({ type: 'new_session', name: 'main', cols: term.cols, rows: term.rows });
+                  // Last session deleted — re-bootstrap via attach_first
+                  currentSession = null;
+                  sendCtrl({ type: 'attach_first', cols: term.cols, rows: term.rows });
                 }
               }
               return;
@@ -934,8 +936,16 @@ const HTML_TEMPLATE = `<!doctype html>
         ws.onopen = () => {
           backoffMs = 1000; // reset backoff on successful connection
           startHeartbeat();
-          if (urlToken) ws.send(JSON.stringify({ type: 'auth', token: urlToken }));
-          sendCtrl({ type: 'attach_first', session: currentSession || 'main', cols: term.cols, rows: term.rows });
+          if (urlToken) {
+            // Use persistent device ID from localStorage so each browser context
+            // is a distinct device even with identical User-Agent
+            if (!localStorage.getItem('remux-device-id')) {
+              localStorage.setItem('remux-device-id', 'dev-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36));
+            }
+            ws.send(JSON.stringify({ type: 'auth', token: urlToken, deviceId: localStorage.getItem('remux-device-id') }));
+          }
+          // Let server pick the session if we have none (bootstrap flow)
+          sendCtrl({ type: 'attach_first', session: currentSession || undefined, cols: term.cols, rows: term.rows });
           // Request device list (works with or without auth)
           sendCtrl({ type: 'list_devices' });
           // Request VAPID key for push notifications
@@ -1356,11 +1366,12 @@ const HTML_TEMPLATE = `<!doctype html>
       let wsNotes = [], wsCommands = [];
 
       function refreshWorkspace() {
+        if (!currentSession) return; // Wait until bootstrap resolves a session
         sendCtrl({ type: 'list_topics', sessionName: currentSession });
         sendCtrl({ type: 'list_runs' });
-        sendCtrl({ type: 'list_artifacts' });
+        sendCtrl({ type: 'list_artifacts', sessionName: currentSession });
         sendCtrl({ type: 'list_approvals' });
-        sendCtrl({ type: 'list_notes' });
+        sendCtrl({ type: 'list_notes' }); // Notes are global workspace memory, not session-scoped
         sendCtrl({ type: 'list_commands' });
       }
 
@@ -1443,11 +1454,8 @@ const HTML_TEMPLATE = `<!doctype html>
       function renderWorkspaceArtifacts() {
         const el = $('ws-artifacts');
         if (!el) return;
-        // Filter artifacts to current session (title contains "session / Tab")
-        const sessionArtifacts = wsArtifacts.filter(a =>
-          !a.title || a.title.includes(currentSession + ' /') || a.title.includes(currentSession + '/')
-        );
-        const recent = sessionArtifacts.slice(-10).reverse();
+        // Artifacts are already filtered by session_name on the server side
+        const recent = wsArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
         el.innerHTML = recent.map(a =>
           '<div class="ws-card">' +

@@ -358,6 +358,12 @@ export function deleteSession(name: string): void {
 
 // ── State queries ────────────────────────────────────────────────
 
+/** Return the name of the first existing session, or null if none. */
+export function getFirstSessionName(): string | null {
+  const first = sessionMap.values().next();
+  return first.done ? null : first.value.name;
+}
+
 export function getState(): Array<{
   name: string;
   tabs: Array<{
