@@ -1506,8 +1506,8 @@ async function getGitDiff(base) {
     // 1MB limit
     files: diffStat.files.map((f) => ({
       file: f.file,
-      insertions: f.insertions,
-      deletions: f.deletions
+      insertions: "binary" in f && f.binary ? 0 : f.insertions,
+      deletions: "binary" in f && f.binary ? 0 : f.deletions
     }))
   };
 }
@@ -1557,8 +1557,8 @@ async function compareBranches(base, head) {
     behind: behindLog.total,
     files: diffStat.files.map((f) => ({
       file: f.file,
-      insertions: f.insertions,
-      deletions: f.deletions
+      insertions: "binary" in f && f.binary ? 0 : f.insertions,
+      deletions: "binary" in f && f.binary ? 0 : f.deletions
     }))
   };
 }
@@ -1669,6 +1669,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList);
   const wss2 = new WebSocketServer({ noServer: true });
   httpServer2.on("upgrade", (req, socket, head) => {
+    if ("setNoDelay" in socket) socket.setNoDelay(true);
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === "/ws") {
       wss2.handleUpgrade(
@@ -3294,11 +3295,13 @@ var init_server = __esm({
       /* -- Mobile -- */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
-          margin-left: -220px; box-shadow: 4px 0 20px rgba(0,0,0,.5); }
-        .sidebar.open { margin-left: 0; }
+          margin-left: 0; transform: translateX(-100%); box-shadow: none;
+          transition: transform .2s ease, box-shadow .2s ease; }
+        .sidebar.open { transform: translateX(0); box-shadow: 4px 0 20px rgba(0,0,0,.5); }
         .sidebar-overlay { display: none; position: fixed; inset: 0;
           background: rgba(0,0,0,.4); z-index: 99; }
         .sidebar-overlay.visible { display: block; }
+        .main { width: 100vw; min-width: 0; }
         .session-item { min-height: 44px; } /* touch-friendly */
         .tab { min-height: 36px; }
       }
@@ -3540,6 +3543,7 @@ var init_server = __esm({
       const sidebar = $('sidebar'), overlay = $('sidebar-overlay');
       function toggleSidebar() {
         if (window.innerWidth <= 768) {
+          sidebar.classList.remove('collapsed');
           sidebar.classList.toggle('open');
           overlay.classList.toggle('visible', sidebar.classList.contains('open'));
         } else { sidebar.classList.toggle('collapsed'); }

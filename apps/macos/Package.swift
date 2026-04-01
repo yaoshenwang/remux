@@ -13,9 +13,6 @@ let package = Package(
             name: "Remux",
             dependencies: ["RemuxKit", "GhosttyKit"],
             path: "Sources/Remux",
-            resources: [
-                .copy("../../Resources"),
-            ],
             linkerSettings: [
                 .linkedFramework("Cocoa"),
                 .linkedFramework("Metal"),

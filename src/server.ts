@@ -502,11 +502,13 @@ const HTML_TEMPLATE = `<!doctype html>
       /* -- Mobile -- */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
-          margin-left: -220px; box-shadow: 4px 0 20px rgba(0,0,0,.5); }
-        .sidebar.open { margin-left: 0; }
+          margin-left: 0; transform: translateX(-100%); box-shadow: none;
+          transition: transform .2s ease, box-shadow .2s ease; }
+        .sidebar.open { transform: translateX(0); box-shadow: 4px 0 20px rgba(0,0,0,.5); }
         .sidebar-overlay { display: none; position: fixed; inset: 0;
           background: rgba(0,0,0,.4); z-index: 99; }
         .sidebar-overlay.visible { display: block; }
+        .main { width: 100vw; min-width: 0; }
         .session-item { min-height: 44px; } /* touch-friendly */
         .tab { min-height: 36px; }
       }
@@ -748,6 +750,7 @@ const HTML_TEMPLATE = `<!doctype html>
       const sidebar = $('sidebar'), overlay = $('sidebar-overlay');
       function toggleSidebar() {
         if (window.innerWidth <= 768) {
+          sidebar.classList.remove('collapsed');
           sidebar.classList.toggle('open');
           overlay.classList.toggle('visible', sidebar.classList.contains('open'));
         } else { sidebar.classList.toggle('collapsed'); }
