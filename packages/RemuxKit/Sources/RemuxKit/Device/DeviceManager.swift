@@ -1,6 +1,7 @@
 import Foundation
 
 /// Manages device trust operations via WebSocket messages.
+/// All messages use JSONSerialization for safe construction.
 @MainActor
 public final class DeviceManager {
 
@@ -10,33 +11,17 @@ public final class DeviceManager {
         self.connection = connection
     }
 
-    public func listDevices() {
-        connection?.sendString("{\"type\":\"list_devices\"}")
-    }
+    public func listDevices() { sendJSON(["type": "list_devices"]) }
+    public func trustDevice(id: String) { sendJSON(["type": "trust_device", "deviceId": id]) }
+    public func blockDevice(id: String) { sendJSON(["type": "block_device", "deviceId": id]) }
+    public func renameDevice(id: String, name: String) { sendJSON(["type": "rename_device", "deviceId": id, "name": name]) }
+    public func revokeDevice(id: String) { sendJSON(["type": "revoke_device", "deviceId": id]) }
+    public func generatePairCode() { sendJSON(["type": "generate_pair_code"]) }
+    public func pair(code: String) { sendJSON(["type": "pair", "code": code]) }
 
-    public func trustDevice(id: String) {
-        connection?.sendString("{\"type\":\"trust_device\",\"deviceId\":\"\(id)\"}")
-    }
-
-    public func blockDevice(id: String) {
-        connection?.sendString("{\"type\":\"block_device\",\"deviceId\":\"\(id)\"}")
-    }
-
-    public func renameDevice(id: String, name: String) {
-        let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
-        connection?.sendString("{\"type\":\"rename_device\",\"deviceId\":\"\(id)\",\"name\":\"\(escaped)\"}")
-    }
-
-    public func revokeDevice(id: String) {
-        connection?.sendString("{\"type\":\"revoke_device\",\"deviceId\":\"\(id)\"}")
-    }
-
-    public func generatePairCode() {
-        connection?.sendString("{\"type\":\"generate_pair_code\"}")
-    }
-
-    public func pair(code: String) {
-        let escaped = code.replacingOccurrences(of: "\"", with: "\\\"")
-        connection?.sendString("{\"type\":\"pair\",\"code\":\"\(escaped)\"}")
+    private func sendJSON(_ dict: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let str = String(data: data, encoding: .utf8) else { return }
+        connection?.sendString(str)
     }
 }

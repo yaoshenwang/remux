@@ -131,7 +131,10 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
         setStatus(.connecting)
 
         // Build WebSocket URL: ws(s)://host:port/ws
-        var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else {
+            setStatus(.disconnected)
+            return
+        }
         // Convert http(s) to ws(s)
         if components.scheme == "http" { components.scheme = "ws" }
         else if components.scheme == "https" { components.scheme = "wss" }

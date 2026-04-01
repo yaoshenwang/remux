@@ -112,12 +112,15 @@ export class ClaudeCodeAdapter implements SemanticAdapter {
       const stat = fs.statSync(filePath);
       if (stat.size <= this.lastFileSize) return;
 
-      // Read only new content
+      // Read only new content (with proper fd cleanup)
       const fd = fs.openSync(filePath, "r");
-      const buffer = Buffer.alloc(stat.size - this.lastFileSize);
-      fs.readSync(fd, buffer, 0, buffer.length, this.lastFileSize);
-      fs.closeSync(fd);
-      this.lastFileSize = stat.size;
+      try {
+        const buffer = Buffer.alloc(stat.size - this.lastFileSize);
+        fs.readSync(fd, buffer, 0, buffer.length, this.lastFileSize);
+        this.lastFileSize = stat.size;
+      } finally {
+        fs.closeSync(fd);
+      }
 
       // Parse JSONL lines
       const lines = buffer

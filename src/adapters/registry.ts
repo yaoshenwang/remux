@@ -58,8 +58,8 @@ export class AdapterRegistry {
       if (adapter.mode === "passive" && adapter.onTerminalData) {
         try {
           adapter.onTerminalData(sessionName, data);
-        } catch {
-          // Don't let adapter errors crash the server
+        } catch (err) {
+          console.error(`[adapter:${adapter.id}] onTerminalData error:`, err);
         }
       }
     }
@@ -74,8 +74,8 @@ export class AdapterRegistry {
       if (adapter.mode === "passive" && adapter.onEventFile) {
         try {
           adapter.onEventFile(path, event);
-        } catch {
-          // Ignore adapter errors
+        } catch (err) {
+          console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
         }
       }
     }
