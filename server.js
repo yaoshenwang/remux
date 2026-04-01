@@ -1563,11 +1563,11 @@ async function compareBranches(base, head) {
   };
 }
 function watchGitChanges(onChange) {
-  const fs6 = __require("fs");
-  const path4 = __require("path");
-  const gitDir = path4.join(process.cwd(), ".git");
+  const fs7 = __require("fs");
+  const path5 = __require("path");
+  const gitDir = path5.join(process.cwd(), ".git");
   try {
-    const watcher = fs6.watch(
+    const watcher = fs7.watch(
       gitDir,
       { recursive: false },
       (eventType, filename) => {
@@ -2490,11 +2490,11 @@ var init_registry = __esm({
         }
       }
       /** Forward event file data to all passive adapters */
-      dispatchEventFile(path4, event) {
+      dispatchEventFile(path5, event) {
         for (const adapter of this.adapters.values()) {
           if (adapter.mode === "passive" && adapter.onEventFile) {
             try {
-              adapter.onEventFile(path4, event);
+              adapter.onEventFile(path5, event);
             } catch (err) {
               console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
             }
@@ -2769,23 +2769,179 @@ var init_tunnel = __esm({
   }
 });
 
+// src/service.ts
+import fs5 from "fs";
+import path3 from "path";
+import { homedir as homedir4 } from "os";
+import { execSync } from "child_process";
+import { fileURLToPath } from "url";
+function escapeXml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function generatePlist(options = {}) {
+  const { port, args = [] } = options;
+  const programArgs = [process.execPath, SERVER_JS, ...args];
+  const programArgsXml = programArgs.map((a) => `    <string>${escapeXml(a)}</string>`).join("\n");
+  const envVars = {};
+  if (port) envVars.PORT = String(port);
+  if (process.env.REMUX_TOKEN) envVars.REMUX_TOKEN = process.env.REMUX_TOKEN;
+  let envXml = "";
+  if (Object.keys(envVars).length > 0) {
+    const entries = Object.entries(envVars).map(
+      ([k, v]) => `      <key>${escapeXml(k)}</key>
+      <string>${escapeXml(v)}</string>`
+    ).join("\n");
+    envXml = `
+  <key>EnvironmentVariables</key>
+  <dict>
+${entries}
+  </dict>`;
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${programArgsXml}
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>${escapeXml(__dirname)}</string>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(path3.join(LOG_DIR, "remux.log"))}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(path3.join(LOG_DIR, "remux.err"))}</string>${envXml}
+</dict>
+</plist>
+`;
+}
+function installService(options = {}) {
+  fs5.mkdirSync(LOG_DIR, { recursive: true });
+  if (fs5.existsSync(PLIST_PATH)) {
+    try {
+      execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: "pipe" });
+    } catch {
+    }
+  }
+  const xml = generatePlist(options);
+  fs5.writeFileSync(PLIST_PATH, xml);
+  execSync(`launchctl load "${PLIST_PATH}"`, { stdio: "pipe" });
+  console.log(`[remux] Service installed and started.`);
+  console.log(`[remux]   Plist: ${PLIST_PATH}`);
+  console.log(`[remux]   Logs:  ${LOG_DIR}/`);
+}
+function uninstallService() {
+  if (!fs5.existsSync(PLIST_PATH)) {
+    console.log(`[remux] Service is not installed.`);
+    return;
+  }
+  try {
+    execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: "pipe" });
+  } catch {
+  }
+  fs5.unlinkSync(PLIST_PATH);
+  console.log(`[remux] Service uninstalled.`);
+}
+function serviceStatus() {
+  if (!fs5.existsSync(PLIST_PATH)) {
+    return { installed: false, running: false };
+  }
+  try {
+    const output = execSync(`launchctl list ${LABEL}`, {
+      stdio: "pipe",
+      encoding: "utf8"
+    });
+    const firstLine = output.trim().split("\n").pop();
+    const pid = firstLine?.split("	")[0];
+    if (pid && pid !== "-" && !isNaN(Number(pid))) {
+      return { installed: true, running: true, pid: Number(pid) };
+    }
+    return { installed: true, running: false };
+  } catch {
+    return { installed: true, running: false };
+  }
+}
+function handleServiceCommand(argv) {
+  if (argv.length < 4 || argv[2] !== "service") return false;
+  const subcommand = argv[3];
+  switch (subcommand) {
+    case "install": {
+      const opts = {};
+      const portIdx = argv.indexOf("--port");
+      if (portIdx !== -1 && argv[portIdx + 1]) {
+        opts.port = Number(argv[portIdx + 1]);
+      }
+      const extra = [];
+      for (let i = 4; i < argv.length; i++) {
+        if (argv[i] === "--port") {
+          i++;
+          continue;
+        }
+        extra.push(argv[i]);
+      }
+      if (extra.length) opts.args = extra;
+      installService(opts);
+      return true;
+    }
+    case "uninstall":
+      uninstallService();
+      return true;
+    case "status": {
+      const st = serviceStatus();
+      if (!st.installed) {
+        console.log("[remux] Service is not installed.");
+      } else if (st.running) {
+        console.log(`[remux] Service is running (PID ${st.pid}).`);
+      } else {
+        console.log("[remux] Service is installed but not running.");
+      }
+      return true;
+    }
+    default:
+      console.error(
+        `[remux] Unknown service command: ${subcommand}
+Usage: remux service <install|uninstall|status>`
+      );
+      return true;
+  }
+}
+var __filename, __dirname, LABEL, PLIST_DIR, PLIST_PATH, LOG_DIR, SERVER_JS;
+var init_service = __esm({
+  "src/service.ts"() {
+    "use strict";
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path3.dirname(__filename);
+    LABEL = "com.remux.agent";
+    PLIST_DIR = path3.join(homedir4(), "Library", "LaunchAgents");
+    PLIST_PATH = path3.join(PLIST_DIR, `${LABEL}.plist`);
+    LOG_DIR = path3.join(homedir4(), ".remux", "logs");
+    SERVER_JS = path3.join(__dirname, "server.js");
+  }
+});
+
 // src/server.ts
 var server_exports = {};
 __export(server_exports, {
   adapterRegistry: () => adapterRegistry
 });
-import fs5 from "fs";
+import fs6 from "fs";
 import http from "http";
-import path3 from "path";
+import path4 from "path";
 import { createRequire } from "module";
-import { fileURLToPath } from "url";
+import { fileURLToPath as fileURLToPath2 } from "url";
 import qrcode from "qrcode-terminal";
 function findGhosttyWeb() {
   const ghosttyWebMain = require2.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
-  const distPath2 = path3.join(ghosttyWebRoot, "dist");
-  const wasmPath2 = path3.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs5.existsSync(path3.join(distPath2, "ghostty-web.js")) && fs5.existsSync(wasmPath2)) {
+  const distPath2 = path4.join(ghosttyWebRoot, "dist");
+  const wasmPath2 = path4.join(ghosttyWebRoot, "ghostty-vt.wasm");
+  if (fs6.existsSync(path4.join(distPath2, "ghostty-web.js")) && fs6.existsSync(wasmPath2)) {
     return { distPath: distPath2, wasmPath: wasmPath2 };
   }
   console.error("Error: ghostty-web package not found.");
@@ -2828,8 +2984,8 @@ function initAdapters() {
   adapterRegistry.register(claudeAdapter);
 }
 function serveFile(filePath, res) {
-  const ext = path3.extname(filePath);
-  fs5.readFile(filePath, (err, data) => {
+  const ext = path4.extname(filePath);
+  fs6.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end("Not Found");
@@ -2905,7 +3061,7 @@ function shutdown() {
   }
   process.exit(0);
 }
-var __filename, __dirname, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
+var __filename2, __dirname2, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
 var init_server = __esm({
   "src/server.ts"() {
     init_auth();
@@ -2917,11 +3073,15 @@ var init_server = __esm({
     init_adapters();
     init_git_service();
     init_tunnel();
-    __filename = fileURLToPath(import.meta.url);
-    __dirname = path3.dirname(__filename);
+    init_service();
+    __filename2 = fileURLToPath2(import.meta.url);
+    __dirname2 = path4.dirname(__filename2);
+    if (handleServiceCommand(process.argv)) {
+      process.exit(0);
+    }
     require2 = createRequire(import.meta.url);
     PKG = JSON.parse(
-      fs5.readFileSync(path3.join(__dirname, "package.json"), "utf8")
+      fs6.readFileSync(path4.join(__dirname2, "package.json"), "utf8")
     );
     VERSION = PKG.version;
     PORT2 = process.env.PORT || 8767;
@@ -4632,9 +4792,9 @@ self.addEventListener('notificationclick', function(event) {
         return;
       }
       if (url.pathname.startsWith("/dist/")) {
-        const resolved = path3.resolve(distPath, url.pathname.slice(6));
-        const rel = path3.relative(distPath, resolved);
-        if (rel.startsWith("..") || path3.isAbsolute(rel)) {
+        const resolved = path4.resolve(distPath, url.pathname.slice(6));
+        const rel = path4.relative(distPath, resolved);
+        if (rel.startsWith("..") || path4.isAbsolute(rel)) {
           res.writeHead(403);
           res.end("Forbidden");
           return;

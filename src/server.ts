@@ -31,9 +31,16 @@ import {
   buildTunnelAccessUrl,
 } from "./tunnel.js";
 import type { ChildProcess } from "child_process";
+import { handleServiceCommand } from "./service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── Service subcommand (must run before any heavy init) ─────────
+if (handleServiceCommand(process.argv)) {
+  process.exit(0);
+}
+
 const require = createRequire(import.meta.url);
 const PKG = JSON.parse(
   fs.readFileSync(path.join(__dirname, "package.json"), "utf8"),
