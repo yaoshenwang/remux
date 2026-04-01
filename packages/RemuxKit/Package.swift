@@ -17,9 +17,7 @@ let package = Package(
     targets: [
         .target(
             name: "RemuxKit",
-            resources: [
-                .copy("Terminal/Resources"),
-            ]
+            exclude: ["Terminal/Resources"]
         ),
         .testTarget(
             name: "RemuxKitTests",
