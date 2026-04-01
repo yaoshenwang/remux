@@ -749,13 +749,17 @@ const HTML_TEMPLATE = `<!doctype html>
           el.addEventListener('pointerdown', e => {
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
-              if (sessions.length <= 1) return; // don't delete last session
               if (!confirm('Delete session "' + e.target.dataset.del + '"? All tabs will be closed.')) return;
               sendCtrl({ type: 'delete_session', name: e.target.dataset.del });
-              // if deleting current, switch to first other
+              // if deleting current, switch to another or create fresh
               if (e.target.dataset.del === currentSession) {
                 const other = sessions.find(x => x.name !== currentSession);
-                if (other) selectSession(other.name);
+                if (other) {
+                  selectSession(other.name);
+                } else {
+                  // Last session deleted — server will create a new one on next attach
+                  sendCtrl({ type: 'new_session', name: 'main', cols: term.cols, rows: term.rows });
+                }
               }
               return;
             }

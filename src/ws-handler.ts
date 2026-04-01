@@ -433,11 +433,8 @@ export function setupWebSocket(
               found.session.tabs = found.session.tabs.filter(
                 (t) => t.id !== p.tabId,
               );
-              // If session has no tabs left, remove it (unless it's "main")
-              if (
-                found.session.tabs.length === 0 &&
-                found.session.name !== "main"
-              ) {
+              // If session has no tabs left, remove it
+              if (found.session.tabs.length === 0) {
                 sessionMap.delete(found.session.name);
               }
             }
