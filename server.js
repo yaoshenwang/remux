@@ -1148,6 +1148,7 @@ function createTab(session, cols = 80, rows = 24) {
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
+    if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
     processShellIntegration(data, tab, session.name);
     try {
       const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
@@ -1298,6 +1299,10 @@ function setBroadcastHooks(sendFn, clientListFn) {
   _sendEnvelopeFn = sendFn;
   _getClientListFn = clientListFn;
 }
+function setBufferHooks(bufferTabOutputFn, bufferStateFn) {
+  _bufferTabOutputFn = bufferTabOutputFn;
+  _bufferStateForDisconnectedFn = bufferStateFn;
+}
 function broadcastState() {
   const state = getState();
   const clients = _getClientListFn ? _getClientListFn() : [];
@@ -1310,6 +1315,7 @@ function broadcastState() {
       }
     }
   }
+  if (_bufferStateForDisconnectedFn) _bufferStateForDisconnectedFn();
 }
 function persistSessions() {
   try {
@@ -1340,7 +1346,7 @@ function restoreSessions() {
     return false;
   }
 }
-var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, PERSIST_INTERVAL_MS;
+var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
 var init_session = __esm({
   "src/session.ts"() {
     "use strict";
@@ -1395,7 +1401,116 @@ var init_session = __esm({
     controlClients = /* @__PURE__ */ new Set();
     _sendEnvelopeFn = null;
     _getClientListFn = null;
+    _bufferTabOutputFn = null;
+    _bufferStateForDisconnectedFn = null;
     PERSIST_INTERVAL_MS = 8e3;
+  }
+});
+
+// src/message-buffer.ts
+var MessageBuffer, BufferRegistry;
+var init_message_buffer = __esm({
+  "src/message-buffer.ts"() {
+    "use strict";
+    MessageBuffer = class {
+      buffer = [];
+      maxSize;
+      maxAgeMs;
+      constructor(maxSize = 1e3, maxAgeMs = 10 * 60 * 1e3) {
+        this.maxSize = maxSize;
+        this.maxAgeMs = maxAgeMs;
+      }
+      /**
+       * Add a message to the buffer.
+       * Evicts the oldest message if buffer is at capacity.
+       */
+      push(data) {
+        if (this.buffer.length >= this.maxSize) {
+          this.buffer.shift();
+        }
+        this.buffer.push({ timestamp: Date.now(), data });
+      }
+      /**
+       * Return all messages (optionally since a given timestamp).
+       * Filters out expired messages (older than maxAgeMs).
+       * Clears returned messages from the buffer.
+       */
+      drain(since) {
+        const now = Date.now();
+        const cutoff = now - this.maxAgeMs;
+        let result = this.buffer.filter((m) => m.timestamp > cutoff);
+        if (since !== void 0) {
+          result = result.filter((m) => m.timestamp > since);
+        }
+        this.buffer = [];
+        return result;
+      }
+      /**
+       * Clear all messages from the buffer.
+       */
+      clear() {
+        this.buffer = [];
+      }
+      /**
+       * Number of messages currently in the buffer.
+       */
+      get size() {
+        return this.buffer.length;
+      }
+      /**
+       * Remove messages older than maxAgeMs.
+       */
+      pruneExpired() {
+        const cutoff = Date.now() - this.maxAgeMs;
+        this.buffer = this.buffer.filter((m) => m.timestamp > cutoff);
+      }
+    };
+    BufferRegistry = class {
+      buffers = /* @__PURE__ */ new Map();
+      cleanupInterval = null;
+      constructor() {
+        this.cleanupInterval = setInterval(() => this.cleanup(), 6e4);
+      }
+      /**
+       * Get or create a MessageBuffer for a device.
+       */
+      getOrCreate(deviceId) {
+        let buf = this.buffers.get(deviceId);
+        if (!buf) {
+          buf = new MessageBuffer();
+          this.buffers.set(deviceId, buf);
+        }
+        return buf;
+      }
+      /**
+       * Remove the buffer for a device.
+       */
+      remove(deviceId) {
+        this.buffers.delete(deviceId);
+      }
+      /**
+       * Remove empty buffers that have no messages (stale).
+       * Prune expired messages in all remaining buffers.
+       */
+      cleanup() {
+        for (const [deviceId, buf] of this.buffers) {
+          buf.pruneExpired();
+          if (buf.size === 0) {
+            this.buffers.delete(deviceId);
+          }
+        }
+      }
+      /**
+       * Tear down: clear the cleanup interval and all buffers.
+       */
+      destroy() {
+        if (this.cleanupInterval) {
+          clearInterval(this.cleanupInterval);
+          this.cleanupInterval = null;
+        }
+        this.buffers.clear();
+      }
+    };
   }
 });
 
@@ -1453,322 +1568,6 @@ var init_workspace = __esm({
     "use strict";
     init_store();
     init_session();
-  }
-});
-
-// src/renderers.ts
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function detectContentType(text) {
-  if (!text) return "plain";
-  if (/^diff --git /m.test(text)) return "diff";
-  if (/^--- .+\n\+\+\+ .+\n@@/m.test(text))
-    return "diff";
-  if (/\x1b\[[\d;]*m/.test(text)) return "ansi";
-  if (/^#{1,6}\s+\S/m.test(text)) return "markdown";
-  if (/\*\*[^*]+\*\*/.test(text)) return "markdown";
-  if (/```[\s\S]*?```/.test(text)) return "markdown";
-  if (/\[[^\]]+\]\([^)]+\)/.test(text)) return "markdown";
-  return "plain";
-}
-function renderDiff(diffText) {
-  const lines = diffText.split("\n");
-  const out = ['<div class="diff-container">'];
-  let oldLine = 0;
-  let newLine = 0;
-  for (const raw of lines) {
-    const escaped = escapeHtml(raw);
-    if (raw.startsWith("diff --git") || raw.startsWith("index ") || raw.startsWith("---") || raw.startsWith("+++")) {
-      out.push(
-        `<div class="diff-header">${escaped}</div>`
-      );
-    } else if (raw.startsWith("@@")) {
-      const m = raw.match(/@@ -(\d+)/);
-      if (m) {
-        oldLine = parseInt(m[1], 10);
-        const m2 = raw.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
-        newLine = m2 ? parseInt(m2[1], 10) : oldLine;
-      }
-      out.push(
-        `<div class="diff-hunk">${escaped}</div>`
-      );
-    } else if (raw.startsWith("+")) {
-      out.push(
-        `<div class="diff-add"><span class="diff-line-num">${newLine}</span>${escaped}</div>`
-      );
-      newLine++;
-    } else if (raw.startsWith("-")) {
-      out.push(
-        `<div class="diff-del"><span class="diff-line-num">${oldLine}</span>${escaped}</div>`
-      );
-      oldLine++;
-    } else {
-      out.push(
-        `<div class="diff-ctx"><span class="diff-line-num">${oldLine}</span>${escaped}</div>`
-      );
-      oldLine++;
-      newLine++;
-    }
-  }
-  out.push("</div>");
-  return out.join("\n");
-}
-function renderMarkdown(md) {
-  const lines = md.split("\n");
-  const out = ['<div class="rendered-md">'];
-  let inCodeBlock = false;
-  let codeLang = "";
-  let codeLines = [];
-  let inList = null;
-  let inBlockquote = false;
-  let paragraph = [];
-  function flushParagraph() {
-    if (paragraph.length > 0) {
-      const text = paragraph.join(" ");
-      out.push(`<p>${inlineFormat(text)}</p>`);
-      paragraph = [];
-    }
-  }
-  function flushList() {
-    if (inList) {
-      out.push(`</${inList}>`);
-      inList = null;
-    }
-  }
-  function flushBlockquote() {
-    if (inBlockquote) {
-      out.push("</blockquote>");
-      inBlockquote = false;
-    }
-  }
-  function inlineFormat(raw) {
-    const parts = raw.split(/(`[^`]+`)/);
-    return parts.map((part) => {
-      if (part.startsWith("`") && part.endsWith("`")) {
-        const code = part.slice(1, -1);
-        return `<code>${escapeHtml(code)}</code>`;
-      }
-      let escaped = escapeHtml(part);
-      escaped = escaped.replace(
-        /\*\*([^*]+)\*\*/g,
-        "<strong>$1</strong>"
-      );
-      escaped = escaped.replace(
-        /(?<!\*)\*([^*]+)\*(?!\*)/g,
-        "<em>$1</em>"
-      );
-      escaped = escaped.replace(
-        /\[([^\]]+)\]\(([^)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener">$1</a>'
-      );
-      return escaped;
-    }).join("");
-  }
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.startsWith("```")) {
-      if (!inCodeBlock) {
-        flushParagraph();
-        flushList();
-        flushBlockquote();
-        inCodeBlock = true;
-        codeLang = line.slice(3).trim();
-        codeLines = [];
-        continue;
-      } else {
-        const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
-        out.push(
-          `<pre><code${langAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`
-        );
-        inCodeBlock = false;
-        codeLang = "";
-        codeLines = [];
-        continue;
-      }
-    }
-    if (inCodeBlock) {
-      codeLines.push(line);
-      continue;
-    }
-    if (/^---+$/.test(line.trim())) {
-      flushParagraph();
-      flushList();
-      flushBlockquote();
-      out.push("<hr>");
-      continue;
-    }
-    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
-    if (headerMatch) {
-      flushParagraph();
-      flushList();
-      flushBlockquote();
-      const level = headerMatch[1].length;
-      const text = escapeHtml(headerMatch[2]);
-      out.push(`<h${level}>${text}</h${level}>`);
-      continue;
-    }
-    if (line.startsWith("> ")) {
-      flushParagraph();
-      flushList();
-      if (!inBlockquote) {
-        inBlockquote = true;
-        out.push("<blockquote>");
-      }
-      out.push(inlineFormat(line.slice(2)));
-      continue;
-    } else if (inBlockquote) {
-      flushBlockquote();
-    }
-    if (/^[-*]\s+/.test(line)) {
-      flushParagraph();
-      flushBlockquote();
-      if (inList !== "ul") {
-        flushList();
-        inList = "ul";
-        out.push("<ul>");
-      }
-      const text = line.replace(/^[-*]\s+/, "");
-      out.push(`<li>${inlineFormat(text)}</li>`);
-      continue;
-    }
-    if (/^\d+\.\s+/.test(line)) {
-      flushParagraph();
-      flushBlockquote();
-      if (inList !== "ol") {
-        flushList();
-        inList = "ol";
-        out.push("<ol>");
-      }
-      const text = line.replace(/^\d+\.\s+/, "");
-      out.push(`<li>${inlineFormat(text)}</li>`);
-      continue;
-    }
-    if (inList && !/^\s*$/.test(line)) {
-      flushList();
-    }
-    if (line.trim() === "") {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-    paragraph.push(line);
-  }
-  if (inCodeBlock) {
-    const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
-    out.push(
-      `<pre><code${langAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`
-    );
-  }
-  flushParagraph();
-  flushList();
-  flushBlockquote();
-  out.push("</div>");
-  return out.join("\n");
-}
-function renderAnsi(ansiText) {
-  let cleaned = ansiText.replace(/\x1b\][^\x07]*\x07/g, "");
-  cleaned = cleaned.replace(/\x1b\[[\d;]*[A-LN-Za-ln-z]/g, "");
-  if (!/\x1b\[[\d;]*m/.test(cleaned)) {
-    return escapeHtml(cleaned);
-  }
-  const state = {
-    bold: false,
-    dim: false,
-    italic: false,
-    underline: false,
-    fgColor: null
-  };
-  const parts = [];
-  let spanOpen = false;
-  const re = /\x1b\[([\d;]*)m/g;
-  let lastIndex = 0;
-  let match;
-  while ((match = re.exec(cleaned)) !== null) {
-    const text = cleaned.slice(lastIndex, match.index);
-    if (text) {
-      parts.push(escapeHtml(text));
-    }
-    lastIndex = match.index + match[0].length;
-    const codes = match[1] ? match[1].split(";").map(Number) : [0];
-    for (const code of codes) {
-      if (code === 0) {
-        if (spanOpen) {
-          parts.push("</span>");
-          spanOpen = false;
-        }
-        state.bold = false;
-        state.dim = false;
-        state.italic = false;
-        state.underline = false;
-        state.fgColor = null;
-      } else if (code === 1) {
-        state.bold = true;
-      } else if (code === 2) {
-        state.dim = true;
-      } else if (code === 3) {
-        state.italic = true;
-      } else if (code === 4) {
-        state.underline = true;
-      } else if (code >= 30 && code <= 37) {
-        state.fgColor = ANSI_COLORS[code] || null;
-      } else if (code >= 90 && code <= 97) {
-        state.fgColor = ANSI_BRIGHT_COLORS[code] || null;
-      }
-    }
-    if (spanOpen) {
-      parts.push("</span>");
-      spanOpen = false;
-    }
-    const classes = [];
-    const styles = [];
-    if (state.bold) classes.push("ansi-bold");
-    if (state.dim) classes.push("ansi-dim");
-    if (state.italic) classes.push("ansi-italic");
-    if (state.underline) classes.push("ansi-underline");
-    if (state.fgColor) styles.push(`color:${state.fgColor}`);
-    if (classes.length > 0 || styles.length > 0) {
-      let tag = "<span";
-      if (classes.length > 0) tag += ` class="${classes.join(" ")}"`;
-      if (styles.length > 0) tag += ` style="${styles.join(";")}"`;
-      tag += ">";
-      parts.push(tag);
-      spanOpen = true;
-    }
-  }
-  const remainder = cleaned.slice(lastIndex);
-  if (remainder) {
-    parts.push(escapeHtml(remainder));
-  }
-  if (spanOpen) {
-    parts.push("</span>");
-  }
-  return parts.join("");
-}
-var ANSI_COLORS, ANSI_BRIGHT_COLORS;
-var init_renderers = __esm({
-  "src/renderers.ts"() {
-    "use strict";
-    ANSI_COLORS = {
-      30: "#000000",
-      31: "#cc0000",
-      32: "#00cc00",
-      33: "#cccc00",
-      34: "#0000cc",
-      35: "#cc00cc",
-      36: "#00cccc",
-      37: "#cccccc"
-    };
-    ANSI_BRIGHT_COLORS = {
-      90: "#555555",
-      91: "#ff5555",
-      92: "#55ff55",
-      93: "#ffff55",
-      94: "#5555ff",
-      95: "#ff55ff",
-      96: "#55ffff",
-      97: "#ffffff"
-    };
   }
 });
 
@@ -1879,11 +1678,11 @@ async function compareBranches(base, head) {
   };
 }
 function watchGitChanges(onChange) {
-  const fs7 = __require("fs");
-  const path5 = __require("path");
-  const gitDir = path5.join(process.cwd(), ".git");
+  const fs6 = __require("fs");
+  const path4 = __require("path");
+  const gitDir = path4.join(process.cwd(), ".git");
   try {
-    const watcher = fs7.watch(
+    const watcher = fs6.watch(
       gitDir,
       { recursive: false },
       (eventType, filename) => {
@@ -1910,6 +1709,31 @@ var init_git_service = __esm({
 // src/ws-handler.ts
 import crypto3 from "crypto";
 import { WebSocketServer } from "ws";
+function bufferForDevice(deviceId, type, payload) {
+  if (!disconnectedDevices.has(deviceId)) return;
+  const buf = bufferRegistry.getOrCreate(deviceId);
+  buf.push(JSON.stringify({ v: 1, type, payload }));
+}
+function bufferRawForDevice(deviceId, data) {
+  if (!disconnectedDevices.has(deviceId)) return;
+  const buf = bufferRegistry.getOrCreate(deviceId);
+  buf.push(data);
+}
+function bufferTabOutput(tabId, data) {
+  for (const [deviceId, watchingTabId] of disconnectedDeviceTab) {
+    if (watchingTabId === tabId) {
+      bufferRawForDevice(deviceId, data);
+    }
+  }
+}
+function bufferStateForDisconnected() {
+  if (disconnectedDevices.size === 0) return;
+  const state = getState();
+  const clients = getClientList();
+  for (const deviceId of disconnectedDevices) {
+    bufferForDevice(deviceId, "state", { sessions: state, clients });
+  }
+}
 function sendEnvelope(ws, type, payload) {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify({ v: 1, type, payload }));
@@ -1983,6 +1807,7 @@ function getClientList() {
 }
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList);
+  setBufferHooks(bufferTabOutput, bufferStateForDisconnected);
   const wss2 = new WebSocketServer({ noServer: true });
   httpServer2.on("upgrade", (req, socket, head) => {
     if ("setNoDelay" in socket) socket.setNoDelay(true);
@@ -2092,6 +1917,27 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
         try {
           const rawParsed = JSON.parse(msg);
           const p = unwrapMessage(rawParsed);
+          if (p.type === "resume") {
+            const resumeDeviceId = p.deviceId || ws._remuxDeviceId;
+            if (resumeDeviceId && disconnectedDevices.has(resumeDeviceId)) {
+              const buf = bufferRegistry.getOrCreate(resumeDeviceId);
+              const messages = buf.drain(p.lastTimestamp || void 0);
+              for (const m of messages) {
+                if (ws.readyState === ws.OPEN) {
+                  ws.send(m.data);
+                }
+              }
+              disconnectedDevices.delete(resumeDeviceId);
+              disconnectedDeviceTab.delete(resumeDeviceId);
+              bufferRegistry.remove(resumeDeviceId);
+              sendEnvelope(ws, "resume_complete", {
+                replayed: messages.length
+              });
+            } else {
+              sendEnvelope(ws, "resume_complete", { replayed: 0 });
+            }
+            return;
+          }
           if (p.type === "attach_first") {
             const name = p.session || getFirstSessionName() || "default";
             const session = createSession(name);
@@ -2513,15 +2359,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                 p.topicId || void 0
               );
               if (result) {
-                const a = result.artifact;
-                const contentType = a.content ? detectContentType(a.content) : "plain";
-                let renderedHtml;
-                if (a.content) {
-                  if (contentType === "diff") renderedHtml = renderDiff(a.content);
-                  else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
-                  else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
-                }
-                sendEnvelope(ws, "snapshot_captured", { ...a, contentType, renderedHtml });
+                sendEnvelope(ws, "snapshot_captured", result.artifact);
               } else {
                 sendEnvelope(ws, "error", {
                   reason: "no tab attached for snapshot"
@@ -2536,16 +2374,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               runId: p.runId || void 0,
               sessionName: p.sessionName || clientState.currentSession || void 0
             });
-            const enriched = artifacts.map((a) => {
-              if (!a.content) return a;
-              const contentType = detectContentType(a.content);
-              let renderedHtml;
-              if (contentType === "diff") renderedHtml = renderDiff(a.content);
-              else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
-              else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
-              return { ...a, contentType, renderedHtml };
-            });
-            sendEnvelope(ws, "artifact_list", { artifacts: enriched });
+            sendEnvelope(ws, "artifact_list", { artifacts });
             return;
           }
           if (p.type === "create_approval") {
@@ -2696,7 +2525,16 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
         const sockets = deviceSockets.get(ws._remuxDeviceId);
         if (sockets) {
           sockets.delete(ws);
-          if (sockets.size === 0) deviceSockets.delete(ws._remuxDeviceId);
+          if (sockets.size === 0) {
+            deviceSockets.delete(ws._remuxDeviceId);
+            if (ws._remuxAuthed) {
+              disconnectedDevices.add(ws._remuxDeviceId);
+              bufferRegistry.getOrCreate(ws._remuxDeviceId);
+              if (tabId != null) {
+                disconnectedDeviceTab.set(ws._remuxDeviceId, tabId);
+              }
+            }
+          }
         }
       }
       detachFromTab(ws);
@@ -2730,17 +2568,20 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   }
   return wss2;
 }
-var ACTIVE_IDLE_TIMEOUT_MS, clientStates, deviceSockets;
+var bufferRegistry, disconnectedDevices, disconnectedDeviceTab, ACTIVE_IDLE_TIMEOUT_MS, clientStates, deviceSockets;
 var init_ws_handler = __esm({
   "src/ws-handler.ts"() {
     "use strict";
+    init_message_buffer();
     init_session();
     init_auth();
     init_store();
     init_push();
     init_store();
     init_workspace();
-    init_renderers();
+    bufferRegistry = new BufferRegistry();
+    disconnectedDevices = /* @__PURE__ */ new Set();
+    disconnectedDeviceTab = /* @__PURE__ */ new Map();
     ACTIVE_IDLE_TIMEOUT_MS = 12e4;
     clientStates = /* @__PURE__ */ new Map();
     deviceSockets = /* @__PURE__ */ new Map();
@@ -2824,11 +2665,11 @@ var init_registry = __esm({
         }
       }
       /** Forward event file data to all passive adapters */
-      dispatchEventFile(path5, event) {
+      dispatchEventFile(path4, event) {
         for (const adapter of this.adapters.values()) {
           if (adapter.mode === "passive" && adapter.onEventFile) {
             try {
-              adapter.onEventFile(path5, event);
+              adapter.onEventFile(path4, event);
             } catch (err) {
               console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
             }
@@ -3103,179 +2944,23 @@ var init_tunnel = __esm({
   }
 });
 
-// src/service.ts
-import fs5 from "fs";
-import path3 from "path";
-import { homedir as homedir4 } from "os";
-import { execSync } from "child_process";
-import { fileURLToPath } from "url";
-function escapeXml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-function generatePlist(options = {}) {
-  const { port, args = [] } = options;
-  const programArgs = [process.execPath, SERVER_JS, ...args];
-  const programArgsXml = programArgs.map((a) => `    <string>${escapeXml(a)}</string>`).join("\n");
-  const envVars = {};
-  if (port) envVars.PORT = String(port);
-  if (process.env.REMUX_TOKEN) envVars.REMUX_TOKEN = process.env.REMUX_TOKEN;
-  let envXml = "";
-  if (Object.keys(envVars).length > 0) {
-    const entries = Object.entries(envVars).map(
-      ([k, v]) => `      <key>${escapeXml(k)}</key>
-      <string>${escapeXml(v)}</string>`
-    ).join("\n");
-    envXml = `
-  <key>EnvironmentVariables</key>
-  <dict>
-${entries}
-  </dict>`;
-  }
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-${programArgsXml}
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>WorkingDirectory</key>
-  <string>${escapeXml(__dirname)}</string>
-  <key>StandardOutPath</key>
-  <string>${escapeXml(path3.join(LOG_DIR, "remux.log"))}</string>
-  <key>StandardErrorPath</key>
-  <string>${escapeXml(path3.join(LOG_DIR, "remux.err"))}</string>${envXml}
-</dict>
-</plist>
-`;
-}
-function installService(options = {}) {
-  fs5.mkdirSync(LOG_DIR, { recursive: true });
-  if (fs5.existsSync(PLIST_PATH)) {
-    try {
-      execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: "pipe" });
-    } catch {
-    }
-  }
-  const xml = generatePlist(options);
-  fs5.writeFileSync(PLIST_PATH, xml);
-  execSync(`launchctl load "${PLIST_PATH}"`, { stdio: "pipe" });
-  console.log(`[remux] Service installed and started.`);
-  console.log(`[remux]   Plist: ${PLIST_PATH}`);
-  console.log(`[remux]   Logs:  ${LOG_DIR}/`);
-}
-function uninstallService() {
-  if (!fs5.existsSync(PLIST_PATH)) {
-    console.log(`[remux] Service is not installed.`);
-    return;
-  }
-  try {
-    execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: "pipe" });
-  } catch {
-  }
-  fs5.unlinkSync(PLIST_PATH);
-  console.log(`[remux] Service uninstalled.`);
-}
-function serviceStatus() {
-  if (!fs5.existsSync(PLIST_PATH)) {
-    return { installed: false, running: false };
-  }
-  try {
-    const output = execSync(`launchctl list ${LABEL}`, {
-      stdio: "pipe",
-      encoding: "utf8"
-    });
-    const firstLine = output.trim().split("\n").pop();
-    const pid = firstLine?.split("	")[0];
-    if (pid && pid !== "-" && !isNaN(Number(pid))) {
-      return { installed: true, running: true, pid: Number(pid) };
-    }
-    return { installed: true, running: false };
-  } catch {
-    return { installed: true, running: false };
-  }
-}
-function handleServiceCommand(argv) {
-  if (argv.length < 4 || argv[2] !== "service") return false;
-  const subcommand = argv[3];
-  switch (subcommand) {
-    case "install": {
-      const opts = {};
-      const portIdx = argv.indexOf("--port");
-      if (portIdx !== -1 && argv[portIdx + 1]) {
-        opts.port = Number(argv[portIdx + 1]);
-      }
-      const extra = [];
-      for (let i = 4; i < argv.length; i++) {
-        if (argv[i] === "--port") {
-          i++;
-          continue;
-        }
-        extra.push(argv[i]);
-      }
-      if (extra.length) opts.args = extra;
-      installService(opts);
-      return true;
-    }
-    case "uninstall":
-      uninstallService();
-      return true;
-    case "status": {
-      const st = serviceStatus();
-      if (!st.installed) {
-        console.log("[remux] Service is not installed.");
-      } else if (st.running) {
-        console.log(`[remux] Service is running (PID ${st.pid}).`);
-      } else {
-        console.log("[remux] Service is installed but not running.");
-      }
-      return true;
-    }
-    default:
-      console.error(
-        `[remux] Unknown service command: ${subcommand}
-Usage: remux service <install|uninstall|status>`
-      );
-      return true;
-  }
-}
-var __filename, __dirname, LABEL, PLIST_DIR, PLIST_PATH, LOG_DIR, SERVER_JS;
-var init_service = __esm({
-  "src/service.ts"() {
-    "use strict";
-    __filename = fileURLToPath(import.meta.url);
-    __dirname = path3.dirname(__filename);
-    LABEL = "com.remux.agent";
-    PLIST_DIR = path3.join(homedir4(), "Library", "LaunchAgents");
-    PLIST_PATH = path3.join(PLIST_DIR, `${LABEL}.plist`);
-    LOG_DIR = path3.join(homedir4(), ".remux", "logs");
-    SERVER_JS = path3.join(__dirname, "server.js");
-  }
-});
-
 // src/server.ts
 var server_exports = {};
 __export(server_exports, {
   adapterRegistry: () => adapterRegistry
 });
-import fs6 from "fs";
+import fs5 from "fs";
 import http from "http";
-import path4 from "path";
+import path3 from "path";
 import { createRequire } from "module";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
 function findGhosttyWeb() {
   const ghosttyWebMain = require2.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
-  const distPath2 = path4.join(ghosttyWebRoot, "dist");
-  const wasmPath2 = path4.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs6.existsSync(path4.join(distPath2, "ghostty-web.js")) && fs6.existsSync(wasmPath2)) {
+  const distPath2 = path3.join(ghosttyWebRoot, "dist");
+  const wasmPath2 = path3.join(ghosttyWebRoot, "ghostty-vt.wasm");
+  if (fs5.existsSync(path3.join(distPath2, "ghostty-web.js")) && fs5.existsSync(wasmPath2)) {
     return { distPath: distPath2, wasmPath: wasmPath2 };
   }
   console.error("Error: ghostty-web package not found.");
@@ -3318,8 +3003,8 @@ function initAdapters() {
   adapterRegistry.register(claudeAdapter);
 }
 function serveFile(filePath, res) {
-  const ext = path4.extname(filePath);
-  fs6.readFile(filePath, (err, data) => {
+  const ext = path3.extname(filePath);
+  fs5.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end("Not Found");
@@ -3395,7 +3080,7 @@ function shutdown() {
   }
   process.exit(0);
 }
-var __filename2, __dirname2, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
+var __filename, __dirname, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
 var init_server = __esm({
   "src/server.ts"() {
     init_auth();
@@ -3407,15 +3092,11 @@ var init_server = __esm({
     init_adapters();
     init_git_service();
     init_tunnel();
-    init_service();
-    __filename2 = fileURLToPath2(import.meta.url);
-    __dirname2 = path4.dirname(__filename2);
-    if (handleServiceCommand(process.argv)) {
-      process.exit(0);
-    }
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path3.dirname(__filename);
     require2 = createRequire(import.meta.url);
     PKG = JSON.parse(
-      fs6.readFileSync(path4.join(__dirname2, "package.json"), "utf8")
+      fs5.readFileSync(path3.join(__dirname, "package.json"), "utf8")
     );
     VERSION = PKG.version;
     PORT2 = process.env.PORT || 8767;
@@ -3630,9 +3311,6 @@ var init_server = __esm({
       .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
       .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
       .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
-      .ws-badge.diff { background: #2a2a1a; color: #ddbb55; }
-      .ws-badge.markdown { background: #1a2a2a; color: #55bbdd; }
-      .ws-badge.ansi { background: #2a1a2a; color: #dd88bb; }
       .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
       .ws-card-actions button { background: none; border: 1px solid var(--border);
         color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
@@ -3697,63 +3375,6 @@ var init_server = __esm({
         letter-spacing: .5px; margin-bottom: 4px; }
       .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
       .ws-handoff-list li { margin-bottom: 2px; }
-
-      /* -- Rich content rendering (diff, markdown, ANSI) -- */
-      .ws-card-content { margin-top: 6px; font-size: 12px; max-height: 200px; overflow: auto;
-        border-top: 1px solid var(--border); padding-top: 6px; }
-      .ws-card-content.expanded { max-height: none; }
-      .ws-card-toggle { font-size: 11px; color: var(--text-dim); background: none; border: none;
-        cursor: pointer; padding: 2px 6px; font-family: inherit; border-radius: 3px; }
-      .ws-card-toggle:hover { color: var(--text-bright); background: var(--bg-hover); }
-
-      /* Diff */
-      .diff-container { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 11px;
-        line-height: 1.5; overflow-x: auto; }
-      .diff-container > div { padding: 0 8px; white-space: pre; }
-      .diff-add { background: #1a3a1a; color: #4eff4e; }
-      .diff-del { background: #3a1a1a; color: #ff4e4e; }
-      .diff-hunk { color: #6a9eff; font-style: italic; }
-      .diff-header { color: #888; font-style: italic; }
-      .diff-ctx { color: var(--text-muted); }
-      .diff-line-num { display: inline-block; width: 32px; text-align: right; margin-right: 8px;
-        color: var(--text-dim); user-select: none; }
-
-      /* Markdown */
-      .rendered-md { font-size: 13px; line-height: 1.6; color: var(--text-bright); }
-      .rendered-md h1 { font-size: 18px; margin: 0.5em 0 0.3em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-      .rendered-md h2 { font-size: 15px; margin: 0.5em 0 0.3em; }
-      .rendered-md h3 { font-size: 13px; margin: 0.5em 0 0.3em; font-weight: 600; }
-      .rendered-md p { margin: 0.4em 0; }
-      .rendered-md code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px;
-        font-family: 'Menlo','Monaco',monospace; font-size: 11px; }
-      .rendered-md pre { background: #1e1e1e; padding: 12px; border-radius: 6px;
-        overflow-x: auto; margin: 0.4em 0; }
-      .rendered-md pre code { background: none; padding: 0; font-size: 11px; }
-      .rendered-md blockquote { border-left: 3px solid #555; padding-left: 12px; color: #aaa;
-        margin: 0.4em 0; }
-      .rendered-md ul, .rendered-md ol { padding-left: 20px; margin: 0.3em 0; }
-      .rendered-md li { margin: 0.15em 0; }
-      .rendered-md a { color: var(--accent); text-decoration: none; }
-      .rendered-md a:hover { text-decoration: underline; }
-      .rendered-md hr { border: none; border-top: 1px solid var(--border); margin: 0.5em 0; }
-      .rendered-md strong { color: var(--text-on-active); }
-
-      /* ANSI */
-      .ansi-bold { font-weight: bold; }
-      .ansi-dim { opacity: 0.6; }
-      .ansi-italic { font-style: italic; }
-      .ansi-underline { text-decoration: underline; }
-
-      /* Light theme overrides */
-      [data-theme="light"] .diff-add { background: #e6ffec; color: #1a7f37; }
-      [data-theme="light"] .diff-del { background: #ffebe9; color: #cf222e; }
-      [data-theme="light"] .diff-hunk { color: #0969da; }
-      [data-theme="light"] .diff-header { color: #6e7781; }
-      [data-theme="light"] .diff-ctx { color: #57606a; }
-      [data-theme="light"] .rendered-md code { background: #eee; }
-      [data-theme="light"] .rendered-md pre { background: #f6f8fa; }
-      [data-theme="light"] .rendered-md blockquote { border-left-color: #ccc; color: #666; }
-
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
         tab-size: 8; user-select: text; -webkit-user-select: text; }
@@ -4329,6 +3950,10 @@ var init_server = __esm({
       let lastMessageAt = Date.now();
       let heartbeatChecker = null;
 
+      // Track last received message timestamp for session recovery
+      let lastReceivedTimestamp = 0;
+      let isResuming = false;
+
       function startHeartbeat() {
         lastMessageAt = Date.now();
         if (heartbeatChecker) clearInterval(heartbeatChecker);
@@ -4375,6 +4000,13 @@ var init_server = __esm({
             }
             ws.send(JSON.stringify({ type: 'auth', token: urlToken, deviceId: localStorage.getItem('remux-device-id') }));
           }
+          // Session recovery: if we have a previous timestamp, request buffered messages
+          const deviceId = localStorage.getItem('remux-device-id');
+          if (lastReceivedTimestamp > 0 && deviceId) {
+            isResuming = true;
+            setStatus('connecting', 'Resuming session...');
+            sendCtrl({ type: 'resume', deviceId: deviceId, lastTimestamp: lastReceivedTimestamp });
+          }
           // Let server pick the session if we have none (bootstrap flow)
           sendCtrl({ type: 'attach_first', session: currentSession || undefined, cols: term.cols, rows: term.rows });
           // Request device list (works with or without auth)
@@ -4394,6 +4026,16 @@ var init_server = __esm({
               const msg = parsed.v === 1 ? { ...(parsed.payload || {}), type: parsed.type } : parsed;
               // Server heartbeat \u2014 just keep connection alive (lastMessageAt already updated)
               if (msg.type === 'ping') return;
+              // Session recovery complete
+              if (msg.type === 'resume_complete') {
+                isResuming = false;
+                if (msg.replayed > 0) {
+                  console.log('[remux] session recovered: ' + msg.replayed + ' buffered messages replayed');
+                }
+                return;
+              }
+              // Track timestamp for session recovery on reconnect
+              lastReceivedTimestamp = Date.now();
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
                 // Request device list and workspace data after auth
@@ -4514,8 +4156,8 @@ var init_server = __esm({
               if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
               if (msg.type === 'snapshot_captured') {
-                // Optimistic render: add artifact directly (with server-rendered HTML)
-                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, contentType: msg.contentType || 'plain', renderedHtml: msg.renderedHtml, createdAt: msg.createdAt || Date.now() });
+                // Optimistic render: add artifact directly
+                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, createdAt: msg.createdAt || Date.now() });
                 renderWorkspaceArtifacts();
                 return;
               }
@@ -4890,34 +4532,15 @@ var init_server = __esm({
         // Artifacts are already filtered by session_name on the server side
         const recent = wsArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
-        el.innerHTML = recent.map((a, idx) => {
-          var hasContent = a.content && a.content.trim();
-          var ct = a.contentType || 'plain';
-          var badge = (ct !== 'plain') ? ' <span class="ws-badge ' + esc(ct) + '">' + esc(ct) + '</span>' : '';
-          // Use server-rendered HTML if available, otherwise show raw text
-          var rendered = a.renderedHtml || (hasContent ? '<pre style="margin:0;font-size:11px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">' + esc(a.content) + '</pre>' : '');
-          return '<div class="ws-card">' +
+        el.innerHTML = recent.map(a =>
+          '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
-              badge +
               '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
-              (hasContent ? '<button class="ws-card-toggle" data-toggle-idx="' + idx + '">Show</button>' : '') +
             '</div>' +
-            (hasContent ? '<div class="ws-card-content" id="ws-art-content-' + idx + '" style="display:none">' + rendered + '</div>' : '') +
-          '</div>';
-        }).join('');
-        // Wire up toggle buttons
-        el.querySelectorAll('[data-toggle-idx]').forEach(function(btn) {
-          btn.addEventListener('click', function() {
-            var idx = btn.getAttribute('data-toggle-idx');
-            var contentEl = document.getElementById('ws-art-content-' + idx);
-            if (!contentEl) return;
-            var visible = contentEl.style.display !== 'none';
-            contentEl.style.display = visible ? 'none' : 'block';
-            btn.textContent = visible ? 'Show' : 'Hide';
-          });
-        });
+          '</div>'
+        ).join('');
       }
 
       $('btn-new-topic').addEventListener('click', () => {
@@ -5205,9 +4828,9 @@ self.addEventListener('notificationclick', function(event) {
         return;
       }
       if (url.pathname.startsWith("/dist/")) {
-        const resolved = path4.resolve(distPath, url.pathname.slice(6));
-        const rel = path4.relative(distPath, resolved);
-        if (rel.startsWith("..") || path4.isAbsolute(rel)) {
+        const resolved = path3.resolve(distPath, url.pathname.slice(6));
+        const rel = path3.relative(distPath, resolved);
+        if (rel.startsWith("..") || path3.isAbsolute(rel)) {
           res.writeHead(403);
           res.end("Forbidden");
           return;

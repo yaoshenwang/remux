@@ -1148,6 +1148,10 @@ const HTML_TEMPLATE = `<!doctype html>
       let lastMessageAt = Date.now();
       let heartbeatChecker = null;
 
+      // Track last received message timestamp for session recovery
+      let lastReceivedTimestamp = 0;
+      let isResuming = false;
+
       function startHeartbeat() {
         lastMessageAt = Date.now();
         if (heartbeatChecker) clearInterval(heartbeatChecker);
@@ -1204,6 +1208,13 @@ const HTML_TEMPLATE = `<!doctype html>
               ws.send(JSON.stringify({ v: 1, type: 'e2ee_init', payload: { publicKey: pubKey } }));
             }
           }
+          // Session recovery: if we have a previous timestamp, request buffered messages
+          const deviceId = localStorage.getItem('remux-device-id');
+          if (lastReceivedTimestamp > 0 && deviceId) {
+            isResuming = true;
+            setStatus('connecting', 'Resuming session...');
+            sendCtrl({ type: 'resume', deviceId: deviceId, lastTimestamp: lastReceivedTimestamp });
+          }
           // Let server pick the session if we have none (bootstrap flow)
           sendCtrl({ type: 'attach_first', session: currentSession || undefined, cols: term.cols, rows: term.rows });
           // Request device list (works with or without auth)
@@ -1244,6 +1255,16 @@ const HTML_TEMPLATE = `<!doctype html>
                 }
                 return;
               }
+              // Session recovery complete
+              if (msg.type === 'resume_complete') {
+                isResuming = false;
+                if (msg.replayed > 0) {
+                  console.log('[remux] session recovered: ' + msg.replayed + ' buffered messages replayed');
+                }
+                return;
+              }
+              // Track timestamp for session recovery on reconnect
+              lastReceivedTimestamp = Date.now();
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
                 // Request device list and workspace data after auth

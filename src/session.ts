@@ -281,6 +281,9 @@ export function createTab(
       sendData(ws, data);
     }
 
+    // Buffer PTY output for recently-disconnected devices watching this tab
+    if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
+
     // Shell integration: parse OSC 133 / OSC 7 sequences
     processShellIntegration(data, tab, session.name);
 
@@ -491,6 +494,10 @@ let _getClientListFn: (() => any[]) | null = null;
 // E2EE-aware data send hook: encrypts raw terminal data when E2EE is active
 let _sendDataFn: ((ws: any, data: string) => void) | null = null;
 
+// Buffer hooks -- injected by ws-handler for offline message queuing.
+let _bufferTabOutputFn: ((tabId: number, data: string) => void) | null = null;
+let _bufferStateForDisconnectedFn: (() => void) | null = null;
+
 export function setBroadcastHooks(
   sendFn: (ws: any, type: string, payload: any) => void,
   clientListFn: () => any[],
@@ -510,6 +517,18 @@ function sendData(ws: RemuxWebSocket, data: string): void {
   }
 }
 
+/**
+ * Set buffer hooks for offline message queuing.
+ * Called by ws-handler after initialization to avoid circular imports.
+ */
+export function setBufferHooks(
+  bufferTabOutputFn: (tabId: number, data: string) => void,
+  bufferStateFn: () => void,
+): void {
+  _bufferTabOutputFn = bufferTabOutputFn;
+  _bufferStateForDisconnectedFn = bufferStateFn;
+}
+
 export function broadcastState(): void {
   const state = getState();
   const clients = _getClientListFn ? _getClientListFn() : [];
@@ -523,6 +542,8 @@ export function broadcastState(): void {
       }
     }
   }
+  // Also buffer state for recently-disconnected devices
+  if (_bufferStateForDisconnectedFn) _bufferStateForDisconnectedFn();
 }
 
 // ── Persistence (SQLite via store.ts) ────────────────────────────

@@ -16,6 +16,7 @@ import type http from "http";
 import { WebSocketServer } from "ws";
 import { E2EESession } from "./e2ee.js";
 import type WebSocket from "ws";
+import { BufferRegistry } from "./message-buffer.js";
 import {
   type RemuxWebSocket,
   controlClients,
@@ -31,6 +32,7 @@ import {
   recalcTabSize,
   broadcastState,
   setBroadcastHooks,
+  setBufferHooks,
 } from "./session.js";
 import { validateToken, registerDevice } from "./auth.js";
 import {
@@ -86,6 +88,71 @@ import {
   renderMarkdown,
   renderAnsi,
 } from "./renderers.js";
+
+// ── Offline Message Buffer ──────────────────────────────────────
+
+/**
+ * Global buffer registry: stores messages for recently-disconnected devices
+ * so they can be replayed on reconnect. Keyed by deviceId.
+ */
+export const bufferRegistry = new BufferRegistry();
+
+/**
+ * Set of deviceIds that are currently "recently disconnected" — their buffer
+ * is active and collecting messages. Cleared when the device reconnects
+ * and sends a `resume`, or when the buffer expires.
+ */
+export const disconnectedDevices = new Set<string>();
+
+/**
+ * Map deviceId -> tabId the device was watching when it disconnected.
+ * Used to buffer PTY output for the correct tab.
+ */
+export const disconnectedDeviceTab = new Map<string, number>();
+
+/**
+ * Buffer an enveloped message for a disconnected device.
+ * Only buffers if the device is in the recently-disconnected set.
+ */
+export function bufferForDevice(deviceId: string, type: string, payload: any): void {
+  if (!disconnectedDevices.has(deviceId)) return;
+  const buf = bufferRegistry.getOrCreate(deviceId);
+  buf.push(JSON.stringify({ v: 1, type, payload }));
+}
+
+/**
+ * Buffer raw terminal data for a disconnected device.
+ * Only buffers if the device is in the recently-disconnected set.
+ */
+export function bufferRawForDevice(deviceId: string, data: string): void {
+  if (!disconnectedDevices.has(deviceId)) return;
+  const buf = bufferRegistry.getOrCreate(deviceId);
+  buf.push(data);
+}
+
+/**
+ * Buffer raw terminal data for all disconnected devices watching a given tab.
+ */
+export function bufferTabOutput(tabId: number, data: string): void {
+  for (const [deviceId, watchingTabId] of disconnectedDeviceTab) {
+    if (watchingTabId === tabId) {
+      bufferRawForDevice(deviceId, data);
+    }
+  }
+}
+
+/**
+ * Buffer a state broadcast for all disconnected devices.
+ */
+export function bufferStateForDisconnected(): void {
+  if (disconnectedDevices.size === 0) return;
+  // Lazy import to avoid calling getState before session module is ready
+  const state = getState();
+  const clients = getClientList();
+  for (const deviceId of disconnectedDevices) {
+    bufferForDevice(deviceId, "state", { sessions: state, clients });
+  }
+}
 
 // ── Protocol Envelope ───────────────────────────────────────────
 
@@ -268,6 +335,8 @@ export function setupWebSocket(
 ): WebSocketServer {
   // Wire broadcast hooks to break the circular session <-> ws-handler dependency
   setBroadcastHooks(sendEnvelope, getClientList, e2eeSend);
+  // Wire buffer hooks for offline message queuing
+  setBufferHooks(bufferTabOutput, bufferStateForDisconnected);
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -442,8 +511,6 @@ export function setupWebSocket(
                 }
 
                 // For other control messages, re-emit as if received normally.
-                // We prepend the decrypted JSON back through the message handler.
-                // To avoid infinite recursion, we mark the message as already decrypted.
                 ws.emit("message", Buffer.from(decrypted, "utf8"));
               } else {
                 // Raw terminal input wrapped in E2EE
@@ -459,6 +526,35 @@ export function setupWebSocket(
               sendEnvelope(ws, "error", {
                 reason: "E2EE decrypt failed",
               });
+            }
+            return;
+          }
+
+          // ── Session recovery: replay buffered messages ──
+          if (p.type === "resume") {
+            const resumeDeviceId = p.deviceId || ws._remuxDeviceId;
+            if (resumeDeviceId && disconnectedDevices.has(resumeDeviceId)) {
+              const buf = bufferRegistry.getOrCreate(resumeDeviceId);
+              const messages = buf.drain(p.lastTimestamp || undefined);
+
+              // Replay buffered messages in order
+              for (const m of messages) {
+                if (ws.readyState === ws.OPEN) {
+                  ws.send(m.data);
+                }
+              }
+
+              // Clean up: device is no longer disconnected
+              disconnectedDevices.delete(resumeDeviceId);
+              disconnectedDeviceTab.delete(resumeDeviceId);
+              bufferRegistry.remove(resumeDeviceId);
+
+              sendEnvelope(ws, "resume_complete", {
+                replayed: messages.length,
+              });
+            } else {
+              // No buffered messages — still send resume_complete
+              sendEnvelope(ws, "resume_complete", { replayed: 0 });
             }
             return;
           }
@@ -1218,7 +1314,19 @@ export function setupWebSocket(
         const sockets = deviceSockets.get(ws._remuxDeviceId);
         if (sockets) {
           sockets.delete(ws);
-          if (sockets.size === 0) deviceSockets.delete(ws._remuxDeviceId);
+          // If this was the device's last connection, start buffering
+          // so messages can be replayed on reconnect
+          if (sockets.size === 0) {
+            deviceSockets.delete(ws._remuxDeviceId);
+            if (ws._remuxAuthed) {
+              disconnectedDevices.add(ws._remuxDeviceId);
+              bufferRegistry.getOrCreate(ws._remuxDeviceId); // ensure buffer exists
+              // Track which tab the device was watching for PTY output buffering
+              if (tabId != null) {
+                disconnectedDeviceTab.set(ws._remuxDeviceId, tabId);
+              }
+            }
+          }
         }
       }
 
