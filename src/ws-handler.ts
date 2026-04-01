@@ -23,6 +23,7 @@ import {
   createTab,
   deleteSession,
   getState,
+  getFirstSessionName,
   findTab,
   attachToTab,
   detachFromTab,
@@ -323,6 +324,16 @@ export function setupWebSocket(
             if (validateToken(parsed.token, TOKEN)) {
               ws._remuxAuthed = true;
               controlClients.add(ws);
+              // Re-register device with client-provided ID if available
+              if (parsed.deviceId) {
+                try {
+                  const { device } = registerDevice(req, parsed.deviceId);
+                  deviceInfo = device;
+                  ws._remuxDeviceId = device.id;
+                  if (!deviceSockets.has(device.id)) deviceSockets.set(device.id, new Set());
+                  deviceSockets.get(device.id)!.add(ws);
+                } catch {}
+              }
               sendEnvelope(ws, "auth_ok", {
                 deviceId: deviceInfo?.id ?? null,
                 trust: deviceInfo?.trust ?? null,
@@ -346,9 +357,10 @@ export function setupWebSocket(
           const rawParsed = JSON.parse(msg);
           const p = unwrapMessage(rawParsed);
 
-          // Attach to first tab of a session (or create one)
+          // Attach to first tab of a session (or create one).
+          // If no session specified, pick the first existing one or create "default".
           if (p.type === "attach_first") {
-            const name = p.session || "main";
+            const name = p.session || getFirstSessionName() || "default";
             const session = createSession(name);
             let tab = session.tabs.find((t) => !t.ended);
             if (!tab)
@@ -401,7 +413,7 @@ export function setupWebSocket(
 
           // Create a new tab in a session (creates session if needed)
           if (p.type === "new_tab") {
-            const session = createSession(p.session || "main");
+            const session = createSession(p.session || "default");
             const tab = createTab(
               session,
               p.cols || ws._remuxCols,
@@ -798,7 +810,7 @@ export function setupWebSocket(
           if (p.type === "create_topic") {
             if (typeof p.title === "string" && p.title.trim()) {
               const topic = createTopic(
-                p.sessionName || "main",
+                p.sessionName || clientState.currentSession || "default",
                 p.title.trim(),
               );
               sendEnvelope(ws, "topic_created", topic);
@@ -828,7 +840,7 @@ export function setupWebSocket(
           if (p.type === "create_run") {
             const run = createRun({
               topicId: p.topicId || undefined,
-              sessionName: p.sessionName || "main",
+              sessionName: p.sessionName || clientState.currentSession || "default",
               tabId: p.tabId,
               command: p.command,
             });
@@ -862,7 +874,7 @@ export function setupWebSocket(
             const tabId = ws._remuxTabId;
             if (tabId != null) {
               const result = captureSnapshot(
-                clientState.currentSession || "main",
+                clientState.currentSession || "default",
                 tabId,
                 p.topicId || undefined,
               );
@@ -881,6 +893,7 @@ export function setupWebSocket(
             const artifacts = listArtifacts({
               topicId: p.topicId || undefined,
               runId: p.runId || undefined,
+              sessionName: p.sessionName || clientState.currentSession || undefined,
             });
             sendEnvelope(ws, "artifact_list", { artifacts });
             return;

@@ -87,6 +87,7 @@ function createTestDb() {
       id TEXT PRIMARY KEY,
       run_id TEXT REFERENCES runs(id),
       topic_id TEXT REFERENCES topics(id),
+      session_name TEXT,
       type TEXT NOT NULL,
       title TEXT,
       content TEXT,

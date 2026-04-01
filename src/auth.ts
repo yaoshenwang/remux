@@ -73,13 +73,30 @@ export function validateToken(
 // ── Device registration ─────────────────────────────────────────
 
 /**
- * Register or retrieve a device based on request headers.
+ * Register or retrieve a device.
+ * Uses client-provided deviceId (from localStorage) when available,
+ * falling back to header-based fingerprint for legacy clients.
  * First device ever is auto-trusted (bootstrap trust).
- * Returns the device and whether it was newly created.
  */
 export function registerDevice(
   req: http.IncomingMessage,
+  clientDeviceId?: string,
 ): { device: Device; isNew: boolean } {
+  // Prefer client-provided persistent deviceId over header fingerprint
+  if (clientDeviceId) {
+    const existing = findDeviceById(clientDeviceId);
+    if (existing) {
+      touchDevice(existing.id);
+      return { device: existing, isNew: false };
+    }
+    // New device with client-provided ID — create with that ID as fingerprint
+    const isFirst = !hasAnyDevice();
+    const trust: TrustLevel = isFirst ? "trusted" : "untrusted";
+    const device = createDevice(clientDeviceId, trust, undefined, clientDeviceId);
+    return { device, isNew: true };
+  }
+
+  // Legacy fallback: header-based fingerprint
   const ua = req.headers["user-agent"] || "";
   const lang = req.headers["accept-language"] || "";
   const fingerprint = computeFingerprint(ua, lang);
@@ -90,7 +107,6 @@ export function registerDevice(
     return { device: existing, isNew: false };
   }
 
-  // First device gets auto-trusted (bootstrap trust)
   const isFirst = !hasAnyDevice();
   const trust: TrustLevel = isFirst ? "trusted" : "untrusted";
   const device = createDevice(fingerprint, trust);

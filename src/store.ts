@@ -107,6 +107,7 @@ export function getDb(): Database.Database {
       id TEXT PRIMARY KEY,
       run_id TEXT REFERENCES runs(id),
       topic_id TEXT REFERENCES topics(id),
+      session_name TEXT,
       type TEXT NOT NULL,
       title TEXT,
       content TEXT,
@@ -327,9 +328,10 @@ export function createDevice(
   fingerprint: string,
   trust: TrustLevel = "untrusted",
   name?: string,
+  explicitId?: string,
 ): Device {
   const db = getDb();
-  const id = generateDeviceId();
+  const id = explicitId || generateDeviceId();
   const now = Date.now();
   const deviceName = name || `Device-${id.slice(0, 4).toUpperCase()}`;
 
@@ -811,6 +813,7 @@ export interface Artifact {
 export function createArtifact(params: {
   runId?: string;
   topicId?: string;
+  sessionName?: string;
   type: string;
   title?: string;
   content?: string;
@@ -819,12 +822,13 @@ export function createArtifact(params: {
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    `INSERT INTO artifacts (id, run_id, topic_id, type, title, content, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO artifacts (id, run_id, topic_id, session_name, type, title, content, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     params.runId ?? null,
     params.topicId ?? null,
+    params.sessionName ?? null,
     params.type,
     params.title ?? null,
     params.content ?? null,
@@ -848,11 +852,12 @@ export function createArtifact(params: {
 }
 
 /**
- * List artifacts, optionally filtered by topic or run.
+ * List artifacts, optionally filtered by topic, run, or session.
  */
 export function listArtifacts(params: {
   topicId?: string;
   runId?: string;
+  sessionName?: string;
 }): Artifact[] {
   const db = getDb();
   let rows: any[];
@@ -866,6 +871,10 @@ export function listArtifacts(params: {
     rows = db
       .prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at")
       .all(params.runId) as any[];
+  } else if (params.sessionName) {
+    rows = db
+      .prepare("SELECT * FROM artifacts WHERE session_name = ? ORDER BY created_at")
+      .all(params.sessionName) as any[];
   } else {
     rows = db
       .prepare("SELECT * FROM artifacts ORDER BY created_at")
