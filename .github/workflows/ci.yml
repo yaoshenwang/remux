@@ -1,9 +1,11 @@
 name: CI
+
 on:
   push:
     branches: [dev, main]
   pull_request:
     branches: [dev, main]
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -20,11 +22,43 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm test
+
   swift-test:
     runs-on: macos-15
-    if: false  # Disabled: ghostty vendor submodule ref is stale
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - run: cd packages/RemuxKit && swift build && swift test
+
+  # ── Dev prerelease: publish @dev tag on push to dev ──
+  prerelease:
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+      - name: Set prerelease version
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          SHA=$(git rev-parse --short HEAD)
+          PREID="${BASE}-dev.${SHA}"
+          npm version "$PREID" --no-git-tag-version
+          echo "Publishing remux@${PREID} to @dev tag"
+
+      - name: Publish @dev
+        run: pnpm publish --access public --no-git-checks --tag dev
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
