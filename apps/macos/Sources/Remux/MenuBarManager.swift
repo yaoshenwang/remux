@@ -6,6 +6,13 @@ import RemuxKit
 final class MenuBarManager {
     private weak var state: RemuxState?
 
+    /// Callback for split operations, wired from AppDelegate.
+    var onSplitRight: (() -> Void)?
+    var onSplitDown: (() -> Void)?
+    var onClosePane: (() -> Void)?
+    var onFocusNextPane: (() -> Void)?
+    var onFocusPreviousPane: (() -> Void)?
+
     init(state: RemuxState) {
         self.state = state
         setupMenuBar()
@@ -52,6 +59,9 @@ final class MenuBarManager {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        let findItem = editMenu.addItem(withTitle: "Find...", action: #selector(findInTerminal(_:)), keyEquivalent: "f")
+        findItem.target = self
         let editMenuItem = NSMenuItem()
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
@@ -61,6 +71,34 @@ final class MenuBarManager {
         let toggleSidebar = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
         toggleSidebar.keyEquivalentModifierMask = [.command, .control]
         toggleSidebar.target = self
+
+        viewMenu.addItem(.separator())
+
+        // Split pane items
+        let splitRight = viewMenu.addItem(withTitle: "Split Right", action: #selector(splitRightAction(_:)), keyEquivalent: "d")
+        splitRight.target = self
+
+        let splitDown = viewMenu.addItem(withTitle: "Split Down", action: #selector(splitDownAction(_:)), keyEquivalent: "d")
+        splitDown.keyEquivalentModifierMask = [.command, .shift]
+        splitDown.target = self
+
+        viewMenu.addItem(.separator())
+
+        let closePane = viewMenu.addItem(withTitle: "Close Pane", action: #selector(closePaneAction(_:)), keyEquivalent: "w")
+        closePane.keyEquivalentModifierMask = [.command, .shift]
+        closePane.target = self
+
+        viewMenu.addItem(.separator())
+
+        // Focus navigation
+        let focusNext = viewMenu.addItem(withTitle: "Focus Next Pane", action: #selector(focusNextAction(_:)), keyEquivalent: "]")
+        focusNext.keyEquivalentModifierMask = [.command, .option]
+        focusNext.target = self
+
+        let focusPrev = viewMenu.addItem(withTitle: "Focus Previous Pane", action: #selector(focusPrevAction(_:)), keyEquivalent: "[")
+        focusPrev.keyEquivalentModifierMask = [.command, .option]
+        focusPrev.target = self
+
         let viewMenuItem = NSMenuItem()
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
@@ -117,5 +155,32 @@ final class MenuBarManager {
         NSApp.keyWindow?.contentView?.window?.firstResponder?.tryToPerform(
             #selector(NSSplitViewController.toggleSidebar(_:)), with: nil
         )
+    }
+
+    @objc private func findInTerminal(_ sender: Any?) {
+        // Search is triggered through the GhosttyNativeView's performKeyEquivalent
+        // which intercepts Cmd+F. The menu item provides discoverability.
+    }
+
+    // MARK: - Split pane actions
+
+    @objc private func splitRightAction(_ sender: Any?) {
+        onSplitRight?()
+    }
+
+    @objc private func splitDownAction(_ sender: Any?) {
+        onSplitDown?()
+    }
+
+    @objc private func closePaneAction(_ sender: Any?) {
+        onClosePane?()
+    }
+
+    @objc private func focusNextAction(_ sender: Any?) {
+        onFocusNextPane?()
+    }
+
+    @objc private func focusPrevAction(_ sender: Any?) {
+        onFocusPreviousPane?()
     }
 }

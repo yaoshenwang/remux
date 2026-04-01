@@ -15,30 +15,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let state = RemuxState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        setupMainWindow()
+        // Load saved session (if any)
+        let savedSession = SessionPersistence.shared.load()
+
+        setupMainWindow(savedSession: savedSession)
         setupStatusItem()
         menuBarManager = MenuBarManager(state: state)
         notificationManager = NotificationManager()
         setupGlobalShortcut()
+
+        // Start autosave
+        SessionPersistence.shared.startAutosave { [weak self] in
+            guard let self else {
+                return AppSession()
+            }
+            return self.buildCurrentSession()
+        }
+
         // Auto-connect after a brief delay to ensure UI is ready
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             Task { @MainActor in
-                self.autoConnectIfConfigured()
+                self.autoConnectIfConfigured(savedSession: savedSession)
             }
         }
     }
 
-    /// Auto-connect if REMUX_URL and REMUX_TOKEN environment variables are set.
+    func applicationWillTerminate(_ notification: Notification) {
+        // Save session on quit
+        Task { @MainActor in
+            let session = buildCurrentSession()
+            SessionPersistence.shared.save(session)
+            SessionPersistence.shared.stopAutosave()
+        }
+    }
+
+    /// Build the current session state for persistence.
     @MainActor
-    private func autoConnectIfConfigured() {
-        guard let urlStr = ProcessInfo.processInfo.environment["REMUX_URL"],
-              let token = ProcessInfo.processInfo.environment["REMUX_TOKEN"],
-              let url = URL(string: urlStr) else {
-            NSLog("[remux] No REMUX_URL/REMUX_TOKEN env vars, showing connection UI")
+    private func buildCurrentSession() -> AppSession {
+        var session = AppSession()
+
+        // Server URL
+        if case .connected = state.connectionStatus {
+            session.serverURL = state.serverURL?.absoluteString
+        }
+
+        // Window frame
+        if let frame = mainWindow?.frame {
+            session.windowFrame = CodableRect(rect: frame)
+        }
+
+        // Split layout — for now, save a single leaf; the MainContentView
+        // snapshot would need to be plumbed here for full persistence
+        session.splitLayout = .leaf(tabIndex: state.activeTabIndex)
+        session.sidebarCollapsed = false
+
+        return session
+    }
+
+    /// Auto-connect if REMUX_URL and REMUX_TOKEN environment variables are set,
+    /// or if a saved session has a server URL.
+    @MainActor
+    private func autoConnectIfConfigured(savedSession: AppSession?) {
+        // Priority 1: Environment variables
+        if let urlStr = ProcessInfo.processInfo.environment["REMUX_URL"],
+           let token = ProcessInfo.processInfo.environment["REMUX_TOKEN"],
+           let url = URL(string: urlStr) {
+            NSLog("[remux] Auto-connecting to %@ (env vars)", urlStr)
+            state.connect(url: url, credential: .token(token))
             return
         }
-        NSLog("[remux] Auto-connecting to %@", urlStr)
-        state.connect(url: url, credential: .token(token))
+
+        // Priority 2: Saved session with server URL
+        if let urlStr = savedSession?.serverURL,
+           let url = URL(string: urlStr) {
+            NSLog("[remux] Saved session has server URL: %@, showing connection UI", urlStr)
+            // Don't auto-connect without credentials — just pre-fill the URL
+        }
+
+        NSLog("[remux] No REMUX_URL/REMUX_TOKEN env vars, showing connection UI")
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -47,12 +101,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Main Window
 
-    private func setupMainWindow() {
+    private func setupMainWindow(savedSession: AppSession? = nil) {
         let contentView = MainContentView()
             .environment(state)
 
+        let defaultFrame = NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let windowFrame = savedSession?.windowCGRect ?? defaultFrame
+
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+            contentRect: windowFrame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -60,7 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.minSize = NSSize(width: 800, height: 500)
         window.title = "Remux"
         window.contentView = NSHostingView(rootView: contentView)
-        window.center()
+
+        // Restore position or center
+        if savedSession?.windowCGRect != nil {
+            // Position is already set from windowFrame
+        } else {
+            window.center()
+        }
+
         window.setFrameAutosaveName("RemuxMainWindow")
         window.makeKeyAndOrderFront(nil)
 

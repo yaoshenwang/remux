@@ -3,11 +3,11 @@ import GhosttyKit
 
 /// NSView subclass wrapping libghostty's native Metal terminal renderer.
 /// Adapted for ghostty v1.3.1 API: uses `command` field to spawn a relay
-/// process (`nc -U <socket>`) that bridges Unix socket ↔ PTY stdio.
+/// process (`nc -U <socket>`) that bridges Unix socket <-> PTY stdio.
 ///
 /// Data flow:
-///   Remote PTY → WebSocket → TerminalRelay.writeToTerminal() → socket → nc stdout → ghostty renders
-///   User types → ghostty → nc stdin → socket → TerminalRelay.onDataFromClient → WebSocket → remote PTY
+///   Remote PTY -> WebSocket -> TerminalRelay.writeToTerminal() -> socket -> nc stdout -> ghostty renders
+///   User types -> ghostty -> nc stdin -> socket -> TerminalRelay.onDataFromClient -> WebSocket -> remote PTY
 ///
 /// Architecture ref: Calyx, Kytos (libghostty-based terminal apps)
 @MainActor
@@ -18,6 +18,12 @@ final class GhosttyNativeView: NSView {
     var onResize: ((Int, Int) -> Void)?
     var onBell: (() -> Void)?
     var onTitle: ((String) -> Void)?
+
+    // Search callbacks
+    var onSearchStart: ((String?) -> Void)?
+    var onSearchEnd: (() -> Void)?
+    var onSearchTotal: ((Int) -> Void)?
+    var onSearchSelected: ((Int) -> Void)?
 
     // MARK: - Ghostty state (nonisolated for deinit cleanup)
 
@@ -67,7 +73,7 @@ final class GhosttyNativeView: NSView {
         // Runtime callbacks
         var rtConfig = ghostty_runtime_config_s()
         rtConfig.userdata = Unmanaged.passUnretained(self).toOpaque()
-        rtConfig.supports_selection_clipboard = false
+        rtConfig.supports_selection_clipboard = true
 
         rtConfig.wakeup_cb = { ud in
             guard let ud else { return }
@@ -77,14 +83,45 @@ final class GhosttyNativeView: NSView {
             }
         }
 
-        rtConfig.action_cb = { _, _, _ in false }
-        rtConfig.read_clipboard_cb = { _, _, _ in false }
-        rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in }
+        rtConfig.action_cb = { app, target, action in
+            guard let app else { return false }
+            guard let ud = ghostty_app_userdata(app) else { return false }
+            let view = Unmanaged<GhosttyNativeView>.fromOpaque(ud).takeUnretainedValue()
+            return GhosttyNativeView.handleAction(view: view, target: target, action: action)
+        }
 
-        rtConfig.write_clipboard_cb = { _, _, content, count, _ in
+        rtConfig.read_clipboard_cb = { ud, clipboard, state in
+            guard let ud else { return false }
+            let view = Unmanaged<GhosttyNativeView>.fromOpaque(ud).takeUnretainedValue()
+            guard let surface = view.surface else { return false }
+            let pb = NSPasteboard.general
+            if let str = pb.string(forType: .string) {
+                str.withCString { ptr in
+                    ghostty_surface_complete_clipboard_request(surface, ptr, state, true)
+                }
+                return true
+            }
+            return false
+        }
+
+        rtConfig.confirm_read_clipboard_cb = { ud, content, state, req in
+            // Auto-confirm clipboard reads for simplicity
+            guard let ud else { return }
+            let view = Unmanaged<GhosttyNativeView>.fromOpaque(ud).takeUnretainedValue()
+            guard let surface = view.surface, let content else { return }
+            ghostty_surface_complete_clipboard_request(surface, content, state, true)
+        }
+
+        rtConfig.write_clipboard_cb = { _, clipboard, content, count, _ in
             guard let content, count > 0, let data = content.pointee.data else { return }
             let str = String(cString: data)
-            let pb = NSPasteboard.general
+            let pb: NSPasteboard
+            if clipboard == GHOSTTY_CLIPBOARD_SELECTION {
+                // Selection clipboard: use a named pasteboard
+                pb = NSPasteboard(name: .init("org.remux.selection"))
+            } else {
+                pb = NSPasteboard.general
+            }
             pb.clearContents()
             pb.setString(str, forType: .string)
         }
@@ -120,6 +157,78 @@ final class GhosttyNativeView: NSView {
         }
     }
 
+    // MARK: - Action handler (called from C callback context)
+
+    /// Handle ghostty actions. This is a static method so the C function pointer
+    /// (action_cb) can dispatch to it via Unmanaged userdata.
+    nonisolated private static func handleAction(
+        view: GhosttyNativeView,
+        target: ghostty_target_s,
+        action: ghostty_action_s
+    ) -> Bool {
+        // All UI work must happen on MainActor
+        DispatchQueue.main.async { @MainActor in
+            switch action.tag {
+            case GHOSTTY_ACTION_RING_BELL:
+                view.onBell?()
+
+            case GHOSTTY_ACTION_SET_TITLE:
+                if let titlePtr = action.action.set_title.title {
+                    let title = String(cString: titlePtr)
+                    view.onTitle?(title)
+                }
+
+            case GHOSTTY_ACTION_START_SEARCH:
+                var needle: String? = nil
+                if let needlePtr = action.action.start_search.needle {
+                    needle = String(cString: needlePtr)
+                }
+                view.onSearchStart?(needle)
+
+            case GHOSTTY_ACTION_END_SEARCH:
+                view.onSearchEnd?()
+
+            case GHOSTTY_ACTION_SEARCH_TOTAL:
+                let total = Int(action.action.search_total.total)
+                view.onSearchTotal?(total)
+
+            case GHOSTTY_ACTION_SEARCH_SELECTED:
+                let selected = Int(action.action.search_selected.selected)
+                view.onSearchSelected?(selected)
+
+            case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+                // Could forward to NotificationManager if desired
+                break
+
+            default:
+                break
+            }
+        }
+        return true
+    }
+
+    // MARK: - Search methods
+
+    /// Navigate to the next search match.
+    func searchForward() {
+        guard let surface else { return }
+        let action = "search_forward"
+        _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+    }
+
+    /// Navigate to the previous search match.
+    func searchBackward() {
+        guard let surface else { return }
+        let action = "search_backward"
+        _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+    }
+
+    /// Send text input directly to the ghostty surface (used for paste).
+    func sendText(_ text: String) {
+        guard let surface else { return }
+        ghostty_surface_text(surface, text, UInt(text.utf8.count))
+    }
+
     // MARK: - View lifecycle
 
     override var acceptsFirstResponder: Bool { true }
@@ -146,7 +255,25 @@ final class GhosttyNativeView: NSView {
         surface.flatMap { ghostty_surface_draw($0) }
     }
 
-    // MARK: - Keyboard input (ghostty handles forwarding to PTY → nc stdin → socket)
+    // MARK: - Keyboard input (ghostty handles forwarding to PTY -> nc stdin -> socket)
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Intercept Cmd+V for enhanced paste
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers == "v" {
+            handlePaste()
+            return true
+        }
+
+        // Intercept Cmd+F for search
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers == "f" {
+            onSearchStart?(nil)
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         guard let surface else { return }
@@ -216,5 +343,23 @@ final class GhosttyNativeView: NSView {
     override func resignFirstResponder() -> Bool {
         surface.flatMap { ghostty_surface_set_focus($0, false) }
         return super.resignFirstResponder()
+    }
+
+    // MARK: - Private: Paste handling
+
+    private func handlePaste() {
+        let pb = NSPasteboard.general
+
+        // Check for image first — save to temp and paste path
+        if let imageURL = ClipboardHelper.saveImageToTemp(from: pb) {
+            let escapedPath = ClipboardHelper.escapeForShell(imageURL.path)
+            sendText(escapedPath)
+            return
+        }
+
+        // Use ClipboardHelper for enhanced paste (files, RTF, HTML, etc.)
+        if let content = ClipboardHelper.pasteContent(from: pb) {
+            sendText(content)
+        }
     }
 }
