@@ -22,7 +22,7 @@ import {
   PERSIST_INTERVAL_MS,
 } from "./session.js";
 import { setupWebSocket } from "./ws-handler.js";
-import { AdapterRegistry, GenericShellAdapter, ClaudeCodeAdapter } from "./adapters/index.js";
+import { AdapterRegistry, GenericShellAdapter, ClaudeCodeAdapter, CodexAdapter } from "./adapters/index.js";
 import { initGitService } from "./git-service.js";
 import {
   parseTunnelArgs,
@@ -139,6 +139,12 @@ function initAdapters(): void {
     adapterRegistry.emit(event.adapterId, event.type, event.data);
   });
   adapterRegistry.register(claudeAdapter);
+
+  // E10-008: codex adapter (passive, watches events and terminal)
+  const codexAdapter = new CodexAdapter((event) => {
+    adapterRegistry.emit(event.adapterId, event.type, event.data);
+  });
+  adapterRegistry.register(codexAdapter);
 }
 
 startup().catch((e) => {

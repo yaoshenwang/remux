@@ -1279,6 +1279,23 @@ export function setupWebSocket(
             return;
           }
 
+          if (p.type === "request_agent_summary") {
+            // E10-009: build AgentSessionSummary for each adapter
+            const { adapterRegistry } = require("./server.js");
+            const { AgentSessionSummary } = require("./adapters/agent-events.js");
+            const states = adapterRegistry?.getAllStates() ?? [];
+            const summaries = states.map((s: any) => ({
+              agentId: s.adapterId,
+              agentName: s.name,
+              state: s.currentState,
+              currentTurn: undefined,
+              recentToolCalls: [],
+              pendingApprovals: [],
+            }));
+            sendEnvelope(ws, "agent_summary", { agents: summaries });
+            return;
+          }
+
           return;
         } catch (err) {
           // Log JSON parse errors for debugging (e.g. createNote DB failures)
