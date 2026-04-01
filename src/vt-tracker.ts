@@ -71,6 +71,7 @@ export function createVtTerminal(
     },
 
     isAltScreen(): boolean {
+      if (!this.handle) return false; // disposed
       return !!wasmExports.ghostty_terminal_is_alternate_screen(handle);
     },
 

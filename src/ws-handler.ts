@@ -70,6 +70,8 @@ import {
   deleteNote,
   togglePinNote,
   listCommands,
+  removeStaleTab,
+  removeSession as removeSessionFromDb,
 } from "./store.js";
 import {
   captureSnapshot,
@@ -334,6 +336,12 @@ export function setupWebSocket(
                     if (oldSockets) { oldSockets.delete(ws); if (oldSockets.size === 0) deviceSockets.delete(ws._remuxDeviceId); }
                   }
                   const { device } = registerDevice(req, parsed.deviceId);
+                  // Re-check trust after re-registration: block if device was blocked
+                  if (device.trust === "blocked") {
+                    sendEnvelope(ws, "auth_error", { reason: "device blocked" });
+                    ws.close(4003, "device blocked");
+                    return;
+                  }
                   deviceInfo = device;
                   ws._remuxDeviceId = device.id;
                   if (!deviceSockets.has(device.id)) deviceSockets.set(device.id, new Set());
@@ -451,8 +459,10 @@ export function setupWebSocket(
               found.session.tabs = found.session.tabs.filter(
                 (t) => t.id !== p.tabId,
               );
+              removeStaleTab(p.tabId);
               // If session has no tabs left, remove it
               if (found.session.tabs.length === 0) {
+                removeSessionFromDb(found.session.name);
                 sessionMap.delete(found.session.name);
               }
             }

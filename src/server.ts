@@ -9,7 +9,7 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
-import { resolveAuth, generateToken, addPasswordToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
+import { resolveAuth, generateToken, validateToken, addPasswordToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
 import { initGhosttyVt } from "./vt-tracker.js";
 import { getDb, closeDb } from "./store.js";
 import { initPush } from "./push.js";
@@ -91,9 +91,9 @@ async function startup(): Promise<void> {
         const tab = createTab(session);
         tab.title = t.title || tab.title;
         if (t.scrollback) {
-          // Write saved scrollback to the RingBuffer so it's available on attach
-          // Note: this goes to RingBuffer only, NOT to PTY or VT terminal
+          // Write saved scrollback to RingBuffer and VT terminal for attach snapshot
           tab.scrollback.write(t.scrollback);
+          if (tab.vt) tab.vt.consume(t.scrollback);
         }
       }
       // If all tabs were ended, create a fresh one
@@ -1056,7 +1056,7 @@ const HTML_TEMPLATE = `<!doctype html>
                 window._inspectText = msg.text || '(empty)';
                 const m = msg.meta || {};
                 $('inspect-meta').innerHTML =
-                  '<span>' + (m.session || '') + ' / ' + (m.tabTitle || 'Tab ' + m.tabId) + '</span>' +
+                  '<span>' + esc(m.session) + ' / ' + esc(m.tabTitle || 'Tab ' + m.tabId) + '</span>' +
                   '<span>' + (m.cols || '?') + 'x' + (m.rows || '?') + '</span>' +
                   '<span>' + new Date(m.timestamp || Date.now()).toLocaleTimeString() + '</span>' +
                   '<button class="inspect-btn" id="btn-copy-inspect">Copy</button>';
@@ -1421,7 +1421,7 @@ const HTML_TEMPLATE = `<!doctype html>
               '<span class="ws-card-meta">' + timeAgo(t.createdAt) + '</span>' +
               '<button class="del-topic" data-del-topic="' + t.id + '" title="Delete">&times;</button>' +
             '</div>' +
-            '<div class="ws-card-meta">' + t.sessionName + '</div>' +
+            '<div class="ws-card-meta">' + esc(t.sessionName) + '</div>' +
           '</div>'
         ).join('');
         el.querySelectorAll('[data-del-topic]').forEach(btn => {
@@ -1751,8 +1751,7 @@ const httpServer = http.createServer((req, res) => {
     const urlToken = url.searchParams.get("token");
     const isAuthed =
       (!TOKEN && !PASSWORD) || // no auth configured (impossible after auto-gen, but safe)
-      (TOKEN != null && urlToken === TOKEN) ||
-      (urlToken != null && passwordTokens.has(urlToken));
+      (urlToken != null && validateToken(urlToken, TOKEN));
 
     if (!isAuthed) {
       // If password mode is active and no valid token, show login page
@@ -1772,7 +1771,8 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname.startsWith("/dist/")) {
     const resolved = path.resolve(distPath, url.pathname.slice(6));
-    if (!resolved.startsWith(distPath)) {
+    const rel = path.relative(distPath, resolved);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
       res.writeHead(403);
       res.end("Forbidden");
       return;

@@ -678,9 +678,12 @@ export function listTopics(sessionName?: string): Topic[] {
  */
 export function deleteTopic(id: string): boolean {
   const db = getDb();
-  removeFromIndex(id);
-  const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
-  return result.changes > 0;
+  const txn = db.transaction(() => {
+    const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
+    if (result.changes > 0) removeFromIndex(id);
+    return result.changes > 0;
+  });
+  return txn();
 }
 
 // ── Workspace: Runs ───────────────────────────────────────────────
@@ -1124,9 +1127,12 @@ export function updateNote(id: string, content: string): boolean {
  */
 export function deleteNote(id: string): boolean {
   const db = getDb();
-  removeFromIndex(id);
-  const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
-  return result.changes > 0;
+  const txn = db.transaction(() => {
+    const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
+    if (result.changes > 0) removeFromIndex(id);
+    return result.changes > 0;
+  });
+  return txn();
 }
 
 /**
