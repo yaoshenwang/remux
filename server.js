@@ -116,6 +116,30 @@ function getDb() {
       created_at INTEGER NOT NULL,
       resolved_at INTEGER
     );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+      entity_type, entity_id, title, content,
+      tokenize='porter unicode61'
+    );
+
+    CREATE TABLE IF NOT EXISTS memory_notes (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      pinned INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS commands (
+      id TEXT PRIMARY KEY,
+      session_name TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      command TEXT,
+      exit_code INTEGER,
+      cwd TEXT,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER
+    );
   `);
   return _db;
 }
@@ -339,6 +363,7 @@ function createTopic(sessionName, title) {
   db.prepare(
     "INSERT INTO topics (id, session_name, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
   ).run(id, sessionName, title, now, now);
+  indexEntity("topic", id, title, title);
   return { id, sessionName, title, createdAt: now, updatedAt: now };
 }
 function listTopics(sessionName) {
@@ -379,6 +404,9 @@ function createRun(params) {
     params.command ?? null,
     now
   );
+  if (params.command) {
+    indexEntity("run", id, params.command, params.command);
+  }
   return {
     id,
     topicId: params.topicId ?? null,
@@ -449,6 +477,11 @@ function createArtifact(params) {
     params.content ?? null,
     now
   );
+  const ftsTitle = params.title || params.type;
+  const ftsContent = [params.title, params.content].filter(Boolean).join(" ");
+  if (ftsContent) {
+    indexEntity("artifact", id, ftsTitle, ftsContent);
+  }
   return {
     id,
     runId: params.runId ?? null,
@@ -535,6 +568,115 @@ function resolveApproval(id, status) {
     "UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?"
   ).run(status, now, id);
   return result.changes > 0;
+}
+function indexEntity(entityType, entityId, title, content) {
+  const db = getDb();
+  db.prepare("DELETE FROM fts_index WHERE entity_id = ?").run(entityId);
+  db.prepare(
+    "INSERT INTO fts_index (entity_type, entity_id, title, content) VALUES (?, ?, ?, ?)"
+  ).run(entityType, entityId, title, content);
+}
+function searchEntities(query, limit = 20) {
+  const db = getDb();
+  if (!query.trim()) return [];
+  const safeQuery = query.replace(/"/g, '""');
+  try {
+    const rows = db.prepare(
+      `SELECT entity_type, entity_id, title, content, rank
+         FROM fts_index WHERE fts_index MATCH ?
+         ORDER BY rank LIMIT ?`
+    ).all(`"${safeQuery}"`, limit);
+    return rows.map((r) => ({
+      entityType: r.entity_type,
+      entityId: r.entity_id,
+      title: r.title,
+      content: r.content,
+      rank: r.rank
+    }));
+  } catch {
+    return [];
+  }
+}
+function createNote(content) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO memory_notes (id, content, pinned, created_at, updated_at) VALUES (?, ?, 0, ?, ?)"
+  ).run(id, content, now, now);
+  return { id, content, pinned: false, createdAt: now, updatedAt: now };
+}
+function listNotes() {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT * FROM memory_notes ORDER BY pinned DESC, updated_at DESC"
+  ).all();
+  return rows.map((r) => ({
+    id: r.id,
+    content: r.content,
+    pinned: r.pinned === 1,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at
+  }));
+}
+function updateNote(id, content) {
+  const db = getDb();
+  const now = Date.now();
+  const result = db.prepare("UPDATE memory_notes SET content = ?, updated_at = ? WHERE id = ?").run(content, now, id);
+  return result.changes > 0;
+}
+function deleteNote(id) {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+function togglePinNote(id) {
+  const db = getDb();
+  const result = db.prepare(
+    "UPDATE memory_notes SET pinned = CASE WHEN pinned = 0 THEN 1 ELSE 0 END, updated_at = ? WHERE id = ?"
+  ).run(Date.now(), id);
+  return result.changes > 0;
+}
+function createCommand(params) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO commands (id, session_name, tab_id, command, cwd, started_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, params.sessionName, params.tabId, params.command ?? null, params.cwd ?? null, now);
+  return {
+    id,
+    sessionName: params.sessionName,
+    tabId: params.tabId,
+    command: params.command ?? null,
+    exitCode: null,
+    cwd: params.cwd ?? null,
+    startedAt: now,
+    endedAt: null
+  };
+}
+function completeCommand(id, exitCode) {
+  const db = getDb();
+  const now = Date.now();
+  const result = db.prepare("UPDATE commands SET exit_code = ?, ended_at = ? WHERE id = ?").run(exitCode, now, id);
+  return result.changes > 0;
+}
+function listCommands(tabId, limit = 50) {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT * FROM commands WHERE tab_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?"
+  ).all(tabId, limit);
+  return rows.map((r) => ({
+    id: r.id,
+    sessionName: r.session_name,
+    tabId: r.tab_id,
+    command: r.command,
+    exitCode: r.exit_code,
+    cwd: r.cwd,
+    startedAt: r.started_at,
+    endedAt: r.ended_at
+  }));
 }
 
 // src/auth.ts
@@ -855,6 +997,64 @@ function getShell() {
 var tabIdCounter = 0;
 var sessionMap = /* @__PURE__ */ new Map();
 var controlClients = /* @__PURE__ */ new Set();
+function processShellIntegration(data, tab, sessionName) {
+  const si = tab.shellIntegration;
+  const osc7Re = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
+  let m7;
+  while ((m7 = osc7Re.exec(data)) !== null) {
+    const cwdPath = decodeURIComponent(m7[1]);
+    if (cwdPath) si.cwd = cwdPath;
+  }
+  const osc133Re = /\x1b\]133;([ABCD])(?:;([^\x07\x1b]*?))?(?:\x07|\x1b\\)/g;
+  let m;
+  while ((m = osc133Re.exec(data)) !== null) {
+    const marker = m[1];
+    const params = m[2] || "";
+    switch (marker) {
+      case "A":
+        si.phase = "prompt";
+        si.commandBuffer = "";
+        break;
+      case "B":
+        si.phase = "command";
+        si.commandBuffer = "";
+        break;
+      case "C": {
+        const bIdx = data.indexOf("\x1B]133;B");
+        const cIdx = data.indexOf("\x1B]133;C");
+        if (bIdx >= 0 && cIdx > bIdx) {
+          const bEnd = data.indexOf("\x07", bIdx);
+          const bEnd2 = data.indexOf("\x1B\\", bIdx);
+          const bEndPos = bEnd >= 0 && bEnd < cIdx ? bEnd + 1 : bEnd2 >= 0 && bEnd2 < cIdx ? bEnd2 + 2 : bIdx + 9;
+          const cmdText = data.slice(bEndPos, cIdx).trim();
+          if (cmdText) si.commandBuffer = cmdText;
+        }
+        si.phase = "output";
+        const cmd = createCommand({
+          sessionName,
+          tabId: tab.id,
+          command: si.commandBuffer || void 0,
+          cwd: si.cwd || void 0
+        });
+        si.activeCommandId = cmd.id;
+        break;
+      }
+      case "D": {
+        const exitCode = params ? parseInt(params, 10) : 0;
+        if (si.activeCommandId) {
+          completeCommand(
+            si.activeCommandId,
+            isNaN(exitCode) ? 0 : exitCode
+          );
+          si.activeCommandId = null;
+        }
+        si.phase = "idle";
+        si.commandBuffer = "";
+        break;
+      }
+    }
+  }
+}
 function createTab(session, cols = 80, rows = 24) {
   const id = tabIdCounter++;
   const ptyProcess = pty.spawn(getShell(), [], {
@@ -878,7 +1078,13 @@ function createTab(session, cols = 80, rows = 24) {
     cols,
     rows,
     ended: false,
-    title: `Tab ${session.tabs.length + 1}`
+    title: `Tab ${session.tabs.length + 1}`,
+    shellIntegration: {
+      phase: "idle",
+      commandBuffer: "",
+      cwd: null,
+      activeCommandId: null
+    }
   };
   ptyProcess.onData((data) => {
     tab.scrollback.write(data);
@@ -886,6 +1092,7 @@ function createTab(session, cols = 80, rows = 24) {
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
+    processShellIntegration(data, tab, session.name);
     const now = Date.now();
     if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS && !isIdle) {
       isIdle = true;
@@ -1088,6 +1295,34 @@ function captureSnapshot(sessionName, tabId, topicId) {
     content: text
   });
   return { artifact, text };
+}
+function generateHandoffBundle() {
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1e3;
+  const sessions = [];
+  for (const session of sessionMap.values()) {
+    sessions.push({
+      name: session.name,
+      activeTabs: session.tabs.filter((t) => !t.ended).length
+    });
+  }
+  const allRuns = listRuns();
+  const recentRuns = allRuns.slice(-10).reverse();
+  const allTopics = listTopics();
+  const activeTopics = allTopics.filter(
+    (t) => now - t.updatedAt < DAY_MS
+  );
+  const pendingApprovals = listApprovals("pending");
+  const allArtifacts = listArtifacts({});
+  const keyArtifacts = allArtifacts.slice(-20).reverse();
+  return {
+    timestamp: now,
+    sessions,
+    recentRuns,
+    activeTopics,
+    pendingApprovals,
+    keyArtifacts
+  };
 }
 
 // src/ws-handler.ts
@@ -1706,6 +1941,59 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             }
             return;
           }
+          if (p.type === "search") {
+            if (typeof p.query === "string") {
+              const results = searchEntities(p.query, p.limit || 20);
+              sendEnvelope(ws, "search_results", { query: p.query, results });
+            }
+            return;
+          }
+          if (p.type === "get_handoff") {
+            const bundle = generateHandoffBundle();
+            sendEnvelope(ws, "handoff_bundle", bundle);
+            return;
+          }
+          if (p.type === "create_note") {
+            if (typeof p.content === "string" && p.content.trim()) {
+              const note = createNote(p.content.trim());
+              sendEnvelope(ws, "note_created", note);
+            }
+            return;
+          }
+          if (p.type === "list_notes") {
+            const notes = listNotes();
+            sendEnvelope(ws, "note_list", { notes });
+            return;
+          }
+          if (p.type === "update_note") {
+            if (p.noteId && typeof p.content === "string" && p.content.trim()) {
+              const ok = updateNote(p.noteId, p.content.trim());
+              sendEnvelope(ws, "note_updated", { noteId: p.noteId, success: ok });
+            }
+            return;
+          }
+          if (p.type === "delete_note") {
+            if (p.noteId) {
+              const ok = deleteNote(p.noteId);
+              sendEnvelope(ws, "note_deleted", { noteId: p.noteId, success: ok });
+            }
+            return;
+          }
+          if (p.type === "pin_note") {
+            if (p.noteId) {
+              const ok = togglePinNote(p.noteId);
+              sendEnvelope(ws, "note_pinned", { noteId: p.noteId, success: ok });
+            }
+            return;
+          }
+          if (p.type === "list_commands") {
+            const tabId = p.tabId ?? ws._remuxTabId;
+            if (tabId != null) {
+              const commands = listCommands(tabId, p.limit || 50);
+              sendEnvelope(ws, "command_list", { tabId, commands });
+            }
+            return;
+          }
           return;
         } catch {
         }
@@ -2103,6 +2391,57 @@ var HTML_TEMPLATE = `<!doctype html>
         cursor: pointer; font-size: 14px; padding: 0 4px; font-family: inherit; border-radius: 3px; }
       .ws-card:hover .del-topic { opacity: 1; }
       .ws-card .del-topic:hover { color: var(--dot-err); }
+
+      /* -- Search bar -- */
+      .ws-search { display: flex; gap: 8px; margin-bottom: 16px; }
+      .ws-search input { flex: 1; padding: 6px 10px; font-size: 13px; font-family: inherit;
+        background: var(--compose-bg); border: 1px solid var(--compose-border); border-radius: 6px;
+        color: var(--text-bright); outline: none; }
+      .ws-search input:focus { border-color: var(--accent); }
+      .ws-search input::placeholder { color: var(--text-dim); }
+      .ws-search-results { margin-bottom: 12px; }
+      .ws-search-result { padding: 6px 10px; margin-bottom: 4px; background: var(--bg-sidebar);
+        border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+      .ws-search-result:hover { border-color: var(--accent); }
+      .ws-search-result .sr-type { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+      .ws-search-result .sr-title { font-size: 12px; color: var(--text-bright); }
+
+      /* -- Notes -- */
+      .ws-note { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
+        padding: 8px 12px; margin-bottom: 6px; position: relative; }
+      .ws-note.pinned { border-color: var(--accent); }
+      .ws-note-content { font-size: 12px; color: var(--text-bright); white-space: pre-wrap; word-break: break-word; }
+      .ws-note-actions { display: flex; gap: 4px; margin-top: 4px; }
+      .ws-note-actions button { background: none; border: none; color: var(--text-dim);
+        font-size: 11px; cursor: pointer; padding: 2px 6px; border-radius: 3px; font-family: inherit; }
+      .ws-note-actions button:hover { color: var(--text-bright); background: var(--bg-hover); }
+      .ws-note-input { display: flex; gap: 6px; margin-bottom: 8px; }
+      .ws-note-input input { flex: 1; padding: 6px 10px; font-size: 12px; font-family: inherit;
+        background: var(--compose-bg); border: 1px solid var(--compose-border); border-radius: 4px;
+        color: var(--text-bright); outline: none; }
+      .ws-note-input input:focus { border-color: var(--accent); }
+      .ws-note-input button { padding: 4px 12px; font-size: 12px; font-family: inherit;
+        background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+
+      /* -- Commands -- */
+      .ws-cmd { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
+        padding: 6px 12px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+      .ws-cmd-text { font-size: 12px; color: var(--text-bright); font-family: 'Menlo','Monaco',monospace;
+        flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ws-cmd-exit { font-size: 11px; font-weight: 600; }
+      .ws-cmd-exit.ok { color: #27c93f; }
+      .ws-cmd-exit.err { color: #ff5f56; }
+      .ws-cmd-meta { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+      /* -- Handoff -- */
+      .ws-handoff { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
+        padding: 12px; margin-bottom: 12px; display: none; }
+      .ws-handoff.visible { display: block; }
+      .ws-handoff-section { margin-bottom: 8px; }
+      .ws-handoff-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+        letter-spacing: .5px; margin-bottom: 4px; }
+      .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
+      .ws-handoff-list li { margin-bottom: 2px; }
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
         user-select: text; -webkit-user-select: text; }
@@ -2283,6 +2622,22 @@ var HTML_TEMPLATE = `<!doctype html>
         <pre id="inspect-content"></pre>
       </div>
       <div id="workspace">
+        <div class="ws-search">
+          <input type="text" id="ws-search-input" placeholder="Search topics, artifacts, runs..." />
+        </div>
+        <div id="ws-search-results" class="ws-search-results"></div>
+        <div id="ws-handoff" class="ws-handoff"></div>
+        <div class="ws-section" id="ws-notes-section">
+          <div class="ws-section-title">
+            <span>Notes</span>
+            <button id="btn-handoff">Handoff</button>
+          </div>
+          <div class="ws-note-input">
+            <input type="text" id="ws-note-input" placeholder="Add a note..." />
+            <button id="btn-add-note">Add</button>
+          </div>
+          <div id="ws-notes"></div>
+        </div>
         <div class="ws-section">
           <div class="ws-section-title">
             <span>Pending Approvals</span>
@@ -2308,6 +2663,12 @@ var HTML_TEMPLATE = `<!doctype html>
             <button id="btn-capture-snapshot">Capture Snapshot</button>
           </div>
           <div id="ws-artifacts"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Commands</span>
+          </div>
+          <div id="ws-commands"></div>
         </div>
       </div>
       <div class="compose-bar" id="compose-bar">
@@ -2721,6 +3082,15 @@ var HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'approval_list') { wsApprovals = msg.approvals || []; renderWorkspaceApprovals(); return; }
               if (msg.type === 'approval_created') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'approval_resolved') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              // Search results
+              if (msg.type === 'search_results') { renderSearchResults(msg.results || []); return; }
+              // Handoff bundle
+              if (msg.type === 'handoff_bundle') { renderHandoffBundle(msg); return; }
+              // Notes
+              if (msg.type === 'note_list') { wsNotes = msg.notes || []; renderNotes(); return; }
+              if (msg.type === 'note_created' || msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
+              // Commands
+              if (msg.type === 'command_list') { wsCommands = msg.commands || []; renderCommands(); return; }
             } catch {}
           }
           term.write(e.data);
@@ -2970,12 +3340,15 @@ var HTML_TEMPLATE = `<!doctype html>
 
       // -- Workspace view --
       let wsTopics = [], wsRuns = [], wsArtifacts = [], wsApprovals = [];
+      let wsNotes = [], wsCommands = [];
 
       function refreshWorkspace() {
         sendCtrl({ type: 'list_topics', sessionName: currentSession });
         sendCtrl({ type: 'list_runs' });
         sendCtrl({ type: 'list_artifacts' });
         sendCtrl({ type: 'list_approvals' });
+        sendCtrl({ type: 'list_notes' });
+        sendCtrl({ type: 'list_commands' });
       }
 
       function timeAgo(ts) {
@@ -3082,6 +3455,127 @@ var HTML_TEMPLATE = `<!doctype html>
         sendCtrl({ type: 'capture_snapshot' });
         setTimeout(refreshWorkspace, 500);
       });
+
+      // -- Search --
+      let searchDebounce = null;
+      $('ws-search-input').addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        const q = $('ws-search-input').value.trim();
+        if (!q) { $('ws-search-results').innerHTML = ''; return; }
+        searchDebounce = setTimeout(() => sendCtrl({ type: 'search', query: q }), 200);
+      });
+
+      function renderSearchResults(results) {
+        const el = $('ws-search-results');
+        if (!el) return;
+        if (results.length === 0) {
+          const q = ($('ws-search-input') || {}).value || '';
+          el.innerHTML = q ? '<div class="ws-empty">No results</div>' : '';
+          return;
+        }
+        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        el.innerHTML = results.map(r =>
+          '<div class="ws-search-result">' +
+            '<span class="sr-type">' + esc(r.entityType) + '</span> ' +
+            '<span class="sr-title">' + esc(r.title) + '</span>' +
+          '</div>'
+        ).join('');
+      }
+
+      // -- Handoff --
+      $('btn-handoff').addEventListener('click', () => {
+        const el = $('ws-handoff');
+        if (el.classList.contains('visible')) { el.classList.remove('visible'); return; }
+        sendCtrl({ type: 'get_handoff' });
+      });
+
+      function renderHandoffBundle(bundle) {
+        const el = $('ws-handoff');
+        if (!el) return;
+        el.classList.add('visible');
+        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        let html = '<div class="ws-handoff-section"><div class="ws-handoff-label">Sessions</div>';
+        html += '<ul class="ws-handoff-list">';
+        (bundle.sessions || []).forEach(s => {
+          html += '<li>' + esc(s.name) + ' (' + s.activeTabs + ' active tabs)</li>';
+        });
+        html += '</ul></div>';
+        if ((bundle.activeTopics || []).length > 0) {
+          html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Active Topics (24h)</div>';
+          html += '<ul class="ws-handoff-list">';
+          bundle.activeTopics.forEach(t => { html += '<li>' + esc(t.title) + '</li>'; });
+          html += '</ul></div>';
+        }
+        if ((bundle.pendingApprovals || []).length > 0) {
+          html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Pending Approvals</div>';
+          html += '<ul class="ws-handoff-list">';
+          bundle.pendingApprovals.forEach(a => { html += '<li>' + esc(a.title) + '</li>'; });
+          html += '</ul></div>';
+        }
+        html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Recent Runs (' + (bundle.recentRuns || []).length + ')</div></div>';
+        html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Key Artifacts (' + (bundle.keyArtifacts || []).length + ')</div></div>';
+        el.innerHTML = html;
+      }
+
+      // -- Notes --
+      function renderNotes() {
+        const el = $('ws-notes');
+        if (!el) return;
+        if (wsNotes.length === 0) { el.innerHTML = '<div class="ws-empty">No notes yet</div>'; return; }
+        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        el.innerHTML = wsNotes.map(n =>
+          '<div class="ws-note' + (n.pinned ? ' pinned' : '') + '">' +
+            '<div class="ws-note-content">' + esc(n.content) + '</div>' +
+            '<div class="ws-note-actions">' +
+              '<button data-pin-note="' + n.id + '">' + (n.pinned ? 'Unpin' : 'Pin') + '</button>' +
+              '<button data-del-note="' + n.id + '">Delete</button>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+        el.querySelectorAll('[data-pin-note]').forEach(btn => {
+          btn.addEventListener('click', () => sendCtrl({ type: 'pin_note', noteId: btn.dataset.pinNote }));
+        });
+        el.querySelectorAll('[data-del-note]').forEach(btn => {
+          btn.addEventListener('click', () => sendCtrl({ type: 'delete_note', noteId: btn.dataset.delNote }));
+        });
+      }
+
+      $('btn-add-note').addEventListener('click', () => {
+        const input = $('ws-note-input');
+        const content = input.value.trim();
+        if (!content) return;
+        sendCtrl({ type: 'create_note', content });
+        input.value = '';
+      });
+      $('ws-note-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); $('btn-add-note').click(); }
+      });
+
+      // -- Commands --
+      function formatDuration(startedAt, endedAt) {
+        if (!endedAt) return 'running';
+        const ms = endedAt - startedAt;
+        if (ms < 1000) return ms + 'ms';
+        if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+        return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
+      }
+
+      function renderCommands() {
+        const el = $('ws-commands');
+        if (!el) return;
+        if (wsCommands.length === 0) { el.innerHTML = '<div class="ws-empty">No commands detected (requires shell integration)</div>'; return; }
+        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        el.innerHTML = wsCommands.slice(0, 20).map(c => {
+          const exitClass = c.exitCode === null ? '' : (c.exitCode === 0 ? 'ok' : 'err');
+          const exitSymbol = c.exitCode === null ? '' : (c.exitCode === 0 ? '&#10003;' : '&#10007; ' + c.exitCode);
+          return '<div class="ws-cmd">' +
+            '<span class="ws-cmd-text">' + esc(c.command || '(unknown)') + '</span>' +
+            (exitSymbol ? '<span class="ws-cmd-exit ' + exitClass + '">' + exitSymbol + '</span>' : '') +
+            '<span class="ws-cmd-meta">' + formatDuration(c.startedAt, c.endedAt) + '</span>' +
+            (c.cwd ? '<span class="ws-cmd-meta">' + esc(c.cwd) + '</span>' : '') +
+          '</div>';
+        }).join('');
+      }
 
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {

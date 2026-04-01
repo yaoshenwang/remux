@@ -12,6 +12,9 @@ import {
   loadSessions as loadSessionsFromDb,
   removeSession as removeSessionFromDb,
   removeStaleTab,
+  createCommand,
+  completeCommand,
+  type CommandRecord,
 } from "./store.js";
 import { broadcastPush } from "./push.js";
 import type { IPty } from "node-pty";
@@ -80,6 +83,18 @@ export interface RemuxWebSocket extends WebSocket {
   _remuxDeviceId: string | null;
 }
 
+/** Shell integration state tracking for OSC 133 sequences. */
+export interface ShellIntegration {
+  /** Current phase: 'idle' | 'prompt' | 'command' | 'output' */
+  phase: "idle" | "prompt" | "command" | "output";
+  /** Buffer to capture command text between 133;B and 133;C */
+  commandBuffer: string;
+  /** Current working directory from OSC 7 */
+  cwd: string | null;
+  /** Active command record ID (from DB) */
+  activeCommandId: string | null;
+}
+
 export interface Tab {
   id: number;
   pty: IPty;
@@ -90,6 +105,8 @@ export interface Tab {
   rows: number;
   ended: boolean;
   title: string;
+  /** Shell integration state for OSC 133 command tracking */
+  shellIntegration: ShellIntegration;
 }
 
 export interface Session {
@@ -124,6 +141,98 @@ let tabIdCounter = 0;
 export const sessionMap = new Map<string, Session>();
 export const controlClients = new Set<RemuxWebSocket>();
 
+// ── Shell Integration: OSC 133 + OSC 7 parsing ─────────────────
+
+/**
+ * Parse PTY output for shell integration OSC sequences:
+ * - OSC 133;A -- prompt start
+ * - OSC 133;B -- command start (user pressed Enter)
+ * - OSC 133;C -- command output start
+ * - OSC 133;D;exitcode -- command end with exit code
+ * - OSC 7;file://host/path -- CWD update
+ *
+ * Adapted from Warp terminal / VS Code shell integration patterns.
+ */
+export function processShellIntegration(
+  data: string,
+  tab: Tab,
+  sessionName: string,
+): void {
+  const si = tab.shellIntegration;
+
+  // OSC 7: CWD tracking -- \x1b]7;file://host/path\x07 or \x1b]7;file://host/path\x1b\\
+  const osc7Re = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
+  let m7;
+  while ((m7 = osc7Re.exec(data)) !== null) {
+    const cwdPath = decodeURIComponent(m7[1]);
+    if (cwdPath) si.cwd = cwdPath;
+  }
+
+  // OSC 133: command boundary markers
+  // Match \x1b]133;X(;params)?\x07 or \x1b]133;X(;params)?\x1b\\
+  const osc133Re = /\x1b\]133;([ABCD])(?:;([^\x07\x1b]*?))?(?:\x07|\x1b\\)/g;
+  let m;
+  while ((m = osc133Re.exec(data)) !== null) {
+    const marker = m[1];
+    const params = m[2] || "";
+
+    switch (marker) {
+      case "A": // Prompt start
+        si.phase = "prompt";
+        si.commandBuffer = "";
+        break;
+
+      case "B": // Command start (after Enter)
+        si.phase = "command";
+        si.commandBuffer = "";
+        break;
+
+      case "C": { // Command output start -- capture command text between B and C
+        // The text between B and C markers contains the command
+        // We extract it from data between the B marker end and C marker start
+        const bIdx = data.indexOf("\x1b]133;B");
+        const cIdx = data.indexOf("\x1b]133;C");
+        if (bIdx >= 0 && cIdx > bIdx) {
+          // Find end of B marker
+          const bEnd = data.indexOf("\x07", bIdx);
+          const bEnd2 = data.indexOf("\x1b\\", bIdx);
+          const bEndPos = bEnd >= 0 && bEnd < cIdx
+            ? bEnd + 1
+            : bEnd2 >= 0 && bEnd2 < cIdx
+              ? bEnd2 + 2
+              : bIdx + 9; // fallback: skip \x1b]133;B\x07
+          const cmdText = data.slice(bEndPos, cIdx).trim();
+          if (cmdText) si.commandBuffer = cmdText;
+        }
+        si.phase = "output";
+        // Create command record in DB
+        const cmd = createCommand({
+          sessionName,
+          tabId: tab.id,
+          command: si.commandBuffer || undefined,
+          cwd: si.cwd || undefined,
+        });
+        si.activeCommandId = cmd.id;
+        break;
+      }
+
+      case "D": { // Command end with exit code
+        const exitCode = params ? parseInt(params, 10) : 0;
+        if (si.activeCommandId) {
+          completeCommand(
+            si.activeCommandId,
+            isNaN(exitCode) ? 0 : exitCode,
+          );
+          si.activeCommandId = null;
+        }
+        si.phase = "idle";
+        si.commandBuffer = "";
+        break;
+      }
+    }
+  }
+}
+
 // ── Tab lifecycle ────────────────────────────────────────────────
 
 export function createTab(
@@ -156,6 +265,12 @@ export function createTab(
     rows,
     ended: false,
     title: `Tab ${session.tabs.length + 1}`,
+    shellIntegration: {
+      phase: "idle",
+      commandBuffer: "",
+      cwd: null,
+      activeCommandId: null,
+    },
   };
 
   ptyProcess.onData((data: string) => {
@@ -164,6 +279,9 @@ export function createTab(
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
+
+    // Shell integration: parse OSC 133 / OSC 7 sequences
+    processShellIntegration(data, tab, session.name);
 
     // Idle activity tracking: notify on resume after >5 min silence
     const now = Date.now();

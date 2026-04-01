@@ -7,10 +7,14 @@ import {
   createArtifact,
   listRuns,
   listArtifacts,
+  listTopics,
+  listApprovals,
   type Topic,
   type Run,
+  type Artifact,
+  type Approval,
 } from "./store.js";
-import { findTab } from "./session.js";
+import { findTab, sessionMap } from "./session.js";
 
 /**
  * Capture a terminal snapshot as an artifact.
@@ -87,5 +91,61 @@ export function getTopicSummary(
     runCount: runs.length,
     artifactCount: artifacts.length,
     runs,
+  };
+}
+
+// ── Handoff Bundle ──────────────────────────────────────────────
+
+export interface HandoffBundle {
+  timestamp: number;
+  sessions: { name: string; activeTabs: number }[];
+  recentRuns: Run[];
+  activeTopics: Topic[];
+  pendingApprovals: Approval[];
+  keyArtifacts: Artifact[];
+}
+
+/**
+ * Generate a handoff bundle summarizing the current workspace state.
+ * Includes sessions, recent runs, active topics, pending approvals,
+ * and key artifacts for context transfer between sessions.
+ */
+export function generateHandoffBundle(): HandoffBundle {
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // Sessions with active (non-ended) tab count
+  const sessions: HandoffBundle["sessions"] = [];
+  for (const session of sessionMap.values()) {
+    sessions.push({
+      name: session.name,
+      activeTabs: session.tabs.filter((t) => !t.ended).length,
+    });
+  }
+
+  // Last 10 runs
+  const allRuns = listRuns();
+  const recentRuns = allRuns.slice(-10).reverse();
+
+  // Topics updated in last 24h
+  const allTopics = listTopics();
+  const activeTopics = allTopics.filter(
+    (t) => now - t.updatedAt < DAY_MS,
+  );
+
+  // Pending approvals
+  const pendingApprovals = listApprovals("pending");
+
+  // Last 20 artifacts
+  const allArtifacts = listArtifacts({});
+  const keyArtifacts = allArtifacts.slice(-20).reverse();
+
+  return {
+    timestamp: now,
+    sessions,
+    recentRuns,
+    activeTopics,
+    pendingApprovals,
+    keyArtifacts,
   };
 }

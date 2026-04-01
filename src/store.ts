@@ -123,6 +123,30 @@ export function getDb(): Database.Database {
       created_at INTEGER NOT NULL,
       resolved_at INTEGER
     );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+      entity_type, entity_id, title, content,
+      tokenize='porter unicode61'
+    );
+
+    CREATE TABLE IF NOT EXISTS memory_notes (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      pinned INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS commands (
+      id TEXT PRIMARY KEY,
+      session_name TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      command TEXT,
+      exit_code INTEGER,
+      cwd TEXT,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER
+    );
   `);
 
   return _db;
@@ -597,6 +621,8 @@ export function createTopic(sessionName: string, title: string): Topic {
   db.prepare(
     "INSERT INTO topics (id, session_name, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run(id, sessionName, title, now, now);
+  // Index into FTS
+  indexEntity("topic", id, title, title);
   return { id, sessionName, title, createdAt: now, updatedAt: now };
 }
 
@@ -684,6 +710,10 @@ export function createRun(params: {
     params.command ?? null,
     now,
   );
+  // Index into FTS
+  if (params.command) {
+    indexEntity("run", id, params.command, params.command);
+  }
   return {
     id,
     topicId: params.topicId ?? null,
@@ -800,6 +830,12 @@ export function createArtifact(params: {
     params.content ?? null,
     now,
   );
+  // Index into FTS
+  const ftsTitle = params.title || params.type;
+  const ftsContent = [params.title, params.content].filter(Boolean).join(" ");
+  if (ftsContent) {
+    indexEntity("artifact", id, ftsTitle, ftsContent);
+  }
   return {
     id,
     runId: params.runId ?? null,
@@ -940,4 +976,229 @@ export function resolveApproval(
     )
     .run(status, now, id);
   return result.changes > 0;
+}
+
+// ── FTS5 Full-Text Search ────────────────────────────────────────
+
+export interface SearchResult {
+  entityType: string;
+  entityId: string;
+  title: string;
+  content: string;
+  rank: number;
+}
+
+/**
+ * Index an entity for full-text search.
+ * Replaces existing entry for the same entityId.
+ */
+export function indexEntity(
+  entityType: string,
+  entityId: string,
+  title: string,
+  content: string,
+): void {
+  const db = getDb();
+  // Remove existing entry first (FTS5 doesn't support ON CONFLICT)
+  db.prepare("DELETE FROM fts_index WHERE entity_id = ?").run(entityId);
+  db.prepare(
+    "INSERT INTO fts_index (entity_type, entity_id, title, content) VALUES (?, ?, ?, ?)",
+  ).run(entityType, entityId, title, content);
+}
+
+/**
+ * Search indexed entities using FTS5. Returns ranked results.
+ */
+export function searchEntities(
+  query: string,
+  limit = 20,
+): SearchResult[] {
+  const db = getDb();
+  if (!query.trim()) return [];
+  // Sanitize query: FTS5 uses double-quotes for phrases
+  const safeQuery = query.replace(/"/g, '""');
+  try {
+    const rows = db
+      .prepare(
+        `SELECT entity_type, entity_id, title, content, rank
+         FROM fts_index WHERE fts_index MATCH ?
+         ORDER BY rank LIMIT ?`,
+      )
+      .all(`"${safeQuery}"`, limit) as any[];
+    return rows.map((r) => ({
+      entityType: r.entity_type,
+      entityId: r.entity_id,
+      title: r.title,
+      content: r.content,
+      rank: r.rank,
+    }));
+  } catch {
+    // FTS query syntax error -- fall back to empty results
+    return [];
+  }
+}
+
+/**
+ * Remove an entity from the FTS index.
+ */
+export function removeFromIndex(entityId: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM fts_index WHERE entity_id = ?").run(entityId);
+}
+
+// ── Memory Notes ─────────────────────────────────────────────────
+
+export interface MemoryNote {
+  id: string;
+  content: string;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Create a memory note.
+ */
+export function createNote(content: string): MemoryNote {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO memory_notes (id, content, pinned, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
+  ).run(id, content, now, now);
+  return { id, content, pinned: false, createdAt: now, updatedAt: now };
+}
+
+/**
+ * List all memory notes (pinned first, then by updated_at desc).
+ */
+export function listNotes(): MemoryNote[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT * FROM memory_notes ORDER BY pinned DESC, updated_at DESC",
+    )
+    .all() as any[];
+  return rows.map((r) => ({
+    id: r.id,
+    content: r.content,
+    pinned: r.pinned === 1,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+/**
+ * Update a memory note's content.
+ */
+export function updateNote(id: string, content: string): boolean {
+  const db = getDb();
+  const now = Date.now();
+  const result = db
+    .prepare("UPDATE memory_notes SET content = ?, updated_at = ? WHERE id = ?")
+    .run(content, now, id);
+  return result.changes > 0;
+}
+
+/**
+ * Delete a memory note.
+ */
+export function deleteNote(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+/**
+ * Toggle the pinned state of a memory note.
+ */
+export function togglePinNote(id: string): boolean {
+  const db = getDb();
+  const result = db
+    .prepare(
+      "UPDATE memory_notes SET pinned = CASE WHEN pinned = 0 THEN 1 ELSE 0 END, updated_at = ? WHERE id = ?",
+    )
+    .run(Date.now(), id);
+  return result.changes > 0;
+}
+
+// ── Commands (Shell Integration) ─────────────────────────────────
+
+export interface CommandRecord {
+  id: string;
+  sessionName: string;
+  tabId: number;
+  command: string | null;
+  exitCode: number | null;
+  cwd: string | null;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+/**
+ * Create a command record (shell integration tracking).
+ */
+export function createCommand(params: {
+  sessionName: string;
+  tabId: number;
+  command?: string;
+  cwd?: string;
+}): CommandRecord {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO commands (id, session_name, tab_id, command, cwd, started_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, params.sessionName, params.tabId, params.command ?? null, params.cwd ?? null, now);
+  return {
+    id,
+    sessionName: params.sessionName,
+    tabId: params.tabId,
+    command: params.command ?? null,
+    exitCode: null,
+    cwd: params.cwd ?? null,
+    startedAt: now,
+    endedAt: null,
+  };
+}
+
+/**
+ * Complete a command record with exit code.
+ */
+export function completeCommand(
+  id: string,
+  exitCode: number,
+): boolean {
+  const db = getDb();
+  const now = Date.now();
+  const result = db
+    .prepare("UPDATE commands SET exit_code = ?, ended_at = ? WHERE id = ?")
+    .run(exitCode, now, id);
+  return result.changes > 0;
+}
+
+/**
+ * List commands for a tab (most recent first).
+ */
+export function listCommands(
+  tabId: number,
+  limit = 50,
+): CommandRecord[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT * FROM commands WHERE tab_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?",
+    )
+    .all(tabId, limit) as any[];
+  return rows.map((r) => ({
+    id: r.id,
+    sessionName: r.session_name,
+    tabId: r.tab_id,
+    command: r.command,
+    exitCode: r.exit_code,
+    cwd: r.cwd,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+  }));
 }
