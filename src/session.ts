@@ -278,7 +278,7 @@ export function createTab(
     tab.scrollback.write(data);
     if (tab.vt) tab.vt.consume(data);
     for (const ws of tab.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(data);
+      sendData(ws, data);
     }
 
     // Shell integration: parse OSC 133 / OSC 7 sequences
@@ -320,7 +320,7 @@ export function createTab(
     }
     const msg = `\r\n\x1b[33mShell exited (code: ${exitCode})\x1b[0m\r\n`;
     for (const ws of tab.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(msg);
+      sendData(ws, msg);
     }
     broadcastState();
 
@@ -420,11 +420,11 @@ export function attachToTab(
     if (tab.vt && !tab.ended) {
       // tsm pattern: send VT snapshot (screen content with colors + cursor)
       const snapshot = tab.vt.snapshot();
-      if (snapshot) ws.send(snapshot);
+      if (snapshot) sendData(ws, snapshot);
     } else {
       // fallback: raw scrollback
       const history = tab.scrollback.read();
-      if (history.length > 0) ws.send(history.toString("utf8"));
+      if (history.length > 0) sendData(ws, history.toString("utf8"));
     }
   }
 
@@ -488,13 +488,26 @@ export function recalcTabSize(tab: Tab): void {
 let _sendEnvelopeFn: ((ws: any, type: string, payload: any) => void) | null =
   null;
 let _getClientListFn: (() => any[]) | null = null;
+// E2EE-aware data send hook: encrypts raw terminal data when E2EE is active
+let _sendDataFn: ((ws: any, data: string) => void) | null = null;
 
 export function setBroadcastHooks(
   sendFn: (ws: any, type: string, payload: any) => void,
   clientListFn: () => any[],
+  sendDataFn?: (ws: any, data: string) => void,
 ): void {
   _sendEnvelopeFn = sendFn;
   _getClientListFn = clientListFn;
+  if (sendDataFn) _sendDataFn = sendDataFn;
+}
+
+/** Send raw data to a client, using E2EE if available. */
+function sendData(ws: RemuxWebSocket, data: string): void {
+  if (_sendDataFn) {
+    _sendDataFn(ws, data);
+  } else if (ws.readyState === ws.OPEN) {
+    ws.send(data);
+  }
 }
 
 export function broadcastState(): void {

@@ -815,10 +815,10 @@ const HTML_TEMPLATE = `<!doctype html>
           if (ctrlActive) {
             ctrlActive = false; $('btn-ctrl').classList.remove('active');
             const ch = data.toLowerCase().charCodeAt(0);
-            if (ch >= 0x61 && ch <= 0x7a) { ws.send(String.fromCharCode(ch - 0x60)); return; }
+            if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
           }
           pe.onInput(data);
-          ws.send(data);
+          sendTermData(data);
         });
         term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
         // Re-attach to current tab to get snapshot
@@ -975,6 +975,105 @@ const HTML_TEMPLATE = `<!doctype html>
         if (name && name.trim()) sendCtrl({ type: 'new_session', name: name.trim(), cols: term.cols, rows: term.rows });
       });
 
+      // -- E2EE client (Web Crypto API) --
+      // Adapted from Signal Protocol X25519+AES-GCM pattern
+      const e2ee = {
+        established: false,
+        sendCounter: 0n,
+        recvCounter: -1n,
+        localKeyPair: null,  // { publicKey: CryptoKey, privateKey: CryptoKey, rawPublic: Uint8Array }
+        sharedKey: null,     // CryptoKey (AES-GCM)
+        available: !!(crypto && crypto.subtle),
+
+        async init() {
+          if (!this.available) return;
+          try {
+            const kp = await crypto.subtle.generateKey('X25519', false, ['deriveBits']);
+            const rawPub = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+            this.localKeyPair = { publicKey: kp.publicKey, privateKey: kp.privateKey, rawPublic: rawPub };
+          } catch (e) {
+            console.warn('[e2ee] X25519 not available:', e);
+            this.available = false;
+          }
+        },
+
+        getPublicKeyB64() {
+          if (!this.localKeyPair) return null;
+          return btoa(String.fromCharCode(...this.localKeyPair.rawPublic));
+        },
+
+        async completeHandshake(peerPubKeyB64) {
+          if (!this.localKeyPair) return;
+          try {
+            const peerRaw = Uint8Array.from(atob(peerPubKeyB64), c => c.charCodeAt(0));
+            const peerKey = await crypto.subtle.importKey('raw', peerRaw, 'X25519', false, []);
+            // ECDH: derive raw shared bits
+            const rawBits = await crypto.subtle.deriveBits(
+              { name: 'X25519', public: peerKey },
+              this.localKeyPair.privateKey,
+              256
+            );
+            // HKDF-SHA256 to derive AES-256-GCM key
+            const hkdfKey = await crypto.subtle.importKey('raw', rawBits, 'HKDF', false, ['deriveBits']);
+            const salt = new TextEncoder().encode('remux-e2ee-v1');
+            const info = new TextEncoder().encode('aes-256-gcm');
+            const derived = await crypto.subtle.deriveBits(
+              { name: 'HKDF', hash: 'SHA-256', salt, info },
+              hkdfKey,
+              256
+            );
+            this.sharedKey = await crypto.subtle.importKey('raw', derived, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+            this.established = true;
+            this.sendCounter = 0n;
+            this.recvCounter = -1n;
+            console.log('[e2ee] handshake complete');
+          } catch (e) {
+            console.error('[e2ee] handshake failed:', e);
+            this.available = false;
+          }
+        },
+
+        async encryptMessage(plaintext) {
+          if (!this.sharedKey) throw new Error('E2EE not established');
+          const plaintextBuf = new TextEncoder().encode(plaintext);
+          // IV: 4 random bytes + 8 byte counter (big-endian)
+          const iv = new Uint8Array(12);
+          crypto.getRandomValues(iv.subarray(0, 4));
+          const counterView = new DataView(iv.buffer, iv.byteOffset + 4, 8);
+          counterView.setBigUint64(0, this.sendCounter, false);
+          this.sendCounter++;
+          const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv, tagLength: 128 },
+            this.sharedKey,
+            plaintextBuf
+          );
+          // AES-GCM returns ciphertext + tag concatenated
+          const result = new Uint8Array(12 + encrypted.byteLength);
+          result.set(iv, 0);
+          result.set(new Uint8Array(encrypted), 12);
+          return btoa(String.fromCharCode(...result));
+        },
+
+        async decryptMessage(encryptedB64) {
+          if (!this.sharedKey) throw new Error('E2EE not established');
+          const packed = Uint8Array.from(atob(encryptedB64), c => c.charCodeAt(0));
+          if (packed.length < 28) throw new Error('E2EE message too short'); // 12 iv + 16 tag minimum
+          const iv = packed.subarray(0, 12);
+          const ciphertextWithTag = packed.subarray(12);
+          // Anti-replay: check counter is monotonically increasing
+          const counterView = new DataView(iv.buffer, iv.byteOffset + 4, 8);
+          const counter = counterView.getBigUint64(0, false);
+          if (counter <= this.recvCounter) throw new Error('E2EE replay detected');
+          const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv, tagLength: 128 },
+            this.sharedKey,
+            ciphertextWithTag
+          );
+          this.recvCounter = counter;
+          return new TextDecoder().decode(decrypted);
+        }
+      };
+
       // -- WebSocket with exponential backoff + heartbeat --
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const urlToken = new URLSearchParams(location.search).get('token');
@@ -1023,8 +1122,10 @@ const HTML_TEMPLATE = `<!doctype html>
 
       function connect() {
         setStatus('connecting', 'Connecting...');
+        e2ee.established = false;
+        e2ee.sharedKey = null;
         ws = new WebSocket(proto + '//' + location.host + '/ws');
-        ws.onopen = () => {
+        ws.onopen = async () => {
           backoffMs = 1000; // reset backoff on successful connection
           startHeartbeat();
           if (urlToken) {
@@ -1034,6 +1135,14 @@ const HTML_TEMPLATE = `<!doctype html>
               localStorage.setItem('remux-device-id', 'dev-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36));
             }
             ws.send(JSON.stringify({ type: 'auth', token: urlToken, deviceId: localStorage.getItem('remux-device-id') }));
+          }
+          // Initiate E2EE handshake if Web Crypto API is available
+          if (e2ee.available) {
+            await e2ee.init();
+            const pubKey = e2ee.getPublicKeyB64();
+            if (pubKey) {
+              ws.send(JSON.stringify({ v: 1, type: 'e2ee_init', payload: { publicKey: pubKey } }));
+            }
           }
           // Let server pick the session if we have none (bootstrap flow)
           sendCtrl({ type: 'attach_first', session: currentSession || undefined, cols: term.cols, rows: term.rows });
@@ -1054,6 +1163,27 @@ const HTML_TEMPLATE = `<!doctype html>
               const msg = parsed.v === 1 ? { ...(parsed.payload || {}), type: parsed.type } : parsed;
               // Server heartbeat — just keep connection alive (lastMessageAt already updated)
               if (msg.type === 'ping') return;
+              // E2EE handshake: server responds with its public key
+              if (msg.type === 'e2ee_init') {
+                if (msg.publicKey && e2ee.available && e2ee.localKeyPair) {
+                  e2ee.completeHandshake(msg.publicKey);
+                }
+                return;
+              }
+              if (msg.type === 'e2ee_ready') {
+                console.log('[e2ee] server confirmed E2EE established');
+                return;
+              }
+              // E2EE encrypted message (terminal output from server)
+              if (msg.type === 'e2ee_msg') {
+                if (e2ee.established && msg.data) {
+                  e2ee.decryptMessage(msg.data).then(decrypted => {
+                    const filtered = pe.onServerData(decrypted);
+                    if (filtered) term.write(filtered);
+                  }).catch(err => console.error('[e2ee] decrypt failed:', err));
+                }
+                return;
+              }
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
                 // Request device list and workspace data after auth
@@ -1213,6 +1343,22 @@ const HTML_TEMPLATE = `<!doctype html>
       }
       connect();
       function sendCtrl(msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+      // Send terminal data, encrypting if E2EE is established
+      function sendTermData(data) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (e2ee.established) {
+          e2ee.encryptMessage(data).then(encrypted => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ v: 1, type: 'e2ee_msg', payload: { data: encrypted } }));
+            }
+          }).catch(err => {
+            console.error('[e2ee] encrypt failed, sending plaintext:', err);
+            ws.send(data);
+          });
+        } else {
+          ws.send(data);
+        }
+      }
 
       // -- Terminal I/O --
       term.onData(data => {
@@ -1220,10 +1366,10 @@ const HTML_TEMPLATE = `<!doctype html>
         if (ctrlActive) {
           ctrlActive = false; $('btn-ctrl').classList.remove('active');
           const ch = data.toLowerCase().charCodeAt(0);
-          if (ch >= 0x61 && ch <= 0x7a) { ws.send(String.fromCharCode(ch - 0x60)); return; }
+          if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
         }
         pe.onInput(data);
-        ws.send(data);
+        sendTermData(data);
       });
       term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
 
@@ -1239,7 +1385,7 @@ const HTML_TEMPLATE = `<!doctype html>
         e.preventDefault();
         if (btn.dataset.mod === 'ctrl') { ctrlActive = !ctrlActive; btn.classList.toggle('active', ctrlActive); return; }
         const d = SEQ[btn.dataset.seq] || btn.dataset.ch;
-        if (d && ws && ws.readyState === WebSocket.OPEN) ws.send(d);
+        if (d) sendTermData(d);
         term.focus();
       });
 
