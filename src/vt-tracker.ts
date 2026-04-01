@@ -57,6 +57,7 @@ export function createVtTerminal(
     handle,
 
     consume(data: string | Buffer) {
+      if (!this.handle) return; // disposed
       const bytes = typeof data === "string" ? Buffer.from(data) : data;
       const ptr = wasmExports.ghostty_wasm_alloc_u8_array(bytes.length);
       new Uint8Array(wasmMemory!.buffer).set(bytes, ptr);
@@ -65,6 +66,7 @@ export function createVtTerminal(
     },
 
     resize(cols: number, rows: number) {
+      if (!this.handle) return; // disposed
       wasmExports.ghostty_terminal_resize(handle, cols, rows);
     },
 
@@ -73,6 +75,7 @@ export function createVtTerminal(
     },
 
     snapshot(): string | null {
+      if (!this.handle) return null; // disposed
       wasmExports.ghostty_render_state_update(handle);
       const cols = wasmExports.ghostty_render_state_get_cols(handle);
       const rows = wasmExports.ghostty_render_state_get_rows(handle);
@@ -144,6 +147,7 @@ export function createVtTerminal(
     },
 
     textSnapshot(): { text: string; cols: number; rows: number } {
+      if (!this.handle) return { text: "", cols: 0, rows: 0 }; // disposed
       wasmExports.ghostty_render_state_update(handle);
       const cols = wasmExports.ghostty_render_state_get_cols(handle);
       const rows = wasmExports.ghostty_render_state_get_rows(handle);
@@ -175,7 +179,9 @@ export function createVtTerminal(
     },
 
     dispose() {
+      if (this.handle === 0) return; // already disposed
       wasmExports.ghostty_terminal_free(handle);
+      this.handle = 0;
     },
   };
 }

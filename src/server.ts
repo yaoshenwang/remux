@@ -9,7 +9,7 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
-import { resolveAuth, generateToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
+import { resolveAuth, generateToken, addPasswordToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
 import { initGhosttyVt } from "./vt-tracker.js";
 import { getDb, closeDb } from "./store.js";
 import { initPush } from "./push.js";
@@ -237,7 +237,6 @@ const HTML_TEMPLATE = `<!doctype html>
         display: flex; flex-direction: column; gap: 6px; }
       .sidebar-footer .version { font-size: 10px; color: var(--text-dim); }
       .sidebar-footer .footer-row { display: flex; align-items: center; gap: 8px; }
-        display: flex; align-items: center; gap: 8px; }
       .sidebar-footer .status { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
       .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
       .status-dot.connected { background: var(--dot-ok); }
@@ -711,6 +710,7 @@ const HTML_TEMPLATE = `<!doctype html>
       let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
       const $ = id => document.getElementById(id);
+      const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
 
       // -- Theme switching --
@@ -766,9 +766,9 @@ const HTML_TEMPLATE = `<!doctype html>
           const el = document.createElement('button');
           el.className = 'session-item' + (s.name === currentSession ? ' active' : '');
           const live = s.tabs.filter(t => !t.ended).length;
-          el.innerHTML = '<span class="dot"></span><span class="name">' + s.name
+          el.innerHTML = '<span class="dot"></span><span class="name">' + esc(s.name)
             + '</span><span class="count">' + live + '</span>'
-            + '<button class="del" data-del="' + s.name + '">\u00d7</button>';
+            + '<button class="del" data-del="' + esc(s.name) + '">\u00d7</button>';
           el.addEventListener('pointerdown', e => {
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
@@ -805,7 +805,7 @@ const HTML_TEMPLATE = `<!doctype html>
           el.className = 'tab' + (t.id === currentTabId ? ' active' : '');
           const clientCount = t.clients || 0;
           const countBadge = clientCount > 1 ? '<span class="client-count">' + clientCount + '</span>' : '';
-          el.innerHTML = '<span class="title">' + t.title + '</span>' + countBadge
+          el.innerHTML = '<span class="title">' + esc(t.title) + '</span>' + countBadge
             + '<button class="close" data-close="' + t.id + '">\u00d7</button>';
           el.addEventListener('pointerdown', e => {
             const closeId = e.target.dataset.close ?? e.target.closest('[data-close]')?.dataset.close;
@@ -1216,8 +1216,8 @@ const HTML_TEMPLATE = `<!doctype html>
           const el = document.createElement('div');
           el.className = 'device-item';
           const isSelf = d.id === myDeviceId;
-          el.innerHTML = '<span class="device-dot ' + d.trust + '"></span>'
-            + '<span class="device-name">' + d.name + (isSelf ? ' <span class="device-self">(you)</span>' : '') + '</span>'
+          el.innerHTML = '<span class="device-dot ' + esc(d.trust) + '"></span>'
+            + '<span class="device-name">' + esc(d.name) + (isSelf ? ' <span class="device-self">(you)</span>' : '') + '</span>'
             + '<span class="device-actions">'
             + (d.trust !== 'trusted' ? '<button data-trust="' + d.id + '" title="Trust">&#10003;</button>' : '')
             + (d.trust !== 'blocked' ? '<button data-block="' + d.id + '" title="Block">&#10007;</button>' : '')
@@ -1313,7 +1313,7 @@ const HTML_TEMPLATE = `<!doctype html>
           const reg = await navigator.serviceWorker.register('/sw.js');
           await navigator.serviceWorker.ready;
           const sub = await reg.pushManager.subscribe({
-            userNotificationAllowed: true,
+            userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(pushVapidKey),
           });
           const subJson = sub.toJSON();
@@ -1392,10 +1392,10 @@ const HTML_TEMPLATE = `<!doctype html>
           '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge pending">pending</span>' +
-              '<span class="ws-card-title">' + (a.title || '') + '</span>' +
+              '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
             '</div>' +
-            (a.description ? '<div class="ws-card-desc">' + a.description + '</div>' : '') +
+            (a.description ? '<div class="ws-card-desc">' + esc(a.description) + '</div>' : '') +
             '<div class="ws-card-actions">' +
               '<button class="approve" data-approve-id="' + a.id + '">Approve</button>' +
               '<button class="reject" data-reject-id="' + a.id + '">Reject</button>' +
@@ -1417,7 +1417,7 @@ const HTML_TEMPLATE = `<!doctype html>
         el.innerHTML = wsTopics.map(t =>
           '<div class="ws-card">' +
             '<div class="ws-card-header">' +
-              '<span class="ws-card-title">' + (t.title || '') + '</span>' +
+              '<span class="ws-card-title">' + esc(t.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(t.createdAt) + '</span>' +
               '<button class="del-topic" data-del-topic="' + t.id + '" title="Delete">&times;</button>' +
             '</div>' +
@@ -1443,7 +1443,7 @@ const HTML_TEMPLATE = `<!doctype html>
           '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge ' + r.status + '">' + r.status + '</span>' +
-              '<span class="ws-card-title">' + (r.command || '(no command)') + '</span>' +
+              '<span class="ws-card-title">' + esc(r.command || '(no command)') + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(r.startedAt) + '</span>' +
             '</div>' +
             (r.exitCode !== null ? '<div class="ws-card-meta">Exit: ' + r.exitCode + '</div>' : '') +
@@ -1460,8 +1460,8 @@ const HTML_TEMPLATE = `<!doctype html>
         el.innerHTML = recent.map(a =>
           '<div class="ws-card">' +
             '<div class="ws-card-header">' +
-              '<span class="ws-badge ' + a.type + '">' + a.type + '</span>' +
-              '<span class="ws-card-title">' + (a.title || '') + '</span>' +
+              '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
+              '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
             '</div>' +
           '</div>'
@@ -1736,7 +1736,7 @@ const httpServer = http.createServer((req, res) => {
       if (PASSWORD && submitted === PASSWORD) {
         // Generate a session token and redirect with it
         const sessionToken = generateToken();
-        passwordTokens.add(sessionToken);
+        addPasswordToken(sessionToken);
         res.writeHead(302, { Location: `/?token=${sessionToken}` });
         res.end();
       } else {
@@ -1752,7 +1752,7 @@ const httpServer = http.createServer((req, res) => {
     const isAuthed =
       (!TOKEN && !PASSWORD) || // no auth configured (impossible after auto-gen, but safe)
       (TOKEN != null && urlToken === TOKEN) ||
-      passwordTokens.has(urlToken!);
+      (urlToken != null && passwordTokens.has(urlToken));
 
     if (!isAuthed) {
       // If password mode is active and no valid token, show login page
@@ -1771,7 +1771,13 @@ const httpServer = http.createServer((req, res) => {
   }
 
   if (url.pathname.startsWith("/dist/")) {
-    return serveFile(path.join(distPath, url.pathname.slice(6)), res);
+    const resolved = path.resolve(distPath, url.pathname.slice(6));
+    if (!resolved.startsWith(distPath)) {
+      res.writeHead(403);
+      res.end("Forbidden");
+      return;
+    }
+    return serveFile(resolved, res);
   }
 
   if (url.pathname === "/ghostty-vt.wasm") {
@@ -1900,8 +1906,13 @@ async function launchTunnel(): Promise<void> {
 }
 
 function shutdown(): void {
-  persistSessions(); // save before exit
+  try {
+    persistSessions(); // save before exit
+  } catch (e: any) {
+    console.error("[shutdown] persist failed:", e.message);
+  }
   closeDb(); // close SQLite connection
+  adapterRegistry.shutdown(); // stop all adapters
   // Kill cloudflared tunnel if running
   if (tunnelProcess) {
     try {

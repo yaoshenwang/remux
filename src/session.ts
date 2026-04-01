@@ -64,7 +64,8 @@ export class RingBuffer {
   read(): Buffer {
     if (this.length === 0) return Buffer.alloc(0);
     if (this.length < this.maxBytes) {
-      return this.buf.subarray(this.writePos - this.length, this.writePos);
+      // Return a copy to prevent data corruption if buffer is written to before consumer finishes
+      return Buffer.from(this.buf.subarray(this.writePos - this.length, this.writePos));
     }
     return Buffer.concat([
       this.buf.subarray(this.writePos),
@@ -291,10 +292,11 @@ export function createTab(
 
     // Idle activity tracking: notify on resume after >5 min silence
     const now = Date.now();
-    if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS && !isIdle) {
+    const wasIdle = isIdle || (now - lastOutputTimestamp > IDLE_THRESHOLD_MS);
+    if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS) {
       isIdle = true;
     }
-    if (isIdle) {
+    if (wasIdle && isIdle) {
       isIdle = false;
       // Collect deviceIds of currently connected clients to exclude
       const connectedDeviceIds: string[] = [];
@@ -353,6 +355,7 @@ export function deleteSession(name: string): void {
     if (!tab.ended) tab.pty.kill();
   }
   sessionMap.delete(name);
+  removeSessionFromDb(name);
   console.log(`[session] deleted "${name}"`);
 }
 
@@ -468,6 +471,9 @@ export function recalcTabSize(tab: Tab): void {
     if (ws._remuxRows) minRows = Math.min(minRows, ws._remuxRows);
   }
   if (minCols < Infinity && minRows < Infinity && !tab.ended) {
+    // Clamp to sane ranges to prevent crashes or extreme memory allocation
+    minCols = Math.max(1, Math.min(minCols, 500));
+    minRows = Math.max(1, Math.min(minRows, 200));
     tab.cols = minCols;
     tab.rows = minRows;
     tab.pty.resize(minCols, minRows);

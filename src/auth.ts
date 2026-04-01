@@ -19,8 +19,22 @@ import {
 
 // ── State ────────────────────────────────────────────────────────
 
-// Tokens generated from password login (valid for the lifetime of the server)
-export const passwordTokens = new Set<string>();
+// Tokens generated from password login (with TTL expiry)
+const PASSWORD_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const passwordTokens = new Map<string, number>(); // token → expiresAt
+
+/** Periodically clean expired password tokens (every 10 minutes). */
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, expiresAt] of passwordTokens) {
+    if (now >= expiresAt) passwordTokens.delete(token);
+  }
+}, 10 * 60 * 1000).unref();
+
+/** Add a password token with TTL. */
+export function addPasswordToken(token: string): void {
+  passwordTokens.set(token, Date.now() + PASSWORD_TOKEN_TTL_MS);
+}
 
 // ── CLI password parsing ─────────────────────────────────────────
 
@@ -66,8 +80,13 @@ export function validateToken(
   token: string,
   TOKEN: string | null,
 ): boolean {
-  if (TOKEN && token === TOKEN) return true;
-  if (passwordTokens.has(token)) return true;
+  // Timing-safe comparison to prevent side-channel attacks
+  if (TOKEN && token.length === TOKEN.length) {
+    const equal = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(TOKEN));
+    if (equal) return true;
+  }
+  const entry = passwordTokens.get(token);
+  if (entry && Date.now() < entry) return true;
   return false;
 }
 

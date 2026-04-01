@@ -8,6 +8,9 @@ export class AdapterRegistry {
   private listeners: ((event: SemanticEvent) => void)[] = [];
 
   register(adapter: SemanticAdapter): void {
+    // Stop existing adapter with same id to prevent resource leaks
+    const existing = this.adapters.get(adapter.id);
+    if (existing) existing.stop?.();
     this.adapters.set(adapter.id, adapter);
     adapter.start?.();
   }
@@ -48,8 +51,21 @@ export class AdapterRegistry {
       adapterId,
     };
     for (const listener of this.listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch (err) {
+        console.error(`[adapter-registry] listener error:`, err);
+      }
     }
+  }
+
+  /** Stop all adapters and clear state (for clean shutdown). */
+  shutdown(): void {
+    for (const adapter of this.adapters.values()) {
+      try { adapter.stop?.(); } catch {}
+    }
+    this.adapters.clear();
+    this.listeners = [];
   }
 
   /** Forward terminal data to all passive adapters */

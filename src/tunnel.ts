@@ -57,6 +57,7 @@ export function startTunnel(
     const timer = setTimeout(() => {
       if (!resolved) {
         resolved = true;
+        child.kill("SIGTERM");
         reject(new Error("cloudflared tunnel URL not detected within 30s"));
       }
     }, TIMEOUT_MS);
@@ -67,6 +68,9 @@ export function startTunnel(
       if (match && !resolved) {
         resolved = true;
         clearTimeout(timer);
+        // Stop accumulating data after URL is found
+        child.stderr!.removeListener("data", handleData);
+        child.stdout!.removeListener("data", handleData);
         resolve({ url: match[0], process: child });
       }
     }

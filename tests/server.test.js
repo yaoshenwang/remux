@@ -734,9 +734,7 @@ describe("multi-client", () => {
     const msgs = await sendAndCollect(ws2, null, { timeout: 2000 });
     ws2.send("echo alive\n");
     const afterSend = await sendAndCollect(ws2, null, { timeout: 2000 });
-    // Should have received something (terminal output or state)
-    expect(msgs.length + afterSend.length).toBeGreaterThanOrEqual(0);
-    // The key assertion: ws2 is still open
+    // The key assertion: ws2 is still open and functional
     expect(ws2.readyState).toBe(WebSocket.OPEN);
 
     ws2.close();
