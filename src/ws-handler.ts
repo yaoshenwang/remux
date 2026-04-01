@@ -14,6 +14,7 @@
 import crypto from "crypto";
 import type http from "http";
 import { WebSocketServer } from "ws";
+import { E2EESession } from "./e2ee.js";
 import type WebSocket from "ws";
 import {
   type RemuxWebSocket,
@@ -122,6 +123,25 @@ const ACTIVE_IDLE_TIMEOUT_MS = 120_000; // 2 minutes
 
 /** Map from WebSocket to client tracking state. */
 export const clientStates = new Map<RemuxWebSocket, ClientState>();
+
+/** Map from WebSocket to E2EE session (only present when client initiated E2EE). */
+export const e2eeSessions = new Map<RemuxWebSocket, E2EESession>();
+
+/**
+ * Send data to a WebSocket, encrypting if E2EE is established.
+ * For raw terminal output that bypasses sendEnvelope.
+ */
+export function e2eeSend(ws: WebSocket | RemuxWebSocket, data: string): void {
+  if (ws.readyState !== ws.OPEN) return;
+  const session = e2eeSessions.get(ws as RemuxWebSocket);
+  if (session && session.isEstablished()) {
+    // Wrap encrypted data in e2ee_msg envelope
+    const encrypted = session.encryptMessage(data);
+    ws.send(JSON.stringify({ v: 1, type: "e2ee_msg", payload: { data: encrypted } }));
+  } else {
+    ws.send(data);
+  }
+}
 
 function generateClientId(): string {
   return crypto.randomBytes(4).toString("hex");
@@ -241,7 +261,7 @@ export function setupWebSocket(
   PASSWORD: string | null,
 ): WebSocketServer {
   // Wire broadcast hooks to break the circular session <-> ws-handler dependency
-  setBroadcastHooks(sendEnvelope, getClientList);
+  setBroadcastHooks(sendEnvelope, getClientList, e2eeSend);
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -372,6 +392,70 @@ export function setupWebSocket(
         try {
           const rawParsed = JSON.parse(msg);
           const p = unwrapMessage(rawParsed);
+
+          // ── E2EE handshake (opt-in, backward compatible) ──
+
+          if (p.type === "e2ee_init") {
+            // Client sends its X25519 public key to initiate E2EE
+            if (typeof p.publicKey === "string") {
+              const session = new E2EESession();
+              session.completeHandshake(p.publicKey);
+              e2eeSessions.set(ws, session);
+              sendEnvelope(ws, "e2ee_init", {
+                publicKey: session.getPublicKey(),
+              });
+              sendEnvelope(ws, "e2ee_ready", { established: true });
+            }
+            return;
+          }
+
+          if (p.type === "e2ee_msg") {
+            // Decrypt incoming encrypted message and re-process as control message
+            const e2ee = e2eeSessions.get(ws);
+            if (!e2ee || !e2ee.isEstablished()) {
+              sendEnvelope(ws, "error", { reason: "E2EE not established" });
+              return;
+            }
+            try {
+              const decrypted = e2ee.decryptMessage(p.data);
+              // Re-parse the decrypted plaintext as a control message
+              if (decrypted.startsWith("{")) {
+                const innerParsed = JSON.parse(decrypted);
+                const inner = unwrapMessage(innerParsed);
+
+                // Terminal input wrapped in E2EE
+                if (inner.type === "input") {
+                  if (clientState.role === "active") {
+                    clientState.lastActiveAt = Date.now();
+                    const found = findTab(ws._remuxTabId);
+                    if (found && !found.tab.ended) {
+                      found.tab.pty.write(inner.data);
+                    }
+                  }
+                  return;
+                }
+
+                // For other control messages, re-emit as if received normally.
+                // We prepend the decrypted JSON back through the message handler.
+                // To avoid infinite recursion, we mark the message as already decrypted.
+                ws.emit("message", Buffer.from(decrypted, "utf8"));
+              } else {
+                // Raw terminal input wrapped in E2EE
+                if (clientState.role === "active") {
+                  clientState.lastActiveAt = Date.now();
+                  const found = findTab(ws._remuxTabId);
+                  if (found && !found.tab.ended) {
+                    found.tab.pty.write(decrypted);
+                  }
+                }
+              }
+            } catch (err) {
+              sendEnvelope(ws, "error", {
+                reason: "E2EE decrypt failed",
+              });
+            }
+            return;
+          }
 
           // Attach to first tab of a session (or create one).
           // If no session specified, pick the first existing one or create "default".
@@ -1117,6 +1201,7 @@ export function setupWebSocket(
       detachFromTab(ws);
       controlClients.delete(ws);
       clientStates.delete(ws);
+      e2eeSessions.delete(ws);
 
       // Reassign roles if the disconnecting client was active
       if (tabId != null) {
