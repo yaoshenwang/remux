@@ -18,6 +18,6 @@ ENV PORT=8767
 EXPOSE 8767
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -f http://localhost:8767/ || exit 1
+  CMD node -e "fetch('http://localhost:8767/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["node", "server.js"]

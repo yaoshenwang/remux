@@ -678,6 +678,7 @@ export function listTopics(sessionName?: string): Topic[] {
  */
 export function deleteTopic(id: string): boolean {
   const db = getDb();
+  removeFromIndex(id);
   const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
   return result.changes > 0;
 }
@@ -1031,8 +1032,10 @@ export function searchEntities(
 ): SearchResult[] {
   const db = getDb();
   if (!query.trim()) return [];
-  // Sanitize query: FTS5 uses double-quotes for phrases
-  const safeQuery = query.replace(/"/g, '""');
+  // Sanitize: strip FTS5 operators, escape quotes for phrase search
+  const safeQuery = query
+    .replace(/"/g, '""')
+    .replace(/[*^]/g, "");
   try {
     const rows = db
       .prepare(
@@ -1121,6 +1124,7 @@ export function updateNote(id: string, content: string): boolean {
  */
 export function deleteNote(id: string): boolean {
   const db = getDb();
+  removeFromIndex(id);
   const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
   return result.changes > 0;
 }

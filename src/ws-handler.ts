@@ -1113,7 +1113,9 @@ export function setupWebSocket(
       }
     });
 
-    ws.on("error", () => {});
+    ws.on("error", (err) => {
+      console.error("[ws] error:", err.message);
+    });
   });
 
   /**

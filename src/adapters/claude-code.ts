@@ -21,7 +21,7 @@ export class ClaudeCodeAdapter implements SemanticAdapter {
   };
 
   private watcher: fs.FSWatcher | null = null;
-  private lastFileSize = 0;
+  private fileSizes = new Map<string, number>();
   private eventsDir: string;
   private onEmit?: (event: SemanticEvent) => void;
 
@@ -110,20 +110,22 @@ export class ClaudeCodeAdapter implements SemanticAdapter {
   private processEventFile(filePath: string): void {
     try {
       const stat = fs.statSync(filePath);
-      if (stat.size <= this.lastFileSize) return;
+      const lastSize = this.fileSizes.get(filePath) ?? 0;
+      if (stat.size <= lastSize) return;
 
       // Read only new content (with proper fd cleanup)
+      let newData: Buffer;
       const fd = fs.openSync(filePath, "r");
       try {
-        const buffer = Buffer.alloc(stat.size - this.lastFileSize);
-        fs.readSync(fd, buffer, 0, buffer.length, this.lastFileSize);
-        this.lastFileSize = stat.size;
+        newData = Buffer.alloc(stat.size - lastSize);
+        fs.readSync(fd, newData, 0, newData.length, lastSize);
+        this.fileSizes.set(filePath, stat.size);
       } finally {
         fs.closeSync(fd);
       }
 
       // Parse JSONL lines
-      const lines = buffer
+      const lines = newData
         .toString()
         .split("\n")
         .filter((l) => l.trim());

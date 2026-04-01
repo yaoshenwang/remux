@@ -6,6 +6,14 @@
 
 import simpleGit, { SimpleGit, StatusResult, DiffResult } from "simple-git";
 
+/** Validate git ref names to prevent flag injection via user-supplied arguments. */
+const SAFE_REF_RE = /^[a-zA-Z0-9._\/@{}\[\]:^~-]+$/;
+function assertSafeRef(ref: string): void {
+  if (!ref || ref.startsWith("-") || !SAFE_REF_RE.test(ref)) {
+    throw new Error(`Invalid git ref: ${ref}`);
+  }
+}
+
 let git: SimpleGit | null = null;
 
 export function initGitService(cwd?: string): void {
@@ -46,6 +54,7 @@ export async function getGitDiff(base?: string): Promise<{
 }> {
   const g = getGit();
   const diffBase = base || "HEAD";
+  assertSafeRef(diffBase);
 
   const diffText = await g.diff([diffBase]);
   const diffStat = await g.diffSummary([diffBase]);
@@ -94,10 +103,15 @@ export async function getWorktrees(): Promise<
 
 export async function createWorktree(
   branch: string,
-  path: string,
+  worktreePath: string,
 ): Promise<void> {
+  assertSafeRef(branch);
+  // Prevent path traversal: worktree path must be relative and within project
+  if (worktreePath.includes("..") || worktreePath.startsWith("/")) {
+    throw new Error(`Invalid worktree path: ${worktreePath}`);
+  }
   const g = getGit();
-  await g.raw(["worktree", "add", "-b", branch, path, "dev"]);
+  await g.raw(["worktree", "add", "-b", branch, worktreePath, "dev"]);
 }
 
 // E11-013: branch comparison
@@ -109,6 +123,8 @@ export async function compareBranches(
   behind: number;
   files: Array<{ file: string; insertions: number; deletions: number }>;
 }> {
+  assertSafeRef(base);
+  assertSafeRef(head);
   const g = getGit();
   const diffStat = await g.diffSummary([`${base}...${head}`]);
 
