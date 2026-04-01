@@ -239,7 +239,7 @@ const HTML_TEMPLATE = `<!doctype html>
 
       /* -- Tab bar (Chrome-style) -- */
       .tab-bar { background: var(--bg-tab-bar); display: flex; align-items: flex-end; flex-shrink: 0;
-        min-height: 36px; padding: 0 0 0 0; }
+        min-height: 36px; padding: 0 0 0 0; position: relative; z-index: 101; }
       .tab-toggle { padding: 8px 10px; background: none; border: none; color: var(--text-muted);
         cursor: pointer; font-size: 16px; flex-shrink: 0; align-self: center; }
       .tab-toggle:hover { color: var(--text-bright); }
