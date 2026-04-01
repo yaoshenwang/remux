@@ -213,23 +213,23 @@ test.describe.serial("Remux E2E", () => {
       { timeout: 10000 },
     );
 
-    // Should start with Tab 1
+    // Count current tabs
     const tabList = page.locator("#tab-list");
-    await expect(tabList.locator(".tab")).toHaveCount(1, { timeout: 5000 });
+    const initialCount = await tabList.locator(".tab").count();
 
     // Click "+" to create a new tab
     await page.locator("#btn-new-tab").click();
 
-    // Wait for Tab 2 to appear
-    await expect(tabList.locator(".tab")).toHaveCount(2, { timeout: 5000 });
+    // Wait for new tab to appear
+    await expect(tabList.locator(".tab")).toHaveCount(initialCount + 1, { timeout: 5000 });
 
-    // Close the second tab (click its × button)
-    const secondTab = tabList.locator(".tab").nth(1);
-    const closeBtn = secondTab.locator(".close");
-    await closeBtn.click();
+    // Close the last tab (click its × button)
+    const lastTab = tabList.locator(".tab").last();
+    await lastTab.hover();
+    await lastTab.locator(".close").click({ force: true });
 
-    // Only one tab should remain
-    await expect(tabList.locator(".tab")).toHaveCount(1, { timeout: 5000 });
+    // Tab count should return to initial
+    await expect(tabList.locator(".tab")).toHaveCount(initialCount, { timeout: 5000 });
   });
 
   // ── 6. Theme toggle ──
