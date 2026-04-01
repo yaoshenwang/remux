@@ -63,8 +63,8 @@ export async function getGitDiff(base?: string): Promise<{
     diff: diffText.substring(0, 1024 * 1024), // 1MB limit
     files: diffStat.files.map((f) => ({
       file: f.file,
-      insertions: f.insertions,
-      deletions: f.deletions,
+      insertions: "binary" in f && f.binary ? 0 : (f as { insertions: number }).insertions,
+      deletions: "binary" in f && f.binary ? 0 : (f as { deletions: number }).deletions,
     })),
   };
 }
@@ -137,8 +137,8 @@ export async function compareBranches(
     behind: behindLog.total,
     files: diffStat.files.map((f) => ({
       file: f.file,
-      insertions: f.insertions,
-      deletions: f.deletions,
+      insertions: "binary" in f && f.binary ? 0 : (f as { insertions: number }).insertions,
+      deletions: "binary" in f && f.binary ? 0 : (f as { deletions: number }).deletions,
     })),
   };
 }

@@ -22,7 +22,7 @@
   },
   "packageManager": "pnpm@10.26.2",
   "engines": {
-    "node": ">=20"
+    "node": ">=20 <25"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

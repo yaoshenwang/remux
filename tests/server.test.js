@@ -123,19 +123,44 @@ beforeAll(async () => {
     stdio: "pipe",
   });
 
-  // Wait for server to be ready
+  // Collect stderr for diagnostics on failure
+  let stderrBuf = "";
+  serverProc.stderr.on("data", (d) => { stderrBuf += d.toString(); });
+
+  // Wait for server: stdout "Remux running" then HTTP probe via http.get
+  let serverExited = false;
+  serverProc.on("exit", (code) => { serverExited = true; stderrBuf += `\n[process exited ${code}]`; });
+
+  // Phase 1: wait for stdout signal
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("server start timeout")), 10000);
+    const timeout = setTimeout(() => {
+      if (serverExited) reject(new Error(`Server exited early: ${stderrBuf}`));
+      else reject(new Error(`Server stdout timeout after 20s. stderr: ${stderrBuf}`));
+    }, 20000);
     serverProc.stdout.on("data", (d) => {
       if (d.toString().includes("Remux running")) {
         clearTimeout(timeout);
-        // Extra delay for WASM init
-        setTimeout(resolve, 2000);
+        resolve();
       }
     });
-    serverProc.on("error", reject);
+    serverProc.on("error", (e) => { clearTimeout(timeout); reject(e); });
   });
-}, 15000);
+
+  // Phase 2: poll HTTP to confirm full readiness (WASM, DB, etc.)
+  const httpProbe = () => new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${PORT}/`, (res) => {
+      res.resume();
+      resolve(res.statusCode < 500);
+    });
+    req.on("error", () => resolve(false));
+    req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+  });
+  for (let i = 0; i < 20; i++) {
+    if (await httpProbe()) return;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  throw new Error(`Server HTTP not ready after polling. stderr: ${stderrBuf}`);
+}, 35000);
 
 afterAll(() => {
   if (serverProc) serverProc.kill("SIGTERM");

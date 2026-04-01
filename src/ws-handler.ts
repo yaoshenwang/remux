@@ -246,6 +246,8 @@ export function setupWebSocket(
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
+    // Disable Nagle algorithm to minimize input latency (see #80)
+    if ("setNoDelay" in socket) (socket as import("net").Socket).setNoDelay(true);
     const url = new URL(req.url!, `http://${req.headers.host}`);
     if (url.pathname === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) =>
