@@ -921,7 +921,10 @@ const HTML_TEMPLATE = `<!doctype html>
             try {
               const parsed = JSON.parse(e.data);
               // Handle both envelope (v:1) and legacy messages
-              const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
+              // Unwrap envelope: spread payload first, then override type with the
+              // envelope's type to prevent payload.type (e.g. artifact type "snapshot")
+              // from colliding with the message type (e.g. "snapshot_captured")
+              const msg = parsed.v === 1 ? { ...(parsed.payload || {}), type: parsed.type } : parsed;
               // Server heartbeat — just keep connection alive (lastMessageAt already updated)
               if (msg.type === 'ping') return;
               if (msg.type === 'auth_ok') {
@@ -932,6 +935,12 @@ const HTML_TEMPLATE = `<!doctype html>
                 return;
               }
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
+              // Generic server error — show to user (e.g. pair code trust errors)
+              if (msg.type === 'error') {
+                console.warn('[remux] server error:', msg.reason || 'unknown');
+                alert('Error: ' + (msg.reason || 'unknown error'));
+                return;
+              }
               if (msg.type === 'device_list') {
                 devicesList = msg.devices || [];
                 renderDevices(); return;
@@ -1282,7 +1291,9 @@ const HTML_TEMPLATE = `<!doctype html>
         } catch (err) {
           console.error('[push] subscribe failed:', err);
           if (Notification.permission === 'denied') {
-            alert('Notification permission denied. Please enable in browser settings.');
+            $('push-label').textContent = 'Permission Denied';
+          } else {
+            $('push-label').textContent = 'Not Available';
           }
         }
       }
@@ -1406,7 +1417,11 @@ const HTML_TEMPLATE = `<!doctype html>
       function renderWorkspaceArtifacts() {
         const el = $('ws-artifacts');
         if (!el) return;
-        const recent = wsArtifacts.slice(-10).reverse();
+        // Filter artifacts to current session (title contains "session / Tab")
+        const sessionArtifacts = wsArtifacts.filter(a =>
+          !a.title || a.title.includes(currentSession + ' /') || a.title.includes(currentSession + '/')
+        );
+        const recent = sessionArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
         el.innerHTML = recent.map(a =>
           '<div class="ws-card">' +
@@ -1423,13 +1438,13 @@ const HTML_TEMPLATE = `<!doctype html>
         const title = prompt('Topic title:');
         if (title && title.trim()) {
           sendCtrl({ type: 'create_topic', sessionName: currentSession, title: title.trim() });
-          setTimeout(refreshWorkspace, 200);
+          // Optimistic render in topic_created handler, no delayed refresh needed
         }
       });
 
       $('btn-capture-snapshot').addEventListener('click', () => {
         sendCtrl({ type: 'capture_snapshot' });
-        setTimeout(refreshWorkspace, 500);
+        // Optimistic render in snapshot_captured handler, no delayed refresh needed
       });
 
       // -- Search --
