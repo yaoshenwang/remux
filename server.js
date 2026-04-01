@@ -208,6 +208,10 @@ function loadSessions() {
     };
   });
 }
+function removeStaleTab(tabId) {
+  const db = getDb();
+  db.prepare("DELETE FROM tabs WHERE id = ?").run(tabId);
+}
 function removeSession(name) {
   const db = getDb();
   db.prepare("DELETE FROM sessions WHERE name = ?").run(name);
@@ -406,9 +410,12 @@ function listTopics(sessionName) {
 }
 function deleteTopic(id) {
   const db = getDb();
-  removeFromIndex(id);
-  const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
-  return result.changes > 0;
+  const txn = db.transaction(() => {
+    const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
+    if (result.changes > 0) removeFromIndex(id);
+    return result.changes > 0;
+  });
+  return txn();
 }
 function createRun(params) {
   const db = getDb();
@@ -655,9 +662,12 @@ function updateNote(id, content) {
 }
 function deleteNote(id) {
   const db = getDb();
-  removeFromIndex(id);
-  const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
-  return result.changes > 0;
+  const txn = db.transaction(() => {
+    const result = db.prepare("DELETE FROM memory_notes WHERE id = ?").run(id);
+    if (result.changes > 0) removeFromIndex(id);
+    return result.changes > 0;
+  });
+  return txn();
 }
 function togglePinNote(id) {
   const db = getDb();
@@ -853,6 +863,7 @@ function createVtTerminal(cols, rows) {
       wasmExports.ghostty_terminal_resize(handle, cols2, rows2);
     },
     isAltScreen() {
+      if (!this.handle) return false;
       return !!wasmExports.ghostty_terminal_is_alternate_screen(handle);
     },
     snapshot() {
@@ -1731,6 +1742,11 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                     }
                   }
                   const { device } = registerDevice(req, parsed.deviceId);
+                  if (device.trust === "blocked") {
+                    sendEnvelope(ws, "auth_error", { reason: "device blocked" });
+                    ws.close(4003, "device blocked");
+                    return;
+                  }
                   deviceInfo = device;
                   ws._remuxDeviceId = device.id;
                   if (!deviceSockets.has(device.id)) deviceSockets.set(device.id, /* @__PURE__ */ new Set());
@@ -1838,7 +1854,9 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
               found2.session.tabs = found2.session.tabs.filter(
                 (t) => t.id !== p.tabId
               );
+              removeStaleTab(p.tabId);
               if (found2.session.tabs.length === 0) {
+                removeSession(found2.session.name);
                 sessionMap.delete(found2.session.name);
               }
             }
@@ -2786,6 +2804,7 @@ async function startup() {
         tab.title = t.title || tab.title;
         if (t.scrollback) {
           tab.scrollback.write(t.scrollback);
+          if (tab.vt) tab.vt.consume(t.scrollback);
         }
       }
       if (session.tabs.length === 0) createTab(session);
@@ -3829,7 +3848,7 @@ var init_server = __esm({
                 window._inspectText = msg.text || '(empty)';
                 const m = msg.meta || {};
                 $('inspect-meta').innerHTML =
-                  '<span>' + (m.session || '') + ' / ' + (m.tabTitle || 'Tab ' + m.tabId) + '</span>' +
+                  '<span>' + esc(m.session) + ' / ' + esc(m.tabTitle || 'Tab ' + m.tabId) + '</span>' +
                   '<span>' + (m.cols || '?') + 'x' + (m.rows || '?') + '</span>' +
                   '<span>' + new Date(m.timestamp || Date.now()).toLocaleTimeString() + '</span>' +
                   '<button class="inspect-btn" id="btn-copy-inspect">Copy</button>';
@@ -4194,7 +4213,7 @@ var init_server = __esm({
               '<span class="ws-card-meta">' + timeAgo(t.createdAt) + '</span>' +
               '<button class="del-topic" data-del-topic="' + t.id + '" title="Delete">&times;</button>' +
             '</div>' +
-            '<div class="ws-card-meta">' + t.sessionName + '</div>' +
+            '<div class="ws-card-meta">' + esc(t.sessionName) + '</div>' +
           '</div>'
         ).join('');
         el.querySelectorAll('[data-del-topic]').forEach(btn => {
@@ -4510,7 +4529,7 @@ self.addEventListener('notificationclick', function(event) {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const urlToken = url.searchParams.get("token");
         const isAuthed = !TOKEN && !PASSWORD || // no auth configured (impossible after auto-gen, but safe)
-        TOKEN != null && urlToken === TOKEN || urlToken != null && passwordTokens.has(urlToken);
+        urlToken != null && validateToken(urlToken, TOKEN);
         if (!isAuthed) {
           if (PASSWORD) {
             res.writeHead(200, { "Content-Type": "text/html" });
@@ -4527,7 +4546,8 @@ self.addEventListener('notificationclick', function(event) {
       }
       if (url.pathname.startsWith("/dist/")) {
         const resolved = path3.resolve(distPath, url.pathname.slice(6));
-        if (!resolved.startsWith(distPath)) {
+        const rel = path3.relative(distPath, resolved);
+        if (rel.startsWith("..") || path3.isAbsolute(rel)) {
           res.writeHead(403);
           res.end("Forbidden");
           return;
