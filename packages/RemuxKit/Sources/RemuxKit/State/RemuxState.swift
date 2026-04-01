@@ -56,30 +56,27 @@ public final class RemuxState {
     // MARK: - Actions
 
     public func switchTab(id: String) {
-        connection?.sendString("{\"type\":\"attach_tab\",\"tabId\":\"\(id)\"}")
+        sendJSON(["type": "attach_tab", "tabId": id])
     }
 
     public func createTab() {
-        connection?.sendString("{\"type\":\"new_tab\"}")
+        sendJSON(["type": "new_tab"])
     }
 
     public func closeTab(id: String) {
-        connection?.sendString("{\"type\":\"close_tab\",\"tabId\":\"\(id)\"}")
+        sendJSON(["type": "close_tab", "tabId": id])
     }
 
     public func renameTab(id: String, name: String) {
-        let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
-        connection?.sendString("{\"type\":\"rename_tab\",\"tabId\":\"\(id)\",\"name\":\"\(escaped)\"}")
+        sendJSON(["type": "rename_tab", "tabId": id, "name": name])
     }
 
     public func createSession(name: String) {
-        let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
-        connection?.sendString("{\"type\":\"new_session\",\"name\":\"\(escaped)\"}")
+        sendJSON(["type": "new_session", "name": name])
     }
 
     public func deleteSession(name: String) {
-        let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
-        connection?.sendString("{\"type\":\"delete_session\",\"name\":\"\(escaped)\"}")
+        sendJSON(["type": "delete_session", "name": name])
     }
 
     public func requestInspect(tabIndex: Int? = nil, query: String? = nil) {
@@ -93,15 +90,22 @@ public final class RemuxState {
     }
 
     public func requestControl() {
-        connection?.sendString("{\"type\":\"request_control\"}")
+        sendJSON(["type": "request_control"])
     }
 
     public func releaseControl() {
-        connection?.sendString("{\"type\":\"release_control\"}")
+        sendJSON(["type": "release_control"])
     }
 
     public func sendTerminalInput(_ text: String) {
         connection?.sendString(text)
+    }
+
+    /// Safe JSON message construction — prevents injection via user input
+    private func sendJSON(_ dict: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let str = String(data: data, encoding: .utf8) else { return }
+        connection?.sendString(str)
     }
 
     public func sendTerminalData(_ data: Data) {

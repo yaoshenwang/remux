@@ -22,7 +22,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm test
-        continue-on-error: true
   swift-test:
     runs-on: macos-15
     steps:

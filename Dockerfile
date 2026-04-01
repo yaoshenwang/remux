@@ -17,5 +17,7 @@ ENV PORT=8767
 
 EXPOSE 8767
 
-# Generate a random token if not provided
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD curl -f http://localhost:8767/ || exit 1
+
 ENTRYPOINT ["node", "server.js"]
