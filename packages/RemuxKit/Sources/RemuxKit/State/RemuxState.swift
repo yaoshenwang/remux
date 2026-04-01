@@ -168,6 +168,8 @@ extension RemuxState: @preconcurrency RemuxConnectionDelegate {
 
     public func connectionDidAuthenticate(capabilities: ProtocolCapabilities) {
         handleAuthenticated(capabilities: capabilities)
+        // Auto-attach to first tab to start receiving PTY data
+        connection?.sendString("{\"type\":\"attach_first\"}")
     }
 
     public func connectionDidFailAuth(reason: String) {

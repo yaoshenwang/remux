@@ -220,37 +220,53 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
     }
 
     private func handleTextMessage(_ text: String) {
-        // Check for auth response first
-        if let data = text.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-
-            // Handle both envelope and legacy format
-            let msgType: String?
-            if let v = json["v"] as? Int, v >= 1 {
-                msgType = json["type"] as? String
-            } else {
-                msgType = json["type"] as? String
+        // PTY data from remux server is sent as raw text (not JSON).
+        // JSON control messages start with '{'. If text doesn't start with '{',
+        // it's PTY terminal data — forward as binary data for rendering.
+        guard text.hasPrefix("{") else {
+            if let data = text.data(using: .utf8) {
+                let delegate = self.delegate
+                DispatchQueue.main.async { delegate?.connectionDidReceiveData(data) }
             }
+            return
+        }
 
-            switch msgType {
-            case "auth_ok":
-                handleAuthOk(json)
-                return
-            case "auth_error":
-                let reason = json["reason"] as? String
-                    ?? (json["payload"] as? [String: Any])?["reason"] as? String
-                    ?? "Unknown error"
-                let d = self.delegate
-                DispatchQueue.main.async { d?.connectionDidFailAuth(reason: reason) }
-                return
-            case "ping":
-                // Respond to server heartbeat
-                resetHeartbeatTimer()
-                sendString("{\"type\":\"pong\"}")
-                return
-            default:
-                break
+        // Try JSON parse for control messages
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // Malformed JSON — treat as PTY data
+            if let data = text.data(using: .utf8) {
+                let delegate = self.delegate
+                DispatchQueue.main.async { delegate?.connectionDidReceiveData(data) }
             }
+            return
+        }
+
+        // Handle both envelope and legacy format
+        let msgType: String?
+        if let v = json["v"] as? Int, v >= 1 {
+            msgType = json["type"] as? String
+        } else {
+            msgType = json["type"] as? String
+        }
+
+        switch msgType {
+        case "auth_ok":
+            handleAuthOk(json)
+            return
+        case "auth_error":
+            let reason = json["reason"] as? String
+                ?? (json["payload"] as? [String: Any])?["reason"] as? String
+                ?? "Unknown error"
+            let d = self.delegate
+            DispatchQueue.main.async { d?.connectionDidFailAuth(reason: reason) }
+            return
+        case "ping":
+            resetHeartbeatTimer()
+            sendString("{\"type\":\"pong\"}")
+            return
+        default:
+            break
         }
 
         let delegate = self.delegate
