@@ -23,6 +23,7 @@ import {
 } from "./session.js";
 import { setupWebSocket } from "./ws-handler.js";
 import { AdapterRegistry, GenericShellAdapter, ClaudeCodeAdapter } from "./adapters/index.js";
+import { initGitService } from "./git-service.js";
 import {
   parseTunnelArgs,
   isCloudflaredAvailable,
@@ -108,6 +109,9 @@ async function startup(): Promise<void> {
 
   // Persistence timer (8s, like cmux)
   setInterval(persistSessions, PERSIST_INTERVAL_MS);
+
+  // Initialize git service (E11)
+  initGitService();
 
   // Initialize adapter registry (E10)
   initAdapters();
