@@ -924,8 +924,9 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'ping') return;
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
-                // Request device list after auth
+                // Request device list and workspace data after auth
                 sendCtrl({ type: 'list_devices' });
+                sendCtrl({ type: 'list_notes' });
                 return;
               }
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }

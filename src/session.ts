@@ -419,11 +419,17 @@ export function attachToTab(
   ws._remuxRows = rows;
   recalcTabSize(tab);
 
-  // tsm pattern: after attach, resize + Ctrl+L to trigger running app redraw
-  if (!tab.ended) {
-    setTimeout(() => {
-      tab.pty.write("\x0c"); // Ctrl+L -- forces shell/vim/etc to redraw
-    }, 50);
+  // Only send Ctrl+L redraw when a VT snapshot exists (app is actively
+  // rendering).  Idle shells don't need it and it pollutes scrollback
+  // with ^L artifacts visible in Inspect.
+  if (!tab.ended && tab.vt) {
+    const { text } = tab.vt.textSnapshot();
+    // Only redraw if there's real content beyond an empty prompt
+    if (text && text.trim().length > 0) {
+      setTimeout(() => {
+        tab.pty.write("\x0c");
+      }, 50);
+    }
   }
 }
 
