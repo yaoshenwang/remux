@@ -129,6 +129,7 @@ const HTML_TEMPLATE = `<!doctype html>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Remux</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⬛</text></svg>">
     <style>
       /* -- Theme Variables -- */
       [data-theme="dark"] {
@@ -749,6 +750,7 @@ const HTML_TEMPLATE = `<!doctype html>
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
               if (sessions.length <= 1) return; // don't delete last session
+              if (!confirm('Delete session "' + e.target.dataset.del + '"? All tabs will be closed.')) return;
               sendCtrl({ type: 'delete_session', name: e.target.dataset.del });
               // if deleting current, switch to first other
               if (e.target.dataset.del === currentSession) {
@@ -918,6 +920,8 @@ const HTML_TEMPLATE = `<!doctype html>
               const parsed = JSON.parse(e.data);
               // Handle both envelope (v:1) and legacy messages
               const msg = parsed.v === 1 ? { type: parsed.type, ...parsed.payload } : parsed;
+              // Server heartbeat — just keep connection alive (lastMessageAt already updated)
+              if (msg.type === 'ping') return;
               if (msg.type === 'auth_ok') {
                 if (msg.deviceId) myDeviceId = msg.deviceId;
                 // Request device list after auth
@@ -983,6 +987,11 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'state') {
                 sessions = msg.sessions || [];
                 clientsList = msg.clients || [];
+                // Re-derive own role from authoritative server state
+                if (myClientId) {
+                  const me = clientsList.find(c => c.clientId === myClientId);
+                  if (me) myRole = me.role;
+                }
                 renderSessions(); renderTabs(); renderRole(); return;
               }
               if (msg.type === 'attached') {
@@ -1033,8 +1042,16 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'note_created' || msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
               // Commands
               if (msg.type === 'command_list') { wsCommands = msg.commands || []; renderCommands(); return; }
+              // Unrecognized JSON control message — log and discard, never write to terminal
+              if (typeof msg.type === 'string') {
+                console.warn('[remux] unhandled message type:', msg.type);
+                return;
+              }
             } catch {}
+            // JSON parse succeeded but had no type, or parse failed — don't write JSON to terminal
+            return;
           }
+          // Only write non-JSON data (raw terminal output) to xterm
           term.write(e.data);
         };
         ws.onclose = () => { stopHeartbeat(); scheduleReconnect(); };

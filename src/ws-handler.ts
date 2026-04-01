@@ -233,11 +233,13 @@ export function setupWebSocket(
     }
   });
 
-  // ── Heartbeat: ping authenticated clients every 30s ──
+  // ── Heartbeat: send data-level ping to authenticated clients every 30s ──
+  // Browser onmessage does NOT fire for protocol-level ws.ping() frames,
+  // so we send a JSON envelope that the client can use to reset its timeout.
   const HEARTBEAT_INTERVAL = 30_000;
   setInterval(() => {
     for (const ws of controlClients) {
-      if (ws.readyState === ws.OPEN) ws.ping();
+      if (ws.readyState === ws.OPEN) sendEnvelope(ws, "ping", {});
     }
   }, HEARTBEAT_INTERVAL);
 
@@ -480,13 +482,30 @@ export function setupWebSocket(
               const rawText = found2
                 ? found2.tab.scrollback.read().toString("utf8")
                 : "";
-              // Strip ANSI escape sequences
+              // Strip ANSI escape sequences comprehensively:
+              // CSI sequences, OSC sequences (BEL or ST terminated), DCS/PM/APC,
+              // simple escapes, and remaining control chars except newline/tab
               const text = rawText
-                .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
-                .replace(/\x1b\][^\x07]*\x07/g, "");
+                .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")       // CSI sequences
+                .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC sequences
+                .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "")     // DCS/PM/APC sequences
+                .replace(/\x1b[()][A-Z0-9]/g, "")              // charset selection
+                .replace(/\x1b[A-Z=><78]/gi, "")               // simple escape sequences
+                .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "") // remaining ctrl chars
+                .replace(/\x7f/g, "");                          // DEL char
+              // Include tab metadata so Inspect header shows identity and size
+              const session = found2 ? found2.session : null;
+              const tab = found2 ? found2.tab : null;
               sendEnvelope(ws, "inspect_result", {
                 text,
-                meta: { timestamp: Date.now() },
+                meta: {
+                  session: session?.name || "",
+                  tabId: tab?.id || null,
+                  tabTitle: tab?.title || "",
+                  cols: ws._remuxCols || 80,
+                  rows: ws._remuxRows || 24,
+                  timestamp: Date.now(),
+                },
               });
             }
             return;
