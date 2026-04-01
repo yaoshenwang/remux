@@ -30,6 +30,25 @@ AGENTS.md
 *.yml
 !pnpm-lock.yaml
 
+# Docs (planning docs, not tracked)
+docs/
+
+# Swift / Xcode
+.build/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.swiftpm/xcode/
+
+# GhosttyKit xcframework (built from source, not tracked)
+vendor/ghostty/zig-out/
+vendor/ghostty/zig-cache/
+
+# ghostty-web bundled resources (synced from npm, not tracked)
+packages/RemuxKit/Sources/RemuxKit/Terminal/Resources/ghostty-web.js
+packages/RemuxKit/Sources/RemuxKit/Terminal/Resources/ghostty-vt.wasm
+packages/RemuxKit/Sources/RemuxKit/Terminal/Resources/ghostty-web-version.txt
+
 # Build artifacts
 src/backend/zellij/plugin/target/
 native/zellij-bridge/target/
