@@ -109,9 +109,13 @@ export interface ClientState {
   clientId: string;
   role: "active" | "observer";
   connectedAt: number;
+  lastActiveAt: number; // last time this client sent input or took control
   currentSession: string | null;
   currentTabId: number | null;
 }
+
+// If active client hasn't sent input for this long, new clients can claim active
+const ACTIVE_IDLE_TIMEOUT_MS = 120_000; // 2 minutes
 
 /** Map from WebSocket to client tracking state. */
 export const clientStates = new Map<RemuxWebSocket, ClientState>();
@@ -134,7 +138,9 @@ function getActiveClientForTab(tabId: number): RemuxWebSocket | null {
 /**
  * Assign roles after a client attaches to a tab.
  * If no active client exists on the tab, the client becomes active.
- * Otherwise it becomes an observer.
+ * If the existing active client has been idle beyond ACTIVE_IDLE_TIMEOUT_MS,
+ * the new client steals active and the idle client is demoted.
+ * Otherwise the new client becomes an observer.
  */
 function assignRole(ws: RemuxWebSocket, tabId: number): void {
   const state = clientStates.get(ws);
@@ -143,8 +149,22 @@ function assignRole(ws: RemuxWebSocket, tabId: number): void {
   const existingActive = getActiveClientForTab(tabId);
   if (!existingActive || existingActive === ws) {
     state.role = "active";
+    state.lastActiveAt = Date.now();
   } else {
-    state.role = "observer";
+    // Check if existing active client is idle — if so, steal active
+    const activeState = clientStates.get(existingActive);
+    const isIdle = activeState && (Date.now() - activeState.lastActiveAt > ACTIVE_IDLE_TIMEOUT_MS);
+    if (isIdle) {
+      activeState!.role = "observer";
+      sendEnvelope(existingActive, "role_changed", {
+        clientId: activeState!.clientId,
+        role: "observer",
+      });
+      state.role = "active";
+      state.lastActiveAt = Date.now();
+    } else {
+      state.role = "observer";
+    }
   }
   state.currentTabId = tabId;
 }
@@ -260,6 +280,7 @@ export function setupWebSocket(
       clientId,
       role: "observer",
       connectedAt: Date.now(),
+      lastActiveAt: Date.now(),
       currentSession: null,
       currentTabId: null,
     };
@@ -552,6 +573,7 @@ export function setupWebSocket(
 
             // Promote requester to active
             clientState.role = "active";
+            clientState.lastActiveAt = Date.now();
             sendEnvelope(ws, "role_changed", {
               clientId: clientState.clientId,
               role: "active",
@@ -1001,6 +1023,9 @@ export function setupWebSocket(
       // ── Raw terminal input -> current tab's PTY ──
       // Only active clients can write to PTY; observer input is silently dropped
       if (clientState.role !== "active") return;
+
+      // Track activity for idle timeout
+      clientState.lastActiveAt = Date.now();
 
       // Defense-in-depth: never write JSON control messages to PTY
       if (msg.startsWith("{") && msg.includes('"type"')) return;
