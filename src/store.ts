@@ -69,6 +69,19 @@ export function getDb(): Database.Database {
       expires_at INTEGER NOT NULL,
       FOREIGN KEY (created_by) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      device_id TEXT PRIMARY KEY,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
 
   return _db;
@@ -418,4 +431,107 @@ export function consumePairCode(code: string): string | null {
   // Consume (delete) the code
   db.prepare("DELETE FROM pair_codes WHERE code = ?").run(code);
   return row.created_by;
+}
+
+// ── Settings KV ────────────────────────────────────────────────
+
+/**
+ * Get a setting value by key.
+ */
+export function getSetting(key: string): string | null {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+/**
+ * Set a setting value (upsert).
+ */
+export function setSetting(key: string, value: string): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(key, value);
+}
+
+// ── Push Subscriptions ─────────────────────────────────────────
+
+export interface PushSubscriptionRecord {
+  deviceId: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  createdAt: number;
+}
+
+/**
+ * Save a push subscription for a device (upsert).
+ */
+export function savePushSubscription(
+  deviceId: string,
+  endpoint: string,
+  p256dh: string,
+  auth: string,
+): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO push_subscriptions (device_id, endpoint, p256dh, auth, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET
+       endpoint = excluded.endpoint,
+       p256dh = excluded.p256dh,
+       auth = excluded.auth,
+       created_at = excluded.created_at`,
+  ).run(deviceId, endpoint, p256dh, auth, Date.now());
+}
+
+/**
+ * Remove a push subscription for a device.
+ */
+export function removePushSubscription(deviceId: string): boolean {
+  const db = getDb();
+  const result = db
+    .prepare("DELETE FROM push_subscriptions WHERE device_id = ?")
+    .run(deviceId);
+  return result.changes > 0;
+}
+
+/**
+ * Get a push subscription for a specific device.
+ */
+export function getPushSubscription(
+  deviceId: string,
+): PushSubscriptionRecord | null {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM push_subscriptions WHERE device_id = ?")
+    .get(deviceId) as any;
+  if (!row) return null;
+  return {
+    deviceId: row.device_id,
+    endpoint: row.endpoint,
+    p256dh: row.p256dh,
+    auth: row.auth,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * List all push subscriptions.
+ */
+export function listPushSubscriptions(): PushSubscriptionRecord[] {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT * FROM push_subscriptions ORDER BY created_at DESC")
+    .all() as any[];
+  return rows.map((r) => ({
+    deviceId: r.device_id,
+    endpoint: r.endpoint,
+    p256dh: r.p256dh,
+    auth: r.auth,
+    createdAt: r.created_at,
+  }));
 }

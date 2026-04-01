@@ -13,9 +13,16 @@ import {
   removeSession as removeSessionFromDb,
   removeStaleTab,
 } from "./store.js";
+import { broadcastPush } from "./push.js";
 import type { IPty } from "node-pty";
 import type WebSocket from "ws";
 import { createVtTerminal, type VtTerminal } from "./vt-tracker.js";
+
+// ── Idle activity tracking (for push on resume) ─────────────────
+
+const IDLE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+let lastOutputTimestamp = Date.now();
+let isIdle = false;
 
 // ── RingBuffer ───────────────────────────────────────────────────
 
@@ -157,6 +164,26 @@ export function createTab(
     for (const ws of tab.clients) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     }
+
+    // Idle activity tracking: notify on resume after >5 min silence
+    const now = Date.now();
+    if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS && !isIdle) {
+      isIdle = true;
+    }
+    if (isIdle) {
+      isIdle = false;
+      // Collect deviceIds of currently connected clients to exclude
+      const connectedDeviceIds: string[] = [];
+      for (const ws of controlClients) {
+        if (ws._remuxDeviceId) connectedDeviceIds.push(ws._remuxDeviceId);
+      }
+      broadcastPush(
+        "Terminal Activity",
+        `New output in "${session.name}" after idle`,
+        connectedDeviceIds,
+      ).catch(() => {});
+    }
+    lastOutputTimestamp = now;
   });
 
   ptyProcess.onExit(({ exitCode }) => {
@@ -170,6 +197,12 @@ export function createTab(
       if (ws.readyState === ws.OPEN) ws.send(msg);
     }
     broadcastState();
+
+    // Push notification: shell exit
+    broadcastPush(
+      "Shell Exited",
+      `"${session.name}" tab "${tab.title}" exited (code: ${exitCode})`,
+    ).catch(() => {});
   });
 
   session.tabs.push(tab);
