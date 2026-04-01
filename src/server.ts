@@ -288,6 +288,51 @@ const HTML_TEMPLATE = `<!doctype html>
       #inspect { flex: 1; background: var(--bg); overflow: auto; display: none;
         padding: 12px 16px; -webkit-overflow-scrolling: touch; }
       #inspect.visible { display: block; }
+
+      /* -- Workspace -- */
+      #workspace { flex: 1; background: var(--bg); overflow: auto; display: none;
+        padding: 12px 16px; -webkit-overflow-scrolling: touch; }
+      #workspace.visible { display: block; }
+      .ws-section { margin-bottom: 16px; }
+      .ws-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px;
+        display: flex; align-items: center; justify-content: space-between; }
+      .ws-section-title button { background: none; border: 1px solid var(--border);
+        color: var(--text-muted); font-size: 11px; padding: 2px 8px; border-radius: 4px;
+        cursor: pointer; font-family: inherit; }
+      .ws-section-title button:hover { color: var(--text-bright); border-color: var(--text-muted); }
+      .ws-empty { font-size: 12px; color: var(--text-dim); padding: 8px 0; }
+      .ws-card { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
+        padding: 8px 12px; margin-bottom: 6px; }
+      .ws-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+      .ws-card-title { font-size: 13px; color: var(--text-bright); font-weight: 500; flex: 1;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ws-card-meta { font-size: 10px; color: var(--text-dim); }
+      .ws-card-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+      .ws-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+        font-weight: 500; }
+      .ws-badge.running { background: #1a3a5c; color: #4da6ff; }
+      .ws-badge.completed { background: #1a3c1a; color: #4dff4d; }
+      .ws-badge.failed { background: #3c1a1a; color: #ff4d4d; }
+      .ws-badge.pending { background: #3c3a1a; color: #ffbd2e; }
+      .ws-badge.approved { background: #1a3c1a; color: #4dff4d; }
+      .ws-badge.rejected { background: #3c1a1a; color: #ff4d4d; }
+      .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
+      .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
+      .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
+      .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
+      .ws-card-actions button { background: none; border: 1px solid var(--border);
+        color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
+        cursor: pointer; font-family: inherit; }
+      .ws-card-actions button:hover { color: var(--text-bright); border-color: var(--text-muted); }
+      .ws-card-actions button.approve { border-color: #27c93f; color: #27c93f; }
+      .ws-card-actions button.approve:hover { background: #27c93f22; }
+      .ws-card-actions button.reject { border-color: #ff5f56; color: #ff5f56; }
+      .ws-card-actions button.reject:hover { background: #ff5f5622; }
+      .ws-card .del-topic { opacity: 0; background: none; border: none; color: var(--text-dim);
+        cursor: pointer; font-size: 14px; padding: 0 4px; font-family: inherit; border-radius: 3px; }
+      .ws-card:hover .del-topic { opacity: 1; }
+      .ws-card .del-topic:hover { color: var(--dot-err); }
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
         user-select: text; -webkit-user-select: text; }
@@ -453,6 +498,7 @@ const HTML_TEMPLATE = `<!doctype html>
         <div class="view-switch">
           <button id="btn-live" class="active">Live</button>
           <button id="btn-inspect">Inspect</button>
+          <button id="btn-workspace">Workspace</button>
         </div>
       </div>
       <div id="terminal"></div>
@@ -465,6 +511,34 @@ const HTML_TEMPLATE = `<!doctype html>
           </div>
         </div>
         <pre id="inspect-content"></pre>
+      </div>
+      <div id="workspace">
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Pending Approvals</span>
+          </div>
+          <div id="ws-approvals"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Topics</span>
+            <button id="btn-new-topic">+ New</button>
+          </div>
+          <div id="ws-topics"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Active Runs</span>
+          </div>
+          <div id="ws-runs"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Recent Artifacts</span>
+            <button id="btn-capture-snapshot">Capture Snapshot</button>
+          </div>
+          <div id="ws-artifacts"></div>
+        </div>
       </div>
       <div class="compose-bar" id="compose-bar">
         <button data-seq="esc">Esc</button>
@@ -866,6 +940,17 @@ const HTML_TEMPLATE = `<!doctype html>
                 applyInspectSearch();
                 return;
               }
+              // Workspace message handlers
+              if (msg.type === 'topic_list') { wsTopics = msg.topics || []; renderWorkspaceTopics(); return; }
+              if (msg.type === 'topic_created') { refreshWorkspace(); return; }
+              if (msg.type === 'topic_deleted') { refreshWorkspace(); return; }
+              if (msg.type === 'run_list') { wsRuns = msg.runs || []; renderWorkspaceRuns(); return; }
+              if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
+              if (msg.type === 'snapshot_captured') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'approval_list') { wsApprovals = msg.approvals || []; renderWorkspaceApprovals(); return; }
+              if (msg.type === 'approval_created') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'approval_resolved') { if (currentView === 'workspace') refreshWorkspace(); return; }
             } catch {}
           }
           term.write(e.data);
@@ -905,24 +990,32 @@ const HTML_TEMPLATE = `<!doctype html>
       });
 
       // -- Inspect view --
-      let inspectMode = false, inspectTimer = null;
+      let currentView = 'live', inspectTimer = null, wsRefreshTimer = null;
       function setView(mode) {
-        inspectMode = mode === 'inspect';
-        $('btn-live').classList.toggle('active', !inspectMode);
-        $('btn-inspect').classList.toggle('active', inspectMode);
-        $('terminal').classList.toggle('hidden', inspectMode);
-        $('inspect').classList.toggle('visible', inspectMode);
-        if (inspectMode) {
+        currentView = mode;
+        $('btn-live').classList.toggle('active', mode === 'live');
+        $('btn-inspect').classList.toggle('active', mode === 'inspect');
+        $('btn-workspace').classList.toggle('active', mode === 'workspace');
+        $('terminal').classList.toggle('hidden', mode !== 'live');
+        $('inspect').classList.toggle('visible', mode === 'inspect');
+        $('workspace').classList.toggle('visible', mode === 'workspace');
+        // Inspect auto-refresh
+        if (inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
+        if (mode === 'inspect') {
           sendCtrl({ type: 'inspect' });
           inspectTimer = setInterval(() => sendCtrl({ type: 'inspect' }), 3000);
-        } else {
-          if (inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
-          term.focus();
-          fitAddon.fit();
         }
+        // Workspace auto-refresh
+        if (wsRefreshTimer) { clearInterval(wsRefreshTimer); wsRefreshTimer = null; }
+        if (mode === 'workspace') {
+          refreshWorkspace();
+          wsRefreshTimer = setInterval(refreshWorkspace, 5000);
+        }
+        if (mode === 'live') { term.focus(); fitAddon.fit(); }
       }
       $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); setView('live'); });
       $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); setView('inspect'); });
+      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); setView('workspace'); });
 
       // -- Inspect search --
       function applyInspectSearch() {
@@ -1105,6 +1198,121 @@ const HTML_TEMPLATE = `<!doctype html>
         sendCtrl({ type: 'test_push' });
       });
 
+      // -- Workspace view --
+      let wsTopics = [], wsRuns = [], wsArtifacts = [], wsApprovals = [];
+
+      function refreshWorkspace() {
+        sendCtrl({ type: 'list_topics', sessionName: currentSession });
+        sendCtrl({ type: 'list_runs' });
+        sendCtrl({ type: 'list_artifacts' });
+        sendCtrl({ type: 'list_approvals' });
+      }
+
+      function timeAgo(ts) {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 60) return s + 's ago';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        return Math.floor(s / 86400) + 'd ago';
+      }
+
+      function renderWorkspaceApprovals() {
+        const el = $('ws-approvals');
+        if (!el) return;
+        const pending = wsApprovals.filter(a => a.status === 'pending');
+        if (pending.length === 0) { el.innerHTML = '<div class="ws-empty">No pending approvals</div>'; return; }
+        el.innerHTML = pending.map(a =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-badge pending">pending</span>' +
+              '<span class="ws-card-title">' + (a.title || '') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+            '</div>' +
+            (a.description ? '<div class="ws-card-desc">' + a.description + '</div>' : '') +
+            '<div class="ws-card-actions">' +
+              '<button class="approve" data-approve-id="' + a.id + '">Approve</button>' +
+              '<button class="reject" data-reject-id="' + a.id + '">Reject</button>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+        el.querySelectorAll('[data-approve-id]').forEach(btn => {
+          btn.addEventListener('click', () => sendCtrl({ type: 'resolve_approval', approvalId: btn.dataset.approveId, status: 'approved' }));
+        });
+        el.querySelectorAll('[data-reject-id]').forEach(btn => {
+          btn.addEventListener('click', () => sendCtrl({ type: 'resolve_approval', approvalId: btn.dataset.rejectId, status: 'rejected' }));
+        });
+      }
+
+      function renderWorkspaceTopics() {
+        const el = $('ws-topics');
+        if (!el) return;
+        if (wsTopics.length === 0) { el.innerHTML = '<div class="ws-empty">No topics yet</div>'; return; }
+        el.innerHTML = wsTopics.map(t =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-card-title">' + (t.title || '') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(t.createdAt) + '</span>' +
+              '<button class="del-topic" data-del-topic="' + t.id + '" title="Delete">&times;</button>' +
+            '</div>' +
+            '<div class="ws-card-meta">' + t.sessionName + '</div>' +
+          '</div>'
+        ).join('');
+        el.querySelectorAll('[data-del-topic]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            sendCtrl({ type: 'delete_topic', topicId: btn.dataset.delTopic });
+            setTimeout(refreshWorkspace, 200);
+          });
+        });
+      }
+
+      function renderWorkspaceRuns() {
+        const el = $('ws-runs');
+        if (!el) return;
+        const active = wsRuns.filter(r => r.status === 'running');
+        const recent = wsRuns.filter(r => r.status !== 'running').slice(-5).reverse();
+        const all = [...active, ...recent];
+        if (all.length === 0) { el.innerHTML = '<div class="ws-empty">No runs</div>'; return; }
+        el.innerHTML = all.map(r =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-badge ' + r.status + '">' + r.status + '</span>' +
+              '<span class="ws-card-title">' + (r.command || '(no command)') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(r.startedAt) + '</span>' +
+            '</div>' +
+            (r.exitCode !== null ? '<div class="ws-card-meta">Exit: ' + r.exitCode + '</div>' : '') +
+          '</div>'
+        ).join('');
+      }
+
+      function renderWorkspaceArtifacts() {
+        const el = $('ws-artifacts');
+        if (!el) return;
+        const recent = wsArtifacts.slice(-10).reverse();
+        if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
+        el.innerHTML = recent.map(a =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-badge ' + a.type + '">' + a.type + '</span>' +
+              '<span class="ws-card-title">' + (a.title || '') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+      }
+
+      $('btn-new-topic').addEventListener('click', () => {
+        const title = prompt('Topic title:');
+        if (title && title.trim()) {
+          sendCtrl({ type: 'create_topic', sessionName: currentSession, title: title.trim() });
+          setTimeout(refreshWorkspace, 200);
+        }
+      });
+
+      $('btn-capture-snapshot').addEventListener('click', () => {
+        sendCtrl({ type: 'capture_snapshot' });
+        setTimeout(refreshWorkspace, 500);
+      });
+
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {
         const tabEl = e.target.closest('.tab');
@@ -1160,7 +1368,7 @@ const HTML_TEMPLATE = `<!doctype html>
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
       // iOS Safari: touching terminal area focuses hidden textarea for input
-      document.getElementById('terminal').addEventListener('touchend', () => { if (!inspectMode) term.focus(); });
+      document.getElementById('terminal').addEventListener('touchend', () => { if (currentView === 'live') term.focus(); });
     </script>
   </body>
 </html>`;
