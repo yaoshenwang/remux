@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+        #terminal { width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+    <script src="ghostty-web.js"></script>
+    <script>
+        // ghostty-web terminal bridge for RemuxKit WKWebView integration
+        (function() {
+            let terminal = null;
+
+            function init() {
+                if (typeof GhosttyWeb === 'undefined') {
+                    // ghostty-web not loaded yet — show placeholder
+                    document.getElementById('terminal').textContent = 'Loading terminal...';
+                    setTimeout(init, 100);
+                    return;
+                }
+
+                const container = document.getElementById('terminal');
+                terminal = new GhosttyWeb.Terminal(container, {
+                    // ghostty-web options
+                });
+
+                // Forward input to Swift
+                terminal.onData(function(data) {
+                    window.webkit.messageHandlers.remux.postMessage({
+                        type: 'input',
+                        data: data
+                    });
+                });
+
+                // Forward bell to Swift
+                terminal.onBell(function() {
+                    window.webkit.messageHandlers.remux.postMessage({ type: 'bell' });
+                });
+
+                // Watch for container resize
+                const resizeObserver = new ResizeObserver(function() {
+                    if (terminal && terminal.cols && terminal.rows) {
+                        window.webkit.messageHandlers.remux.postMessage({
+                            type: 'resize',
+                            cols: terminal.cols,
+                            rows: terminal.rows
+                        });
+                    }
+                });
+                resizeObserver.observe(container);
+
+                // Notify Swift that terminal is ready
+                window.webkit.messageHandlers.remux.postMessage({
+                    type: 'ready',
+                    cols: terminal.cols || 80,
+                    rows: terminal.rows || 24
+                });
+            }
+
+            // Bridge object exposed to Swift
+            window.terminalBridge = {
+                write: function(base64) {
+                    if (!terminal) return;
+                    const raw = atob(base64);
+                    const bytes = new Uint8Array(raw.length);
+                    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                    terminal.write(bytes);
+                },
+                resize: function(cols, rows) {
+                    if (!terminal) return;
+                    terminal.resize(cols, rows);
+                },
+                setTheme: function(config) {
+                    if (!terminal) return;
+                    // Apply theme config to terminal
+                    if (config.background) document.body.style.background = config.background;
+                    // ghostty-web theme API TBD based on actual ghostty-web version
+                }
+            };
+
+            init();
+        })();
+    </script>
+</body>
+</html>
