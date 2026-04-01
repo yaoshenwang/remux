@@ -343,6 +343,9 @@ const HTML_TEMPLATE = `<!doctype html>
       .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
       .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
       .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
+      .ws-badge.diff { background: #2a2a1a; color: #ddbb55; }
+      .ws-badge.markdown { background: #1a2a2a; color: #55bbdd; }
+      .ws-badge.ansi { background: #2a1a2a; color: #dd88bb; }
       .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
       .ws-card-actions button { background: none; border: 1px solid var(--border);
         color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
