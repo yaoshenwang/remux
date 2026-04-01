@@ -37,6 +37,9 @@ final class MenuBarManager {
         let closeTab = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeCurrentTab(_:)), keyEquivalent: "w")
         closeTab.target = self
         fileMenu.addItem(.separator())
+        let newWindow = fileMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+        newWindow.target = self
+        fileMenu.addItem(.separator())
         let newSession = fileMenu.addItem(withTitle: "New Session", action: #selector(newSession(_:)), keyEquivalent: "n")
         newSession.keyEquivalentModifierMask = [.command, .shift]
         newSession.target = self
@@ -85,6 +88,12 @@ final class MenuBarManager {
 
     @objc private func showSettings(_ sender: Any?) {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    @objc private func newWindow(_ sender: Any?) {
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.createNewWindow()
+        }
     }
 
     @objc private func newTab(_ sender: Any?) {
