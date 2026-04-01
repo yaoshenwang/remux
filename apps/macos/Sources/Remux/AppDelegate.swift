@@ -14,6 +14,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainWindow()
         setupStatusItem()
+        // Auto-connect after a brief delay to ensure UI is ready
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            Task { @MainActor in
+                self.autoConnectIfConfigured()
+            }
+        }
+    }
+
+    /// Auto-connect if REMUX_URL and REMUX_TOKEN environment variables are set.
+    @MainActor
+    private func autoConnectIfConfigured() {
+        guard let urlStr = ProcessInfo.processInfo.environment["REMUX_URL"],
+              let token = ProcessInfo.processInfo.environment["REMUX_TOKEN"],
+              let url = URL(string: urlStr) else {
+            NSLog("[remux] No REMUX_URL/REMUX_TOKEN env vars, showing connection UI")
+            return
+        }
+        NSLog("[remux] Auto-connecting to %@", urlStr)
+        state.connect(url: url, credential: .token(token))
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

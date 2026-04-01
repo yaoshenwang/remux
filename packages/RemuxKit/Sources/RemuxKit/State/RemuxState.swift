@@ -151,20 +151,14 @@ public final class RemuxState {
 extension RemuxState: @preconcurrency RemuxConnectionDelegate {
 
     public func connectionDidChangeStatus(_ status: ConnectionStatus) {
-        Task { @MainActor in
-            updateConnectionStatus(status)
-        }
+        updateConnectionStatus(status)
     }
 
     public func connectionDidReceiveMessage(_ message: String) {
-        Task { @MainActor in
-            processMessage(message)
-        }
+        processMessage(message)
     }
 
     public func connectionDidReceiveData(_ data: Data) {
-        // Binary PTY data — forwarded to terminal view (handled by the view layer)
-        // Observers of RemuxState should watch for this via a separate callback
         NotificationCenter.default.post(
             name: .remuxTerminalData,
             object: nil,
@@ -173,15 +167,11 @@ extension RemuxState: @preconcurrency RemuxConnectionDelegate {
     }
 
     public func connectionDidAuthenticate(capabilities: ProtocolCapabilities) {
-        Task { @MainActor in
-            handleAuthenticated(capabilities: capabilities)
-        }
+        handleAuthenticated(capabilities: capabilities)
     }
 
     public func connectionDidFailAuth(reason: String) {
-        Task { @MainActor in
-            connectionStatus = .disconnected
-        }
+        connectionStatus = .disconnected
     }
 }
 

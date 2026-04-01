@@ -138,6 +138,7 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
         components.path = "/ws"
         guard let wsURL = components.url else { return }
 
+        NSLog("[RemuxConnection] connecting to %@", wsURL.absoluteString)
         let task = urlSession.webSocketTask(with: wsURL)
         lock.lock()
         _task = task
@@ -204,7 +205,8 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
                 case .string(let text):
                     self.handleTextMessage(text)
                 case .data(let data):
-                    self.delegate?.connectionDidReceiveData(data)
+                    let delegate = self.delegate
+                    DispatchQueue.main.async { delegate?.connectionDidReceiveData(data) }
                 @unknown default:
                     break
                 }
@@ -238,7 +240,8 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
                 let reason = json["reason"] as? String
                     ?? (json["payload"] as? [String: Any])?["reason"] as? String
                     ?? "Unknown error"
-                delegate?.connectionDidFailAuth(reason: reason)
+                let d = self.delegate
+                DispatchQueue.main.async { d?.connectionDidFailAuth(reason: reason) }
                 return
             case "ping":
                 // Respond to server heartbeat
@@ -250,7 +253,8 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
             }
         }
 
-        delegate?.connectionDidReceiveMessage(text)
+        let delegate = self.delegate
+        DispatchQueue.main.async { delegate?.connectionDidReceiveMessage(text) }
     }
 
     private func handleAuthOk(_ json: [String: Any]) {
@@ -282,7 +286,8 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
         }
 
         startHeartbeatTimer()
-        delegate?.connectionDidAuthenticate(capabilities: capabilities)
+        let delegate = self.delegate
+        DispatchQueue.main.async { delegate?.connectionDidAuthenticate(capabilities: capabilities) }
     }
 
     // MARK: - Reconnection (exponential backoff, ref: remodex reconnection strategy)
@@ -363,6 +368,9 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
         lock.lock()
         _status = status
         lock.unlock()
-        delegate?.connectionDidChangeStatus(status)
+        let delegate = self.delegate
+        DispatchQueue.main.async {
+            delegate?.connectionDidChangeStatus(status)
+        }
     }
 }
