@@ -90,7 +90,7 @@ struct MeView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("0.4.0")
+                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.5")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -98,7 +98,7 @@ struct MeView: View {
             .navigationTitle("Me")
             .onAppear {
                 // Request device list
-                state.sendTerminalInput("{\"type\":\"list_devices\"}")
+                state.sendJSON(["type": "list_devices"])
             }
         }
     }

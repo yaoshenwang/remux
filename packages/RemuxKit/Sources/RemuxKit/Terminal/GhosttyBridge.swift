@@ -46,7 +46,14 @@ public final class GhosttyBridge: NSObject, WKScriptMessageHandler {
     /// Write PTY data to the terminal (base64 encoded to avoid escaping issues)
     public func writeToTerminal(data: Data) {
         let base64 = data.base64EncodedString()
-        webView.evaluateJavaScript("window.terminalBridge.write('\(base64)')") { _, _ in }
+        // Use callAsyncJavaScript with arguments to prevent JS injection
+        webView.callAsyncJavaScript(
+            "window.terminalBridge.write(b64)",
+            arguments: ["b64": base64],
+            in: nil,
+            in: WKContentWorld.page,
+            completionHandler: nil
+        )
     }
 
     /// Write string data to the terminal
@@ -58,7 +65,13 @@ public final class GhosttyBridge: NSObject, WKScriptMessageHandler {
 
     /// Resize the terminal
     public func resize(cols: Int, rows: Int) {
-        webView.evaluateJavaScript("window.terminalBridge.resize(\(cols), \(rows))") { _, _ in }
+        webView.callAsyncJavaScript(
+            "window.terminalBridge.resize(c, r)",
+            arguments: ["c": cols, "r": rows],
+            in: nil,
+            in: WKContentWorld.page,
+            completionHandler: nil
+        )
     }
 
     /// Set terminal theme

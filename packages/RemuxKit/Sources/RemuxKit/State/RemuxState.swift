@@ -101,8 +101,8 @@ public final class RemuxState {
         connection?.sendString(text)
     }
 
-    /// Safe JSON message construction — prevents injection via user input
-    private func sendJSON(_ dict: [String: Any]) {
+    /// Safe JSON message construction — prevents injection via string interpolation
+    public func sendJSON(_ dict: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
               let str = String(data: data, encoding: .utf8) else { return }
         connection?.sendString(str)

@@ -50,7 +50,7 @@ struct LiveTerminalView: View {
             }
         }
         b.onResize = { cols, rows in
-            state.sendTerminalInput("{\"type\":\"resize\",\"cols\":\(cols),\"rows\":\(rows)}")
+            state.sendJSON(["type": "resize", "cols": cols, "rows": rows])
         }
         b.onReady = {
             // Terminal initialized — attach to current tab
