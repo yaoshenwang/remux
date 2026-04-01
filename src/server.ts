@@ -12,6 +12,7 @@ import qrcode from "qrcode-terminal";
 import { resolveAuth, generateToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
 import { initGhosttyVt } from "./vt-tracker.js";
 import { getDb, closeDb } from "./store.js";
+import { initPush } from "./push.js";
 import {
   sessionMap,
   createSession,
@@ -71,6 +72,9 @@ let startupDone = false;
 async function startup(): Promise<void> {
   // Initialize SQLite store (creates tables if needed)
   getDb();
+
+  // Initialize Web Push (loads or generates VAPID keys)
+  initPush();
 
   await initGhosttyVt(wasmPath);
 
@@ -362,6 +366,20 @@ const HTML_TEMPLATE = `<!doctype html>
       .pair-input-area input:focus { border-color: var(--accent); }
       .pair-input-area .pair-btn { width: auto; }
 
+      /* -- Push notification section -- */
+      .push-section { padding: 4px 12px 8px; border-top: 1px solid var(--border); }
+      .push-toggle { width: 100%; padding: 5px 8px; font-size: 11px; font-family: inherit;
+        color: var(--text-bright); background: var(--compose-bg); border: 1px solid var(--compose-border);
+        border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+        justify-content: center; }
+      .push-toggle:hover { background: var(--compose-border); }
+      .push-toggle.subscribed { background: var(--accent); border-color: var(--accent); }
+      .push-toggle .push-icon { font-size: 14px; }
+      .push-test-btn { width: 100%; padding: 4px 8px; font-size: 10px; font-family: inherit;
+        color: var(--text-muted); background: none; border: 1px solid var(--border);
+        border-radius: 4px; cursor: pointer; margin-top: 4px; }
+      .push-test-btn:hover { color: var(--text-bright); border-color: var(--compose-border); }
+
       /* -- Mobile -- */
       @media (max-width: 768px) {
         .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
@@ -402,6 +420,15 @@ const HTML_TEMPLATE = `<!doctype html>
             <button class="pair-btn" id="btn-submit-pair">Pair</button>
           </div>
         </div>
+      </div>
+
+      <!-- Push notifications -->
+      <div class="push-section" id="push-section" style="display:none">
+        <button class="push-toggle" id="btn-push-toggle">
+          <span class="push-icon">&#128276;</span>
+          <span id="push-label">Enable Notifications</span>
+        </button>
+        <button class="push-test-btn" id="btn-push-test" style="display:none">Send Test</button>
       </div>
 
       <div class="sidebar-footer">
@@ -734,6 +761,8 @@ const HTML_TEMPLATE = `<!doctype html>
           sendCtrl({ type: 'attach_first', session: currentSession || 'main', cols: term.cols, rows: term.rows });
           // Request device list (works with or without auth)
           sendCtrl({ type: 'list_devices' });
+          // Request VAPID key for push notifications
+          sendCtrl({ type: 'get_vapid_key' });
         };
         ws.onmessage = e => {
           lastMessageAt = Date.now();
@@ -770,6 +799,37 @@ const HTML_TEMPLATE = `<!doctype html>
                   sendCtrl({ type: 'list_devices' });
                 } else {
                   alert('Pairing failed: ' + (msg.reason || 'invalid code'));
+                }
+                return;
+              }
+              if (msg.type === 'vapid_key') {
+                pushVapidKey = msg.publicKey;
+                showPushSection();
+                // Check current push status
+                sendCtrl({ type: 'get_push_status' });
+                return;
+              }
+              if (msg.type === 'push_subscribed') {
+                pushSubscribed = msg.success;
+                updatePushUI();
+                return;
+              }
+              if (msg.type === 'push_unsubscribed') {
+                pushSubscribed = false;
+                updatePushUI();
+                return;
+              }
+              if (msg.type === 'push_status') {
+                pushSubscribed = msg.subscribed;
+                updatePushUI();
+                return;
+              }
+              if (msg.type === 'push_test_result') {
+                // Brief visual feedback
+                const testBtn = $('btn-push-test');
+                if (testBtn) {
+                  testBtn.textContent = msg.sent ? 'Sent!' : 'Failed';
+                  setTimeout(() => { testBtn.textContent = 'Send Test'; }, 2000);
                 }
                 return;
               }
@@ -959,6 +1019,92 @@ const HTML_TEMPLATE = `<!doctype html>
         if (e.key === 'Enter') { e.preventDefault(); $('btn-submit-pair').click(); }
       });
 
+      // -- Push notifications --
+      let pushSubscribed = false;
+      let pushVapidKey = null;
+
+      function showPushSection() {
+        // Show only if browser supports push + service workers
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+        $('push-section').style.display = 'block';
+      }
+
+      function updatePushUI() {
+        const btn = $('btn-push-toggle');
+        const label = $('push-label');
+        const testBtn = $('btn-push-test');
+        if (pushSubscribed) {
+          btn.classList.add('subscribed');
+          label.textContent = 'Notifications On';
+          testBtn.style.display = 'block';
+        } else {
+          btn.classList.remove('subscribed');
+          label.textContent = 'Enable Notifications';
+          testBtn.style.display = 'none';
+        }
+      }
+
+      function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+        return outputArray;
+      }
+
+      async function subscribePush() {
+        if (!pushVapidKey) return;
+        try {
+          const reg = await navigator.serviceWorker.register('/sw.js');
+          await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.subscribe({
+            userNotificationAllowed: true,
+            applicationServerKey: urlBase64ToUint8Array(pushVapidKey),
+          });
+          const subJson = sub.toJSON();
+          sendCtrl({
+            type: 'subscribe_push',
+            subscription: {
+              endpoint: subJson.endpoint,
+              keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+            },
+          });
+        } catch (err) {
+          console.error('[push] subscribe failed:', err);
+          if (Notification.permission === 'denied') {
+            alert('Notification permission denied. Please enable in browser settings.');
+          }
+        }
+      }
+
+      async function unsubscribePush() {
+        try {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg) {
+            const sub = await reg.pushManager.getSubscription();
+            if (sub) await sub.unsubscribe();
+          }
+          sendCtrl({ type: 'unsubscribe_push' });
+        } catch (err) {
+          console.error('[push] unsubscribe failed:', err);
+        }
+      }
+
+      $('btn-push-toggle').addEventListener('click', async () => {
+        if (pushSubscribed) {
+          await unsubscribePush();
+          pushSubscribed = false;
+        } else {
+          await subscribePush();
+        }
+        updatePushUI();
+      });
+
+      $('btn-push-test').addEventListener('click', () => {
+        sendCtrl({ type: 'test_push' });
+      });
+
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {
         const tabEl = e.target.closest('.tab');
@@ -1018,6 +1164,46 @@ const HTML_TEMPLATE = `<!doctype html>
     </script>
   </body>
 </html>`;
+
+// ── Service Worker for Push Notifications ───────────────────────
+
+const SW_SCRIPT = `self.addEventListener('push', function(event) {
+  if (!event.data) return;
+  try {
+    var data = event.data.json();
+    event.waitUntil(
+      self.registration.showNotification(data.title || 'Remux', {
+        body: data.body || '',
+        icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">></text></svg>',
+        badge: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">></text></svg>',
+        tag: 'remux-' + (data.tag || 'default'),
+        renotify: true,
+      })
+    );
+  } catch (e) {
+    // Fallback for non-JSON payloads
+    event.waitUntil(
+      self.registration.showNotification('Remux', { body: event.data.text() })
+    );
+  }
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      for (var i = 0; i < clientList.length; i++) {
+        if (clientList[i].url.includes(self.location.origin) && 'focus' in clientList[i]) {
+          return clientList[i].focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow('/');
+      }
+    })
+  );
+});
+`;
 
 // ── MIME ──────────────────────────────────────────────────────────
 
@@ -1084,6 +1270,16 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/ghostty-vt.wasm") {
     return serveFile(wasmPath, res);
+  }
+
+  // Service worker for push notifications
+  if (url.pathname === "/sw.js") {
+    res.writeHead(200, {
+      "Content-Type": "application/javascript",
+      "Service-Worker-Allowed": "/",
+    });
+    res.end(SW_SCRIPT);
+    return;
   }
 
   res.writeHead(404);

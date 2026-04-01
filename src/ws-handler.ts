@@ -40,8 +40,16 @@ import {
   createPairCode,
   consumePairCode,
   touchDevice,
+  savePushSubscription,
+  removePushSubscription,
+  getPushSubscription,
   type Device,
 } from "./store.js";
+import {
+  getVapidPublicKey,
+  sendPushNotification,
+  broadcastPush,
+} from "./push.js";
 
 // ── Protocol Envelope ───────────────────────────────────────────
 
@@ -655,6 +663,69 @@ export function setupWebSocket(
                 });
               }
             }
+            return;
+          }
+
+          // ── Push notification messages ──
+
+          if (p.type === "get_vapid_key") {
+            const publicKey = getVapidPublicKey();
+            sendEnvelope(ws, "vapid_key", { publicKey });
+            return;
+          }
+
+          if (p.type === "subscribe_push") {
+            if (
+              ws._remuxDeviceId &&
+              p.subscription &&
+              typeof p.subscription.endpoint === "string" &&
+              p.subscription.keys?.p256dh &&
+              p.subscription.keys?.auth
+            ) {
+              savePushSubscription(
+                ws._remuxDeviceId,
+                p.subscription.endpoint,
+                p.subscription.keys.p256dh,
+                p.subscription.keys.auth,
+              );
+              sendEnvelope(ws, "push_subscribed", { success: true });
+            } else {
+              sendEnvelope(ws, "push_subscribed", {
+                success: false,
+                reason: "invalid subscription or no device ID",
+              });
+            }
+            return;
+          }
+
+          if (p.type === "unsubscribe_push") {
+            if (ws._remuxDeviceId) {
+              removePushSubscription(ws._remuxDeviceId);
+              sendEnvelope(ws, "push_unsubscribed", { success: true });
+            }
+            return;
+          }
+
+          if (p.type === "test_push") {
+            if (ws._remuxDeviceId) {
+              sendPushNotification(
+                ws._remuxDeviceId,
+                "Remux Test",
+                "Push notifications are working!",
+              ).then((sent) => {
+                sendEnvelope(ws, "push_test_result", { sent });
+              });
+            } else {
+              sendEnvelope(ws, "push_test_result", { sent: false });
+            }
+            return;
+          }
+
+          if (p.type === "get_push_status") {
+            const hasSub = ws._remuxDeviceId
+              ? !!getPushSubscription(ws._remuxDeviceId)
+              : false;
+            sendEnvelope(ws, "push_status", { subscribed: hasSub });
             return;
           }
 
