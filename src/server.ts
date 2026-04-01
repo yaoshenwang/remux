@@ -1024,12 +1024,22 @@ const HTML_TEMPLATE = `<!doctype html>
               }
               // Workspace message handlers
               if (msg.type === 'topic_list') { wsTopics = msg.topics || []; renderWorkspaceTopics(); return; }
-              if (msg.type === 'topic_created') { refreshWorkspace(); return; }
+              if (msg.type === 'topic_created') {
+                // Optimistic render: add topic directly
+                if (msg.id && msg.title) wsTopics.unshift({ id: msg.id, sessionName: msg.sessionName, title: msg.title, createdAt: msg.createdAt, updatedAt: msg.updatedAt });
+                renderWorkspaceTopics();
+                return;
+              }
               if (msg.type === 'topic_deleted') { refreshWorkspace(); return; }
               if (msg.type === 'run_list') { wsRuns = msg.runs || []; renderWorkspaceRuns(); return; }
               if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
-              if (msg.type === 'snapshot_captured') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'snapshot_captured') {
+                // Optimistic render: add artifact directly
+                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, createdAt: msg.createdAt || Date.now() });
+                renderWorkspaceArtifacts();
+                return;
+              }
               if (msg.type === 'approval_list') { wsApprovals = msg.approvals || []; renderWorkspaceApprovals(); return; }
               if (msg.type === 'approval_created') { if (currentView === 'workspace') refreshWorkspace(); return; }
               if (msg.type === 'approval_resolved') { if (currentView === 'workspace') refreshWorkspace(); return; }
@@ -1039,7 +1049,13 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'handoff_bundle') { renderHandoffBundle(msg); return; }
               // Notes
               if (msg.type === 'note_list') { wsNotes = msg.notes || []; renderNotes(); return; }
-              if (msg.type === 'note_created' || msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
+              if (msg.type === 'note_created') {
+                // Optimistic render: add note directly without waiting for list refresh
+                if (msg.id && msg.content) wsNotes.unshift({ id: msg.id, content: msg.content, pinned: msg.pinned || false, createdAt: msg.createdAt, updatedAt: msg.updatedAt });
+                renderNotes();
+                return;
+              }
+              if (msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
               // Commands
               if (msg.type === 'command_list') { wsCommands = msg.commands || []; renderCommands(); return; }
               // Unrecognized enveloped control message — discard, never write to terminal

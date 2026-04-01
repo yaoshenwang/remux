@@ -989,14 +989,21 @@ export function setupWebSocket(
           }
 
           return;
-        } catch {
-          /* not JSON */
+        } catch (err) {
+          // Log JSON parse errors for debugging (e.g. createNote DB failures)
+          if (msg.startsWith("{")) {
+            console.error("[remux] JSON handler error:", err);
+            return; // Don't fall through to PTY for malformed JSON
+          }
         }
       }
 
       // ── Raw terminal input -> current tab's PTY ──
       // Only active clients can write to PTY; observer input is silently dropped
       if (clientState.role !== "active") return;
+
+      // Defense-in-depth: never write JSON control messages to PTY
+      if (msg.startsWith("{") && msg.includes('"type"')) return;
 
       const found = findTab(ws._remuxTabId);
       if (found && !found.tab.ended) {
