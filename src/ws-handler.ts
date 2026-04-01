@@ -79,6 +79,12 @@ import {
   getTopicSummary,
   generateHandoffBundle,
 } from "./workspace.js";
+import {
+  detectContentType,
+  renderDiff,
+  renderMarkdown,
+  renderAnsi,
+} from "./renderers.js";
 
 // ── Protocol Envelope ───────────────────────────────────────────
 
@@ -897,7 +903,15 @@ export function setupWebSocket(
                 p.topicId || undefined,
               );
               if (result) {
-                sendEnvelope(ws, "snapshot_captured", result.artifact);
+                const a = result.artifact;
+                const contentType = a.content ? detectContentType(a.content) : "plain";
+                let renderedHtml: string | undefined;
+                if (a.content) {
+                  if (contentType === "diff") renderedHtml = renderDiff(a.content);
+                  else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
+                  else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
+                }
+                sendEnvelope(ws, "snapshot_captured", { ...a, contentType, renderedHtml });
               } else {
                 sendEnvelope(ws, "error", {
                   reason: "no tab attached for snapshot",
@@ -913,7 +927,17 @@ export function setupWebSocket(
               runId: p.runId || undefined,
               sessionName: p.sessionName || clientState.currentSession || undefined,
             });
-            sendEnvelope(ws, "artifact_list", { artifacts });
+            // Enrich artifacts with server-side rendered HTML
+            const enriched = artifacts.map((a) => {
+              if (!a.content) return a;
+              const contentType = detectContentType(a.content);
+              let renderedHtml: string | undefined;
+              if (contentType === "diff") renderedHtml = renderDiff(a.content);
+              else if (contentType === "markdown") renderedHtml = renderMarkdown(a.content);
+              else if (contentType === "ansi") renderedHtml = '<pre style="margin:0;font-size:11px;line-height:1.5">' + renderAnsi(a.content) + "</pre>";
+              return { ...a, contentType, renderedHtml };
+            });
+            sendEnvelope(ws, "artifact_list", { artifacts: enriched });
             return;
           }
 
