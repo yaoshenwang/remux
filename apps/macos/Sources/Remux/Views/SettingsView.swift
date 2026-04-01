@@ -15,10 +15,13 @@ struct SettingsView: View {
             generalTab
                 .tabItem { Label("General", systemImage: "gear") }
 
+            ShortcutSettingsView()
+                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+
             notificationsTab
                 .tabItem { Label("Notifications", systemImage: "bell") }
         }
-        .frame(width: 420, height: 300)
+        .frame(width: 560, height: 440)
         .padding()
     }
 

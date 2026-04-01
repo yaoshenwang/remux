@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyKit
+import UniformTypeIdentifiers
 
 /// NSView subclass wrapping libghostty's native Metal terminal renderer.
 /// Adapted for ghostty v1.3.1 API: uses `command` field to spawn a relay
@@ -9,9 +10,12 @@ import GhosttyKit
 ///   Remote PTY -> WebSocket -> TerminalRelay.writeToTerminal() -> socket -> nc stdout -> ghostty renders
 ///   User types -> ghostty -> nc stdin -> socket -> TerminalRelay.onDataFromClient -> WebSocket -> remote PTY
 ///
+/// Supports NSTextInputClient for CJK IME and NSDraggingDestination for file drops.
+///
 /// Architecture ref: Calyx, Kytos (libghostty-based terminal apps)
+/// IME ref: ghostty-org/ghostty macOS TerminalView NSTextInputClient
 @MainActor
-final class GhosttyNativeView: NSView {
+final class GhosttyNativeView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Callbacks
 
@@ -33,23 +37,42 @@ final class GhosttyNativeView: NSView {
     /// The relay command spawned by ghostty as its "shell" process.
     private(set) var relayCommand: String?
 
+    // MARK: - IME composing state
+
+    /// Whether the input method is actively composing (marked text present).
+    private var isComposing: Bool = false
+
+    /// The current marked text from the input method.
+    private var imeMarkedText: NSMutableAttributedString = NSMutableAttributedString()
+
+    /// The selected range within the marked text.
+    private var imeSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
+
+    // MARK: - File drop state
+
+    /// Whether a drag is currently hovering over the view.
+    private var isDragHighlighted: Bool = false {
+        didSet {
+            layer?.borderWidth = isDragHighlighted ? 2 : 0
+            layer?.borderColor = isDragHighlighted
+                ? NSColor.controlAccentColor.cgColor
+                : nil
+        }
+    }
+
     // MARK: - Init
 
     /// Create the view with a relay socket path. Ghostty will spawn `nc -U <socketPath>`.
     init(frame frameRect: NSRect, socketPath: String) {
         self.relayCommand = "nc -U \(socketPath)"
         super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.isOpaque = true
-        layer?.backgroundColor = NSColor.black.cgColor
+        setupView()
         initGhostty()
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.isOpaque = true
-        layer?.backgroundColor = NSColor.black.cgColor
+        setupView()
     }
 
     required init?(coder: NSCoder) {
@@ -59,6 +82,15 @@ final class GhosttyNativeView: NSView {
     deinit {
         if let surface { ghostty_surface_free(surface) }
         if let ghosttyApp { ghostty_app_free(ghosttyApp) }
+    }
+
+    private func setupView() {
+        wantsLayer = true
+        layer?.isOpaque = true
+        layer?.backgroundColor = NSColor.black.cgColor
+
+        // Register for file drag-and-drop
+        registerForDraggedTypes([.fileURL])
     }
 
     // MARK: - Ghostty initialization
@@ -255,9 +287,12 @@ final class GhosttyNativeView: NSView {
         surface.flatMap { ghostty_surface_draw($0) }
     }
 
-    // MARK: - Keyboard input (ghostty handles forwarding to PTY -> nc stdin -> socket)
+    // MARK: - Keyboard input with IME support
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Do not intercept key equivalents while composing
+        if isComposing { return false }
+
         // Intercept Cmd+V for enhanced paste
         if event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers == "v" {
@@ -276,6 +311,14 @@ final class GhosttyNativeView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Let the input method system handle the event first (for CJK IME).
+        // inputContext?.handleEvent() will call back into NSTextInputClient methods:
+        // setMarkedText (composing), insertText (committed), etc.
+        if inputContext?.handleEvent(event) == true {
+            return
+        }
+
+        // If the input method did not handle it, send directly to ghostty
         guard let surface else { return }
         var key = ghostty_input_key_s()
         key.action = GHOSTTY_ACTION_PRESS
@@ -294,14 +337,115 @@ final class GhosttyNativeView: NSView {
         _ = ghostty_surface_key(surface, key)
     }
 
+    override func doCommand(by selector: Selector) {
+        // Called by the input method for special commands (e.g. moveLeft:, deleteBackward:).
+        // We intentionally do nothing here — ghostty handles these via keyDown.
+    }
+
+    // MARK: - NSTextInputClient (CJK IME support)
+
+    /// Whether there is currently marked (composing) text.
+    func hasMarkedText() -> Bool {
+        return isComposing
+    }
+
+    /// The range of the marked text within the total text storage.
+    func markedRange() -> NSRange {
+        if isComposing {
+            return NSRange(location: 0, length: imeMarkedText.length)
+        }
+        return NSRange(location: NSNotFound, length: 0)
+    }
+
+    /// The range of the current selection. Returns empty range at the end.
+    func selectedRange() -> NSRange {
+        return imeSelectedRange
+    }
+
+    /// Called by the input method to set or update composing text.
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let attrStr: NSAttributedString
+        if let s = string as? NSAttributedString {
+            attrStr = s
+        } else if let s = string as? String {
+            attrStr = NSAttributedString(string: s)
+        } else {
+            return
+        }
+
+        imeMarkedText = NSMutableAttributedString(attributedString: attrStr)
+        imeSelectedRange = selectedRange
+        isComposing = imeMarkedText.length > 0
+
+        // Notify ghostty that we are in a composing state
+        if isComposing, let surface {
+            var key = ghostty_input_key_s()
+            key.action = GHOSTTY_ACTION_PRESS
+            key.keycode = 0
+            key.composing = true
+            _ = ghostty_surface_key(surface, key)
+        }
+
+        needsDisplay = true
+    }
+
+    /// Called by the input method when composition is canceled.
+    func unmarkText() {
+        imeMarkedText = NSMutableAttributedString()
+        imeSelectedRange = NSRange(location: NSNotFound, length: 0)
+        isComposing = false
+        needsDisplay = true
+    }
+
+    /// Valid attributes for marked text display.
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        return [.underlineStyle, .foregroundColor, .backgroundColor]
+    }
+
+    /// Return attributed substring for the proposed range.
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        // We don't maintain a text storage, so return nil
+        return nil
+    }
+
+    /// Called when the input method commits text (final input after composing).
     func insertText(_ string: Any, replacementRange: NSRange) {
+        // Unmark first if we were composing
+        let wasComposing = isComposing
+        if wasComposing {
+            unmarkText()
+        }
+
+        // Send the committed text to ghostty
         guard let surface else { return }
         if let str = string as? String {
+            ghostty_surface_text(surface, str, UInt(str.utf8.count))
+        } else if let attrStr = string as? NSAttributedString {
+            let str = attrStr.string
             ghostty_surface_text(surface, str, UInt(str.utf8.count))
         }
     }
 
-    override func doCommand(by selector: Selector) {}
+    /// Return the first rect for the character at the given range.
+    /// Used by the input method to position the candidates window.
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        // Return a rect near the cursor position for the IME candidates window.
+        // We approximate using the bottom-left of the view + some offset.
+        guard let windowRef = window else {
+            return NSRect(x: 0, y: 0, width: 0, height: 20)
+        }
+
+        // Use a position near the center-bottom of the view as a reasonable default
+        let viewRect = NSRect(x: 0, y: bounds.height - 20, width: bounds.width, height: 20)
+        let windowRect = convert(viewRect, to: nil)
+        let screenRect = windowRef.convertToScreen(windowRect)
+        return screenRect
+    }
+
+    /// Return the character index for a given point (used by input method).
+    func characterIndex(for point: NSPoint) -> Int {
+        return NSNotFound
+    }
 
     // MARK: - Mouse input
 
@@ -343,6 +487,56 @@ final class GhosttyNativeView: NSView {
     override func resignFirstResponder() -> Bool {
         surface.flatMap { ghostty_surface_set_focus($0, false) }
         return super.resignFirstResponder()
+    }
+
+    // MARK: - NSDraggingDestination (File Drop Support)
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.canReadObject(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) else {
+            return []
+        }
+        isDragHighlighted = true
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard isDragHighlighted else { return [] }
+        return .copy
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        isDragHighlighted = false
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        isDragHighlighted = false
+
+        let pb = sender.draggingPasteboard
+        guard let urls = pb.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty else {
+            return false
+        }
+
+        // Shell-escape each path and join with spaces
+        let escapedPaths = urls.map { url in
+            ClipboardHelper.escapeForShell(url.path)
+        }
+        let text = escapedPaths.joined(separator: " ")
+        sendText(text)
+        return true
+    }
+
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        return true
+    }
+
+    override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {
+        isDragHighlighted = false
     }
 
     // MARK: - Private: Paste handling
