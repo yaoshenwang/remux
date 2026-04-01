@@ -43,11 +43,19 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ steps.target.outputs.worktree }}
-        run: pnpm install --frozen-lockfile
+        run: |
+          # Use the same Node.js that the launchd service runs (node@20)
+          # to ensure native modules (better-sqlite3, node-pty) are compiled
+          # for the correct NODE_MODULE_VERSION
+          export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+          node --version
+          pnpm install --frozen-lockfile
 
       - name: Build
         working-directory: ${{ steps.target.outputs.worktree }}
-        run: pnpm run build
+        run: |
+          export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+          pnpm run build
 
       - name: Restart launchd service
         run: |
