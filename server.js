@@ -75,6 +75,47 @@ function getDb() {
       auth TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS topics (
+      id TEXT PRIMARY KEY,
+      session_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT REFERENCES topics(id),
+      session_name TEXT NOT NULL,
+      tab_id INTEGER,
+      command TEXT,
+      exit_code INTEGER,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      status TEXT DEFAULT 'running'
+    );
+
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT REFERENCES runs(id),
+      topic_id TEXT REFERENCES topics(id),
+      type TEXT NOT NULL,
+      title TEXT,
+      content TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS approvals (
+      id TEXT PRIMARY KEY,
+      run_id TEXT REFERENCES runs(id),
+      topic_id TEXT REFERENCES topics(id),
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      resolved_at INTEGER
+    );
   `);
   return _db;
 }
@@ -290,6 +331,210 @@ function listPushSubscriptions() {
     auth: r.auth,
     createdAt: r.created_at
   }));
+}
+function createTopic(sessionName, title) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO topics (id, session_name, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, sessionName, title, now, now);
+  return { id, sessionName, title, createdAt: now, updatedAt: now };
+}
+function listTopics(sessionName) {
+  const db = getDb();
+  let rows;
+  if (sessionName) {
+    rows = db.prepare(
+      "SELECT * FROM topics WHERE session_name = ? ORDER BY created_at"
+    ).all(sessionName);
+  } else {
+    rows = db.prepare("SELECT * FROM topics ORDER BY created_at").all();
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    sessionName: r.session_name,
+    title: r.title,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at
+  }));
+}
+function deleteTopic(id) {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+function createRun(params) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO runs (id, topic_id, session_name, tab_id, command, started_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, 'running')`
+  ).run(
+    id,
+    params.topicId ?? null,
+    params.sessionName,
+    params.tabId ?? null,
+    params.command ?? null,
+    now
+  );
+  return {
+    id,
+    topicId: params.topicId ?? null,
+    sessionName: params.sessionName,
+    tabId: params.tabId ?? null,
+    command: params.command ?? null,
+    exitCode: null,
+    startedAt: now,
+    endedAt: null,
+    status: "running"
+  };
+}
+function updateRun(id, params) {
+  const db = getDb();
+  const now = Date.now();
+  const sets = [];
+  const values = [];
+  if (params.exitCode !== void 0) {
+    sets.push("exit_code = ?");
+    values.push(params.exitCode);
+  }
+  if (params.status !== void 0) {
+    sets.push("status = ?");
+    values.push(params.status);
+  }
+  if (params.status === "completed" || params.status === "failed" || params.exitCode !== void 0) {
+    sets.push("ended_at = ?");
+    values.push(now);
+  }
+  if (sets.length === 0) return false;
+  values.push(id);
+  const result = db.prepare(`UPDATE runs SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  return result.changes > 0;
+}
+function listRuns(topicId) {
+  const db = getDb();
+  let rows;
+  if (topicId) {
+    rows = db.prepare("SELECT * FROM runs WHERE topic_id = ? ORDER BY started_at").all(topicId);
+  } else {
+    rows = db.prepare("SELECT * FROM runs ORDER BY started_at").all();
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    topicId: r.topic_id,
+    sessionName: r.session_name,
+    tabId: r.tab_id,
+    command: r.command,
+    exitCode: r.exit_code,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    status: r.status
+  }));
+}
+function createArtifact(params) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO artifacts (id, run_id, topic_id, type, title, content, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    params.runId ?? null,
+    params.topicId ?? null,
+    params.type,
+    params.title ?? null,
+    params.content ?? null,
+    now
+  );
+  return {
+    id,
+    runId: params.runId ?? null,
+    topicId: params.topicId ?? null,
+    type: params.type,
+    title: params.title ?? null,
+    content: params.content ?? null,
+    createdAt: now
+  };
+}
+function listArtifacts(params) {
+  const db = getDb();
+  let rows;
+  if (params.topicId) {
+    rows = db.prepare(
+      "SELECT * FROM artifacts WHERE topic_id = ? ORDER BY created_at"
+    ).all(params.topicId);
+  } else if (params.runId) {
+    rows = db.prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at").all(params.runId);
+  } else {
+    rows = db.prepare("SELECT * FROM artifacts ORDER BY created_at").all();
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    topicId: r.topic_id,
+    type: r.type,
+    title: r.title,
+    content: r.content,
+    createdAt: r.created_at
+  }));
+}
+function createApproval(params) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO approvals (id, run_id, topic_id, title, description, status, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?)`
+  ).run(
+    id,
+    params.runId ?? null,
+    params.topicId ?? null,
+    params.title,
+    params.description ?? null,
+    now
+  );
+  return {
+    id,
+    runId: params.runId ?? null,
+    topicId: params.topicId ?? null,
+    title: params.title,
+    description: params.description ?? null,
+    status: "pending",
+    createdAt: now,
+    resolvedAt: null
+  };
+}
+function listApprovals(status) {
+  const db = getDb();
+  let rows;
+  if (status) {
+    rows = db.prepare(
+      "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC"
+    ).all(status);
+  } else {
+    rows = db.prepare("SELECT * FROM approvals ORDER BY created_at DESC").all();
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    topicId: r.topic_id,
+    title: r.title,
+    description: r.description,
+    status: r.status,
+    createdAt: r.created_at,
+    resolvedAt: r.resolved_at
+  }));
+}
+function resolveApproval(id, status) {
+  const db = getDb();
+  const now = Date.now();
+  const result = db.prepare(
+    "UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?"
+  ).run(status, now, id);
+  return result.changes > 0;
 }
 
 // src/auth.ts
@@ -823,6 +1068,29 @@ function restoreSessions() {
 // src/ws-handler.ts
 import crypto3 from "crypto";
 import { WebSocketServer } from "ws";
+
+// src/workspace.ts
+function captureSnapshot(sessionName, tabId, topicId) {
+  const found = findTab(tabId);
+  if (!found) return null;
+  let text;
+  if (found.tab.vt && !found.tab.ended) {
+    const snapshot = found.tab.vt.textSnapshot();
+    text = snapshot.text;
+  } else {
+    const rawText = found.tab.scrollback.read().toString("utf8");
+    text = rawText.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+  }
+  const artifact = createArtifact({
+    topicId,
+    type: "snapshot",
+    title: `Snapshot: ${found.session.name} / ${found.tab.title}`,
+    content: text
+  });
+  return { artifact, text };
+}
+
+// src/ws-handler.ts
 function sendEnvelope(ws, type, payload) {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify({ v: 1, type, payload }));
@@ -1317,6 +1585,127 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             sendEnvelope(ws, "push_status", { subscribed: hasSub });
             return;
           }
+          if (p.type === "create_topic") {
+            if (typeof p.title === "string" && p.title.trim()) {
+              const topic = createTopic(
+                p.sessionName || "main",
+                p.title.trim()
+              );
+              sendEnvelope(ws, "topic_created", topic);
+            }
+            return;
+          }
+          if (p.type === "list_topics") {
+            const topics = listTopics(p.sessionName || void 0);
+            sendEnvelope(ws, "topic_list", { topics });
+            return;
+          }
+          if (p.type === "delete_topic") {
+            if (p.topicId) {
+              const ok = deleteTopic(p.topicId);
+              sendEnvelope(ws, "topic_deleted", {
+                topicId: p.topicId,
+                success: ok
+              });
+            }
+            return;
+          }
+          if (p.type === "create_run") {
+            const run = createRun({
+              topicId: p.topicId || void 0,
+              sessionName: p.sessionName || "main",
+              tabId: p.tabId,
+              command: p.command
+            });
+            sendEnvelope(ws, "run_created", run);
+            return;
+          }
+          if (p.type === "update_run") {
+            if (p.runId) {
+              const ok = updateRun(p.runId, {
+                exitCode: p.exitCode,
+                status: p.status
+              });
+              sendEnvelope(ws, "run_updated", {
+                runId: p.runId,
+                success: ok
+              });
+            }
+            return;
+          }
+          if (p.type === "list_runs") {
+            const runs = listRuns(p.topicId || void 0);
+            sendEnvelope(ws, "run_list", { runs });
+            return;
+          }
+          if (p.type === "capture_snapshot") {
+            const tabId = ws._remuxTabId;
+            if (tabId != null) {
+              const result = captureSnapshot(
+                clientState.currentSession || "main",
+                tabId,
+                p.topicId || void 0
+              );
+              if (result) {
+                sendEnvelope(ws, "snapshot_captured", result.artifact);
+              } else {
+                sendEnvelope(ws, "error", {
+                  reason: "no tab attached for snapshot"
+                });
+              }
+            }
+            return;
+          }
+          if (p.type === "list_artifacts") {
+            const artifacts = listArtifacts({
+              topicId: p.topicId || void 0,
+              runId: p.runId || void 0
+            });
+            sendEnvelope(ws, "artifact_list", { artifacts });
+            return;
+          }
+          if (p.type === "create_approval") {
+            if (typeof p.title === "string" && p.title.trim()) {
+              const approval = createApproval({
+                runId: p.runId || void 0,
+                topicId: p.topicId || void 0,
+                title: p.title.trim(),
+                description: p.description
+              });
+              sendEnvelope(ws, "approval_created", approval);
+              for (const client of controlClients) {
+                if (client !== ws && client.readyState === client.OPEN) {
+                  sendEnvelope(client, "approval_created", approval);
+                }
+              }
+            }
+            return;
+          }
+          if (p.type === "list_approvals") {
+            const approvals = listApprovals(p.status || void 0);
+            sendEnvelope(ws, "approval_list", { approvals });
+            return;
+          }
+          if (p.type === "resolve_approval") {
+            if (p.approvalId && (p.status === "approved" || p.status === "rejected")) {
+              const ok = resolveApproval(p.approvalId, p.status);
+              sendEnvelope(ws, "approval_resolved", {
+                approvalId: p.approvalId,
+                status: p.status,
+                success: ok
+              });
+              for (const client of controlClients) {
+                if (client !== ws && client.readyState === client.OPEN) {
+                  sendEnvelope(client, "approval_resolved", {
+                    approvalId: p.approvalId,
+                    status: p.status,
+                    success: ok
+                  });
+                }
+              }
+            }
+            return;
+          }
           return;
         } catch {
         }
@@ -1669,6 +2058,51 @@ var HTML_TEMPLATE = `<!doctype html>
       #inspect { flex: 1; background: var(--bg); overflow: auto; display: none;
         padding: 12px 16px; -webkit-overflow-scrolling: touch; }
       #inspect.visible { display: block; }
+
+      /* -- Workspace -- */
+      #workspace { flex: 1; background: var(--bg); overflow: auto; display: none;
+        padding: 12px 16px; -webkit-overflow-scrolling: touch; }
+      #workspace.visible { display: block; }
+      .ws-section { margin-bottom: 16px; }
+      .ws-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px;
+        display: flex; align-items: center; justify-content: space-between; }
+      .ws-section-title button { background: none; border: 1px solid var(--border);
+        color: var(--text-muted); font-size: 11px; padding: 2px 8px; border-radius: 4px;
+        cursor: pointer; font-family: inherit; }
+      .ws-section-title button:hover { color: var(--text-bright); border-color: var(--text-muted); }
+      .ws-empty { font-size: 12px; color: var(--text-dim); padding: 8px 0; }
+      .ws-card { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
+        padding: 8px 12px; margin-bottom: 6px; }
+      .ws-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+      .ws-card-title { font-size: 13px; color: var(--text-bright); font-weight: 500; flex: 1;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ws-card-meta { font-size: 10px; color: var(--text-dim); }
+      .ws-card-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+      .ws-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+        font-weight: 500; }
+      .ws-badge.running { background: #1a3a5c; color: #4da6ff; }
+      .ws-badge.completed { background: #1a3c1a; color: #4dff4d; }
+      .ws-badge.failed { background: #3c1a1a; color: #ff4d4d; }
+      .ws-badge.pending { background: #3c3a1a; color: #ffbd2e; }
+      .ws-badge.approved { background: #1a3c1a; color: #4dff4d; }
+      .ws-badge.rejected { background: #3c1a1a; color: #ff4d4d; }
+      .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
+      .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
+      .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
+      .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
+      .ws-card-actions button { background: none; border: 1px solid var(--border);
+        color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
+        cursor: pointer; font-family: inherit; }
+      .ws-card-actions button:hover { color: var(--text-bright); border-color: var(--text-muted); }
+      .ws-card-actions button.approve { border-color: #27c93f; color: #27c93f; }
+      .ws-card-actions button.approve:hover { background: #27c93f22; }
+      .ws-card-actions button.reject { border-color: #ff5f56; color: #ff5f56; }
+      .ws-card-actions button.reject:hover { background: #ff5f5622; }
+      .ws-card .del-topic { opacity: 0; background: none; border: none; color: var(--text-dim);
+        cursor: pointer; font-size: 14px; padding: 0 4px; font-family: inherit; border-radius: 3px; }
+      .ws-card:hover .del-topic { opacity: 1; }
+      .ws-card .del-topic:hover { color: var(--dot-err); }
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre; tab-size: 8;
         user-select: text; -webkit-user-select: text; }
@@ -1834,6 +2268,7 @@ var HTML_TEMPLATE = `<!doctype html>
         <div class="view-switch">
           <button id="btn-live" class="active">Live</button>
           <button id="btn-inspect">Inspect</button>
+          <button id="btn-workspace">Workspace</button>
         </div>
       </div>
       <div id="terminal"></div>
@@ -1846,6 +2281,34 @@ var HTML_TEMPLATE = `<!doctype html>
           </div>
         </div>
         <pre id="inspect-content"></pre>
+      </div>
+      <div id="workspace">
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Pending Approvals</span>
+          </div>
+          <div id="ws-approvals"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Topics</span>
+            <button id="btn-new-topic">+ New</button>
+          </div>
+          <div id="ws-topics"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Active Runs</span>
+          </div>
+          <div id="ws-runs"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-section-title">
+            <span>Recent Artifacts</span>
+            <button id="btn-capture-snapshot">Capture Snapshot</button>
+          </div>
+          <div id="ws-artifacts"></div>
+        </div>
       </div>
       <div class="compose-bar" id="compose-bar">
         <button data-seq="esc">Esc</button>
@@ -2247,6 +2710,17 @@ var HTML_TEMPLATE = `<!doctype html>
                 applyInspectSearch();
                 return;
               }
+              // Workspace message handlers
+              if (msg.type === 'topic_list') { wsTopics = msg.topics || []; renderWorkspaceTopics(); return; }
+              if (msg.type === 'topic_created') { refreshWorkspace(); return; }
+              if (msg.type === 'topic_deleted') { refreshWorkspace(); return; }
+              if (msg.type === 'run_list') { wsRuns = msg.runs || []; renderWorkspaceRuns(); return; }
+              if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
+              if (msg.type === 'snapshot_captured') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'approval_list') { wsApprovals = msg.approvals || []; renderWorkspaceApprovals(); return; }
+              if (msg.type === 'approval_created') { if (currentView === 'workspace') refreshWorkspace(); return; }
+              if (msg.type === 'approval_resolved') { if (currentView === 'workspace') refreshWorkspace(); return; }
             } catch {}
           }
           term.write(e.data);
@@ -2286,24 +2760,32 @@ var HTML_TEMPLATE = `<!doctype html>
       });
 
       // -- Inspect view --
-      let inspectMode = false, inspectTimer = null;
+      let currentView = 'live', inspectTimer = null, wsRefreshTimer = null;
       function setView(mode) {
-        inspectMode = mode === 'inspect';
-        $('btn-live').classList.toggle('active', !inspectMode);
-        $('btn-inspect').classList.toggle('active', inspectMode);
-        $('terminal').classList.toggle('hidden', inspectMode);
-        $('inspect').classList.toggle('visible', inspectMode);
-        if (inspectMode) {
+        currentView = mode;
+        $('btn-live').classList.toggle('active', mode === 'live');
+        $('btn-inspect').classList.toggle('active', mode === 'inspect');
+        $('btn-workspace').classList.toggle('active', mode === 'workspace');
+        $('terminal').classList.toggle('hidden', mode !== 'live');
+        $('inspect').classList.toggle('visible', mode === 'inspect');
+        $('workspace').classList.toggle('visible', mode === 'workspace');
+        // Inspect auto-refresh
+        if (inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
+        if (mode === 'inspect') {
           sendCtrl({ type: 'inspect' });
           inspectTimer = setInterval(() => sendCtrl({ type: 'inspect' }), 3000);
-        } else {
-          if (inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
-          term.focus();
-          fitAddon.fit();
         }
+        // Workspace auto-refresh
+        if (wsRefreshTimer) { clearInterval(wsRefreshTimer); wsRefreshTimer = null; }
+        if (mode === 'workspace') {
+          refreshWorkspace();
+          wsRefreshTimer = setInterval(refreshWorkspace, 5000);
+        }
+        if (mode === 'live') { term.focus(); fitAddon.fit(); }
       }
       $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); setView('live'); });
       $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); setView('inspect'); });
+      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); setView('workspace'); });
 
       // -- Inspect search --
       function applyInspectSearch() {
@@ -2486,6 +2968,121 @@ var HTML_TEMPLATE = `<!doctype html>
         sendCtrl({ type: 'test_push' });
       });
 
+      // -- Workspace view --
+      let wsTopics = [], wsRuns = [], wsArtifacts = [], wsApprovals = [];
+
+      function refreshWorkspace() {
+        sendCtrl({ type: 'list_topics', sessionName: currentSession });
+        sendCtrl({ type: 'list_runs' });
+        sendCtrl({ type: 'list_artifacts' });
+        sendCtrl({ type: 'list_approvals' });
+      }
+
+      function timeAgo(ts) {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 60) return s + 's ago';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        return Math.floor(s / 86400) + 'd ago';
+      }
+
+      function renderWorkspaceApprovals() {
+        const el = $('ws-approvals');
+        if (!el) return;
+        const pending = wsApprovals.filter(a => a.status === 'pending');
+        if (pending.length === 0) { el.innerHTML = '<div class="ws-empty">No pending approvals</div>'; return; }
+        el.innerHTML = pending.map(a =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-badge pending">pending</span>' +
+              '<span class="ws-card-title">' + (a.title || '') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+            '</div>' +
+            (a.description ? '<div class="ws-card-desc">' + a.description + '</div>' : '') +
+            '<div class="ws-card-actions">' +
+              '<button class="approve" data-approve-id="' + a.id + '">Approve</button>' +
+              '<button class="reject" data-reject-id="' + a.id + '">Reject</button>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+        el.querySelectorAll('[data-approve-id]').forEach(btn => {
+          btn.addEventListener('click', () => sendCtrl({ type: 'resolve_approval', approvalId: btn.dataset.approveId, status: 'approved' }));
+        });
+        el.querySelectorAll('[data-reject-id]').forEach(btn => {
+          btn.addEventListener('click', () => sendCtrl({ type: 'resolve_approval', approvalId: btn.dataset.rejectId, status: 'rejected' }));
+        });
+      }
+
+      function renderWorkspaceTopics() {
+        const el = $('ws-topics');
+        if (!el) return;
+        if (wsTopics.length === 0) { el.innerHTML = '<div class="ws-empty">No topics yet</div>'; return; }
+        el.innerHTML = wsTopics.map(t =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-card-title">' + (t.title || '') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(t.createdAt) + '</span>' +
+              '<button class="del-topic" data-del-topic="' + t.id + '" title="Delete">&times;</button>' +
+            '</div>' +
+            '<div class="ws-card-meta">' + t.sessionName + '</div>' +
+          '</div>'
+        ).join('');
+        el.querySelectorAll('[data-del-topic]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            sendCtrl({ type: 'delete_topic', topicId: btn.dataset.delTopic });
+            setTimeout(refreshWorkspace, 200);
+          });
+        });
+      }
+
+      function renderWorkspaceRuns() {
+        const el = $('ws-runs');
+        if (!el) return;
+        const active = wsRuns.filter(r => r.status === 'running');
+        const recent = wsRuns.filter(r => r.status !== 'running').slice(-5).reverse();
+        const all = [...active, ...recent];
+        if (all.length === 0) { el.innerHTML = '<div class="ws-empty">No runs</div>'; return; }
+        el.innerHTML = all.map(r =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-badge ' + r.status + '">' + r.status + '</span>' +
+              '<span class="ws-card-title">' + (r.command || '(no command)') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(r.startedAt) + '</span>' +
+            '</div>' +
+            (r.exitCode !== null ? '<div class="ws-card-meta">Exit: ' + r.exitCode + '</div>' : '') +
+          '</div>'
+        ).join('');
+      }
+
+      function renderWorkspaceArtifacts() {
+        const el = $('ws-artifacts');
+        if (!el) return;
+        const recent = wsArtifacts.slice(-10).reverse();
+        if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
+        el.innerHTML = recent.map(a =>
+          '<div class="ws-card">' +
+            '<div class="ws-card-header">' +
+              '<span class="ws-badge ' + a.type + '">' + a.type + '</span>' +
+              '<span class="ws-card-title">' + (a.title || '') + '</span>' +
+              '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+      }
+
+      $('btn-new-topic').addEventListener('click', () => {
+        const title = prompt('Topic title:');
+        if (title && title.trim()) {
+          sendCtrl({ type: 'create_topic', sessionName: currentSession, title: title.trim() });
+          setTimeout(refreshWorkspace, 200);
+        }
+      });
+
+      $('btn-capture-snapshot').addEventListener('click', () => {
+        sendCtrl({ type: 'capture_snapshot' });
+        setTimeout(refreshWorkspace, 500);
+      });
+
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {
         const tabEl = e.target.closest('.tab');
@@ -2541,7 +3138,7 @@ var HTML_TEMPLATE = `<!doctype html>
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
       // iOS Safari: touching terminal area focuses hidden textarea for input
-      document.getElementById('terminal').addEventListener('touchend', () => { if (!inspectMode) term.focus(); });
+      document.getElementById('terminal').addEventListener('touchend', () => { if (currentView === 'live') term.focus(); });
     </script>
   </body>
 </html>`;

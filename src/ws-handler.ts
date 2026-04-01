@@ -50,6 +50,24 @@ import {
   sendPushNotification,
   broadcastPush,
 } from "./push.js";
+import {
+  createTopic,
+  updateTopic,
+  listTopics,
+  deleteTopic,
+  createRun,
+  updateRun,
+  listRuns,
+  listArtifacts,
+  createApproval,
+  listApprovals,
+  resolveApproval,
+} from "./store.js";
+import {
+  captureSnapshot,
+  createCommandCard,
+  getTopicSummary,
+} from "./workspace.js";
 
 // ── Protocol Envelope ───────────────────────────────────────────
 
@@ -726,6 +744,151 @@ export function setupWebSocket(
               ? !!getPushSubscription(ws._remuxDeviceId)
               : false;
             sendEnvelope(ws, "push_status", { subscribed: hasSub });
+            return;
+          }
+
+          // ── Workspace: Topics ──
+
+          if (p.type === "create_topic") {
+            if (typeof p.title === "string" && p.title.trim()) {
+              const topic = createTopic(
+                p.sessionName || "main",
+                p.title.trim(),
+              );
+              sendEnvelope(ws, "topic_created", topic);
+            }
+            return;
+          }
+
+          if (p.type === "list_topics") {
+            const topics = listTopics(p.sessionName || undefined);
+            sendEnvelope(ws, "topic_list", { topics });
+            return;
+          }
+
+          if (p.type === "delete_topic") {
+            if (p.topicId) {
+              const ok = deleteTopic(p.topicId);
+              sendEnvelope(ws, "topic_deleted", {
+                topicId: p.topicId,
+                success: ok,
+              });
+            }
+            return;
+          }
+
+          // ── Workspace: Runs ──
+
+          if (p.type === "create_run") {
+            const run = createRun({
+              topicId: p.topicId || undefined,
+              sessionName: p.sessionName || "main",
+              tabId: p.tabId,
+              command: p.command,
+            });
+            sendEnvelope(ws, "run_created", run);
+            return;
+          }
+
+          if (p.type === "update_run") {
+            if (p.runId) {
+              const ok = updateRun(p.runId, {
+                exitCode: p.exitCode,
+                status: p.status,
+              });
+              sendEnvelope(ws, "run_updated", {
+                runId: p.runId,
+                success: ok,
+              });
+            }
+            return;
+          }
+
+          if (p.type === "list_runs") {
+            const runs = listRuns(p.topicId || undefined);
+            sendEnvelope(ws, "run_list", { runs });
+            return;
+          }
+
+          // ── Workspace: Artifacts ──
+
+          if (p.type === "capture_snapshot") {
+            const tabId = ws._remuxTabId;
+            if (tabId != null) {
+              const result = captureSnapshot(
+                clientState.currentSession || "main",
+                tabId,
+                p.topicId || undefined,
+              );
+              if (result) {
+                sendEnvelope(ws, "snapshot_captured", result.artifact);
+              } else {
+                sendEnvelope(ws, "error", {
+                  reason: "no tab attached for snapshot",
+                });
+              }
+            }
+            return;
+          }
+
+          if (p.type === "list_artifacts") {
+            const artifacts = listArtifacts({
+              topicId: p.topicId || undefined,
+              runId: p.runId || undefined,
+            });
+            sendEnvelope(ws, "artifact_list", { artifacts });
+            return;
+          }
+
+          // ── Workspace: Approvals ──
+
+          if (p.type === "create_approval") {
+            if (typeof p.title === "string" && p.title.trim()) {
+              const approval = createApproval({
+                runId: p.runId || undefined,
+                topicId: p.topicId || undefined,
+                title: p.title.trim(),
+                description: p.description,
+              });
+              sendEnvelope(ws, "approval_created", approval);
+              // Broadcast to all control clients so they see the new approval
+              for (const client of controlClients) {
+                if (client !== ws && client.readyState === client.OPEN) {
+                  sendEnvelope(client, "approval_created", approval);
+                }
+              }
+            }
+            return;
+          }
+
+          if (p.type === "list_approvals") {
+            const approvals = listApprovals(p.status || undefined);
+            sendEnvelope(ws, "approval_list", { approvals });
+            return;
+          }
+
+          if (p.type === "resolve_approval") {
+            if (
+              p.approvalId &&
+              (p.status === "approved" || p.status === "rejected")
+            ) {
+              const ok = resolveApproval(p.approvalId, p.status);
+              sendEnvelope(ws, "approval_resolved", {
+                approvalId: p.approvalId,
+                status: p.status,
+                success: ok,
+              });
+              // Broadcast resolution to all control clients
+              for (const client of controlClients) {
+                if (client !== ws && client.readyState === client.OPEN) {
+                  sendEnvelope(client, "approval_resolved", {
+                    approvalId: p.approvalId,
+                    status: p.status,
+                    success: ok,
+                  });
+                }
+              }
+            }
             return;
           }
 

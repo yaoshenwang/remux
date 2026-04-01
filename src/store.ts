@@ -82,6 +82,47 @@ export function getDb(): Database.Database {
       auth TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS topics (
+      id TEXT PRIMARY KEY,
+      session_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT REFERENCES topics(id),
+      session_name TEXT NOT NULL,
+      tab_id INTEGER,
+      command TEXT,
+      exit_code INTEGER,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      status TEXT DEFAULT 'running'
+    );
+
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT REFERENCES runs(id),
+      topic_id TEXT REFERENCES topics(id),
+      type TEXT NOT NULL,
+      title TEXT,
+      content TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS approvals (
+      id TEXT PRIMARY KEY,
+      run_id TEXT REFERENCES runs(id),
+      topic_id TEXT REFERENCES topics(id),
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      resolved_at INTEGER
+    );
   `);
 
   return _db;
@@ -534,4 +575,369 @@ export function listPushSubscriptions(): PushSubscriptionRecord[] {
     auth: r.auth,
     createdAt: r.created_at,
   }));
+}
+
+// ── Workspace: Topics ─────────────────────────────────────────────
+
+export interface Topic {
+  id: string;
+  sessionName: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Create a new topic (conversation thread) within a session.
+ */
+export function createTopic(sessionName: string, title: string): Topic {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO topics (id, session_name, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(id, sessionName, title, now, now);
+  return { id, sessionName, title, createdAt: now, updatedAt: now };
+}
+
+/**
+ * Update a topic's title.
+ */
+export function updateTopic(id: string, title: string): boolean {
+  const db = getDb();
+  const now = Date.now();
+  const result = db
+    .prepare("UPDATE topics SET title = ?, updated_at = ? WHERE id = ?")
+    .run(title, now, id);
+  return result.changes > 0;
+}
+
+/**
+ * List topics, optionally filtered by session name.
+ */
+export function listTopics(sessionName?: string): Topic[] {
+  const db = getDb();
+  let rows: any[];
+  if (sessionName) {
+    rows = db
+      .prepare(
+        "SELECT * FROM topics WHERE session_name = ? ORDER BY created_at",
+      )
+      .all(sessionName) as any[];
+  } else {
+    rows = db
+      .prepare("SELECT * FROM topics ORDER BY created_at")
+      .all() as any[];
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    sessionName: r.session_name,
+    title: r.title,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+/**
+ * Delete a topic by ID.
+ */
+export function deleteTopic(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM topics WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+// ── Workspace: Runs ───────────────────────────────────────────────
+
+export interface Run {
+  id: string;
+  topicId: string | null;
+  sessionName: string;
+  tabId: number | null;
+  command: string | null;
+  exitCode: number | null;
+  startedAt: number;
+  endedAt: number | null;
+  status: "running" | "completed" | "failed";
+}
+
+/**
+ * Create a new run (command execution tracked within a topic).
+ */
+export function createRun(params: {
+  topicId?: string;
+  sessionName: string;
+  tabId?: number;
+  command?: string;
+}): Run {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO runs (id, topic_id, session_name, tab_id, command, started_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, 'running')`,
+  ).run(
+    id,
+    params.topicId ?? null,
+    params.sessionName,
+    params.tabId ?? null,
+    params.command ?? null,
+    now,
+  );
+  return {
+    id,
+    topicId: params.topicId ?? null,
+    sessionName: params.sessionName,
+    tabId: params.tabId ?? null,
+    command: params.command ?? null,
+    exitCode: null,
+    startedAt: now,
+    endedAt: null,
+    status: "running",
+  };
+}
+
+/**
+ * Update a run's exit code, status, and/or end time.
+ */
+export function updateRun(
+  id: string,
+  params: { exitCode?: number; status?: string },
+): boolean {
+  const db = getDb();
+  const now = Date.now();
+  const sets: string[] = [];
+  const values: any[] = [];
+
+  if (params.exitCode !== undefined) {
+    sets.push("exit_code = ?");
+    values.push(params.exitCode);
+  }
+  if (params.status !== undefined) {
+    sets.push("status = ?");
+    values.push(params.status);
+  }
+  if (
+    params.status === "completed" ||
+    params.status === "failed" ||
+    params.exitCode !== undefined
+  ) {
+    sets.push("ended_at = ?");
+    values.push(now);
+  }
+
+  if (sets.length === 0) return false;
+  values.push(id);
+
+  const result = db
+    .prepare(`UPDATE runs SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...values);
+  return result.changes > 0;
+}
+
+/**
+ * List runs, optionally filtered by topic ID.
+ */
+export function listRuns(topicId?: string): Run[] {
+  const db = getDb();
+  let rows: any[];
+  if (topicId) {
+    rows = db
+      .prepare("SELECT * FROM runs WHERE topic_id = ? ORDER BY started_at")
+      .all(topicId) as any[];
+  } else {
+    rows = db
+      .prepare("SELECT * FROM runs ORDER BY started_at")
+      .all() as any[];
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    topicId: r.topic_id,
+    sessionName: r.session_name,
+    tabId: r.tab_id,
+    command: r.command,
+    exitCode: r.exit_code,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    status: r.status,
+  }));
+}
+
+// ── Workspace: Artifacts ──────────────────────────────────────────
+
+export interface Artifact {
+  id: string;
+  runId: string | null;
+  topicId: string | null;
+  type: "snapshot" | "command-card" | "note";
+  title: string | null;
+  content: string | null;
+  createdAt: number;
+}
+
+/**
+ * Create an artifact (snapshot, command card, or note).
+ */
+export function createArtifact(params: {
+  runId?: string;
+  topicId?: string;
+  type: string;
+  title?: string;
+  content?: string;
+}): Artifact {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO artifacts (id, run_id, topic_id, type, title, content, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    params.runId ?? null,
+    params.topicId ?? null,
+    params.type,
+    params.title ?? null,
+    params.content ?? null,
+    now,
+  );
+  return {
+    id,
+    runId: params.runId ?? null,
+    topicId: params.topicId ?? null,
+    type: params.type as Artifact["type"],
+    title: params.title ?? null,
+    content: params.content ?? null,
+    createdAt: now,
+  };
+}
+
+/**
+ * List artifacts, optionally filtered by topic or run.
+ */
+export function listArtifacts(params: {
+  topicId?: string;
+  runId?: string;
+}): Artifact[] {
+  const db = getDb();
+  let rows: any[];
+  if (params.topicId) {
+    rows = db
+      .prepare(
+        "SELECT * FROM artifacts WHERE topic_id = ? ORDER BY created_at",
+      )
+      .all(params.topicId) as any[];
+  } else if (params.runId) {
+    rows = db
+      .prepare("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at")
+      .all(params.runId) as any[];
+  } else {
+    rows = db
+      .prepare("SELECT * FROM artifacts ORDER BY created_at")
+      .all() as any[];
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    topicId: r.topic_id,
+    type: r.type,
+    title: r.title,
+    content: r.content,
+    createdAt: r.created_at,
+  }));
+}
+
+// ── Workspace: Approvals ──────────────────────────────────────────
+
+export interface Approval {
+  id: string;
+  runId: string | null;
+  topicId: string | null;
+  title: string;
+  description: string | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: number;
+  resolvedAt: number | null;
+}
+
+/**
+ * Create an approval request (pending human review).
+ */
+export function createApproval(params: {
+  runId?: string;
+  topicId?: string;
+  title: string;
+  description?: string;
+}): Approval {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO approvals (id, run_id, topic_id, title, description, status, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+  ).run(
+    id,
+    params.runId ?? null,
+    params.topicId ?? null,
+    params.title,
+    params.description ?? null,
+    now,
+  );
+  return {
+    id,
+    runId: params.runId ?? null,
+    topicId: params.topicId ?? null,
+    title: params.title,
+    description: params.description ?? null,
+    status: "pending",
+    createdAt: now,
+    resolvedAt: null,
+  };
+}
+
+/**
+ * List approvals, optionally filtered by status.
+ */
+export function listApprovals(
+  status?: "pending" | "approved" | "rejected",
+): Approval[] {
+  const db = getDb();
+  let rows: any[];
+  if (status) {
+    rows = db
+      .prepare(
+        "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC",
+      )
+      .all(status) as any[];
+  } else {
+    rows = db
+      .prepare("SELECT * FROM approvals ORDER BY created_at DESC")
+      .all() as any[];
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    topicId: r.topic_id,
+    title: r.title,
+    description: r.description,
+    status: r.status,
+    createdAt: r.created_at,
+    resolvedAt: r.resolved_at,
+  }));
+}
+
+/**
+ * Resolve an approval (approve or reject).
+ */
+export function resolveApproval(
+  id: string,
+  status: "approved" | "rejected",
+): boolean {
+  const db = getDb();
+  const now = Date.now();
+  const result = db
+    .prepare(
+      "UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?",
+    )
+    .run(status, now, id);
+  return result.changes > 0;
 }
