@@ -54,3 +54,85 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  # ── macOS app (.dmg) → GitHub Release ────────────────
+  macos:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build GhosttyKit xcframework
+        run: |
+          cd vendor/ghostty
+          zig build -Demit-xcframework=true -Dxcframework-target=native -Doptimize=ReleaseFast
+
+      - name: Build macOS app (release)
+        run: |
+          cd apps/macos
+          swift build -c release
+
+      - name: Create .app bundle and DMG
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          bash scripts/build-dmg.sh "$VERSION"
+
+      - name: Upload DMG to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          DMG="build/Remux-${VERSION}-arm64.dmg"
+          if [ -f "$DMG" ]; then
+            gh release upload "$TAG" "$DMG" --clobber
+            echo "✓ Uploaded $DMG to release $TAG"
+          else
+            echo "⚠ DMG not found, uploading .app as zip"
+            cd build && zip -r "Remux-${VERSION}-arm64.zip" Remux.app
+            gh release upload "$TAG" "Remux-${VERSION}-arm64.zip" --clobber
+          fi
+
+  # ── Update Homebrew tap ─────────────────────────────
+  homebrew:
+    needs: [npm, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Homebrew formula and cask
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+
+          git clone https://x-access-token:${GH_TOKEN}@github.com/yaoshenwang/homebrew-tap /tmp/tap
+          cd /tmp/tap
+
+          # Update cask version
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/remux-app.rb
+
+          # Update formula URL
+          sed -i "s|remux-.*\.tgz|remux-${VERSION}.tgz|" Formula/remux.rb
+
+          # Compute sha256 for npm tarball
+          NPM_SHA=$(curl -sL "https://registry.npmjs.org/remux/-/remux-${VERSION}.tgz" | sha256sum | cut -d' ' -f1)
+          sed -i "s/sha256 \".*\"/sha256 \"${NPM_SHA}\"/" Formula/remux.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Update to v${VERSION}"
+          git push origin main
