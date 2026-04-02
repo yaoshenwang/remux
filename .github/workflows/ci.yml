@@ -60,5 +60,6 @@ jobs:
 
       - name: Publish @dev
         run: pnpm publish --access public --no-git-checks --tag dev
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
