@@ -317,8 +317,8 @@ const HTML_TEMPLATE = `<!doctype html>
       .tab-new:hover { color: var(--text); background: var(--compose-bg); }
 
       /* -- Terminal -- */
-      #terminal { flex: 1; background: var(--bg); overflow: hidden; }
-      #terminal canvas { display: block; }
+      #terminal { flex: 1; background: var(--bg); overflow: hidden; position: relative; }
+      #terminal canvas { display: block; position: absolute; top: 0; left: 0; }
       #terminal.hidden { display: none; }
 
       /* -- View switcher -- */
