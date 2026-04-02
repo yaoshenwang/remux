@@ -1285,7 +1285,7 @@ function main() {
       }
     });
     socket.on("data", (data) => {
-      parser.feed(data);
+      parser.feed(Buffer.isBuffer(data) ? data : Buffer.from(data));
     });
     socket.on("close", () => {
       clients.delete(socket);
@@ -4904,7 +4904,7 @@ function shutdown() {
         tab.vt.dispose();
         tab.vt = null;
       }
-      if (!tab.ended) tab.pty.kill();
+      if (!tab.ended && tab.pty) tab.pty.kill();
     }
   }
   process.exit(0);
@@ -5577,9 +5577,18 @@ var init_server = __esm({
       // so no forwarding patch is needed. Just guard fit() during composition.
       let _isComposing = false;
       let _pendingFit = false;
+      let fitDebounceTimer = null;
+      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
       function safeFit() {
         if (_isComposing) { _pendingFit = true; return; }
         if (fitAddon) fitAddon.fit();
+      }
+      function syncTouchViewportHeight() {
+        if (!window.visualViewport || !isTouchDevice || _isComposing) return;
+        const vh = window.visualViewport.height;
+        if (vh > 0) document.body.style.height = vh + 'px';
+        clearTimeout(fitDebounceTimer);
+        fitDebounceTimer = setTimeout(safeFit, 100);
       }
       window.addEventListener('resize', safeFit);
       const _termContainer = document.getElementById('terminal');
@@ -6729,17 +6738,10 @@ var init_server = __esm({
 
       // -- Mobile virtual keyboard handling --
       // Only apply visualViewport height adjustments on touch devices.
-      // On desktop, IME candidate windows trigger visualViewport resize
-      // with incorrect height values, causing the page to go blank.
-      let fitDebounceTimer = null;
-      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      // Ignore viewport sync during IME composition so candidate UI can't
+      // temporarily collapse the terminal area.
       if (window.visualViewport && isTouchDevice) {
-        window.visualViewport.addEventListener('resize', () => {
-          const vh = window.visualViewport.height;
-          if (vh > 0) document.body.style.height = vh + 'px';
-          clearTimeout(fitDebounceTimer);
-          fitDebounceTimer = setTimeout(safeFit, 100);
-        });
+        window.visualViewport.addEventListener('resize', syncTouchViewportHeight);
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
       // iOS Safari: touching terminal area focuses hidden textarea for input

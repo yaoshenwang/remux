@@ -318,4 +318,127 @@ test.describe.serial("Remux E2E", () => {
       }
     }
   });
+
+  test("IME composition ignores viewport shrink on touch devices", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 1280, height: 720 },
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${BASE}&debug=1`);
+      await expect(page.locator("#terminal canvas")).toBeVisible({
+        timeout: 10000,
+      });
+      await page.waitForFunction(
+        () =>
+          window._remuxTerm &&
+          document.querySelector("#status-dot")?.classList.contains("connected"),
+        { timeout: 10000 },
+      );
+
+      const snapshot = await page.evaluate(async () => {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const visualViewport = window.visualViewport;
+        const viewportProto = visualViewport
+          ? Object.getPrototypeOf(visualViewport)
+          : null;
+        const originalHeight =
+          viewportProto &&
+          Object.getOwnPropertyDescriptor(viewportProto, "height");
+        const textarea = document.querySelector("#terminal textarea");
+        const terminal = document.getElementById("terminal");
+        const canvas = document.querySelector("#terminal canvas");
+
+        if (
+          !visualViewport ||
+          !viewportProto ||
+          !originalHeight ||
+          !textarea ||
+          !terminal ||
+          !canvas
+        ) {
+          return {
+            missing: {
+              visualViewport: !!visualViewport,
+              textarea: !!textarea,
+              terminal: !!terminal,
+              canvas: !!canvas,
+            },
+          };
+        }
+
+        const readLayout = () => ({
+          bodyHeight: document.body.offsetHeight,
+          bodyStyleHeight: document.body.style.height,
+          terminalHeight: terminal.offsetHeight,
+          canvasHeight: canvas.height,
+        });
+
+        const baseline = readLayout();
+
+        try {
+          textarea.focus();
+          textarea.dispatchEvent(
+            new CompositionEvent("compositionstart", {
+              bubbles: true,
+              data: "",
+            }),
+          );
+          textarea.dispatchEvent(
+            new CompositionEvent("compositionupdate", {
+              bubbles: true,
+              data: "zhong",
+            }),
+          );
+
+          Object.defineProperty(viewportProto, "height", {
+            configurable: true,
+            get: () => 120,
+          });
+          visualViewport.dispatchEvent(new Event("resize"));
+          await sleep(180);
+
+          const composing = readLayout();
+
+          textarea.dispatchEvent(
+            new CompositionEvent("compositionend", {
+              bubbles: true,
+              data: "中文",
+            }),
+          );
+          Object.defineProperty(viewportProto, "height", originalHeight);
+          visualViewport.dispatchEvent(new Event("resize"));
+          await sleep(180);
+
+          return { baseline, composing, recovered: readLayout() };
+        } finally {
+          Object.defineProperty(viewportProto, "height", originalHeight);
+        }
+      });
+
+      expect(snapshot.missing).toBeUndefined();
+      expect(snapshot.baseline.bodyHeight).toBeGreaterThan(400);
+      expect(snapshot.composing.bodyHeight).toBe(snapshot.baseline.bodyHeight);
+      expect(snapshot.composing.bodyStyleHeight).toBe(
+        snapshot.baseline.bodyStyleHeight,
+      );
+      expect(snapshot.composing.terminalHeight).toBe(
+        snapshot.baseline.terminalHeight,
+      );
+      expect(snapshot.composing.canvasHeight).toBe(
+        snapshot.baseline.canvasHeight,
+      );
+      expect(snapshot.recovered.bodyHeight).toBe(snapshot.baseline.bodyHeight);
+      expect(snapshot.recovered.terminalHeight).toBe(
+        snapshot.baseline.terminalHeight,
+      );
+    } finally {
+      await context.close();
+    }
+  });
 });
