@@ -1285,7 +1285,7 @@ function main() {
       }
     });
     socket.on("data", (data) => {
-      parser.feed(data);
+      parser.feed(Buffer.isBuffer(data) ? data : Buffer.from(data));
     });
     socket.on("close", () => {
       clients.delete(socket);
