@@ -6,20 +6,6 @@ import RemuxKit
 final class MenuBarManager {
     private weak var state: RemuxState?
 
-    /// Callback for split operations, wired from AppDelegate.
-    var onSplitRight: (() -> Void)?
-    var onSplitDown: (() -> Void)?
-    var onClosePane: (() -> Void)?
-    var onFocusNextPane: (() -> Void)?
-    var onFocusPreviousPane: (() -> Void)?
-
-    /// Callbacks for new features.
-    var onNewBrowserPane: (() -> Void)?
-    var onNewMarkdownPane: (() -> Void)?
-    var onCommandPalette: (() -> Void)?
-    var onCopyMode: (() -> Void)?
-    var onDetachPane: (() -> Void)?
-
     init(state: RemuxState) {
         self.state = state
         setupMenuBar()
@@ -211,52 +197,53 @@ final class MenuBarManager {
     }
 
     @objc private func findInTerminal(_ sender: Any?) {
-        // Search is triggered through the GhosttyNativeView's performKeyEquivalent
-        // which intercepts Cmd+F. The menu item provides discoverability.
+        dispatch(.findInTerminal)
     }
 
     // MARK: - Split pane actions
 
     @objc private func splitRightAction(_ sender: Any?) {
-        onSplitRight?()
+        dispatch(.splitRight)
     }
 
     @objc private func splitDownAction(_ sender: Any?) {
-        onSplitDown?()
+        dispatch(.splitDown)
     }
 
     @objc private func closePaneAction(_ sender: Any?) {
-        onClosePane?()
+        dispatch(.closePane)
     }
 
     @objc private func focusNextAction(_ sender: Any?) {
-        onFocusNextPane?()
+        dispatch(.focusNextPane)
     }
 
     @objc private func focusPrevAction(_ sender: Any?) {
-        onFocusPreviousPane?()
+        dispatch(.focusPreviousPane)
     }
 
     // MARK: - New panel actions
 
     @objc private func newBrowserPaneAction(_ sender: Any?) {
-        onNewBrowserPane?()
+        dispatch(.newBrowserPane)
     }
 
     @objc private func newMarkdownPaneAction(_ sender: Any?) {
-        onNewMarkdownPane?()
+        dispatch(.newMarkdownPane)
     }
 
     @objc private func commandPaletteAction(_ sender: Any?) {
-        onCommandPalette?()
+        dispatch(.commandPalette)
     }
 
     @objc private func copyModeAction(_ sender: Any?) {
-        onCopyMode?()
+        dispatch(.copyMode)
     }
 
     @objc private func detachPaneAction(_ sender: Any?) {
-        onDetachPane?()
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.detachPaneToWindow()
+        }
     }
 
     @objc private func openInEditor(_ sender: Any?) {
@@ -271,5 +258,10 @@ final class MenuBarManager {
         }
 
         FinderIntegration.openInExternalEditor(path: cwd, editor: editor)
+    }
+
+    private func dispatch(_ action: WindowCommandAction) {
+        guard let targetWindowNumber = NSApp.keyWindow?.windowNumber else { return }
+        WindowCommand(action: action, targetWindowNumber: targetWindowNumber).post()
     }
 }

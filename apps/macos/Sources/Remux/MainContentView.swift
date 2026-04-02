@@ -6,6 +6,7 @@ import RemuxKit
 struct MainContentView: View {
     @Environment(RemuxState.self) private var state
     @State private var showInspect = false
+    @State private var windowNumber: Int?
 
     // Split pane state
     @State private var splitRoot: SplitNode = .leaf(SplitNode.LeafData(tabIndex: 0))
@@ -88,12 +89,24 @@ struct MainContentView: View {
                 isPresented: $showCommandPalette,
                 commands: buildCommandList()
             )
+
+            WindowObserver { window in
+                windowNumber = window?.windowNumber
+            }
+            .frame(width: 0, height: 0)
         }
         .onAppear {
             // Set initial focused leaf
             if focusedLeafID == nil {
                 focusedLeafID = splitRoot.allLeaves.first?.id
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .remuxWindowCommand)) { notification in
+            guard let command = WindowCommand(notification: notification),
+                  command.matches(windowNumber: windowNumber) else {
+                return
+            }
+            handleWindowCommand(command.action)
         }
     }
 
@@ -294,6 +307,49 @@ struct MainContentView: View {
         case .focusLeft, .focusRight, .focusUp, .focusDown:
             break // Directional focus — would need spatial awareness
         }
+    }
+
+    private func handleWindowCommand(_ action: WindowCommandAction) {
+        switch action {
+        case .splitRight:
+            splitPane(orientation: .horizontal)
+        case .splitDown:
+            splitPane(orientation: .vertical)
+        case .closePane:
+            closePane()
+        case .focusNextPane:
+            focusNextPane()
+        case .focusPreviousPane:
+            focusPreviousPane()
+        case .newBrowserPane:
+            addBrowserPane()
+        case .newMarkdownPane:
+            addMarkdownPane()
+        case .commandPalette:
+            toggleCommandPalette()
+        case .copyMode:
+            toggleCopyMode()
+        case .findInTerminal:
+            guard let windowNumber,
+                  let leafID = activeTerminalLeafID else {
+                return
+            }
+            TerminalCommand(
+                action: .showSearch,
+                targetWindowNumber: windowNumber,
+                leafID: leafID
+            ).post()
+        }
+    }
+
+    private var activeTerminalLeafID: UUID? {
+        if let focusedLeafID,
+           let leaf = splitRoot.findLeaf(id: focusedLeafID),
+           leaf.panelType == .terminal {
+            return focusedLeafID
+        }
+
+        return splitRoot.allLeaves.first(where: { $0.panelType == .terminal })?.id
     }
 
     // MARK: - SSH upload

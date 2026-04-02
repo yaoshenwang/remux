@@ -64,7 +64,7 @@ struct SplitLeafView: View {
     private var panelContent: some View {
         switch data.panelType {
         case .terminal:
-            TerminalContainerView()
+            TerminalContainerView(leafID: data.id)
 
         case .browser:
             let panel = getBrowserPanel()

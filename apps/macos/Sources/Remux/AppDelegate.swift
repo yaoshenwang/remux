@@ -38,6 +38,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         finderIntegration = FinderIntegration(state: state)
         finderIntegration?.registerServices()
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTerminalDataNotification(_:)),
+            name: .remuxTerminalData,
+            object: nil
+        )
+
         // Start autosave
         SessionPersistence.shared.startAutosave { [weak self] in
             guard let self else {
@@ -60,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
+
         // Stop socket controller
         socketController?.stop()
 
@@ -253,5 +262,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.close()
         }
         detachedWindows.removeAll()
+    }
+
+    @objc private func handleTerminalDataNotification(_ notification: Notification) {
+        guard let data = notification.userInfo?["data"] as? Data else { return }
+
+        let oscNotifications = OSCNotificationParser.parse(data)
+        guard !oscNotifications.isEmpty else { return }
+
+        let sessionName = state.currentSession.isEmpty ? "Remux" : state.currentSession
+        for oscNotification in oscNotifications {
+            notificationManager?.handleNotification(.init(
+                title: oscNotification.title,
+                body: oscNotification.body,
+                tabIndex: state.activeTabIndex,
+                sessionName: sessionName
+            ))
+        }
     }
 }

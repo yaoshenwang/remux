@@ -95,13 +95,13 @@ struct KeychainStoreTests {
         #expect(servers.contains(resumeOnly))
     }
 
-    @Test("Preferred credential uses resume token before server token", .enabled(if: keychainAvailable))
-    func preferredCredentialPrefersResumeToken() throws {
+    @Test("Preferred credential uses server token before resume token", .enabled(if: keychainAvailable))
+    func preferredCredentialPrefersServerToken() throws {
         try store.saveServerToken("tok", forServer: testServer)
         try store.saveResumeToken("resume", forServer: testServer)
         defer { store.deleteAll(forServer: testServer) }
 
         let credential = store.preferredCredential(forServer: testServer)
-        #expect(credential == .resumeToken("resume"))
+        #expect(credential == .token("tok"))
     }
 }

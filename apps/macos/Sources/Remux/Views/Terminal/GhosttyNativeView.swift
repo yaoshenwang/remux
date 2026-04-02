@@ -243,15 +243,21 @@ final class GhosttyNativeView: NSView, @preconcurrency NSTextInputClient {
 
     /// Navigate to the next search match.
     func searchForward() {
-        guard let surface else { return }
-        let action = "search_forward"
-        _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+        performBindingAction("search_forward")
     }
 
     /// Navigate to the previous search match.
     func searchBackward() {
+        performBindingAction("search_backward")
+    }
+
+    /// Update the active search query for the surface.
+    func updateSearch(_ query: String) {
+        performBindingAction("search:\(query)")
+    }
+
+    private func performBindingAction(_ action: String) {
         guard let surface else { return }
-        let action = "search_backward"
         _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
     }
 

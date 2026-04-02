@@ -84,7 +84,7 @@ final class NotificationManager: NSObject {
     }
 }
 
-extension NotificationManager: @preconcurrency UNUserNotificationCenterDelegate {
+extension NotificationManager: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
@@ -102,8 +102,24 @@ extension NotificationManager: @preconcurrency UNUserNotificationCenterDelegate 
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        let options: UNNotificationPresentationOptions = NSApp.isActive ? [] : [.banner, .sound]
+        let options: UNNotificationPresentationOptions
+        if Thread.isMainThread {
+            options = MainActor.assumeIsolated {
+                currentPresentationOptions()
+            }
+        } else {
+            options = DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    currentPresentationOptions()
+                }
+            }
+        }
         completionHandler(options)
+    }
+
+    @MainActor
+    private func currentPresentationOptions() -> UNNotificationPresentationOptions {
+        NSApp.isActive ? [] : [.banner, .sound]
     }
 }
 
@@ -111,12 +127,19 @@ extension NotificationManager: @preconcurrency UNUserNotificationCenterDelegate 
 
 /// Parses OSC 9/99/777 notification sequences from PTY data.
 /// Ref: cmux OSC notification detection approach
+struct OSCParsedNotification: Equatable {
+    let title: String
+    let body: String
+}
+
 struct OSCNotificationParser {
+    private static let defaultTitle = "Terminal Notification"
+
     /// Parse PTY data for notification sequences.
     /// Returns extracted notifications (if any).
-    static func parse(_ data: Data) -> [String] {
+    static func parse(_ data: Data) -> [OSCParsedNotification] {
         guard let text = String(data: data, encoding: .utf8) else { return [] }
-        var notifications: [String] = []
+        var notifications: [OSCParsedNotification] = []
 
         // OSC 9: iTerm2 notification — ESC ] 9 ; <message> BEL/ST
         let osc9Pattern = "\u{1b}]9;([^\u{07}\u{1b}]+)[\u{07}]"
@@ -124,7 +147,24 @@ struct OSCNotificationParser {
             let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
             for match in matches {
                 if let range = Range(match.range(at: 1), in: text) {
-                    notifications.append(String(text[range]))
+                    notifications.append(OSCParsedNotification(
+                        title: defaultTitle,
+                        body: String(text[range])
+                    ))
+                }
+            }
+        }
+
+        // OSC 99: kitty notification — ESC ] 99 ; <message> BEL
+        let osc99Pattern = "\u{1b}]99;([^\u{07}\u{1b}]+)[\u{07}]"
+        if let regex = try? NSRegularExpression(pattern: osc99Pattern) {
+            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            for match in matches {
+                if let range = Range(match.range(at: 1), in: text) {
+                    notifications.append(OSCParsedNotification(
+                        title: defaultTitle,
+                        body: String(text[range])
+                    ))
                 }
             }
         }
@@ -134,8 +174,13 @@ struct OSCNotificationParser {
         if let regex = try? NSRegularExpression(pattern: osc777Pattern) {
             let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
             for match in matches {
-                if let range = Range(match.range(at: 2), in: text) {
-                    notifications.append(String(text[range]))
+                if let titleRange = Range(match.range(at: 1), in: text),
+                   let bodyRange = Range(match.range(at: 2), in: text) {
+                    let title = String(text[titleRange]).isEmpty ? defaultTitle : String(text[titleRange])
+                    notifications.append(OSCParsedNotification(
+                        title: title,
+                        body: String(text[bodyRange])
+                    ))
                 }
             }
         }
