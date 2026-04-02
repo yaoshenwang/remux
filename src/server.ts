@@ -851,6 +851,8 @@ const HTML_TEMPLATE = `<!doctype html>
       _termContainer.appendChild(_peOverlay);
       const _pePreds = [];
       function _peCellSize() {
+        // Use ghostty-web renderer's exact font metrics when available
+        if (term.renderer) return { w: term.renderer.charWidth, h: term.renderer.charHeight };
         const cvs = _termContainer.querySelector('canvas');
         if (!cvs) return { w: 8, h: 16 };
         return { w: cvs.offsetWidth / term.cols, h: cvs.offsetHeight / term.rows };
