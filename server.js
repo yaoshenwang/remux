@@ -5996,6 +5996,40 @@ var init_server = __esm({
       }
       // iOS Safari: touching terminal area focuses hidden textarea for input
       document.getElementById('terminal').addEventListener('touchend', () => { if (currentView === 'live') term.focus(); });
+
+      // -- IME diagnostic (active when ?debug=1) --
+      if (new URLSearchParams(location.search).has('debug')) {
+        const _d = window._imeDiag = { events: [], t0: Date.now() };
+        function _ilog(type, detail) {
+          const e = { t: Date.now() - _d.t0, type, ...detail };
+          _d.events.push(e);
+          if (_d.events.length > 300) _d.events.shift();
+        }
+        const _ta = document.querySelector('textarea');
+        if (_ta) {
+          ['compositionstart','compositionupdate','compositionend'].forEach(n =>
+            _ta.addEventListener(n, e => _ilog(n, { data: e.data }), true));
+          _ta.addEventListener('input', e => _ilog('input', {
+            data: e.data?.substring(0,20), inputType: e.inputType, isComposing: e.isComposing
+          }), true);
+          _ta.addEventListener('keydown', e => {
+            if (e.isComposing || e.keyCode === 229)
+              _ilog('keydown-ime', { key: e.key, code: e.code, kc: e.keyCode });
+          }, true);
+        }
+        new ResizeObserver(entries => entries.forEach(e => {
+          const n = e.target.id || e.target.tagName;
+          _ilog('resize', { el: n, h: Math.round(e.contentRect.height) });
+        })).observe(document.body);
+        if (window.visualViewport) window.visualViewport.addEventListener('resize', () =>
+          _ilog('vv-resize', { vh: Math.round(window.visualViewport.height), bh: document.body.offsetHeight }));
+        new MutationObserver(() => _ilog('body-style', {
+          h: document.body.style.height, oh: document.body.offsetHeight
+        })).observe(document.body, { attributes: true, attributeFilter: ['style'] });
+        window.addEventListener('error', e => _ilog('js-error', { msg: e.message, line: e.lineno }));
+        // Expose for retrieval: fetch /api/config then check console, or use: window._imeDiag.events
+        console.log('[remux] IME diagnostic active. Access via window._imeDiag.events');
+      }
     </script>
   </body>
 </html>`;
