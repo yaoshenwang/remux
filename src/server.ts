@@ -2064,22 +2064,38 @@ const HTML_TEMPLATE = `<!doctype html>
         // Floating debug overlay — stays visible even when page goes "blank"
         const _dbg = document.createElement('div');
         _dbg.id = 'ime-debug';
-        _dbg.style.cssText = 'position:fixed;bottom:0;right:0;z-index:999999;background:rgba(0,0,0,0.85);color:#0f0;font:10px monospace;padding:4px 8px;max-width:50vw;max-height:30vh;overflow:auto;pointer-events:none;white-space:pre-wrap;';
+        _dbg.style.cssText = 'position:fixed;bottom:0;right:0;z-index:999999;background:rgba(0,0,0,0.85);color:#0f0;font:10px monospace;padding:4px 8px;max-width:60vw;max-height:40vh;overflow:auto;pointer-events:none;white-space:pre-wrap;';
         document.documentElement.appendChild(_dbg);
-        function _updateDbg() {
-          const last = _d.events.slice(-8);
+
+        // Continuous polling — captures state even when no events fire
+        let _prevState = '';
+        setInterval(() => {
+          const _ta2 = document.querySelector('textarea');
+          const _cvs2 = document.querySelector('#terminal canvas');
+          const _term2 = document.getElementById('terminal');
+          const _main2 = document.querySelector('.main');
+          const _sidebar2 = document.querySelector('.sidebar');
+          const state = JSON.stringify({
+            body: { h: document.body.offsetHeight, w: document.body.offsetWidth, styleH: document.body.style.height, vis: document.body.style.visibility, disp: document.body.style.display },
+            main: _main2 ? { h: _main2.offsetHeight, vis: getComputedStyle(_main2).visibility, op: getComputedStyle(_main2).opacity, disp: getComputedStyle(_main2).display } : null,
+            term: _term2 ? { h: _term2.offsetHeight, w: _term2.offsetWidth, vis: getComputedStyle(_term2).visibility, disp: getComputedStyle(_term2).display, op: getComputedStyle(_term2).opacity } : null,
+            cvs: _cvs2 ? { w: _cvs2.width, h: _cvs2.height, styleW: _cvs2.style.width, styleH: _cvs2.style.height, vis: getComputedStyle(_cvs2).visibility, disp: getComputedStyle(_cvs2).display } : null,
+            ta: _ta2 ? { w: _ta2.offsetWidth, h: _ta2.offsetHeight, styleW: _ta2.style.width, styleH: _ta2.style.height, pos: getComputedStyle(_ta2).position, vis: getComputedStyle(_ta2).visibility, op: getComputedStyle(_ta2).opacity, zIdx: getComputedStyle(_ta2).zIndex, bg: getComputedStyle(_ta2).background?.substring(0,40) } : null,
+            sidebar: _sidebar2 ? { h: _sidebar2.offsetHeight, vis: getComputedStyle(_sidebar2).visibility } : null,
+            vv: window.visualViewport ? { h: Math.round(window.visualViewport.height), w: Math.round(window.visualViewport.width) } : null
+          });
+          if (state !== _prevState) {
+            _prevState = state;
+            _ilog('poll', JSON.parse(state));
+          }
+          // Always update overlay with latest events
+          const last = _d.events.slice(-12);
           _dbg.textContent = last.map(e => {
             const {t, type, ...r} = e;
-            return t + 'ms ' + type + ' ' + JSON.stringify(r);
+            return t + 'ms ' + type + ': ' + JSON.stringify(r).substring(0, 120);
           }).join('\\n');
-        }
-        const _origIlog = _ilog;
-        // Patch _ilog to also update debug overlay
-        const _ilog2 = function(type, detail) { _origIlog(type, detail); _updateDbg(); };
-        // Re-register with patched logger — but since _ilog is used by closures above,
-        // we need to update the overlay via an interval instead
-        setInterval(_updateDbg, 200);
-        console.log('[remux] IME diagnostic active + overlay. Access via window._imeDiag.events or localStorage._imeDiag');
+        }, 200);
+        console.log('[remux] IME diagnostic v2 active — polling every 200ms');
       }
     </script>
   </body>
