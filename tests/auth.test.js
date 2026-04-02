@@ -100,7 +100,7 @@ function startServer(env, port) {
     const cleanEnv = { ...process.env };
     delete cleanEnv.REMUX_TOKEN;
     delete cleanEnv.REMUX_PASSWORD;
-    const proc = spawn("node", [SERVER_JS], {
+    const proc = spawn(process.execPath, [SERVER_JS], {
       env: { ...cleanEnv, ...env, PORT: String(port) },
       stdio: "pipe",
     });

@@ -172,7 +172,7 @@ const HTML_TEMPLATE = `<!doctype html>
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Remux</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⬛</text></svg>">
     <style>
@@ -241,6 +241,17 @@ const HTML_TEMPLATE = `<!doctype html>
         font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
       .sidebar-header button:hover { color: var(--text-bright); background: var(--compose-bg); }
 
+      .session-composer { display: none; padding: 0 6px 8px; gap: 6px; }
+      .session-composer.visible { display: flex; }
+      .session-composer input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; font-family: inherit;
+        background: var(--compose-bg); border: 1px solid var(--compose-border); border-radius: 4px;
+        color: var(--text-bright); outline: none; }
+      .session-composer input:focus { border-color: var(--accent); }
+      .session-composer button { padding: 6px 10px; font-size: 11px; font-family: inherit;
+        border-radius: 4px; border: 1px solid var(--compose-border); cursor: pointer; }
+      .session-composer button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .session-composer button.secondary { background: var(--compose-bg); color: var(--text-bright); }
+
       .session-list { flex: 1; overflow-y: auto; padding: 4px 6px; }
       .session-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 4px;
         font-size: 13px; cursor: pointer; color: var(--text); border: none; background: none;
@@ -256,9 +267,8 @@ const HTML_TEMPLATE = `<!doctype html>
       .session-item .del:hover { color: var(--dot-err); background: var(--compose-bg); }
 
       .sidebar-footer { padding: 8px 12px; border-top: 1px solid var(--border);
-        display: flex; flex-direction: column; gap: 6px; }
+        display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .sidebar-footer .version { font-size: 10px; color: var(--text-dim); }
-      .sidebar-footer .footer-row { display: flex; align-items: center; gap: 8px; }
       .sidebar-footer .status { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
       .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
       .status-dot.connected { background: var(--dot-ok); }
@@ -280,6 +290,9 @@ const HTML_TEMPLATE = `<!doctype html>
 
       /* -- Main -- */
       .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      .main-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+        border-bottom: 1px solid var(--border); background: var(--bg); min-height: 40px; }
+      .main-toolbar .toolbar-spacer { flex: 1; }
 
       /* -- Tab bar (Chrome-style) -- */
       .tab-bar { background: var(--bg-tab-bar); display: flex; align-items: flex-end; flex-shrink: 0;
@@ -334,161 +347,6 @@ const HTML_TEMPLATE = `<!doctype html>
         padding: 12px 16px; -webkit-overflow-scrolling: touch; }
       #inspect.visible { display: block; }
 
-      /* -- Workspace -- */
-      #workspace { flex: 1; background: var(--bg); overflow: auto; display: none;
-        padding: 12px 16px; -webkit-overflow-scrolling: touch; }
-      #workspace.visible { display: block; }
-      .ws-section { margin-bottom: 16px; }
-      .ws-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted);
-        text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px;
-        display: flex; align-items: center; justify-content: space-between; }
-      .ws-section-title button { background: none; border: 1px solid var(--border);
-        color: var(--text-muted); font-size: 11px; padding: 2px 8px; border-radius: 4px;
-        cursor: pointer; font-family: inherit; }
-      .ws-section-title button:hover { color: var(--text-bright); border-color: var(--text-muted); }
-      .ws-empty { font-size: 12px; color: var(--text-dim); padding: 8px 0; }
-      .ws-card { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
-        padding: 8px 12px; margin-bottom: 6px; }
-      .ws-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-      .ws-card-title { font-size: 13px; color: var(--text-bright); font-weight: 500; flex: 1;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .ws-card-meta { font-size: 10px; color: var(--text-dim); }
-      .ws-card-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-      .ws-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
-        font-weight: 500; }
-      .ws-badge.running { background: #1a3a5c; color: #4da6ff; }
-      .ws-badge.completed { background: #1a3c1a; color: #4dff4d; }
-      .ws-badge.failed { background: #3c1a1a; color: #ff4d4d; }
-      .ws-badge.pending { background: #3c3a1a; color: #ffbd2e; }
-      .ws-badge.approved { background: #1a3c1a; color: #4dff4d; }
-      .ws-badge.rejected { background: #3c1a1a; color: #ff4d4d; }
-      .ws-badge.snapshot { background: #1a2a3c; color: #88bbdd; }
-      .ws-badge.command-card { background: #2a1a3c; color: #bb88dd; }
-      .ws-badge.note { background: #1a3c2a; color: #88ddbb; }
-      .ws-badge.diff { background: #2a2a1a; color: #ddbb55; }
-      .ws-badge.markdown { background: #1a2a2a; color: #55bbdd; }
-      .ws-badge.ansi { background: #2a1a2a; color: #dd88bb; }
-      .ws-card-actions { display: flex; gap: 4px; margin-top: 6px; }
-      .ws-card-actions button { background: none; border: 1px solid var(--border);
-        color: var(--text-muted); font-size: 11px; padding: 3px 10px; border-radius: 4px;
-        cursor: pointer; font-family: inherit; }
-      .ws-card-actions button:hover { color: var(--text-bright); border-color: var(--text-muted); }
-      .ws-card-actions button.approve { border-color: #27c93f; color: #27c93f; }
-      .ws-card-actions button.approve:hover { background: #27c93f22; }
-      .ws-card-actions button.reject { border-color: #ff5f56; color: #ff5f56; }
-      .ws-card-actions button.reject:hover { background: #ff5f5622; }
-      .ws-card .del-topic { opacity: 0; background: none; border: none; color: var(--text-dim);
-        cursor: pointer; font-size: 14px; padding: 0 4px; font-family: inherit; border-radius: 3px; }
-      .ws-card:hover .del-topic { opacity: 1; }
-      .ws-card .del-topic:hover { color: var(--dot-err); }
-
-      /* -- Search bar -- */
-      .ws-search { display: flex; gap: 8px; margin-bottom: 16px; }
-      .ws-search input { flex: 1; padding: 6px 10px; font-size: 13px; font-family: inherit;
-        background: var(--compose-bg); border: 1px solid var(--compose-border); border-radius: 6px;
-        color: var(--text-bright); outline: none; }
-      .ws-search input:focus { border-color: var(--accent); }
-      .ws-search input::placeholder { color: var(--text-dim); }
-      .ws-search-results { margin-bottom: 12px; }
-      .ws-search-result { padding: 6px 10px; margin-bottom: 4px; background: var(--bg-sidebar);
-        border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
-      .ws-search-result:hover { border-color: var(--accent); }
-      .ws-search-result .sr-type { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
-      .ws-search-result .sr-title { font-size: 12px; color: var(--text-bright); }
-
-      /* -- Notes -- */
-      .ws-note { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
-        padding: 8px 12px; margin-bottom: 6px; position: relative; }
-      .ws-note.pinned { border-color: var(--accent); }
-      .ws-note-content { font-size: 12px; color: var(--text-bright); white-space: pre-wrap; word-break: break-word; }
-      .ws-note-actions { display: flex; gap: 4px; margin-top: 4px; }
-      .ws-note-actions button { background: none; border: none; color: var(--text-dim);
-        font-size: 11px; cursor: pointer; padding: 2px 6px; border-radius: 3px; font-family: inherit; }
-      .ws-note-actions button:hover { color: var(--text-bright); background: var(--bg-hover); }
-      .ws-note-input { display: flex; gap: 6px; margin-bottom: 8px; }
-      .ws-note-input input { flex: 1; padding: 6px 10px; font-size: 12px; font-family: inherit;
-        background: var(--compose-bg); border: 1px solid var(--compose-border); border-radius: 4px;
-        color: var(--text-bright); outline: none; }
-      .ws-note-input input:focus { border-color: var(--accent); }
-      .ws-note-input button { padding: 4px 12px; font-size: 12px; font-family: inherit;
-        background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-
-      /* -- Commands -- */
-      .ws-cmd { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
-        padding: 6px 12px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
-      .ws-cmd-text { font-size: 12px; color: var(--text-bright); font-family: 'Menlo','Monaco',monospace;
-        flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .ws-cmd-exit { font-size: 11px; font-weight: 600; }
-      .ws-cmd-exit.ok { color: #27c93f; }
-      .ws-cmd-exit.err { color: #ff5f56; }
-      .ws-cmd-meta { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
-
-      /* -- Handoff -- */
-      .ws-handoff { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px;
-        padding: 12px; margin-bottom: 12px; display: none; }
-      .ws-handoff.visible { display: block; }
-      .ws-handoff-section { margin-bottom: 8px; }
-      .ws-handoff-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase;
-        letter-spacing: .5px; margin-bottom: 4px; }
-      .ws-handoff-list { font-size: 12px; color: var(--text-muted); padding-left: 12px; }
-      .ws-handoff-list li { margin-bottom: 2px; }
-
-      /* -- Rich content rendering (diff, markdown, ANSI) -- */
-      .ws-card-content { margin-top: 6px; font-size: 12px; max-height: 200px; overflow: auto;
-        border-top: 1px solid var(--border); padding-top: 6px; }
-      .ws-card-content.expanded { max-height: none; }
-      .ws-card-toggle { font-size: 11px; color: var(--text-dim); background: none; border: none;
-        cursor: pointer; padding: 2px 6px; font-family: inherit; border-radius: 3px; }
-      .ws-card-toggle:hover { color: var(--text-bright); background: var(--bg-hover); }
-
-      /* Diff */
-      .diff-container { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 11px;
-        line-height: 1.5; overflow-x: auto; }
-      .diff-container > div { padding: 0 8px; white-space: pre; }
-      .diff-add { background: #1a3a1a; color: #4eff4e; }
-      .diff-del { background: #3a1a1a; color: #ff4e4e; }
-      .diff-hunk { color: #6a9eff; font-style: italic; }
-      .diff-header { color: #888; font-style: italic; }
-      .diff-ctx { color: var(--text-muted); }
-      .diff-line-num { display: inline-block; width: 32px; text-align: right; margin-right: 8px;
-        color: var(--text-dim); user-select: none; }
-
-      /* Markdown */
-      .rendered-md { font-size: 13px; line-height: 1.6; color: var(--text-bright); }
-      .rendered-md h1 { font-size: 18px; margin: 0.5em 0 0.3em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-      .rendered-md h2 { font-size: 15px; margin: 0.5em 0 0.3em; }
-      .rendered-md h3 { font-size: 13px; margin: 0.5em 0 0.3em; font-weight: 600; }
-      .rendered-md p { margin: 0.4em 0; }
-      .rendered-md code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px;
-        font-family: 'Menlo','Monaco',monospace; font-size: 11px; }
-      .rendered-md pre { background: #1e1e1e; padding: 12px; border-radius: 6px;
-        overflow-x: auto; margin: 0.4em 0; }
-      .rendered-md pre code { background: none; padding: 0; font-size: 11px; }
-      .rendered-md blockquote { border-left: 3px solid #555; padding-left: 12px; color: #aaa;
-        margin: 0.4em 0; }
-      .rendered-md ul, .rendered-md ol { padding-left: 20px; margin: 0.3em 0; }
-      .rendered-md li { margin: 0.15em 0; }
-      .rendered-md a { color: var(--accent); text-decoration: none; }
-      .rendered-md a:hover { text-decoration: underline; }
-      .rendered-md hr { border: none; border-top: 1px solid var(--border); margin: 0.5em 0; }
-      .rendered-md strong { color: var(--text-on-active); }
-
-      /* ANSI */
-      .ansi-bold { font-weight: bold; }
-      .ansi-dim { opacity: 0.6; }
-      .ansi-italic { font-style: italic; }
-      .ansi-underline { text-decoration: underline; }
-
-      /* Light theme overrides */
-      [data-theme="light"] .diff-add { background: #e6ffec; color: #1a7f37; }
-      [data-theme="light"] .diff-del { background: #ffebe9; color: #cf222e; }
-      [data-theme="light"] .diff-hunk { color: #0969da; }
-      [data-theme="light"] .diff-header { color: #6e7781; }
-      [data-theme="light"] .diff-ctx { color: #57606a; }
-      [data-theme="light"] .rendered-md code { background: #eee; }
-      [data-theme="light"] .rendered-md pre { background: #f6f8fa; }
-      [data-theme="light"] .rendered-md blockquote { border-left-color: #ccc; color: #666; }
-
       #inspect-content { font-family: 'Menlo','Monaco','Courier New',monospace; font-size: 13px;
         line-height: 1.5; color: var(--text-bright); white-space: pre-wrap; word-break: break-all;
         tab-size: 8; user-select: text; -webkit-user-select: text; }
@@ -513,6 +371,7 @@ const HTML_TEMPLATE = `<!doctype html>
       .compose-bar { display: none; background: var(--bg-sidebar); border-top: 1px solid var(--border);
         padding: 5px 8px; gap: 5px; flex-shrink: 0; overflow-x: auto; flex-wrap: wrap;
         -webkit-overflow-scrolling: touch; }
+      body.touch-device .compose-bar.visible { display: flex; }
       .compose-bar button { padding: 8px 12px; font-size: 14px;
         font-family: 'Menlo','Monaco',monospace; color: var(--text-bright); background: var(--compose-bg);
         border: 1px solid var(--compose-border); border-radius: 5px; cursor: pointer; white-space: nowrap;
@@ -520,66 +379,6 @@ const HTML_TEMPLATE = `<!doctype html>
         min-width: 40px; text-align: center; user-select: none; }
       .compose-bar button:active { background: var(--compose-border); }
       .compose-bar button.active { background: #4a6a9a; border-color: #6a9ade; }
-      @media (hover: none) and (pointer: coarse) { .compose-bar { display: flex; } }
-
-      /* -- Tab rename input -- */
-      .tab .rename-input { background: var(--bg); border: 1px solid var(--accent); border-radius: 3px;
-        color: var(--text-bright); font-size: 12px; font-family: inherit; padding: 1px 4px;
-        outline: none; width: 80px; }
-
-      /* -- Devices section -- */
-      .devices-section { border-top: 1px solid var(--border); }
-      .devices-header { padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--text-muted);
-        text-transform: uppercase; letter-spacing: .5px; cursor: pointer; display: flex;
-        align-items: center; justify-content: space-between; user-select: none; }
-      .devices-header:hover { color: var(--text-bright); }
-      .devices-toggle { font-size: 8px; transition: transform .2s; }
-      .devices-toggle.collapsed { transform: rotate(-90deg); }
-      .devices-list { padding: 2px 6px; max-height: 200px; overflow-y: auto; }
-      .devices-list.collapsed { display: none; }
-      .device-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 4px;
-        font-size: 12px; color: var(--text); }
-      .device-item:hover { background: var(--bg-hover); }
-      .device-item .device-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-      .device-dot.trusted { background: var(--dot-ok); }
-      .device-dot.untrusted { background: var(--dot-warn); }
-      .device-dot.blocked { background: var(--dot-err); }
-      .device-item .device-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .device-item .device-self { font-size: 9px; color: var(--accent); margin-left: 2px; }
-      .device-item .device-actions { display: flex; gap: 2px; opacity: 0; }
-      .device-item:hover .device-actions { opacity: 1; }
-      .device-actions button { background: none; border: none; color: var(--text-dim); cursor: pointer;
-        font-size: 11px; padding: 1px 4px; border-radius: 3px; font-family: inherit; }
-      .device-actions button:hover { color: var(--text-bright); background: var(--compose-bg); }
-      .devices-actions { padding: 4px 12px 8px; }
-      .pair-btn { width: 100%; padding: 5px 8px; font-size: 11px; font-family: inherit;
-        color: var(--text-bright); background: var(--compose-bg); border: 1px solid var(--compose-border);
-        border-radius: 4px; cursor: pointer; margin-bottom: 4px; }
-      .pair-btn:hover { background: var(--compose-border); }
-      .pair-code-display { text-align: center; padding: 6px; }
-      .pair-code { font-family: 'Menlo','Monaco',monospace; font-size: 24px; font-weight: bold;
-        color: var(--accent); letter-spacing: 4px; }
-      .pair-expires { display: block; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
-      .pair-input-area { display: flex; gap: 4px; }
-      .pair-input-area input { flex: 1; min-width: 0; padding: 5px 8px; font-size: 13px; font-family: 'Menlo','Monaco',monospace;
-        background: var(--bg); border: 1px solid var(--compose-border); border-radius: 4px;
-        color: var(--text); outline: none; text-align: center; letter-spacing: 2px; }
-      .pair-input-area input:focus { border-color: var(--accent); }
-      .pair-input-area .pair-btn { flex-shrink: 0; width: auto; }
-
-      /* -- Push notification section -- */
-      .push-section { padding: 4px 12px 8px; border-top: 1px solid var(--border); }
-      .push-toggle { width: 100%; padding: 5px 8px; font-size: 11px; font-family: inherit;
-        color: var(--text-bright); background: var(--compose-bg); border: 1px solid var(--compose-border);
-        border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px;
-        justify-content: center; }
-      .push-toggle:hover { background: var(--compose-border); }
-      .push-toggle.subscribed { background: var(--accent); border-color: var(--accent); }
-      .push-toggle .push-icon { font-size: 14px; }
-      .push-test-btn { width: 100%; padding: 4px 8px; font-size: 10px; font-family: inherit;
-        color: var(--text-muted); background: none; border: 1px solid var(--border);
-        border-radius: 4px; cursor: pointer; margin-top: 4px; }
-      .push-test-btn:hover { color: var(--text-bright); border-color: var(--compose-border); }
 
       /* -- Mobile -- */
       @media (max-width: 768px) {
@@ -594,6 +393,14 @@ const HTML_TEMPLATE = `<!doctype html>
         .tab-bar { overflow-x: auto; }
         .session-item { min-height: 44px; } /* touch-friendly */
         .tab { min-height: 36px; }
+        .main-toolbar { padding-left: 8px; padding-right: 8px; }
+      }
+
+      @media (hover: none), (pointer: coarse) {
+        .session-item .del,
+        .tab .close {
+          opacity: 1;
+        }
       }
     </style>
   </head>
@@ -604,48 +411,14 @@ const HTML_TEMPLATE = `<!doctype html>
         <span>Sessions</span>
         <button id="btn-new-session" title="New session">+</button>
       </div>
+      <div class="session-composer" id="session-composer">
+        <input type="text" id="new-session-input" placeholder="New session name" />
+        <button class="primary" id="btn-create-session">Add</button>
+        <button class="secondary" id="btn-cancel-session">Cancel</button>
+      </div>
       <div class="session-list" id="session-list"></div>
 
-      <!-- Devices section (collapsible) -->
-      <div class="devices-section" id="devices-section">
-        <div class="devices-header" id="devices-header">
-          <span>Devices</span>
-          <span class="devices-toggle" id="devices-toggle">&#9660;</span>
-        </div>
-        <div class="devices-list" id="devices-list"></div>
-        <div class="devices-actions" id="devices-actions" style="display:none">
-          <button class="pair-btn" id="btn-pair">Generate Pair Code</button>
-          <div class="pair-code-display" id="pair-code-display" style="display:none">
-            <span class="pair-code" id="pair-code-value"></span>
-            <span class="pair-expires" id="pair-expires"></span>
-          </div>
-          <div class="pair-input-area" id="pair-input-area" style="display:none">
-            <input type="text" id="pair-code-input" placeholder="Enter 6-digit code" maxlength="6" />
-            <button class="pair-btn" id="btn-submit-pair">Pair</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Push notifications -->
-      <div class="push-section" id="push-section" style="display:none">
-        <button class="push-toggle" id="btn-push-toggle">
-          <span class="push-icon">&#128276;</span>
-          <span id="push-label">Enable Notifications</span>
-        </button>
-        <button class="push-test-btn" id="btn-push-test" style="display:none">Send Test</button>
-      </div>
-
       <div class="sidebar-footer">
-        <div class="role-indicator" id="role-indicator">
-          <span id="role-dot"></span>
-          <span id="role-text"></span>
-          <button class="role-btn" id="btn-role" style="display:none"></button>
-        </div>
-        <button id="btn-theme" class="theme-toggle" title="Toggle theme">&#9728;</button>
-        <div class="status">
-          <div class="status-dot connecting" id="status-dot"></div>
-          <span id="status-text">...</span>
-        </div>
         <div class="version">v${VERSION}</div>
       </div>
     </aside>
@@ -657,8 +430,20 @@ const HTML_TEMPLATE = `<!doctype html>
         <div class="view-switch">
           <button id="btn-live" class="active">Live</button>
           <button id="btn-inspect">Inspect</button>
-          <button id="btn-workspace">Workspace</button>
         </div>
+      </div>
+      <div class="main-toolbar">
+        <div class="status">
+          <div class="status-dot connecting" id="status-dot"></div>
+          <span id="status-text">Connecting...</span>
+        </div>
+        <div class="role-indicator" id="role-indicator">
+          <span id="role-dot"></span>
+          <span id="role-text"></span>
+        </div>
+        <button class="role-btn" id="btn-role" style="display:none"></button>
+        <div class="toolbar-spacer"></div>
+        <button id="btn-theme" class="theme-toggle" title="Toggle theme">&#9728;</button>
       </div>
       <div id="terminal"></div>
       <div id="inspect">
@@ -670,56 +455,6 @@ const HTML_TEMPLATE = `<!doctype html>
           </div>
         </div>
         <pre id="inspect-content"></pre>
-      </div>
-      <div id="workspace">
-        <div class="ws-search">
-          <input type="text" id="ws-search-input" placeholder="Search topics, artifacts, runs..." />
-        </div>
-        <div id="ws-search-results" class="ws-search-results"></div>
-        <div id="ws-handoff" class="ws-handoff"></div>
-        <div class="ws-section" id="ws-notes-section">
-          <div class="ws-section-title">
-            <span>Notes</span>
-            <button id="btn-handoff">Handoff</button>
-          </div>
-          <div class="ws-note-input">
-            <input type="text" id="ws-note-input" placeholder="Add a note..." />
-            <button id="btn-add-note">Add</button>
-          </div>
-          <div id="ws-notes"></div>
-        </div>
-        <div class="ws-section">
-          <div class="ws-section-title">
-            <span>Pending Approvals</span>
-          </div>
-          <div id="ws-approvals"></div>
-        </div>
-        <div class="ws-section">
-          <div class="ws-section-title">
-            <span>Topics</span>
-            <button id="btn-new-topic">+ New</button>
-          </div>
-          <div id="ws-topics"></div>
-        </div>
-        <div class="ws-section">
-          <div class="ws-section-title">
-            <span>Active Runs</span>
-          </div>
-          <div id="ws-runs"></div>
-        </div>
-        <div class="ws-section">
-          <div class="ws-section-title">
-            <span>Recent Artifacts</span>
-            <button id="btn-capture-snapshot">Capture Snapshot</button>
-          </div>
-          <div id="ws-artifacts"></div>
-        </div>
-        <div class="ws-section">
-          <div class="ws-section-title">
-            <span>Commands</span>
-          </div>
-          <div id="ws-commands"></div>
-        </div>
       </div>
       <div class="compose-bar" id="compose-bar">
         <button data-seq="esc">Esc</button>
@@ -809,6 +544,7 @@ const HTML_TEMPLATE = `<!doctype html>
       let _pendingFit = false;
       let fitDebounceTimer = null;
       const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      document.body.classList.toggle('touch-device', isTouchDevice);
       function safeFit() {
         if (_isComposing) { _pendingFit = true; return; }
         if (fitAddon) fitAddon.fit();
@@ -956,8 +692,10 @@ const HTML_TEMPLATE = `<!doctype html>
       function renderSessions() {
         const list = $('session-list'); list.innerHTML = '';
         sessions.forEach(s => {
-          const el = document.createElement('button');
+          const el = document.createElement('div');
           el.className = 'session-item' + (s.name === currentSession ? ' active' : '');
+          el.tabIndex = 0;
+          el.setAttribute('role', 'button');
           const live = s.tabs.filter(t => !t.ended).length;
           el.innerHTML = '<span class="dot"></span><span class="name">' + esc(s.name)
             + '</span><span class="count">' + live + '</span>'
@@ -965,7 +703,6 @@ const HTML_TEMPLATE = `<!doctype html>
           el.addEventListener('pointerdown', e => {
             if (e.target.dataset.del) {
               e.stopPropagation(); e.preventDefault();
-              if (!confirm('Delete session "' + e.target.dataset.del + '"? All tabs will be closed.')) return;
               sendCtrl({ type: 'delete_session', name: e.target.dataset.del });
               // if deleting current, switch to another or create fresh
               if (e.target.dataset.del === currentSession) {
@@ -984,6 +721,13 @@ const HTML_TEMPLATE = `<!doctype html>
             selectSession(s.name);
             closeSidebarMobile();
           });
+          el.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              selectSession(s.name);
+              closeSidebarMobile();
+            }
+          });
           list.appendChild(el);
         });
       }
@@ -994,8 +738,10 @@ const HTML_TEMPLATE = `<!doctype html>
         const sess = sessions.find(s => s.name === currentSession);
         if (!sess) return;
         sess.tabs.forEach(t => {
-          const el = document.createElement('button');
+          const el = document.createElement('div');
           el.className = 'tab' + (t.id === currentTabId ? ' active' : '');
+          el.tabIndex = 0;
+          el.setAttribute('role', 'button');
           const clientCount = t.clients || 0;
           const countBadge = clientCount > 1 ? '<span class="client-count">' + clientCount + '</span>' : '';
           el.innerHTML = '<span class="title">' + esc(t.title) + '</span>' + countBadge
@@ -1009,6 +755,12 @@ const HTML_TEMPLATE = `<!doctype html>
             }
             e.preventDefault();
             if (t.id !== currentTabId) attachTab(t.id);
+          });
+          el.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (t.id !== currentTabId) attachTab(t.id);
+            }
           });
           list.appendChild(el);
         });
@@ -1072,10 +824,34 @@ const HTML_TEMPLATE = `<!doctype html>
         e.preventDefault();
         sendCtrl({ type: 'new_tab', session: currentSession, cols: term.cols, rows: term.rows });
       });
+      function openSessionComposer() {
+        $('session-composer').classList.add('visible');
+        $('new-session-input').focus();
+        $('new-session-input').select();
+      }
+      function closeSessionComposer() {
+        $('session-composer').classList.remove('visible');
+        $('new-session-input').value = '';
+      }
       $('btn-new-session').addEventListener('pointerdown', e => {
         e.preventDefault();
-        const name = prompt('Session name:');
-        if (name && name.trim()) sendCtrl({ type: 'new_session', name: name.trim(), cols: term.cols, rows: term.rows });
+        openSessionComposer();
+      });
+      $('btn-create-session').addEventListener('click', () => {
+        const name = $('new-session-input').value.trim();
+        if (!name) return;
+        sendCtrl({ type: 'new_session', name, cols: term.cols, rows: term.rows });
+        closeSessionComposer();
+      });
+      $('btn-cancel-session').addEventListener('click', closeSessionComposer);
+      $('new-session-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          $('btn-create-session').click();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeSessionComposer();
+        }
       });
 
       // -- E2EE client (Web Crypto API) --
@@ -1260,10 +1036,6 @@ const HTML_TEMPLATE = `<!doctype html>
           }
           // Let server pick the session if we have none (bootstrap flow)
           sendCtrl({ type: 'attach_first', session: currentSession || undefined, cols: term.cols, rows: term.rows });
-          // Request device list (works with or without auth)
-          sendCtrl({ type: 'list_devices' });
-          // Request VAPID key for push notifications
-          sendCtrl({ type: 'get_vapid_key' });
         };
         ws.onmessage = e => {
           lastMessageAt = Date.now();
@@ -1308,10 +1080,6 @@ const HTML_TEMPLATE = `<!doctype html>
               // Track timestamp for session recovery on reconnect
               lastReceivedTimestamp = Date.now();
               if (msg.type === 'auth_ok') {
-                if (msg.deviceId) myDeviceId = msg.deviceId;
-                // Request device list and workspace data after auth
-                sendCtrl({ type: 'list_devices' });
-                sendCtrl({ type: 'list_notes' });
                 return;
               }
               if (msg.type === 'bootstrap') {
@@ -1325,61 +1093,6 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'error') {
                 console.warn('[remux] server error:', msg.reason || 'unknown');
                 alert('Error: ' + (msg.reason || 'unknown error'));
-                return;
-              }
-              if (msg.type === 'device_list') {
-                devicesList = msg.devices || [];
-                renderDevices(); return;
-              }
-              if (msg.type === 'pair_code') {
-                const display = $('pair-code-display');
-                if (display) {
-                  display.style.display = 'block';
-                  $('pair-code-value').textContent = msg.code;
-                  const remaining = Math.max(0, Math.ceil((msg.expiresAt - Date.now()) / 1000));
-                  $('pair-expires').textContent = 'Expires in ' + Math.ceil(remaining / 60) + ' min';
-                  setTimeout(() => { display.style.display = 'none'; }, remaining * 1000);
-                }
-                return;
-              }
-              if (msg.type === 'pair_result') {
-                if (msg.success) {
-                  $('pair-code-input').value = '';
-                  sendCtrl({ type: 'list_devices' });
-                } else {
-                  alert('Pairing failed: ' + (msg.reason || 'invalid code'));
-                }
-                return;
-              }
-              if (msg.type === 'vapid_key') {
-                pushVapidKey = msg.publicKey;
-                showPushSection();
-                // Check current push status
-                sendCtrl({ type: 'get_push_status' });
-                return;
-              }
-              if (msg.type === 'push_subscribed') {
-                pushSubscribed = msg.success;
-                updatePushUI();
-                return;
-              }
-              if (msg.type === 'push_unsubscribed') {
-                pushSubscribed = false;
-                updatePushUI();
-                return;
-              }
-              if (msg.type === 'push_status') {
-                pushSubscribed = msg.subscribed;
-                updatePushUI();
-                return;
-              }
-              if (msg.type === 'push_test_result') {
-                // Brief visual feedback
-                const testBtn = $('btn-push-test');
-                if (testBtn) {
-                  testBtn.textContent = msg.sent ? 'Sent!' : 'Failed';
-                  setTimeout(() => { testBtn.textContent = 'Send Test'; }, 2000);
-                }
                 return;
               }
               if (msg.type === 'state') {
@@ -1396,7 +1109,7 @@ const HTML_TEMPLATE = `<!doctype html>
                 currentTabId = msg.tabId; currentSession = msg.session;
                 if (msg.clientId) myClientId = msg.clientId;
                 if (msg.role) myRole = msg.role;
-                setStatus('connected', msg.session); renderSessions(); renderTabs(); renderRole(); stabilizeFit(); return;
+                setStatus('connected', 'Connected'); renderSessions(); renderTabs(); renderRole(); stabilizeFit(); return;
               }
               if (msg.type === 'role_changed') {
                 if (msg.clientId === myClientId) myRole = msg.role;
@@ -1420,42 +1133,6 @@ const HTML_TEMPLATE = `<!doctype html>
                 applyInspectSearch();
                 return;
               }
-              // Workspace message handlers
-              if (msg.type === 'topic_list') { wsTopics = msg.topics || []; renderWorkspaceTopics(); return; }
-              if (msg.type === 'topic_created') {
-                // Optimistic render: add topic directly
-                if (msg.id && msg.title) wsTopics.unshift({ id: msg.id, sessionName: msg.sessionName, title: msg.title, createdAt: msg.createdAt, updatedAt: msg.updatedAt });
-                renderWorkspaceTopics();
-                return;
-              }
-              if (msg.type === 'topic_deleted') { refreshWorkspace(); return; }
-              if (msg.type === 'run_list') { wsRuns = msg.runs || []; renderWorkspaceRuns(); return; }
-              if (msg.type === 'run_created' || msg.type === 'run_updated') { if (currentView === 'workspace') refreshWorkspace(); return; }
-              if (msg.type === 'artifact_list') { wsArtifacts = msg.artifacts || []; renderWorkspaceArtifacts(); return; }
-              if (msg.type === 'snapshot_captured') {
-                // Optimistic render: add artifact directly (with server-rendered HTML)
-                if (msg.id) wsArtifacts.unshift({ id: msg.id, type: 'snapshot', title: msg.title || 'Snapshot', content: msg.content, contentType: msg.contentType || 'plain', renderedHtml: msg.renderedHtml, createdAt: msg.createdAt || Date.now() });
-                renderWorkspaceArtifacts();
-                return;
-              }
-              if (msg.type === 'approval_list') { wsApprovals = msg.approvals || []; renderWorkspaceApprovals(); return; }
-              if (msg.type === 'approval_created') { if (currentView === 'workspace') refreshWorkspace(); return; }
-              if (msg.type === 'approval_resolved') { if (currentView === 'workspace') refreshWorkspace(); return; }
-              // Search results
-              if (msg.type === 'search_results') { renderSearchResults(msg.results || []); return; }
-              // Handoff bundle
-              if (msg.type === 'handoff_bundle') { renderHandoffBundle(msg); return; }
-              // Notes
-              if (msg.type === 'note_list') { wsNotes = msg.notes || []; renderNotes(); return; }
-              if (msg.type === 'note_created') {
-                // Optimistic render: add note directly without waiting for list refresh
-                if (msg.id && msg.content) wsNotes.unshift({ id: msg.id, content: msg.content, pinned: msg.pinned || false, createdAt: msg.createdAt, updatedAt: msg.updatedAt });
-                renderNotes();
-                return;
-              }
-              if (msg.type === 'note_updated' || msg.type === 'note_deleted' || msg.type === 'note_pinned') { sendCtrl({ type: 'list_notes' }); return; }
-              // Commands
-              if (msg.type === 'command_list') { wsCommands = msg.commands || []; renderCommands(); return; }
               // Unrecognized enveloped control message — discard, never write to terminal
               if (parsed.v === 1) {
                 console.warn('[remux] unhandled message type:', msg.type);
@@ -1519,32 +1196,26 @@ const HTML_TEMPLATE = `<!doctype html>
       });
 
       // -- Inspect view --
-      let currentView = 'live', inspectTimer = null, wsRefreshTimer = null;
+      let currentView = 'live', inspectTimer = null;
+      function syncComposeBar() {
+        $('compose-bar').classList.toggle('visible', isTouchDevice && currentView === 'live');
+      }
       function setView(mode) {
         currentView = mode;
         $('btn-live').classList.toggle('active', mode === 'live');
         $('btn-inspect').classList.toggle('active', mode === 'inspect');
-        $('btn-workspace').classList.toggle('active', mode === 'workspace');
         $('terminal').classList.toggle('hidden', mode !== 'live');
         $('inspect').classList.toggle('visible', mode === 'inspect');
-        $('workspace').classList.toggle('visible', mode === 'workspace');
-        // Inspect auto-refresh
         if (inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
         if (mode === 'inspect') {
           sendCtrl({ type: 'inspect' });
           inspectTimer = setInterval(() => sendCtrl({ type: 'inspect' }), 3000);
         }
-        // Workspace auto-refresh
-        if (wsRefreshTimer) { clearInterval(wsRefreshTimer); wsRefreshTimer = null; }
-        if (mode === 'workspace') {
-          refreshWorkspace();
-          wsRefreshTimer = setInterval(refreshWorkspace, 5000);
-        }
+        syncComposeBar();
         if (mode === 'live') { term.focus(); stabilizeFit(); }
       }
       $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('live'); });
       $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('inspect'); });
-      $('btn-workspace').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('workspace'); });
 
       // -- Inspect search --
       function applyInspectSearch() {
@@ -1555,8 +1226,6 @@ const HTML_TEMPLATE = `<!doctype html>
           $('inspect-match-count').textContent = '';
           return;
         }
-        // Simple case-insensitive text search with <mark> highlighting
-        // Work on raw text to avoid HTML entity issues, then escape each fragment
         const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const q = query.toLowerCase();
         const lower = text.toLowerCase();
@@ -1571,439 +1240,7 @@ const HTML_TEMPLATE = `<!doctype html>
         $('inspect-match-count').textContent = count > 0 ? count + ' match' + (count !== 1 ? 'es' : '') : 'No matches';
       }
       $('inspect-search-input').addEventListener('input', applyInspectSearch);
-
-      // -- Devices section --
-      let devicesList = [], myDeviceId = null, devicesCollapsed = false;
-
-      function renderDevices() {
-        const list = $('devices-list');
-        const actions = $('devices-actions');
-        if (!list) return;
-        list.innerHTML = '';
-        devicesList.forEach(d => {
-          const el = document.createElement('div');
-          el.className = 'device-item';
-          const isSelf = d.id === myDeviceId;
-          el.innerHTML = '<span class="device-dot ' + esc(d.trust) + '"></span>'
-            + '<span class="device-name">' + esc(d.name) + (isSelf ? ' <span class="device-self">(you)</span>' : '') + '</span>'
-            + '<span class="device-actions">'
-            + (d.trust !== 'trusted' ? '<button data-trust="' + d.id + '" title="Trust">&#10003;</button>' : '')
-            + (d.trust !== 'blocked' ? '<button data-block="' + d.id + '" title="Block">&#10007;</button>' : '')
-            + '<button data-rename-dev="' + d.id + '" title="Rename">&#9998;</button>'
-            + (!isSelf ? '<button data-revoke="' + d.id + '" title="Revoke">&#128465;</button>' : '')
-            + '</span>';
-          el.addEventListener('click', e => {
-            const btn = e.target.closest('button');
-            if (!btn) return;
-            if (btn.dataset.trust) sendCtrl({ type: 'trust_device', deviceId: btn.dataset.trust });
-            if (btn.dataset.block) sendCtrl({ type: 'block_device', deviceId: btn.dataset.block });
-            if (btn.dataset.renameDev) {
-              const newName = prompt('Device name:', d.name);
-              if (newName && newName.trim()) sendCtrl({ type: 'rename_device', deviceId: btn.dataset.renameDev, name: newName.trim() });
-            }
-            if (btn.dataset.revoke) {
-              if (confirm('Revoke device "' + d.name + '"?')) sendCtrl({ type: 'revoke_device', deviceId: btn.dataset.revoke });
-            }
-          });
-          list.appendChild(el);
-        });
-
-        // Show actions only for trusted devices; untrusted see pair input instead
-        const isTrusted = devicesList.find(d => d.id === myDeviceId && d.trust === 'trusted');
-        if (actions) {
-          actions.style.display = 'block';
-          const btnPair = $('btn-pair');
-          if (btnPair) {
-            btnPair.disabled = !isTrusted;
-            btnPair.title = isTrusted ? '' : 'Only trusted devices can generate pair codes';
-          }
-          // Show pair input for untrusted devices
-          const pairInput = $('pair-input-area');
-          if (pairInput) pairInput.style.display = isTrusted ? 'none' : 'flex';
-        }
-      }
-
-      $('devices-header').addEventListener('click', () => {
-        devicesCollapsed = !devicesCollapsed;
-        $('devices-list').classList.toggle('collapsed', devicesCollapsed);
-        $('devices-toggle').classList.toggle('collapsed', devicesCollapsed);
-        if ($('devices-actions')) $('devices-actions').style.display = devicesCollapsed ? 'none' : '';
-      });
-
-      $('btn-pair').addEventListener('click', () => {
-        sendCtrl({ type: 'generate_pair_code' });
-      });
-
-      $('btn-submit-pair').addEventListener('click', () => {
-        const code = $('pair-code-input').value.trim();
-        if (!/^\d{6}$/.test(code)) { alert('Please enter a 6-digit pair code'); return; }
-        sendCtrl({ type: 'pair', code });
-      });
-
-      $('pair-code-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); $('btn-submit-pair').click(); }
-      });
-
-      // -- Push notifications --
-      let pushSubscribed = false;
-      let pushVapidKey = null;
-
-      function showPushSection() {
-        // Show only if browser supports push + service workers
-        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-        $('push-section').style.display = 'block';
-      }
-
-      function updatePushUI() {
-        const btn = $('btn-push-toggle');
-        const label = $('push-label');
-        const testBtn = $('btn-push-test');
-        if (pushSubscribed) {
-          btn.classList.add('subscribed');
-          label.textContent = 'Notifications On';
-          testBtn.style.display = 'block';
-        } else {
-          btn.classList.remove('subscribed');
-          label.textContent = 'Enable Notifications';
-          testBtn.style.display = 'none';
-        }
-      }
-
-      function urlBase64ToUint8Array(base64String) {
-        const padding = '='.repeat((4 - base64String.length % 4) % 4);
-        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-        const rawData = atob(base64);
-        const outputArray = new Uint8Array(rawData.length);
-        for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
-        return outputArray;
-      }
-
-      async function subscribePush() {
-        if (!pushVapidKey) return;
-        try {
-          const reg = await navigator.serviceWorker.register('/sw.js');
-          await navigator.serviceWorker.ready;
-          const sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(pushVapidKey),
-          });
-          const subJson = sub.toJSON();
-          sendCtrl({
-            type: 'subscribe_push',
-            subscription: {
-              endpoint: subJson.endpoint,
-              keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
-            },
-          });
-        } catch (err) {
-          console.error('[push] subscribe failed:', err);
-          if (Notification.permission === 'denied') {
-            $('push-label').textContent = 'Permission Denied';
-          } else {
-            $('push-label').textContent = 'Not Available';
-          }
-        }
-      }
-
-      async function unsubscribePush() {
-        try {
-          const reg = await navigator.serviceWorker.getRegistration();
-          if (reg) {
-            const sub = await reg.pushManager.getSubscription();
-            if (sub) await sub.unsubscribe();
-          }
-          sendCtrl({ type: 'unsubscribe_push' });
-        } catch (err) {
-          console.error('[push] unsubscribe failed:', err);
-        }
-      }
-
-      $('btn-push-toggle').addEventListener('click', async () => {
-        if (pushSubscribed) {
-          await unsubscribePush();
-          pushSubscribed = false;
-        } else {
-          await subscribePush();
-        }
-        updatePushUI();
-      });
-
-      $('btn-push-test').addEventListener('click', () => {
-        sendCtrl({ type: 'test_push' });
-      });
-
-      // -- Workspace view --
-      let wsTopics = [], wsRuns = [], wsArtifacts = [], wsApprovals = [];
-      let wsNotes = [], wsCommands = [];
-
-      function refreshWorkspace() {
-        if (!currentSession) return; // Wait until bootstrap resolves a session
-        sendCtrl({ type: 'list_topics', sessionName: currentSession });
-        sendCtrl({ type: 'list_runs' });
-        sendCtrl({ type: 'list_artifacts', sessionName: currentSession });
-        sendCtrl({ type: 'list_approvals' });
-        sendCtrl({ type: 'list_notes' }); // Notes are global workspace memory, not session-scoped
-        sendCtrl({ type: 'list_commands' });
-      }
-
-      function timeAgo(ts) {
-        const s = Math.floor((Date.now() - ts) / 1000);
-        if (s < 60) return s + 's ago';
-        if (s < 3600) return Math.floor(s / 60) + 'm ago';
-        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-        return Math.floor(s / 86400) + 'd ago';
-      }
-
-      function renderWorkspaceApprovals() {
-        const el = $('ws-approvals');
-        if (!el) return;
-        const pending = wsApprovals.filter(a => a.status === 'pending');
-        if (pending.length === 0) { el.innerHTML = '<div class="ws-empty">No pending approvals</div>'; return; }
-        el.innerHTML = pending.map(a =>
-          '<div class="ws-card">' +
-            '<div class="ws-card-header">' +
-              '<span class="ws-badge pending">pending</span>' +
-              '<span class="ws-card-title">' + esc(a.title) + '</span>' +
-              '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
-            '</div>' +
-            (a.description ? '<div class="ws-card-desc">' + esc(a.description) + '</div>' : '') +
-            '<div class="ws-card-actions">' +
-              '<button class="approve" data-approve-id="' + a.id + '">Approve</button>' +
-              '<button class="reject" data-reject-id="' + a.id + '">Reject</button>' +
-            '</div>' +
-          '</div>'
-        ).join('');
-        el.querySelectorAll('[data-approve-id]').forEach(btn => {
-          btn.addEventListener('click', () => sendCtrl({ type: 'resolve_approval', approvalId: btn.dataset.approveId, status: 'approved' }));
-        });
-        el.querySelectorAll('[data-reject-id]').forEach(btn => {
-          btn.addEventListener('click', () => sendCtrl({ type: 'resolve_approval', approvalId: btn.dataset.rejectId, status: 'rejected' }));
-        });
-      }
-
-      function renderWorkspaceTopics() {
-        const el = $('ws-topics');
-        if (!el) return;
-        if (wsTopics.length === 0) { el.innerHTML = '<div class="ws-empty">No topics yet</div>'; return; }
-        el.innerHTML = wsTopics.map(t =>
-          '<div class="ws-card">' +
-            '<div class="ws-card-header">' +
-              '<span class="ws-card-title">' + esc(t.title) + '</span>' +
-              '<span class="ws-card-meta">' + timeAgo(t.createdAt) + '</span>' +
-              '<button class="del-topic" data-del-topic="' + t.id + '" title="Delete">&times;</button>' +
-            '</div>' +
-            '<div class="ws-card-meta">' + esc(t.sessionName) + '</div>' +
-          '</div>'
-        ).join('');
-        el.querySelectorAll('[data-del-topic]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            sendCtrl({ type: 'delete_topic', topicId: btn.dataset.delTopic });
-            setTimeout(refreshWorkspace, 200);
-          });
-        });
-      }
-
-      function renderWorkspaceRuns() {
-        const el = $('ws-runs');
-        if (!el) return;
-        const active = wsRuns.filter(r => r.status === 'running');
-        const recent = wsRuns.filter(r => r.status !== 'running').slice(-5).reverse();
-        const all = [...active, ...recent];
-        if (all.length === 0) { el.innerHTML = '<div class="ws-empty">No runs</div>'; return; }
-        el.innerHTML = all.map(r =>
-          '<div class="ws-card">' +
-            '<div class="ws-card-header">' +
-              '<span class="ws-badge ' + r.status + '">' + r.status + '</span>' +
-              '<span class="ws-card-title">' + esc(r.command || '(no command)') + '</span>' +
-              '<span class="ws-card-meta">' + timeAgo(r.startedAt) + '</span>' +
-            '</div>' +
-            (r.exitCode !== null ? '<div class="ws-card-meta">Exit: ' + r.exitCode + '</div>' : '') +
-          '</div>'
-        ).join('');
-      }
-
-      // Track which artifact IDs are expanded (persists across re-renders)
-      const _expandedArtifacts = new Set();
-
-      function renderWorkspaceArtifacts() {
-        const el = $('ws-artifacts');
-        if (!el) return;
-        // Artifacts are already filtered by session_name on the server side
-        const recent = wsArtifacts.slice(-10).reverse();
-        if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
-        el.innerHTML = recent.map((a) => {
-          var hasContent = a.content && a.content.trim();
-          var ct = a.contentType || 'plain';
-          var badge = (ct !== 'plain') ? ' <span class="ws-badge ' + esc(ct) + '">' + esc(ct) + '</span>' : '';
-          var rendered = a.renderedHtml || (hasContent ? '<pre style="margin:0;font-size:11px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">' + esc(a.content) + '</pre>' : '');
-          var isExpanded = _expandedArtifacts.has(a.id);
-          return '<div class="ws-card">' +
-            '<div class="ws-card-header">' +
-              '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
-              badge +
-              '<span class="ws-card-title">' + esc(a.title) + '</span>' +
-              '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
-              (hasContent ? '<button class="ws-card-toggle" data-toggle-art="' + esc(a.id) + '">' + (isExpanded ? 'Hide' : 'Show') + '</button>' : '') +
-            '</div>' +
-            (hasContent ? '<div class="ws-card-content" data-art-content="' + esc(a.id) + '" style="display:' + (isExpanded ? 'block' : 'none') + '">' + rendered + '</div>' : '') +
-          '</div>';
-        }).join('');
-        // Wire up toggle buttons
-        el.querySelectorAll('[data-toggle-art]').forEach(function(btn) {
-          btn.addEventListener('click', function() {
-            var artId = btn.getAttribute('data-toggle-art');
-            var contentEl = el.querySelector('[data-art-content="' + artId + '"]');
-            if (!contentEl) return;
-            var visible = contentEl.style.display !== 'none';
-            contentEl.style.display = visible ? 'none' : 'block';
-            btn.textContent = visible ? 'Show' : 'Hide';
-            if (visible) _expandedArtifacts.delete(artId); else _expandedArtifacts.add(artId);
-          });
-        });
-      }
-
-      $('btn-new-topic').addEventListener('click', () => {
-        const title = prompt('Topic title:');
-        if (title && title.trim()) {
-          sendCtrl({ type: 'create_topic', sessionName: currentSession, title: title.trim() });
-          // Optimistic render in topic_created handler, no delayed refresh needed
-        }
-      });
-
-      $('btn-capture-snapshot').addEventListener('click', () => {
-        sendCtrl({ type: 'capture_snapshot' });
-        // Optimistic render in snapshot_captured handler, no delayed refresh needed
-      });
-
-      // -- Search --
-      let searchDebounce = null;
-      $('ws-search-input').addEventListener('input', () => {
-        clearTimeout(searchDebounce);
-        const q = $('ws-search-input').value.trim();
-        if (!q) { $('ws-search-results').innerHTML = ''; return; }
-        searchDebounce = setTimeout(() => sendCtrl({ type: 'search', query: q }), 200);
-      });
-
-      function renderSearchResults(results) {
-        const el = $('ws-search-results');
-        if (!el) return;
-        if (results.length === 0) {
-          const q = ($('ws-search-input') || {}).value || '';
-          el.innerHTML = q ? '<div class="ws-empty">No results</div>' : '';
-          return;
-        }
-        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        el.innerHTML = results.map(r =>
-          '<div class="ws-search-result">' +
-            '<span class="sr-type">' + esc(r.entityType) + '</span> ' +
-            '<span class="sr-title">' + esc(r.title) + '</span>' +
-          '</div>'
-        ).join('');
-      }
-
-      // -- Handoff --
-      $('btn-handoff').addEventListener('click', () => {
-        const el = $('ws-handoff');
-        if (el.classList.contains('visible')) { el.classList.remove('visible'); return; }
-        sendCtrl({ type: 'get_handoff' });
-      });
-
-      function renderHandoffBundle(bundle) {
-        const el = $('ws-handoff');
-        if (!el) return;
-        el.classList.add('visible');
-        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        let html = '<div class="ws-handoff-section"><div class="ws-handoff-label">Sessions</div>';
-        html += '<ul class="ws-handoff-list">';
-        (bundle.sessions || []).forEach(s => {
-          html += '<li>' + esc(s.name) + ' (' + s.activeTabs + ' active tabs)</li>';
-        });
-        html += '</ul></div>';
-        if ((bundle.activeTopics || []).length > 0) {
-          html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Active Topics (24h)</div>';
-          html += '<ul class="ws-handoff-list">';
-          bundle.activeTopics.forEach(t => { html += '<li>' + esc(t.title) + '</li>'; });
-          html += '</ul></div>';
-        }
-        if ((bundle.pendingApprovals || []).length > 0) {
-          html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Pending Approvals</div>';
-          html += '<ul class="ws-handoff-list">';
-          bundle.pendingApprovals.forEach(a => { html += '<li>' + esc(a.title) + '</li>'; });
-          html += '</ul></div>';
-        }
-        html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Recent Runs (' + (bundle.recentRuns || []).length + ')</div></div>';
-        html += '<div class="ws-handoff-section"><div class="ws-handoff-label">Key Artifacts (' + (bundle.keyArtifacts || []).length + ')</div></div>';
-        el.innerHTML = html;
-      }
-
-      // -- Notes --
-      function renderNotes() {
-        const el = $('ws-notes');
-        if (!el) return;
-        if (wsNotes.length === 0) { el.innerHTML = '<div class="ws-empty">No notes yet</div>'; return; }
-        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        el.innerHTML = wsNotes.map(n =>
-          '<div class="ws-note' + (n.pinned ? ' pinned' : '') + '">' +
-            '<div class="ws-note-content">' + esc(n.content) + '</div>' +
-            '<div class="ws-note-actions">' +
-              '<button data-pin-note="' + n.id + '">' + (n.pinned ? 'Unpin' : 'Pin') + '</button>' +
-              '<button data-del-note="' + n.id + '">Delete</button>' +
-            '</div>' +
-          '</div>'
-        ).join('');
-        el.querySelectorAll('[data-pin-note]').forEach(btn => {
-          btn.addEventListener('click', () => sendCtrl({ type: 'pin_note', noteId: btn.dataset.pinNote }));
-        });
-        el.querySelectorAll('[data-del-note]').forEach(btn => {
-          btn.addEventListener('click', () => sendCtrl({ type: 'delete_note', noteId: btn.dataset.delNote }));
-        });
-      }
-
-      $('btn-add-note').addEventListener('click', () => {
-        const input = $('ws-note-input');
-        const content = input.value.trim();
-        if (!content) return;
-        sendCtrl({ type: 'create_note', content });
-        input.value = '';
-        // Feedback: show saving indicator, revert if no response in 3s
-        const el = $('ws-notes');
-        const prevHtml = el.innerHTML;
-        el.innerHTML = '<div class="ws-empty">Saving...</div>';
-        setTimeout(() => {
-          if (el.innerHTML.includes('Saving...')) {
-            el.innerHTML = '<div class="ws-empty" style="color:var(--text-dim)">Note may not have saved — check server logs</div>';
-          }
-        }, 3000);
-      });
-      $('ws-note-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); $('btn-add-note').click(); }
-      });
-
-      // -- Commands --
-      function formatDuration(startedAt, endedAt) {
-        if (!endedAt) return 'running';
-        const ms = endedAt - startedAt;
-        if (ms < 1000) return ms + 'ms';
-        if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
-        return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
-      }
-
-      function renderCommands() {
-        const el = $('ws-commands');
-        if (!el) return;
-        if (wsCommands.length === 0) { el.innerHTML = '<div class="ws-empty">No commands detected (requires shell integration)</div>'; return; }
-        const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        el.innerHTML = wsCommands.slice(0, 20).map(c => {
-          const exitClass = c.exitCode === null ? '' : (c.exitCode === 0 ? 'ok' : 'err');
-          const exitSymbol = c.exitCode === null ? '' : (c.exitCode === 0 ? '&#10003;' : '&#10007; ' + c.exitCode);
-          return '<div class="ws-cmd">' +
-            '<span class="ws-cmd-text">' + esc(c.command || '(unknown)') + '</span>' +
-            (exitSymbol ? '<span class="ws-cmd-exit ' + exitClass + '">' + exitSymbol + '</span>' : '') +
-            '<span class="ws-cmd-meta">' + formatDuration(c.startedAt, c.endedAt) + '</span>' +
-            (c.cwd ? '<span class="ws-cmd-meta">' + esc(c.cwd) + '</span>' : '') +
-          '</div>';
-        }).join('');
-      }
+      syncComposeBar();
 
       // -- Tab rename (double-click) --
       $('tab-list').addEventListener('dblclick', e => {

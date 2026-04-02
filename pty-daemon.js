@@ -120,17 +120,23 @@ function main() {
     } catch {
     }
   }
-  const ptyProcess = pty.spawn(args.shell, [], {
-    name: "xterm-256color",
-    cols: args.cols,
-    rows: args.rows,
-    cwd: args.cwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor"
-    }
-  });
+  let ptyProcess;
+  try {
+    ptyProcess = pty.spawn(args.shell, [], {
+      name: "xterm-256color",
+      cols: args.cols,
+      rows: args.rows,
+      cwd: args.cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor"
+      }
+    });
+  } catch (err) {
+    console.error(`[pty-daemon] failed to spawn PTY: ${err?.message || err}`);
+    process.exit(1);
+  }
   const scrollback = new RingBuffer();
   const clients = /* @__PURE__ */ new Set();
   let alive = true;
