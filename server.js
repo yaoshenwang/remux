@@ -5552,9 +5552,11 @@ var init_server = __esm({
       const initTheme = localStorage.getItem('remux-theme') ||
         (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
 
-      let term, fitAddon;
+      let term, fitAddon, fitObserver = null, fitSettleTimer = null;
       function createTerminal(themeMode) {
         const container = document.getElementById('terminal');
+        if (fitObserver) { fitObserver.disconnect(); fitObserver = null; }
+        if (fitSettleTimer) { clearTimeout(fitSettleTimer); fitSettleTimer = null; }
         if (term) { term.dispose(); container.innerHTML = ''; }
         term = window._remuxTerm = new Terminal({ cols: 80, rows: 24,
           fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -5564,11 +5566,18 @@ var init_server = __esm({
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         term.open(container);
-        fitAddon.fit();
-        fitAddon.observeResize();
+        fitObserver = new ResizeObserver(() => safeFit());
+        fitObserver.observe(container);
+        safeFit();
+        fitSettleTimer = setTimeout(() => {
+          fitSettleTimer = null;
+          safeFit();
+        }, 250);
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(() => safeFit()).catch(() => {});
+        }
         return term;
       }
-      createTerminal(initTheme);
 
       // -- IME composition guard --
       // Defer fit()/resize during active IME composition to avoid layout thrash.
@@ -5590,13 +5599,22 @@ var init_server = __esm({
         clearTimeout(fitDebounceTimer);
         fitDebounceTimer = setTimeout(safeFit, 100);
       }
+      function stabilizeFit() {
+        safeFit();
+        if (fitSettleTimer) clearTimeout(fitSettleTimer);
+        fitSettleTimer = setTimeout(() => {
+          fitSettleTimer = null;
+          safeFit();
+        }, 250);
+      }
       window.addEventListener('resize', safeFit);
       const _termContainer = document.getElementById('terminal');
       _termContainer.addEventListener('compositionstart', () => { _isComposing = true; });
       _termContainer.addEventListener('compositionend', () => {
         _isComposing = false;
-        if (_pendingFit) { _pendingFit = false; safeFit(); }
+        if (_pendingFit) { _pendingFit = false; stabilizeFit(); }
       });
+      createTerminal(initTheme);
 
       let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
@@ -5648,7 +5666,7 @@ var init_server = __esm({
           sidebar.classList.toggle('open');
           overlay.classList.toggle('visible', sidebar.classList.contains('open'));
         } else { sidebar.classList.toggle('collapsed'); }
-        setTimeout(safeFit, 250);
+        setTimeout(stabilizeFit, 250);
       }
       function closeSidebarMobile() {
         if (window.innerWidth <= 768) { sidebar.classList.remove('open'); overlay.classList.remove('visible'); }
@@ -5756,6 +5774,7 @@ var init_server = __esm({
         currentTabId = tabId;
         term.reset(); // full reset to avoid duplicate content
         sendCtrl({ type: 'attach_tab', tabId, cols: term.cols, rows: term.rows });
+        stabilizeFit();
         renderTabs(); renderSessions();
       }
 
@@ -6087,13 +6106,13 @@ var init_server = __esm({
                   const me = clientsList.find(c => c.clientId === myClientId);
                   if (me) myRole = me.role;
                 }
-                renderSessions(); renderTabs(); renderRole(); return;
+                renderSessions(); renderTabs(); renderRole(); stabilizeFit(); return;
               }
               if (msg.type === 'attached') {
                 currentTabId = msg.tabId; currentSession = msg.session;
                 if (msg.clientId) myClientId = msg.clientId;
                 if (msg.role) myRole = msg.role;
-                setStatus('connected', msg.session); renderSessions(); renderTabs(); renderRole(); return;
+                setStatus('connected', msg.session); renderSessions(); renderTabs(); renderRole(); stabilizeFit(); return;
               }
               if (msg.type === 'role_changed') {
                 if (msg.clientId === myClientId) myRole = msg.role;
@@ -6235,7 +6254,7 @@ var init_server = __esm({
           refreshWorkspace();
           wsRefreshTimer = setInterval(refreshWorkspace, 5000);
         }
-        if (mode === 'live') { term.focus(); safeFit(); }
+        if (mode === 'live') { term.focus(); stabilizeFit(); }
       }
       $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('live'); });
       $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('inspect'); });
