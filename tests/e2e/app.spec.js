@@ -441,4 +441,90 @@ test.describe.serial("Remux E2E", () => {
       await context.close();
     }
   });
+
+  test("desktop resize waits until composition ends before refit", async ({
+    page,
+  }) => {
+    await page.goto(`${BASE}&debug=1`);
+    await expect(page.locator("#terminal canvas")).toBeVisible({
+      timeout: 10000,
+    });
+    await page.waitForFunction(
+      () =>
+        window._remuxTerm &&
+        document.querySelector("#status-dot")?.classList.contains("connected"),
+      { timeout: 10000 },
+    );
+
+    const snapshot = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const textarea = document.querySelector("#terminal textarea");
+      const sidebar = document.getElementById("sidebar");
+      const term = window._remuxTerm;
+
+      if (!textarea || !sidebar || !term) {
+        return {
+          missing: {
+            textarea: !!textarea,
+            sidebar: !!sidebar,
+            term: !!term,
+          },
+        };
+      }
+
+      const baseline = {
+        cols: term.cols,
+        rows: term.rows,
+        sidebarCollapsed: sidebar.classList.contains("collapsed"),
+      };
+
+      textarea.focus();
+      textarea.dispatchEvent(
+        new CompositionEvent("compositionstart", {
+          bubbles: true,
+          data: "",
+        }),
+      );
+      textarea.dispatchEvent(
+        new CompositionEvent("compositionupdate", {
+          bubbles: true,
+          data: "nihon",
+        }),
+      );
+
+      sidebar.classList.add("collapsed");
+      await sleep(300);
+
+      const composing = {
+        cols: term.cols,
+        rows: term.rows,
+        sidebarCollapsed: sidebar.classList.contains("collapsed"),
+      };
+
+      textarea.dispatchEvent(
+        new CompositionEvent("compositionend", {
+          bubbles: true,
+          data: "日本語",
+        }),
+      );
+      await sleep(400);
+
+      const recovered = {
+        cols: term.cols,
+        rows: term.rows,
+        sidebarCollapsed: sidebar.classList.contains("collapsed"),
+      };
+
+      sidebar.classList.remove("collapsed");
+      await sleep(300);
+
+      return { baseline, composing, recovered };
+    });
+
+    expect(snapshot.missing).toBeUndefined();
+    expect(snapshot.composing.cols).toBe(snapshot.baseline.cols);
+    expect(snapshot.composing.rows).toBe(snapshot.baseline.rows);
+    expect(snapshot.recovered.cols).toBeGreaterThan(snapshot.baseline.cols);
+    expect(snapshot.recovered.sidebarCollapsed).toBe(true);
+  });
 });
