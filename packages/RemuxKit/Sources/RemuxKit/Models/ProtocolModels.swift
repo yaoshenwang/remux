@@ -1,3 +1,5 @@
+import Foundation
+
 public struct ProtocolCapabilities: Codable, Equatable, Sendable {
   public let envelope: Bool
   public let inspectV2: Bool
@@ -65,6 +67,58 @@ public struct WorkspaceState: Codable, Equatable, Sendable {
   public let session: String
   public let tabs: [WorkspaceTab]
   public let activeTabIndex: Int
+}
+
+public struct WorkspaceSessionSummary: Codable, Equatable, Sendable {
+  public let name: String
+  public let tabs: [WorkspaceSessionTab]
+  public let createdAt: Int
+}
+
+public struct WorkspaceSessionTab: Codable, Equatable, Sendable {
+  public let id: Int
+  public let title: String
+  public let ended: Bool
+  public let clients: Int
+  public let restored: Bool
+}
+
+public struct ConnectedClientInfo: Codable, Equatable, Sendable {
+  public let clientId: String
+  public let role: String
+  public let session: String?
+  public let tabId: Int?
+}
+
+public struct WorkspaceSnapshot: Codable, Equatable, Sendable {
+  public let sessions: [WorkspaceSessionSummary]
+  public let clients: [ConnectedClientInfo]
+
+  public init(sessions: [WorkspaceSessionSummary], clients: [ConnectedClientInfo]) {
+    self.sessions = sessions
+    self.clients = clients
+  }
+}
+
+public struct AttachedPayload: Codable, Equatable, Sendable {
+  public let tabId: Int
+  public let session: String
+  public let clientId: String
+  public let role: String
+}
+
+public struct ServerInspectMeta: Codable, Equatable, Sendable {
+  public let session: String
+  public let tabId: Int?
+  public let tabTitle: String
+  public let cols: Int
+  public let rows: Int
+  public let timestamp: Int
+}
+
+public struct ServerInspectResult: Codable, Equatable, Sendable {
+  public let text: String
+  public let meta: ServerInspectMeta
 }
 
 public struct InspectHighlight: Codable, Equatable, Sendable {
@@ -175,6 +229,16 @@ public struct LegacyWorkspaceState: Codable, Equatable, Sendable {
   public let session: String
   public let tabs: [WorkspaceTab]
   public let activeTabIndex: Int
+}
+
+public struct CurrentWorkspaceStatePayload: Codable, Equatable, Sendable {
+  public let sessions: [WorkspaceSessionSummary]
+  public let clients: [ConnectedClientInfo]
+}
+
+public struct BootstrapPayload: Codable, Equatable, Sendable {
+  public let sessions: [WorkspaceSessionSummary]
+  public let clients: [ConnectedClientInfo]
 }
 
 public struct LegacyInspectRequest: Codable, Equatable, Sendable {

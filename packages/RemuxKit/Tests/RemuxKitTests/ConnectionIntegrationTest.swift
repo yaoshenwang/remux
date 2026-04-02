@@ -72,3 +72,19 @@ struct ConnectionIntegrationTests {
         #expect(result.state == true)
     }
 }
+
+@Suite("RemuxConnection")
+struct RemuxConnectionTests {
+
+    @Test("Treat non-protocol JSON output as terminal data")
+    func classifyJsonTerminalOutput() {
+        let disposition = RemuxConnection.classifyIncomingText(#"{"message":"hello"}"#)
+        #expect(disposition == .terminal(#"{"message":"hello"}"#))
+    }
+
+    @Test("Treat enveloped messages as control")
+    func classifyEnvelopedControl() {
+        let disposition = RemuxConnection.classifyIncomingText(#"{"v":1,"type":"state","payload":{"sessions":[],"clients":[]}}"#)
+        #expect(disposition == .control("state"))
+    }
+}

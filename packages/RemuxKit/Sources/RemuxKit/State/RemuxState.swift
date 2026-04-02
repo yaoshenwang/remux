@@ -35,12 +35,16 @@ public final class RemuxState {
 
     private var connection: RemuxConnection?
     private let router = MessageRouter()
+    private var workspaceSnapshot = WorkspaceSnapshot(sessions: [], clients: [])
+    private var clientId: String?
+    private var currentTabId: Int?
 
     public init() {}
 
     // MARK: - Connection management
 
     public func connect(url: URL, credential: RemuxCredential) {
+        connection?.disconnect()
         serverURL = url
         let conn = RemuxConnection(serverURL: url, credential: credential)
         conn.delegate = self
@@ -56,19 +60,23 @@ public final class RemuxState {
     // MARK: - Actions
 
     public func switchTab(id: String) {
-        sendJSON(["type": "attach_tab", "tabId": id])
+        sendJSON(["type": "attach_tab", "tabId": Int(id) ?? id])
     }
 
     public func createTab() {
-        sendJSON(["type": "new_tab"])
+        var payload: [String: Any] = ["type": "new_tab"]
+        if !currentSession.isEmpty {
+            payload["session"] = currentSession
+        }
+        sendJSON(payload)
     }
 
     public func closeTab(id: String) {
-        sendJSON(["type": "close_tab", "tabId": id])
+        sendJSON(["type": "close_tab", "tabId": Int(id) ?? id])
     }
 
     public func renameTab(id: String, name: String) {
-        sendJSON(["type": "rename_tab", "tabId": id, "name": name])
+        sendJSON(["type": "rename_tab", "tabId": Int(id) ?? id, "title": name])
     }
 
     public func createSession(name: String) {
@@ -80,6 +88,9 @@ public final class RemuxState {
     }
 
     public func requestInspect(tabIndex: Int? = nil, query: String? = nil) {
+        if let tabId = tabIndex, tabId != currentTabId {
+            sendJSON(["type": "attach_tab", "tabId": tabId])
+        }
         var dict: [String: Any] = ["type": "inspect"]
         if let idx = tabIndex { dict["tabIndex"] = idx }
         if let q = query { dict["query"] = q }
@@ -127,10 +138,14 @@ public final class RemuxState {
         guard let routed = router.route(text) else { return }
 
         switch routed {
-        case .state(let ws):
-            currentSession = ws.session
-            tabs = ws.tabs
-            activeTabIndex = ws.activeTabIndex
+        case .workspaceSnapshot(let snapshot):
+            applyWorkspaceSnapshot(snapshot)
+        case .attached(let attached):
+            clientId = attached.clientId
+            currentSession = attached.session
+            currentTabId = attached.tabId
+            clientRole = attached.role
+            rebuildTabs()
         case .inspectResult(let snapshot):
             inspectSnapshot = snapshot
         case .roleChanged(let role):
@@ -146,6 +161,64 @@ public final class RemuxState {
             break
         case .unknown:
             break
+        }
+    }
+
+    private func applyWorkspaceSnapshot(_ snapshot: WorkspaceSnapshot) {
+        workspaceSnapshot = snapshot
+
+        if let clientId,
+           let client = snapshot.clients.first(where: { $0.clientId == clientId }) {
+            currentSession = client.session ?? currentSession
+            currentTabId = client.tabId ?? currentTabId
+            clientRole = client.role
+        } else if currentSession.isEmpty, let firstSession = snapshot.sessions.first?.name {
+            currentSession = firstSession
+        }
+
+        rebuildTabs()
+    }
+
+    private func rebuildTabs() {
+        let sessionSummary =
+            workspaceSnapshot.sessions.first(where: { $0.name == currentSession })
+            ?? workspaceSnapshot.sessions.first
+
+        if currentSession.isEmpty, let sessionSummary {
+            currentSession = sessionSummary.name
+        }
+
+        guard let sessionSummary else {
+            tabs = []
+            activeTabIndex = 0
+            return
+        }
+
+        let activeTabId = currentTabId ?? sessionSummary.tabs.first?.id
+        currentTabId = activeTabId
+        activeTabIndex = activeTabId ?? 0
+        tabs = sessionSummary.tabs.map { tab in
+            let isActive = tab.id == activeTabId
+            return WorkspaceTab(
+                index: tab.id,
+                name: tab.title,
+                active: isActive,
+                isFullscreen: false,
+                hasBell: false,
+                panes: [
+                    WorkspacePane(
+                        id: String(tab.id),
+                        focused: isActive,
+                        title: tab.title,
+                        command: nil,
+                        cwd: nil,
+                        rows: 24,
+                        cols: 80,
+                        x: 0,
+                        y: 0
+                    )
+                ]
+            )
         }
     }
 }

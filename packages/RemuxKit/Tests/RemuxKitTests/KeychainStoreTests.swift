@@ -78,4 +78,30 @@ struct KeychainStoreTests {
         #expect(store.loadServerToken(forServer: testServer) == nil)
         #expect(store.loadDeviceId(forServer: testServer) == nil)
     }
+
+    @Test("Saved servers include token-only and resume-token-only entries", .enabled(if: keychainAvailable))
+    func savedServersIncludesAllCredentialTypes() throws {
+        let tokenOnly = "token-only-\(UUID().uuidString)"
+        let resumeOnly = "resume-only-\(UUID().uuidString)"
+        try store.saveServerToken("tok", forServer: tokenOnly)
+        try store.saveResumeToken("resume", forServer: resumeOnly)
+        defer {
+            store.deleteAll(forServer: tokenOnly)
+            store.deleteAll(forServer: resumeOnly)
+        }
+
+        let servers = store.savedServers()
+        #expect(servers.contains(tokenOnly))
+        #expect(servers.contains(resumeOnly))
+    }
+
+    @Test("Preferred credential uses resume token before server token", .enabled(if: keychainAvailable))
+    func preferredCredentialPrefersResumeToken() throws {
+        try store.saveServerToken("tok", forServer: testServer)
+        try store.saveResumeToken("resume", forServer: testServer)
+        defer { store.deleteAll(forServer: testServer) }
+
+        let credential = store.preferredCredential(forServer: testServer)
+        #expect(credential == .resumeToken("resume"))
+    }
 }

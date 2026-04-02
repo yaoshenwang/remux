@@ -53,9 +53,10 @@ struct ConnectionView: View {
                         serverURL = server
                         if let savedToken = keychain.loadServerToken(forServer: server) {
                             token = savedToken
-                            connect()
-                        } else if let resumeToken = keychain.loadResumeToken(forServer: server) {
-                            connectWithResumeToken(server: server, resumeToken: resumeToken)
+                        }
+                        if let credential = keychain.preferredCredential(forServer: server),
+                           let url = URL(string: server) {
+                            state.connect(url: url, credential: credential)
                         }
                     }
                     .buttonStyle(.plain)
@@ -75,10 +76,5 @@ struct ConnectionView: View {
         errorMessage = nil
         try? keychain.saveServerToken(token, forServer: serverURL)
         state.connect(url: url, credential: .token(token))
-    }
-
-    private func connectWithResumeToken(server: String, resumeToken: String) {
-        guard let url = URL(string: server) else { return }
-        state.connect(url: url, credential: .resumeToken(resumeToken))
     }
 }

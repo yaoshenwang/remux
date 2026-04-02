@@ -118,14 +118,16 @@ struct MessageRouterTests {
     func routeStateMessage() throws {
         let router = MessageRouter()
         let json = """
-        {"v":1,"type":"state","domain":"runtime","emittedAt":"2026-04-01T00:00:00Z","source":"server","payload":{"session":"main","tabs":[],"activeTabIndex":0}}
+        {"v":1,"type":"state","domain":"runtime","emittedAt":"2026-04-01T00:00:00Z","source":"server","payload":{"sessions":[{"name":"main","tabs":[{"id":7,"title":"zsh","ended":false,"clients":1,"restored":false}],"createdAt":1712000000000}],"clients":[{"clientId":"c1","role":"active","session":"main","tabId":7}]}}
         """
         let result = router.route(json)
-        guard case .state(let state) = result else {
-            Issue.record("Expected .state, got \(String(describing: result))")
+        guard case .workspaceSnapshot(let snapshot) = result else {
+            Issue.record("Expected .workspaceSnapshot, got \(String(describing: result))")
             return
         }
-        #expect(state.session == "main")
+        #expect(snapshot.sessions.count == 1)
+        #expect(snapshot.sessions[0].name == "main")
+        #expect(snapshot.sessions[0].tabs[0].id == 7)
     }
 
     @Test("Route legacy state message")
@@ -135,11 +137,12 @@ struct MessageRouterTests {
         {"type":"state","session":"dev","tabs":[],"activeTabIndex":0}
         """
         let result = router.route(json)
-        guard case .state(let state) = result else {
-            Issue.record("Expected .state, got \(String(describing: result))")
+        guard case .workspaceSnapshot(let snapshot) = result else {
+            Issue.record("Expected .workspaceSnapshot, got \(String(describing: result))")
             return
         }
-        #expect(state.session == "dev")
+        #expect(snapshot.sessions.first?.name == "dev")
+        #expect(snapshot.sessions.first?.tabs.isEmpty == true)
     }
 
     @Test("Route role_changed message")
@@ -175,5 +178,36 @@ struct MessageRouterTests {
         let router = MessageRouter()
         let result = router.route("not json")
         #expect(result == nil)
+    }
+
+    @Test("Route bootstrap message")
+    func routeBootstrapMessage() throws {
+        let router = MessageRouter()
+        let json = """
+        {"v":1,"type":"bootstrap","domain":"core","emittedAt":"2026-04-01T00:00:00Z","source":"server","payload":{"sessions":[{"name":"default","tabs":[{"id":1,"title":"shell","ended":false,"clients":1,"restored":false}],"createdAt":1712000000000}],"clients":[{"clientId":"c1","role":"active","session":"default","tabId":1}]}}
+        """
+        let result = router.route(json)
+        guard case .workspaceSnapshot(let snapshot) = result else {
+            Issue.record("Expected .workspaceSnapshot")
+            return
+        }
+        #expect(snapshot.sessions.first?.tabs.first?.title == "shell")
+        #expect(snapshot.clients.first?.clientId == "c1")
+    }
+
+    @Test("Route current inspect result")
+    func routeCurrentInspectResult() throws {
+        let router = MessageRouter()
+        let json = """
+        {"v":1,"type":"inspect_result","domain":"runtime","emittedAt":"2026-04-01T00:00:00Z","source":"server","payload":{"text":"first\\nsecond","meta":{"session":"default","tabId":7,"tabTitle":"shell","cols":80,"rows":24,"timestamp":1712000000000}}}
+        """
+        let result = router.route(json)
+        guard case .inspectResult(let snapshot) = result else {
+            Issue.record("Expected .inspectResult")
+            return
+        }
+        #expect(snapshot.items.count == 2)
+        #expect(snapshot.items[0].content == "first")
+        #expect(snapshot.descriptor.tabIndex == 7)
     }
 }
