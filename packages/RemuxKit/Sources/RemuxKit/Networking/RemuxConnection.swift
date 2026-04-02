@@ -10,7 +10,7 @@ public enum ConnectionStatus: Sendable, Equatable {
 }
 
 /// Credentials used to authenticate with the server
-public enum RemuxCredential: Sendable {
+public enum RemuxCredential: Sendable, Equatable {
     case token(String)
     case password(String)
     case resumeToken(String)
@@ -29,6 +29,29 @@ public protocol RemuxConnectionDelegate: AnyObject, Sendable {
 /// Uses URLSessionWebSocketTask (no third-party dependencies).
 /// Handles authentication, automatic reconnection with exponential backoff, and heartbeat.
 public final class RemuxConnection: NSObject, @unchecked Sendable {
+
+    enum IncomingTextDisposition: Equatable {
+        case terminal(String)
+        case control(String?)
+    }
+
+    static let legacyControlTypes: Set<String> = [
+        "auth_ok",
+        "auth_error",
+        "attached",
+        "bootstrap",
+        "device_list",
+        "error",
+        "inspect_result",
+        "pair_code",
+        "pair_result",
+        "ping",
+        "push_status",
+        "push_subscribed",
+        "role_changed",
+        "state",
+        "vapid_key",
+    ]
 
     public let serverURL: URL
     private let credential: RemuxCredential
@@ -223,21 +246,19 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
     }
 
     private func handleTextMessage(_ text: String) {
-        // PTY data from remux server is sent as raw text (not JSON).
-        // JSON control messages start with '{'. If text doesn't start with '{',
-        // it's PTY terminal data — forward as binary data for rendering.
-        guard text.hasPrefix("{") else {
-            if let data = text.data(using: .utf8) {
+        switch Self.classifyIncomingText(text) {
+        case .terminal(let terminalText):
+            if let data = terminalText.data(using: .utf8) {
                 let delegate = self.delegate
                 DispatchQueue.main.async { delegate?.connectionDidReceiveData(data) }
             }
             return
+        case .control:
+            break
         }
 
-        // Try JSON parse for control messages
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            // Malformed JSON — treat as PTY data
             if let data = text.data(using: .utf8) {
                 let delegate = self.delegate
                 DispatchQueue.main.async { delegate?.connectionDidReceiveData(data) }
@@ -391,5 +412,23 @@ public final class RemuxConnection: NSObject, @unchecked Sendable {
         DispatchQueue.main.async {
             delegate?.connectionDidChangeStatus(status)
         }
+    }
+
+    static func classifyIncomingText(_ text: String) -> IncomingTextDisposition {
+        guard text.hasPrefix("{"),
+              let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .terminal(text)
+        }
+
+        if let version = json["v"] as? Int, version >= 1, json["type"] as? String != nil {
+            return .control(json["type"] as? String)
+        }
+
+        if let type = json["type"] as? String, legacyControlTypes.contains(type) {
+            return .control(type)
+        }
+
+        return .terminal(text)
     }
 }

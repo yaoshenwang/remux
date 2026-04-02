@@ -20,12 +20,13 @@ struct RemuxStateTests {
     func processWorkspaceState() {
         let state = RemuxState()
         let json = """
-        {"type":"state","session":"main","tabs":[{"index":0,"name":"zsh","active":true,"isFullscreen":false,"hasBell":false,"panes":[{"id":"p1","focused":true,"title":"zsh","command":null,"cwd":"/tmp","rows":24,"cols":80,"x":0,"y":0}]}],"activeTabIndex":0}
+        {"type":"state","sessions":[{"name":"main","tabs":[{"id":11,"title":"zsh","ended":false,"clients":1,"restored":false}],"createdAt":1712000000000}],"clients":[]}
         """
         state.connectionDidReceiveMessage(json)
         #expect(state.currentSession == "main")
         #expect(state.tabs.count == 1)
         #expect(state.tabs[0].name == "zsh")
+        #expect(state.tabs[0].panes[0].id == "11")
     }
 
     @Test("Process role_changed message")
@@ -44,12 +45,29 @@ struct RemuxStateTests {
     func processInspectResult() {
         let state = RemuxState()
         let json = """
-        {"type":"inspect_result","descriptor":{"scope":"tab","source":"state_tracker","precision":"precise","staleness":"fresh","capturedAt":"2026-04-01T00:00:00Z","paneId":null,"tabIndex":0,"totalItems":1},"items":[{"type":"output","content":"hello","lineNumber":1,"timestamp":"2026-04-01T00:00:00Z","paneId":"p1","highlights":null}],"cursor":null,"truncated":false}
+        {"type":"inspect_result","text":"hello","meta":{"session":"main","tabId":11,"tabTitle":"zsh","cols":80,"rows":24,"timestamp":1712000000000}}
         """
         state.connectionDidReceiveMessage(json)
         #expect(state.inspectSnapshot != nil)
         #expect(state.inspectSnapshot?.items.count == 1)
         #expect(state.inspectSnapshot?.items[0].content == "hello")
+    }
+
+    @Test("Attached message updates current tab and role")
+    @MainActor
+    func processAttached() {
+        let state = RemuxState()
+        state.connectionDidReceiveMessage("""
+        {"type":"state","sessions":[{"name":"main","tabs":[{"id":11,"title":"zsh","ended":false,"clients":1,"restored":false}],"createdAt":1712000000000}],"clients":[]}
+        """)
+        state.connectionDidReceiveMessage("""
+        {"type":"attached","tabId":11,"session":"main","clientId":"c1","role":"observer"}
+        """)
+
+        #expect(state.currentSession == "main")
+        #expect(state.activeTabIndex == 11)
+        #expect(state.clientRole == "observer")
+        #expect(state.tabs.first?.active == true)
     }
 
     @Test("ConnectionStatus is Equatable")

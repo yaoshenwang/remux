@@ -96,9 +96,9 @@ struct RootView: View {
     private func tryAutoConnect() {
         let servers = keychain.savedServers()
         if let server = servers.first,
-           let token = keychain.loadResumeToken(forServer: server) ?? keychain.loadServerToken(forServer: server),
+           let credential = keychain.preferredCredential(forServer: server),
            let url = URL(string: server) {
-            state.connect(url: url, credential: .token(token))
+            state.connect(url: url, credential: credential)
         }
     }
 }

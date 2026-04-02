@@ -65,13 +65,13 @@ struct MeView: View {
                                 VStack(alignment: .leading) {
                                     Text(device.name ?? device.id.prefix(8).description)
                                         .font(.subheadline)
-                                    Text(device.trustLevel)
+                                    Text(device.trust)
                                         .font(.caption)
-                                        .foregroundStyle(device.trustLevel == "trusted" ? .green : .orange)
+                                        .foregroundStyle(device.trust == "trusted" ? .green : .orange)
                                 }
                                 Spacer()
                                 if let lastSeen = device.lastSeen {
-                                    Text(lastSeen.prefix(10).description)
+                                    Text(Self.lastSeenFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(lastSeen) / 1000)))
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
                                 }
@@ -90,7 +90,7 @@ struct MeView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.5")
+                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.9")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -112,6 +112,13 @@ struct MeView: View {
         default: "questionmark.circle"
         }
     }
+
+    private static let lastSeenFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
 
 extension ConnectionStatus {

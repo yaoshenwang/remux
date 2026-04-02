@@ -51,10 +51,29 @@ public struct KeychainStore: Sendable {
 
     /// Returns all server URLs that have stored credentials.
     public func savedServers() -> [String] {
+        let labels = ["resume_token", "server_token"]
+        var servers = Set<String>()
+        for label in labels {
+            servers.formUnion(savedServers(label: label))
+        }
+        return servers.sorted()
+    }
+
+    public func preferredCredential(forServer server: String) -> RemuxCredential? {
+        if let resumeToken = loadResumeToken(forServer: server) {
+            return .resumeToken(resumeToken)
+        }
+        if let token = loadServerToken(forServer: server) {
+            return .token(token)
+        }
+        return nil
+    }
+
+    private func savedServers(label: String) -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
-            kSecAttrLabel as String: "resume_token",
+            kSecAttrLabel as String: label,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
         ]
