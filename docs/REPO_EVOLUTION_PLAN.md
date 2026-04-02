@@ -4,16 +4,16 @@ Remux should evolve incrementally from the current single-package repository tow
 
 ## Phase 0: Current Layout
 
-- `src/backend/`: gateway, auth, runtime integration, extensions
-- `src/frontend/`: web shell
+- `src/`: gateway, auth, session runtime, persistence, adapters, workspace logic, and browser shell template
 - `tests/`: backend, frontend, and e2e coverage
+- `apps/ios/` and `apps/macos/`: adjacent native clients under active exploration
 - `docs/`: active, draft, and archived documentation
 
 This is still the correct layout while the gateway and protocol are being hardened.
 
 ## Phase 1: Clear Boundaries Before New Packages
 
-- Introduce runtime adapter boundaries under `src/backend/`
+- Introduce clearer runtime and transport boundaries inside `src/`
 - Isolate protocol contracts and shared DTOs
 - Keep feature work inside the current package until boundaries are stable
 
@@ -33,8 +33,8 @@ Add host shells or native clients as separate top-level applications only after 
 
 Examples:
 
-- `apps/desktop-host/`
 - `apps/ios/`
+- `apps/macos/`
 - `apps/android/`
 
 ## Red Lines
@@ -42,4 +42,3 @@ Examples:
 - Do not split the repo just to mirror a future architecture diagram.
 - Do not introduce a second production runtime path before the current one is hardened.
 - Do not move files solely for aesthetics without reducing coupling or improving ownership.
-
