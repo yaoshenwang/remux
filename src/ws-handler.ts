@@ -33,7 +33,16 @@ import {
   broadcastState,
   setBroadcastHooks,
   setBufferHooks,
+  reviveTab,
 } from "./session.js";
+import {
+  getHead,
+  updateHead,
+} from "./workspace-head.js";
+import {
+  encodeFrame,
+  TAG_CLIENT_INPUT,
+} from "./pty-daemon.js";
 import { validateToken, registerDevice } from "./auth.js";
 import {
   listDevices,
@@ -82,6 +91,14 @@ import {
   getTopicSummary,
   generateHandoffBundle,
 } from "./workspace.js";
+import {
+  getChunksSince,
+  getDeviceCursor,
+  updateDeviceCursor,
+  getLatestSnapshot,
+  saveStreamChunk,
+  saveTabSnapshot,
+} from "./store.js";
 import {
   detectContentType,
   renderDiff,
@@ -320,6 +337,21 @@ export function getClientList(): Array<{
   return list;
 }
 
+// ── Workspace Head Broadcast ────────────────────────────────────
+
+/**
+ * Broadcast the current workspace head to all authenticated clients.
+ */
+function broadcastHead(): void {
+  const head = getHead();
+  if (!head) return;
+  for (const ws of controlClients) {
+    if (ws.readyState === ws.OPEN) {
+      sendEnvelope(ws, "workspace_head", head);
+    }
+  }
+}
+
 // ── Setup ────────────────────────────────────────────────────────
 
 /**
@@ -449,6 +481,14 @@ export function setupWebSocket(
                 deviceId: deviceInfo?.id ?? null,
                 trust: deviceInfo?.trust ?? null,
               });
+              // Send bootstrap message with workspace head + state
+              const head = getHead();
+              sendEnvelope(ws, "bootstrap", {
+                head,
+                sessions: getState(),
+                clients: getClientList(),
+              });
+              // Also send legacy state for backward compatibility
               sendEnvelope(ws, "state", {
                 sessions: getState(),
                 clients: getClientList(),
@@ -504,7 +544,11 @@ export function setupWebSocket(
                     clientState.lastActiveAt = Date.now();
                     const found = findTab(ws._remuxTabId);
                     if (found && !found.tab.ended) {
-                      found.tab.pty.write(inner.data);
+                      if (found.tab.daemonClient) {
+                        found.tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, inner.data));
+                      } else if (found.tab.pty) {
+                        found.tab.pty.write(inner.data);
+                      }
                     }
                   }
                   return;
@@ -518,7 +562,11 @@ export function setupWebSocket(
                   clientState.lastActiveAt = Date.now();
                   const found = findTab(ws._remuxTabId);
                   if (found && !found.tab.ended) {
-                    found.tab.pty.write(decrypted);
+                    if (found.tab.daemonClient) {
+                      found.tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, decrypted));
+                    } else if (found.tab.pty) {
+                      found.tab.pty.write(decrypted);
+                    }
                   }
                 }
               }
@@ -533,6 +581,24 @@ export function setupWebSocket(
           // ── Session recovery: replay buffered messages ──
           if (p.type === "resume") {
             const resumeDeviceId = p.deviceId || ws._remuxDeviceId;
+            let totalReplayed = 0;
+
+            // Step 4: try durable stream resume first (if tabId and seq provided)
+            if (resumeDeviceId && typeof p.tabId === "number") {
+              const cursor = getDeviceCursor(resumeDeviceId, p.tabId);
+              const sinceSeq = p.seq ?? cursor?.lastAckedSeq ?? 0;
+              if (sinceSeq > 0) {
+                const chunks = getChunksSince(p.tabId, sinceSeq);
+                for (const chunk of chunks) {
+                  if (ws.readyState === ws.OPEN) {
+                    ws.send(chunk.data);
+                  }
+                }
+                totalReplayed += chunks.length;
+              }
+            }
+
+            // Legacy buffer-based resume
             if (resumeDeviceId && disconnectedDevices.has(resumeDeviceId)) {
               const buf = bufferRegistry.getOrCreate(resumeDeviceId);
               const messages = buf.drain(p.lastTimestamp || undefined);
@@ -543,18 +609,57 @@ export function setupWebSocket(
                   ws.send(m.data);
                 }
               }
+              totalReplayed += messages.length;
 
               // Clean up: device is no longer disconnected
               disconnectedDevices.delete(resumeDeviceId);
               disconnectedDeviceTab.delete(resumeDeviceId);
               bufferRegistry.remove(resumeDeviceId);
+            }
 
-              sendEnvelope(ws, "resume_complete", {
-                replayed: messages.length,
-              });
-            } else {
-              // No buffered messages — still send resume_complete
-              sendEnvelope(ws, "resume_complete", { replayed: 0 });
+            sendEnvelope(ws, "resume_complete", {
+              replayed: totalReplayed,
+            });
+            return;
+          }
+
+          // ── Step 2: workspace head sync messages ──
+
+          if (p.type === "switch_tab") {
+            if (typeof p.tabId === "number") {
+              const head = updateHead({ tabId: p.tabId }, ws._remuxDeviceId || undefined);
+              broadcastHead();
+            }
+            return;
+          }
+
+          if (p.type === "switch_session") {
+            if (typeof p.name === "string") {
+              const session = sessionMap.get(p.name);
+              const firstTab = session?.tabs.find((t) => !t.ended);
+              const head = updateHead(
+                { sessionName: p.name, tabId: firstTab?.id ?? 0 },
+                ws._remuxDeviceId || undefined,
+              );
+              broadcastHead();
+            }
+            return;
+          }
+
+          if (p.type === "switch_view") {
+            if (typeof p.view === "string") {
+              const head = updateHead({ view: p.view }, ws._remuxDeviceId || undefined);
+              broadcastHead();
+            }
+            return;
+          }
+
+          // ── Step 4: durable stream ack ──
+
+          if (p.type === "ack") {
+            const deviceId = ws._remuxDeviceId;
+            if (deviceId && typeof p.tabId === "number" && typeof p.seq === "number") {
+              updateDeviceCursor(deviceId, p.tabId, p.seq);
             }
             return;
           }
@@ -639,11 +744,19 @@ export function setupWebSocket(
             return;
           }
 
-          // Close a tab (kill its PTY)
+          // Close a tab (kill its PTY or shutdown daemon)
           if (p.type === "close_tab") {
             const found = findTab(p.tabId);
             if (found) {
-              if (!found.tab.ended) found.tab.pty.kill();
+              if (!found.tab.ended) {
+                if (found.tab.daemonClient) {
+                  try {
+                    found.tab.daemonClient.write(encodeFrame(0xff, Buffer.alloc(0)));
+                  } catch { /* ignore */ }
+                } else if (found.tab.pty) {
+                  found.tab.pty.kill();
+                }
+              }
               found.session.tabs = found.session.tabs.filter(
                 (t) => t.id !== p.tabId,
               );
@@ -1067,7 +1180,7 @@ export function setupWebSocket(
           }
 
           if (p.type === "list_runs") {
-            const runs = listRuns(p.topicId || undefined);
+            const runs = listRuns(p.topicId || undefined, p.sessionName || undefined);
             sendEnvelope(ws, "run_list", { runs });
             return;
           }
@@ -1195,14 +1308,14 @@ export function setupWebSocket(
 
           if (p.type === "create_note") {
             if (typeof p.content === "string" && p.content.trim()) {
-              const note = createNote(p.content.trim());
+              const note = createNote(p.content.trim(), p.sessionName || undefined);
               sendEnvelope(ws, "note_created", note);
             }
             return;
           }
 
           if (p.type === "list_notes") {
-            const notes = listNotes();
+            const notes = listNotes(p.sessionName || undefined);
             sendEnvelope(ws, "note_list", { notes });
             return;
           }
@@ -1317,8 +1430,28 @@ export function setupWebSocket(
       if (msg.startsWith("{") && msg.includes('"type"')) return;
 
       const found = findTab(ws._remuxTabId);
+
+      // Handle restored tab revival: when user presses Enter on a restored tab
+      if (found && found.tab.restored && !found.tab.ended) {
+        // Check if input contains Enter (CR or LF)
+        if (msg.includes("\r") || msg.includes("\n")) {
+          reviveTab(found.tab, found.session).then((ok) => {
+            if (ok) {
+              sendEnvelope(ws, "tab_revived", { tabId: found.tab.id });
+              broadcastState();
+            }
+          }).catch(() => {});
+        }
+        return; // Swallow all input until tab is revived
+      }
       if (found && !found.tab.ended) {
-        found.tab.pty.write(msg);
+        if (found.tab.daemonClient) {
+          // Daemon mode: send input via TLV frame
+          found.tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, msg));
+        } else if (found.tab.pty) {
+          // Direct PTY mode
+          found.tab.pty.write(msg);
+        }
       }
     });
 

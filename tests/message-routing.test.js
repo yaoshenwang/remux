@@ -73,7 +73,7 @@ function createTestDb() {
     );
     CREATE TABLE IF NOT EXISTS memory_notes (
       id TEXT PRIMARY KEY, content TEXT NOT NULL, pinned INTEGER DEFAULT 0,
-      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, session_name TEXT
     );
     CREATE TABLE IF NOT EXISTS commands (
       id TEXT PRIMARY KEY, session_name TEXT NOT NULL, tab_id INTEGER NOT NULL,

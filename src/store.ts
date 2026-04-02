@@ -148,6 +148,46 @@ export function getDb(): Database.Database {
       started_at INTEGER NOT NULL,
       ended_at INTEGER
     );
+
+    -- Step 2: workspace_head (multi-device shared focus state)
+    CREATE TABLE IF NOT EXISTS workspace_head (
+      id TEXT PRIMARY KEY DEFAULT 'global',
+      session_name TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      topic_id TEXT,
+      view TEXT NOT NULL DEFAULT 'live',
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_by_device TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    -- Step 4: durable stream tables
+    CREATE TABLE IF NOT EXISTS tab_stream_chunks (
+      tab_id INTEGER NOT NULL,
+      seq_from INTEGER NOT NULL,
+      seq_to INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      data BLOB NOT NULL,
+      PRIMARY KEY (tab_id, seq_from)
+    );
+
+    CREATE TABLE IF NOT EXISTS tab_snapshots (
+      tab_id INTEGER NOT NULL,
+      seq INTEGER NOT NULL,
+      cols INTEGER NOT NULL,
+      rows INTEGER NOT NULL,
+      snapshot BLOB NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (tab_id, seq)
+    );
+
+    CREATE TABLE IF NOT EXISTS device_tab_cursors (
+      device_id TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      last_acked_seq INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (device_id, tab_id)
+    );
   `);
 
   // ── Migrations for existing databases ──
@@ -155,6 +195,12 @@ export function getDb(): Database.Database {
   const artifactCols = _db.prepare("PRAGMA table_info(artifacts)").all() as any[];
   if (!artifactCols.find((c: any) => c.name === "session_name")) {
     _db.exec("ALTER TABLE artifacts ADD COLUMN session_name TEXT");
+  }
+
+  // Step 3: Add session_name to memory_notes if missing
+  const noteCols = _db.prepare("PRAGMA table_info(memory_notes)").all() as any[];
+  if (!noteCols.find((c: any) => c.name === "session_name")) {
+    _db.exec("ALTER TABLE memory_notes ADD COLUMN session_name TEXT");
   }
 
   return _db;
@@ -779,15 +825,23 @@ export function updateRun(
 }
 
 /**
- * List runs, optionally filtered by topic ID.
+ * List runs, optionally filtered by topic ID and/or session name.
  */
-export function listRuns(topicId?: string): Run[] {
+export function listRuns(topicId?: string, sessionName?: string): Run[] {
   const db = getDb();
   let rows: any[];
-  if (topicId) {
+  if (topicId && sessionName) {
+    rows = db
+      .prepare("SELECT * FROM runs WHERE topic_id = ? AND session_name = ? ORDER BY started_at")
+      .all(topicId, sessionName) as any[];
+  } else if (topicId) {
     rows = db
       .prepare("SELECT * FROM runs WHERE topic_id = ? ORDER BY started_at")
       .all(topicId) as any[];
+  } else if (sessionName) {
+    rows = db
+      .prepare("SELECT * FROM runs WHERE session_name = ? ORDER BY started_at")
+      .all(sessionName) as any[];
   } else {
     rows = db
       .prepare("SELECT * FROM runs ORDER BY started_at")
@@ -1079,28 +1133,39 @@ export interface MemoryNote {
 }
 
 /**
- * Create a memory note.
+ * Create a memory note, optionally scoped to a session.
  */
-export function createNote(content: string): MemoryNote {
+export function createNote(content: string, sessionName?: string): MemoryNote {
   const db = getDb();
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    "INSERT INTO memory_notes (id, content, pinned, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
-  ).run(id, content, now, now);
+    "INSERT INTO memory_notes (id, content, pinned, created_at, updated_at, session_name) VALUES (?, ?, 0, ?, ?, ?)",
+  ).run(id, content, now, now, sessionName ?? null);
   return { id, content, pinned: false, createdAt: now, updatedAt: now };
 }
 
 /**
- * List all memory notes (pinned first, then by updated_at desc).
+ * List memory notes (pinned first, then by updated_at desc).
+ * Optionally filtered by sessionName. If sessionName is provided,
+ * returns notes scoped to that session plus global notes (session_name IS NULL).
  */
-export function listNotes(): MemoryNote[] {
+export function listNotes(sessionName?: string): MemoryNote[] {
   const db = getDb();
-  const rows = db
-    .prepare(
-      "SELECT * FROM memory_notes ORDER BY pinned DESC, updated_at DESC",
-    )
-    .all() as any[];
+  let rows: any[];
+  if (sessionName) {
+    rows = db
+      .prepare(
+        "SELECT * FROM memory_notes WHERE session_name = ? OR session_name IS NULL ORDER BY pinned DESC, updated_at DESC",
+      )
+      .all(sessionName) as any[];
+  } else {
+    rows = db
+      .prepare(
+        "SELECT * FROM memory_notes ORDER BY pinned DESC, updated_at DESC",
+      )
+      .all() as any[];
+  }
   return rows.map((r) => ({
     id: r.id,
     content: r.content,
@@ -1227,4 +1292,131 @@ export function listCommands(
     startedAt: r.started_at,
     endedAt: r.ended_at,
   }));
+}
+
+// ── Durable Stream (Step 4) ─────────────────────────────────────
+
+export interface StreamChunk {
+  tabId: number;
+  seqFrom: number;
+  seqTo: number;
+  createdAt: number;
+  data: Buffer;
+}
+
+/**
+ * Save a stream chunk (batch of PTY output data with sequence range).
+ */
+export function saveStreamChunk(
+  tabId: number,
+  seqFrom: number,
+  seqTo: number,
+  data: Buffer,
+): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT OR REPLACE INTO tab_stream_chunks (tab_id, seq_from, seq_to, created_at, data)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(tabId, seqFrom, seqTo, Date.now(), data);
+}
+
+/**
+ * Get all stream chunks for a tab since a given sequence number.
+ */
+export function getChunksSince(tabId: number, sinceSeq: number): StreamChunk[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT * FROM tab_stream_chunks WHERE tab_id = ? AND seq_to > ? ORDER BY seq_from",
+    )
+    .all(tabId, sinceSeq) as any[];
+  return rows.map((r) => ({
+    tabId: r.tab_id,
+    seqFrom: r.seq_from,
+    seqTo: r.seq_to,
+    createdAt: r.created_at,
+    data: r.data,
+  }));
+}
+
+/**
+ * Save a VT snapshot at a given sequence point.
+ */
+export function saveTabSnapshot(
+  tabId: number,
+  seq: number,
+  cols: number,
+  rows: number,
+  snapshot: Buffer | string,
+): void {
+  const db = getDb();
+  const data = typeof snapshot === "string" ? Buffer.from(snapshot, "utf8") : snapshot;
+  db.prepare(
+    `INSERT OR REPLACE INTO tab_snapshots (tab_id, seq, cols, rows, snapshot, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(tabId, seq, cols, rows, data, Date.now());
+
+  // Keep at most 100 snapshots per tab; prune oldest
+  db.prepare(
+    `DELETE FROM tab_snapshots WHERE tab_id = ? AND seq NOT IN (
+       SELECT seq FROM tab_snapshots WHERE tab_id = ? ORDER BY seq DESC LIMIT 100
+     )`,
+  ).run(tabId, tabId);
+}
+
+/**
+ * Get the latest VT snapshot for a tab.
+ */
+export function getLatestSnapshot(
+  tabId: number,
+): { seq: number; cols: number; rows: number; snapshot: Buffer; createdAt: number } | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT * FROM tab_snapshots WHERE tab_id = ? ORDER BY seq DESC LIMIT 1",
+    )
+    .get(tabId) as any;
+  if (!row) return null;
+  return {
+    seq: row.seq,
+    cols: row.cols,
+    rows: row.rows,
+    snapshot: row.snapshot,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Update the device cursor (last acknowledged sequence) for a tab.
+ */
+export function updateDeviceCursor(
+  deviceId: string,
+  tabId: number,
+  lastAckedSeq: number,
+): void {
+  const db = getDb();
+  db.prepare(
+    `INSERT OR REPLACE INTO device_tab_cursors (device_id, tab_id, last_acked_seq, updated_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(deviceId, tabId, lastAckedSeq, Date.now());
+}
+
+/**
+ * Get the device cursor for a tab.
+ */
+export function getDeviceCursor(
+  deviceId: string,
+  tabId: number,
+): { lastAckedSeq: number; updatedAt: number } | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT last_acked_seq, updated_at FROM device_tab_cursors WHERE device_id = ? AND tab_id = ?",
+    )
+    .get(deviceId, tabId) as any;
+  if (!row) return null;
+  return {
+    lastAckedSeq: row.last_acked_seq,
+    updatedAt: row.updated_at,
+  };
 }

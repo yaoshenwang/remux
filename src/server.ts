@@ -20,6 +20,9 @@ import {
   persistSessions,
   restoreSessions,
   PERSIST_INTERVAL_MS,
+  createRestoredTab,
+  findAliveDaemonSocket,
+  reattachToDaemon,
 } from "./session.js";
 import { setupWebSocket } from "./ws-handler.js";
 import { AdapterRegistry, GenericShellAdapter, ClaudeCodeAdapter, CodexAdapter } from "./adapters/index.js";
@@ -92,16 +95,22 @@ async function startup(): Promise<void> {
   if (saved && saved.sessions.length > 0) {
     for (const s of saved.sessions) {
       const session = createSession(s.name);
-      // Restore tabs -- each tab gets a new PTY, but pre-fill scrollback with saved data
+      // Restore tabs — check for alive daemons first, then fall back to restored mode
       for (const t of s.tabs) {
         if (t.ended) continue;
-        const tab = createTab(session);
-        tab.title = t.title || tab.title;
-        if (t.scrollback) {
-          // Write saved scrollback to RingBuffer and VT terminal for attach snapshot
-          tab.scrollback.write(t.scrollback);
-          if (tab.vt) tab.vt.consume(t.scrollback);
+
+        // Check if a daemon is still alive for this tab
+        const daemonSocket = findAliveDaemonSocket(t.id);
+        const restoredTab = createRestoredTab(session, t);
+
+        if (daemonSocket) {
+          // Daemon is alive — try to reattach
+          reattachToDaemon(restoredTab, session, daemonSocket).catch(() => {
+            console.log(`[startup] daemon reattach failed for tab ${t.id}, staying in restored mode`);
+          });
         }
+        // If no daemon found, tab stays in restored-readonly mode
+        // User will see scrollback + banner prompting to press Enter
       }
       // If all tabs were ended, create a fresh one
       if (session.tabs.length === 0) createTab(session);

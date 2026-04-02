@@ -152,10 +152,54 @@ function getDb() {
       started_at INTEGER NOT NULL,
       ended_at INTEGER
     );
+
+    -- Step 2: workspace_head (multi-device shared focus state)
+    CREATE TABLE IF NOT EXISTS workspace_head (
+      id TEXT PRIMARY KEY DEFAULT 'global',
+      session_name TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      topic_id TEXT,
+      view TEXT NOT NULL DEFAULT 'live',
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_by_device TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    -- Step 4: durable stream tables
+    CREATE TABLE IF NOT EXISTS tab_stream_chunks (
+      tab_id INTEGER NOT NULL,
+      seq_from INTEGER NOT NULL,
+      seq_to INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      data BLOB NOT NULL,
+      PRIMARY KEY (tab_id, seq_from)
+    );
+
+    CREATE TABLE IF NOT EXISTS tab_snapshots (
+      tab_id INTEGER NOT NULL,
+      seq INTEGER NOT NULL,
+      cols INTEGER NOT NULL,
+      rows INTEGER NOT NULL,
+      snapshot BLOB NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (tab_id, seq)
+    );
+
+    CREATE TABLE IF NOT EXISTS device_tab_cursors (
+      device_id TEXT NOT NULL,
+      tab_id INTEGER NOT NULL,
+      last_acked_seq INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (device_id, tab_id)
+    );
   `);
   const artifactCols = _db.prepare("PRAGMA table_info(artifacts)").all();
   if (!artifactCols.find((c) => c.name === "session_name")) {
     _db.exec("ALTER TABLE artifacts ADD COLUMN session_name TEXT");
+  }
+  const noteCols = _db.prepare("PRAGMA table_info(memory_notes)").all();
+  if (!noteCols.find((c) => c.name === "session_name")) {
+    _db.exec("ALTER TABLE memory_notes ADD COLUMN session_name TEXT");
   }
   return _db;
 }
@@ -469,11 +513,15 @@ function updateRun(id, params) {
   const result = db.prepare(`UPDATE runs SET ${sets.join(", ")} WHERE id = ?`).run(...values);
   return result.changes > 0;
 }
-function listRuns(topicId) {
+function listRuns(topicId, sessionName) {
   const db = getDb();
   let rows;
-  if (topicId) {
+  if (topicId && sessionName) {
+    rows = db.prepare("SELECT * FROM runs WHERE topic_id = ? AND session_name = ? ORDER BY started_at").all(topicId, sessionName);
+  } else if (topicId) {
     rows = db.prepare("SELECT * FROM runs WHERE topic_id = ? ORDER BY started_at").all(topicId);
+  } else if (sessionName) {
+    rows = db.prepare("SELECT * FROM runs WHERE session_name = ? ORDER BY started_at").all(sessionName);
   } else {
     rows = db.prepare("SELECT * FROM runs ORDER BY started_at").all();
   }
@@ -632,20 +680,27 @@ function removeFromIndex(entityId) {
   const db = getDb();
   db.prepare("DELETE FROM fts_index WHERE entity_id = ?").run(entityId);
 }
-function createNote(content) {
+function createNote(content, sessionName) {
   const db = getDb();
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    "INSERT INTO memory_notes (id, content, pinned, created_at, updated_at) VALUES (?, ?, 0, ?, ?)"
-  ).run(id, content, now, now);
+    "INSERT INTO memory_notes (id, content, pinned, created_at, updated_at, session_name) VALUES (?, ?, 0, ?, ?, ?)"
+  ).run(id, content, now, now, sessionName ?? null);
   return { id, content, pinned: false, createdAt: now, updatedAt: now };
 }
-function listNotes() {
+function listNotes(sessionName) {
   const db = getDb();
-  const rows = db.prepare(
-    "SELECT * FROM memory_notes ORDER BY pinned DESC, updated_at DESC"
-  ).all();
+  let rows;
+  if (sessionName) {
+    rows = db.prepare(
+      "SELECT * FROM memory_notes WHERE session_name = ? OR session_name IS NULL ORDER BY pinned DESC, updated_at DESC"
+    ).all(sessionName);
+  } else {
+    rows = db.prepare(
+      "SELECT * FROM memory_notes ORDER BY pinned DESC, updated_at DESC"
+    ).all();
+  }
   return rows.map((r) => ({
     id: r.id,
     content: r.content,
@@ -716,6 +771,37 @@ function listCommands(tabId, limit = 50) {
     startedAt: r.started_at,
     endedAt: r.ended_at
   }));
+}
+function getChunksSince(tabId, sinceSeq) {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT * FROM tab_stream_chunks WHERE tab_id = ? AND seq_to > ? ORDER BY seq_from"
+  ).all(tabId, sinceSeq);
+  return rows.map((r) => ({
+    tabId: r.tab_id,
+    seqFrom: r.seq_from,
+    seqTo: r.seq_to,
+    createdAt: r.created_at,
+    data: r.data
+  }));
+}
+function updateDeviceCursor(deviceId, tabId, lastAckedSeq) {
+  const db = getDb();
+  db.prepare(
+    `INSERT OR REPLACE INTO device_tab_cursors (device_id, tab_id, last_acked_seq, updated_at)
+     VALUES (?, ?, ?, ?)`
+  ).run(deviceId, tabId, lastAckedSeq, Date.now());
+}
+function getDeviceCursor(deviceId, tabId) {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT last_acked_seq, updated_at FROM device_tab_cursors WHERE device_id = ? AND tab_id = ?"
+  ).get(deviceId, tabId);
+  if (!row) return null;
+  return {
+    lastAckedSeq: row.last_acked_seq,
+    updatedAt: row.updated_at
+  };
 }
 var REMUX_DIR, PORT, PERSIST_ID, _db;
 var init_store = __esm({
@@ -1039,10 +1125,302 @@ var init_push = __esm({
   }
 });
 
+// src/pty-daemon.ts
+import net from "net";
+import pty from "node-pty";
+import { parseArgs } from "util";
+function encodeFrame(tag, payload) {
+  const data = typeof payload === "string" ? Buffer.from(payload, "utf8") : payload;
+  const frame = Buffer.alloc(5 + data.length);
+  frame[0] = tag;
+  frame.writeUInt32BE(data.length, 1);
+  data.copy(frame, 5);
+  return frame;
+}
+function parseCliArgs() {
+  const { values } = parseArgs({
+    options: {
+      socket: { type: "string" },
+      shell: { type: "string" },
+      cols: { type: "string" },
+      rows: { type: "string" },
+      cwd: { type: "string" },
+      "tab-id": { type: "string" }
+    },
+    strict: true
+  });
+  if (!values.socket || !values.shell) {
+    console.error("Usage: pty-daemon --socket <path> --shell <shell> [--cols N] [--rows N] [--cwd dir] [--tab-id id]");
+    process.exit(1);
+  }
+  return {
+    socket: values.socket,
+    shell: values.shell,
+    cols: parseInt(values.cols || "80", 10),
+    rows: parseInt(values.rows || "24", 10),
+    cwd: values.cwd || process.env.HOME || "/",
+    tabId: values["tab-id"] || "0"
+  };
+}
+function main() {
+  const args = parseCliArgs();
+  let seq = 0;
+  if (typeof process.disconnect === "function") {
+    try {
+      process.disconnect();
+    } catch {
+    }
+  }
+  const ptyProcess = pty.spawn(args.shell, [], {
+    name: "xterm-256color",
+    cols: args.cols,
+    rows: args.rows,
+    cwd: args.cwd,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor"
+    }
+  });
+  const scrollback = new RingBuffer();
+  const clients = /* @__PURE__ */ new Set();
+  let alive = true;
+  console.log(`[pty-daemon] started: pid=${ptyProcess.pid} socket=${args.socket} tab-id=${args.tabId}`);
+  ptyProcess.onData((data) => {
+    seq++;
+    scrollback.write(data);
+    const frame = encodeFrame(TAG_PTY_OUTPUT, data);
+    for (const client of clients) {
+      try {
+        client.write(frame);
+      } catch {
+      }
+    }
+  });
+  ptyProcess.onExit(({ exitCode }) => {
+    alive = false;
+    console.log(`[pty-daemon] PTY exited: code=${exitCode} tab-id=${args.tabId}`);
+    const exitMsg = `\r
+\x1B[33mShell exited (code: ${exitCode})\x1B[0m\r
+`;
+    const frame = encodeFrame(TAG_PTY_OUTPUT, exitMsg);
+    for (const client of clients) {
+      try {
+        client.write(frame);
+      } catch {
+      }
+    }
+    setTimeout(() => {
+      for (const client of clients) {
+        try {
+          client.end();
+        } catch {
+        }
+      }
+      cleanup();
+    }, 2e3);
+  });
+  const server = net.createServer((socket) => {
+    clients.add(socket);
+    console.log(`[pty-daemon] client connected (total: ${clients.size})`);
+    const parser = new FrameParser((tag, payload) => {
+      switch (tag) {
+        case TAG_CLIENT_INPUT:
+          if (alive) {
+            ptyProcess.write(payload.toString("utf8"));
+          }
+          break;
+        case TAG_RESIZE: {
+          try {
+            const { cols, rows } = JSON.parse(payload.toString("utf8"));
+            if (alive && cols > 0 && rows > 0) {
+              ptyProcess.resize(
+                Math.max(1, Math.min(cols, 500)),
+                Math.max(1, Math.min(rows, 200))
+              );
+            }
+          } catch {
+          }
+          break;
+        }
+        case TAG_STATUS_REQ: {
+          const status = JSON.stringify({
+            pid: ptyProcess.pid,
+            cols: args.cols,
+            rows: args.rows,
+            alive,
+            cwd: args.cwd,
+            tabId: args.tabId,
+            seq
+          });
+          socket.write(encodeFrame(TAG_STATUS_RES, status));
+          break;
+        }
+        case TAG_SNAPSHOT_REQ: {
+          const data = scrollback.read();
+          socket.write(encodeFrame(TAG_SNAPSHOT_RES, data));
+          break;
+        }
+        case TAG_SCROLLBACK_REQ: {
+          const data = scrollback.read();
+          socket.write(encodeFrame(TAG_SCROLLBACK_RES, data));
+          break;
+        }
+        case TAG_SHUTDOWN:
+          console.log(`[pty-daemon] shutdown requested`);
+          if (alive) {
+            try {
+              ptyProcess.kill();
+            } catch {
+            }
+          }
+          for (const c of clients) {
+            try {
+              c.end();
+            } catch {
+            }
+          }
+          cleanup();
+          break;
+      }
+    });
+    socket.on("data", (data) => {
+      parser.feed(data);
+    });
+    socket.on("close", () => {
+      clients.delete(socket);
+      console.log(`[pty-daemon] client disconnected (total: ${clients.size})`);
+    });
+    socket.on("error", (err) => {
+      console.error(`[pty-daemon] client socket error:`, err.message);
+      clients.delete(socket);
+    });
+  });
+  try {
+    const fs8 = __require("fs");
+    if (fs8.existsSync(args.socket)) {
+      fs8.unlinkSync(args.socket);
+    }
+  } catch {
+  }
+  server.listen(args.socket, () => {
+    console.log(`[pty-daemon] listening on ${args.socket}`);
+  });
+  server.on("error", (err) => {
+    console.error(`[pty-daemon] server error:`, err.message);
+    cleanup();
+  });
+  function cleanup() {
+    try {
+      const fs8 = __require("fs");
+      if (fs8.existsSync(args.socket)) {
+        fs8.unlinkSync(args.socket);
+      }
+    } catch {
+    }
+    server.close();
+    process.exit(0);
+  }
+  process.on("SIGTERM", () => {
+    console.log(`[pty-daemon] SIGTERM received`);
+    if (alive) {
+      try {
+        ptyProcess.kill();
+      } catch {
+      }
+    }
+    cleanup();
+  });
+  process.on("SIGINT", () => {
+  });
+}
+var TAG_PTY_OUTPUT, TAG_CLIENT_INPUT, TAG_RESIZE, TAG_STATUS_REQ, TAG_STATUS_RES, TAG_SNAPSHOT_REQ, TAG_SNAPSHOT_RES, TAG_SCROLLBACK_REQ, TAG_SCROLLBACK_RES, TAG_SHUTDOWN, FrameParser, RingBuffer, isMainEntry;
+var init_pty_daemon = __esm({
+  "src/pty-daemon.ts"() {
+    "use strict";
+    TAG_PTY_OUTPUT = 1;
+    TAG_CLIENT_INPUT = 2;
+    TAG_RESIZE = 3;
+    TAG_STATUS_REQ = 4;
+    TAG_STATUS_RES = 5;
+    TAG_SNAPSHOT_REQ = 6;
+    TAG_SNAPSHOT_RES = 7;
+    TAG_SCROLLBACK_REQ = 8;
+    TAG_SCROLLBACK_RES = 9;
+    TAG_SHUTDOWN = 255;
+    FrameParser = class {
+      buffer = Buffer.alloc(0);
+      onFrame;
+      constructor(onFrame) {
+        this.onFrame = onFrame;
+      }
+      feed(data) {
+        this.buffer = Buffer.concat([this.buffer, data]);
+        while (this.buffer.length >= 5) {
+          const tag = this.buffer[0];
+          const length = this.buffer.readUInt32BE(1);
+          if (this.buffer.length < 5 + length) break;
+          const payload = this.buffer.subarray(5, 5 + length);
+          this.buffer = this.buffer.subarray(5 + length);
+          this.onFrame(tag, payload);
+        }
+      }
+    };
+    RingBuffer = class {
+      buf;
+      maxBytes;
+      writePos;
+      length;
+      constructor(maxBytes = 10 * 1024 * 1024) {
+        this.buf = Buffer.alloc(maxBytes);
+        this.maxBytes = maxBytes;
+        this.writePos = 0;
+        this.length = 0;
+      }
+      write(data) {
+        const bytes = typeof data === "string" ? Buffer.from(data) : data;
+        if (bytes.length >= this.maxBytes) {
+          bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
+          this.writePos = 0;
+          this.length = this.maxBytes;
+          return;
+        }
+        const space = this.maxBytes - this.writePos;
+        if (bytes.length <= space) {
+          bytes.copy(this.buf, this.writePos);
+        } else {
+          bytes.copy(this.buf, this.writePos, 0, space);
+          bytes.copy(this.buf, 0, space);
+        }
+        this.writePos = (this.writePos + bytes.length) % this.maxBytes;
+        this.length = Math.min(this.length + bytes.length, this.maxBytes);
+      }
+      read() {
+        if (this.length === 0) return Buffer.alloc(0);
+        if (this.length < this.maxBytes) {
+          return Buffer.from(this.buf.subarray(this.writePos - this.length, this.writePos));
+        }
+        return Buffer.concat([
+          this.buf.subarray(this.writePos),
+          this.buf.subarray(0, this.writePos)
+        ]);
+      }
+    };
+    isMainEntry = process.argv[1]?.includes("pty-daemon") || process.argv.includes("--socket");
+    if (isMainEntry) {
+      main();
+    }
+  }
+});
+
 // src/session.ts
 import fs3 from "fs";
+import path2 from "path";
+import net2 from "net";
 import { homedir as homedir2 } from "os";
-import pty from "node-pty";
+import { spawn } from "child_process";
+import { fileURLToPath } from "url";
+import pty2 from "node-pty";
 function getShell() {
   if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
   if (process.env.SHELL) return process.env.SHELL;
@@ -1052,6 +1430,139 @@ function getShell() {
   } catch {
   }
   return "/bin/bash";
+}
+function getDaemonScriptPath() {
+  return path2.join(__dirname, "pty-daemon.js");
+}
+function buildSocketPath(tabId) {
+  return `/tmp/remux-pty-${tabId}-${process.pid}.sock`;
+}
+function spawnDaemon(tabId, shell, cols, rows, cwd) {
+  const socketPath = buildSocketPath(tabId);
+  const daemonScript = getDaemonScriptPath();
+  const child = spawn(process.execPath, [
+    daemonScript,
+    "--socket",
+    socketPath,
+    "--shell",
+    shell,
+    "--cols",
+    String(cols),
+    "--rows",
+    String(rows),
+    "--cwd",
+    cwd,
+    "--tab-id",
+    String(tabId)
+  ], {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+  console.log(`[session] spawned daemon for tab ${tabId}: pid=${child.pid} socket=${socketPath}`);
+  return socketPath;
+}
+function connectToDaemon(socketPath, retries = 20, delayMs = 100) {
+  return new Promise((resolve, reject) => {
+    let attempt = 0;
+    function tryConnect() {
+      attempt++;
+      const socket = net2.createConnection({ path: socketPath }, () => {
+        resolve(socket);
+      });
+      socket.on("error", (err) => {
+        socket.destroy();
+        if (attempt < retries) {
+          setTimeout(tryConnect, delayMs);
+        } else {
+          reject(new Error(`Failed to connect to daemon at ${socketPath} after ${retries} attempts: ${err.message}`));
+        }
+      });
+    }
+    tryConnect();
+  });
+}
+function wireDaemonToTab(tab, daemonSocket, sessionName) {
+  const parser = new FrameParser((tag, payload) => {
+    if (tag === TAG_PTY_OUTPUT) {
+      const data = payload.toString("utf8");
+      tab.scrollback.write(data);
+      if (tab.vt) tab.vt.consume(data);
+      for (const ws of tab.clients) {
+        sendData(ws, data);
+      }
+      if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
+      processShellIntegration(data, tab, sessionName);
+      try {
+        const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
+        adapterRegistry2?.dispatchTerminalData(sessionName, data);
+      } catch {
+      }
+      const now = Date.now();
+      const wasIdle = isIdle || now - lastOutputTimestamp > IDLE_THRESHOLD_MS;
+      if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS) {
+        isIdle = true;
+      }
+      if (wasIdle && isIdle) {
+        isIdle = false;
+        const connectedDeviceIds = [];
+        for (const ws of controlClients) {
+          if (ws._remuxDeviceId) connectedDeviceIds.push(ws._remuxDeviceId);
+        }
+        broadcastPush(
+          "Terminal Activity",
+          `New output in "${sessionName}" after idle`,
+          connectedDeviceIds
+        ).catch(() => {
+        });
+      }
+      lastOutputTimestamp = now;
+    }
+  });
+  daemonSocket.on("data", (data) => {
+    parser.feed(data);
+  });
+  daemonSocket.on("close", () => {
+    console.log(`[session] daemon connection closed for tab ${tab.id}`);
+    tab.daemonClient = null;
+    if (!tab.ended) {
+      tab.ended = true;
+      if (tab.vt) {
+        tab.vt.dispose();
+        tab.vt = null;
+      }
+      const msg = `\r
+\x1B[33mDaemon connection lost\x1B[0m\r
+`;
+      for (const ws of tab.clients) {
+        sendData(ws, msg);
+      }
+      broadcastState();
+    }
+  });
+  daemonSocket.on("error", (err) => {
+    console.error(`[session] daemon socket error for tab ${tab.id}:`, err.message);
+  });
+}
+async function reviveTab(tab, session) {
+  if (!tab.restored) return false;
+  const shell = getShell();
+  const socketPath = spawnDaemon(tab.id, shell, tab.cols, tab.rows, homedir2());
+  try {
+    const client = await connectToDaemon(socketPath);
+    tab.daemonSocket = socketPath;
+    tab.daemonClient = client;
+    tab.restored = false;
+    tab.ended = false;
+    tab.vt = createVtTerminal(tab.cols, tab.rows);
+    wireDaemonToTab(tab, client, session.name);
+    console.log(`[session] revived tab ${tab.id} in session "${session.name}"`);
+    broadcastState();
+    return true;
+  } catch (err) {
+    console.error(`[session] failed to revive tab ${tab.id}:`, err.message);
+    return false;
+  }
 }
 function processShellIntegration(data, tab, sessionName) {
   const si = tab.shellIntegration;
@@ -1113,22 +1624,16 @@ function processShellIntegration(data, tab, sessionName) {
 }
 function createTab(session, cols = 80, rows = 24) {
   const id = tabIdCounter++;
-  const ptyProcess = pty.spawn(getShell(), [], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: homedir2(),
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor"
-    }
-  });
+  const shell = getShell();
+  const daemonScript = getDaemonScriptPath();
+  const useDaemon = fs3.existsSync(daemonScript);
+  let ptyProcess = null;
+  let socketPath = null;
   const vtTerminal = createVtTerminal(cols, rows);
   const tab = {
     id,
-    pty: ptyProcess,
-    scrollback: new RingBuffer(),
+    pty: null,
+    scrollback: new RingBuffer2(),
     vt: vtTerminal,
     clients: /* @__PURE__ */ new Set(),
     cols,
@@ -1140,8 +1645,44 @@ function createTab(session, cols = 80, rows = 24) {
       commandBuffer: "",
       cwd: null,
       activeCommandId: null
-    }
+    },
+    daemonSocket: null,
+    daemonClient: null,
+    restored: false
   };
+  if (useDaemon) {
+    socketPath = spawnDaemon(id, shell, cols, rows, homedir2());
+    tab.daemonSocket = socketPath;
+    connectToDaemon(socketPath).then((client) => {
+      tab.daemonClient = client;
+      wireDaemonToTab(tab, client, session.name);
+      console.log(`[tab] daemon connected for id=${id} in session "${session.name}"`);
+    }).catch((err) => {
+      console.error(`[tab] failed to connect to daemon for id=${id}:`, err.message);
+      spawnDirectPty(tab, session, shell, cols, rows);
+    });
+  } else {
+    spawnDirectPty(tab, session, shell, cols, rows);
+  }
+  session.tabs.push(tab);
+  console.log(
+    `[tab] created id=${id} in session "${session.name}" (mode=${useDaemon ? "daemon" : "direct"})`
+  );
+  return tab;
+}
+function spawnDirectPty(tab, session, shell, cols, rows) {
+  const ptyProcess = pty2.spawn(shell, [], {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd: homedir2(),
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor"
+    }
+  });
+  tab.pty = ptyProcess;
   ptyProcess.onData((data) => {
     tab.scrollback.write(data);
     if (tab.vt) tab.vt.consume(data);
@@ -1194,11 +1735,6 @@ function createTab(session, cols = 80, rows = 24) {
     ).catch(() => {
     });
   });
-  session.tabs.push(tab);
-  console.log(
-    `[tab] created id=${id} in session "${session.name}" (pid=${ptyProcess.pid})`
-  );
-  return tab;
 }
 function createSession(name) {
   if (sessionMap.has(name)) return sessionMap.get(name);
@@ -1211,7 +1747,16 @@ function deleteSession(name) {
   const session = sessionMap.get(name);
   if (!session) return;
   for (const tab of session.tabs) {
-    if (!tab.ended) tab.pty.kill();
+    if (!tab.ended) {
+      if (tab.daemonClient) {
+        try {
+          tab.daemonClient.write(encodeFrame(TAG_SHUTDOWN, Buffer.alloc(0)));
+        } catch {
+        }
+      } else if (tab.pty) {
+        tab.pty.kill();
+      }
+    }
   }
   sessionMap.delete(name);
   removeSession(name);
@@ -1228,7 +1773,8 @@ function getState() {
       id: t.id,
       title: t.title,
       ended: t.ended,
-      clients: t.clients.size
+      clients: t.clients.size,
+      restored: t.restored
     })),
     createdAt: s.createdAt
   }));
@@ -1257,11 +1803,21 @@ function attachToTab(tab, ws, cols, rows) {
   ws._remuxCols = cols;
   ws._remuxRows = rows;
   recalcTabSize(tab);
-  if (!tab.ended && tab.vt) {
+  if (tab.restored) {
+    const banner = `\r
+\x1B[33m[Session restored \u2014 shell has exited. Press Enter to start a new shell.]\x1B[0m\r
+`;
+    sendData(ws, banner);
+  }
+  if (!tab.ended && !tab.restored && tab.vt) {
     const { text } = tab.vt.textSnapshot();
     if (text && text.trim().length > 0) {
       setTimeout(() => {
-        tab.pty.write("\f");
+        if (tab.daemonClient) {
+          tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, "\f"));
+        } else if (tab.pty) {
+          tab.pty.write("\f");
+        }
       }, 50);
     }
   }
@@ -1291,7 +1847,12 @@ function recalcTabSize(tab) {
     minRows = Math.max(1, Math.min(minRows, 200));
     tab.cols = minCols;
     tab.rows = minRows;
-    tab.pty.resize(minCols, minRows);
+    if (tab.daemonClient) {
+      const resizePayload = JSON.stringify({ cols: minCols, rows: minRows });
+      tab.daemonClient.write(encodeFrame(TAG_RESIZE, resizePayload));
+    } else if (tab.pty) {
+      tab.pty.resize(minCols, minRows);
+    }
     if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
@@ -1354,17 +1915,82 @@ function restoreSessions() {
     return false;
   }
 }
-var IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _sendDataFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
+function findAliveDaemonSocket(tabId) {
+  const tmpDir = "/tmp";
+  try {
+    const files = fs3.readdirSync(tmpDir);
+    const pattern = `remux-pty-${tabId}-`;
+    for (const f of files) {
+      if (f.startsWith(pattern) && f.endsWith(".sock")) {
+        return path2.join(tmpDir, f);
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+function createRestoredTab(session, savedTab) {
+  if (savedTab.id >= tabIdCounter) {
+    tabIdCounter = savedTab.id + 1;
+  }
+  const vtTerminal = createVtTerminal(80, 24);
+  const tab = {
+    id: savedTab.id,
+    pty: null,
+    scrollback: new RingBuffer2(),
+    vt: vtTerminal,
+    clients: /* @__PURE__ */ new Set(),
+    cols: 80,
+    rows: 24,
+    ended: savedTab.ended,
+    title: savedTab.title || `Tab ${session.tabs.length + 1}`,
+    shellIntegration: {
+      phase: "idle",
+      commandBuffer: "",
+      cwd: null,
+      activeCommandId: null
+    },
+    daemonSocket: null,
+    daemonClient: null,
+    restored: !savedTab.ended
+    // only "restored" if not already ended
+  };
+  if (savedTab.scrollback) {
+    tab.scrollback.write(savedTab.scrollback);
+    if (tab.vt) tab.vt.consume(savedTab.scrollback);
+  }
+  session.tabs.push(tab);
+  return tab;
+}
+async function reattachToDaemon(tab, session, socketPath) {
+  try {
+    const client = await connectToDaemon(socketPath, 3, 50);
+    tab.daemonSocket = socketPath;
+    tab.daemonClient = client;
+    tab.restored = false;
+    tab.ended = false;
+    wireDaemonToTab(tab, client, session.name);
+    console.log(`[session] reattached to daemon for tab ${tab.id} at ${socketPath}`);
+    return true;
+  } catch (err) {
+    console.log(`[session] daemon at ${socketPath} not reachable: ${err.message}`);
+    return false;
+  }
+}
+var __filename, __dirname, IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer2, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _sendDataFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
 var init_session = __esm({
   "src/session.ts"() {
     "use strict";
     init_store();
     init_push();
+    init_pty_daemon();
     init_vt_tracker();
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path2.dirname(__filename);
     IDLE_THRESHOLD_MS = 5 * 60 * 1e3;
     lastOutputTimestamp = Date.now();
     isIdle = false;
-    RingBuffer = class {
+    RingBuffer2 = class {
       buf;
       maxBytes;
       writePos;
@@ -1663,6 +2289,90 @@ var init_message_buffer = __esm({
         this.buffers.clear();
       }
     };
+  }
+});
+
+// src/workspace-head.ts
+function getHead() {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM workspace_head WHERE id = 'global'").get();
+  if (!row) return null;
+  return {
+    id: row.id,
+    sessionName: row.session_name,
+    tabId: row.tab_id,
+    topicId: row.topic_id,
+    view: row.view,
+    revision: row.revision,
+    updatedByDevice: row.updated_by_device,
+    updatedAt: row.updated_at
+  };
+}
+function updateHead(fields, deviceId) {
+  const db = getDb();
+  const now = Date.now();
+  const current = getHead();
+  if (!current) {
+    const head = {
+      id: "global",
+      sessionName: fields.sessionName || "default",
+      tabId: fields.tabId ?? 0,
+      topicId: fields.topicId ?? null,
+      view: fields.view || "live",
+      revision: 1,
+      updatedByDevice: deviceId || fields.updatedByDevice || null,
+      updatedAt: now
+    };
+    db.prepare(
+      `INSERT INTO workspace_head (id, session_name, tab_id, topic_id, view, revision, updated_by_device, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      head.id,
+      head.sessionName,
+      head.tabId,
+      head.topicId,
+      head.view,
+      head.revision,
+      head.updatedByDevice,
+      head.updatedAt
+    );
+    return head;
+  }
+  const updated = {
+    id: "global",
+    sessionName: fields.sessionName ?? current.sessionName,
+    tabId: fields.tabId ?? current.tabId,
+    topicId: fields.topicId !== void 0 ? fields.topicId : current.topicId,
+    view: fields.view ?? current.view,
+    revision: current.revision + 1,
+    updatedByDevice: deviceId || fields.updatedByDevice || current.updatedByDevice,
+    updatedAt: now
+  };
+  db.prepare(
+    `UPDATE workspace_head SET
+       session_name = ?,
+       tab_id = ?,
+       topic_id = ?,
+       view = ?,
+       revision = ?,
+       updated_by_device = ?,
+       updated_at = ?
+     WHERE id = 'global'`
+  ).run(
+    updated.sessionName,
+    updated.tabId,
+    updated.topicId,
+    updated.view,
+    updated.revision,
+    updated.updatedByDevice,
+    updated.updatedAt
+  );
+  return updated;
+}
+var init_workspace_head = __esm({
+  "src/workspace-head.ts"() {
+    "use strict";
+    init_store();
   }
 });
 
@@ -2147,8 +2857,8 @@ async function compareBranches(base, head) {
 }
 function watchGitChanges(onChange) {
   const fs8 = __require("fs");
-  const path6 = __require("path");
-  const gitDir = path6.join(process.cwd(), ".git");
+  const path7 = __require("path");
+  const gitDir = path7.join(process.cwd(), ".git");
   try {
     const watcher = fs8.watch(
       gitDir,
@@ -2446,6 +3156,15 @@ function getClientList() {
   }
   return list;
 }
+function broadcastHead() {
+  const head = getHead();
+  if (!head) return;
+  for (const ws of controlClients) {
+    if (ws.readyState === ws.OPEN) {
+      sendEnvelope(ws, "workspace_head", head);
+    }
+  }
+}
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList, e2eeSend);
   setBufferHooks(bufferTabOutput, bufferStateForDisconnected);
@@ -2541,6 +3260,12 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                 deviceId: deviceInfo?.id ?? null,
                 trust: deviceInfo?.trust ?? null
               });
+              const head = getHead();
+              sendEnvelope(ws, "bootstrap", {
+                head,
+                sessions: getState(),
+                clients: getClientList()
+              });
               sendEnvelope(ws, "state", {
                 sessions: getState(),
                 clients: getClientList()
@@ -2586,7 +3311,11 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                     clientState.lastActiveAt = Date.now();
                     const found2 = findTab(ws._remuxTabId);
                     if (found2 && !found2.tab.ended) {
-                      found2.tab.pty.write(inner.data);
+                      if (found2.tab.daemonClient) {
+                        found2.tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, inner.data));
+                      } else if (found2.tab.pty) {
+                        found2.tab.pty.write(inner.data);
+                      }
                     }
                   }
                   return;
@@ -2597,7 +3326,11 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                   clientState.lastActiveAt = Date.now();
                   const found2 = findTab(ws._remuxTabId);
                   if (found2 && !found2.tab.ended) {
-                    found2.tab.pty.write(decrypted);
+                    if (found2.tab.daemonClient) {
+                      found2.tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, decrypted));
+                    } else if (found2.tab.pty) {
+                      found2.tab.pty.write(decrypted);
+                    }
                   }
                 }
               }
@@ -2610,6 +3343,20 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
           }
           if (p.type === "resume") {
             const resumeDeviceId = p.deviceId || ws._remuxDeviceId;
+            let totalReplayed = 0;
+            if (resumeDeviceId && typeof p.tabId === "number") {
+              const cursor = getDeviceCursor(resumeDeviceId, p.tabId);
+              const sinceSeq = p.seq ?? cursor?.lastAckedSeq ?? 0;
+              if (sinceSeq > 0) {
+                const chunks = getChunksSince(p.tabId, sinceSeq);
+                for (const chunk of chunks) {
+                  if (ws.readyState === ws.OPEN) {
+                    ws.send(chunk.data);
+                  }
+                }
+                totalReplayed += chunks.length;
+              }
+            }
             if (resumeDeviceId && disconnectedDevices.has(resumeDeviceId)) {
               const buf = bufferRegistry.getOrCreate(resumeDeviceId);
               const messages = buf.drain(p.lastTimestamp || void 0);
@@ -2618,14 +3365,46 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
                   ws.send(m.data);
                 }
               }
+              totalReplayed += messages.length;
               disconnectedDevices.delete(resumeDeviceId);
               disconnectedDeviceTab.delete(resumeDeviceId);
               bufferRegistry.remove(resumeDeviceId);
-              sendEnvelope(ws, "resume_complete", {
-                replayed: messages.length
-              });
-            } else {
-              sendEnvelope(ws, "resume_complete", { replayed: 0 });
+            }
+            sendEnvelope(ws, "resume_complete", {
+              replayed: totalReplayed
+            });
+            return;
+          }
+          if (p.type === "switch_tab") {
+            if (typeof p.tabId === "number") {
+              const head = updateHead({ tabId: p.tabId }, ws._remuxDeviceId || void 0);
+              broadcastHead();
+            }
+            return;
+          }
+          if (p.type === "switch_session") {
+            if (typeof p.name === "string") {
+              const session = sessionMap.get(p.name);
+              const firstTab = session?.tabs.find((t) => !t.ended);
+              const head = updateHead(
+                { sessionName: p.name, tabId: firstTab?.id ?? 0 },
+                ws._remuxDeviceId || void 0
+              );
+              broadcastHead();
+            }
+            return;
+          }
+          if (p.type === "switch_view") {
+            if (typeof p.view === "string") {
+              const head = updateHead({ view: p.view }, ws._remuxDeviceId || void 0);
+              broadcastHead();
+            }
+            return;
+          }
+          if (p.type === "ack") {
+            const deviceId = ws._remuxDeviceId;
+            if (deviceId && typeof p.tabId === "number" && typeof p.seq === "number") {
+              updateDeviceCursor(deviceId, p.tabId, p.seq);
             }
             return;
           }
@@ -2704,7 +3483,16 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
           if (p.type === "close_tab") {
             const found2 = findTab(p.tabId);
             if (found2) {
-              if (!found2.tab.ended) found2.tab.pty.kill();
+              if (!found2.tab.ended) {
+                if (found2.tab.daemonClient) {
+                  try {
+                    found2.tab.daemonClient.write(encodeFrame(255, Buffer.alloc(0)));
+                  } catch {
+                  }
+                } else if (found2.tab.pty) {
+                  found2.tab.pty.kill();
+                }
+              }
               found2.session.tabs = found2.session.tabs.filter(
                 (t) => t.id !== p.tabId
               );
@@ -3037,7 +3825,7 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             return;
           }
           if (p.type === "list_runs") {
-            const runs = listRuns(p.topicId || void 0);
+            const runs = listRuns(p.topicId || void 0, p.sessionName || void 0);
             sendEnvelope(ws, "run_list", { runs });
             return;
           }
@@ -3141,13 +3929,13 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
           }
           if (p.type === "create_note") {
             if (typeof p.content === "string" && p.content.trim()) {
-              const note = createNote(p.content.trim());
+              const note = createNote(p.content.trim(), p.sessionName || void 0);
               sendEnvelope(ws, "note_created", note);
             }
             return;
           }
           if (p.type === "list_notes") {
-            const notes = listNotes();
+            const notes = listNotes(p.sessionName || void 0);
             sendEnvelope(ws, "note_list", { notes });
             return;
           }
@@ -3237,8 +4025,24 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
       clientState.lastActiveAt = Date.now();
       if (msg.startsWith("{") && msg.includes('"type"')) return;
       const found = findTab(ws._remuxTabId);
+      if (found && found.tab.restored && !found.tab.ended) {
+        if (msg.includes("\r") || msg.includes("\n")) {
+          reviveTab(found.tab, found.session).then((ok) => {
+            if (ok) {
+              sendEnvelope(ws, "tab_revived", { tabId: found.tab.id });
+              broadcastState();
+            }
+          }).catch(() => {
+          });
+        }
+        return;
+      }
       if (found && !found.tab.ended) {
-        found.tab.pty.write(msg);
+        if (found.tab.daemonClient) {
+          found.tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, msg));
+        } else if (found.tab.pty) {
+          found.tab.pty.write(msg);
+        }
       }
     });
     ws.on("close", () => {
@@ -3299,11 +4103,14 @@ var init_ws_handler = __esm({
     init_e2ee();
     init_message_buffer();
     init_session();
+    init_workspace_head();
+    init_pty_daemon();
     init_auth();
     init_store();
     init_push();
     init_store();
     init_workspace();
+    init_store();
     init_renderers();
     bufferRegistry = new BufferRegistry();
     disconnectedDevices = /* @__PURE__ */ new Set();
@@ -3392,11 +4199,11 @@ var init_registry = __esm({
         }
       }
       /** Forward event file data to all passive adapters */
-      dispatchEventFile(path6, event) {
+      dispatchEventFile(path7, event) {
         for (const adapter of this.adapters.values()) {
           if (adapter.mode === "passive" && adapter.onEventFile) {
             try {
-              adapter.onEventFile(path6, event);
+              adapter.onEventFile(path7, event);
             } catch (err) {
               console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
             }
@@ -3458,7 +4265,7 @@ var init_generic_shell = __esm({
 
 // src/adapters/claude-code.ts
 import * as fs4 from "fs";
-import * as path2 from "path";
+import * as path3 from "path";
 import * as os from "os";
 var ClaudeCodeAdapter;
 var init_claude_code = __esm({
@@ -3482,7 +4289,7 @@ var init_claude_code = __esm({
       onEmit;
       constructor(onEmit) {
         this.onEmit = onEmit;
-        this.eventsDir = path2.join(os.homedir(), ".claude", "projects");
+        this.eventsDir = path3.join(os.homedir(), ".claude", "projects");
       }
       start() {
         this.watchForEvents();
@@ -3527,7 +4334,7 @@ var init_claude_code = __esm({
             { recursive: true },
             (eventType, filename) => {
               if (filename && (filename.endsWith("events.jsonl") || filename.endsWith("conversation.jsonl"))) {
-                this.processEventFile(path2.join(this.eventsDir, filename));
+                this.processEventFile(path3.join(this.eventsDir, filename));
               }
             }
           );
@@ -3577,7 +4384,7 @@ var init_claude_code = __esm({
 
 // src/adapters/codex.ts
 import * as fs5 from "fs";
-import * as path3 from "path";
+import * as path4 from "path";
 import * as os2 from "os";
 var CodexAdapter;
 var init_codex = __esm({
@@ -3601,7 +4408,7 @@ var init_codex = __esm({
       onEmit;
       constructor(onEmit) {
         this.onEmit = onEmit;
-        this.eventsDir = path3.join(os2.homedir(), ".codex");
+        this.eventsDir = path4.join(os2.homedir(), ".codex");
       }
       start() {
         this.watchForEvents();
@@ -3659,7 +4466,7 @@ var init_codex = __esm({
             { recursive: true },
             (eventType, filename) => {
               if (filename && (filename.endsWith(".jsonl") || filename.endsWith(".json"))) {
-                this.processEventFile(path3.join(this.eventsDir, filename));
+                this.processEventFile(path4.join(this.eventsDir, filename));
               }
             }
           );
@@ -3720,7 +4527,7 @@ var init_adapters = __esm({
 });
 
 // src/tunnel.ts
-import { spawn, execFile } from "child_process";
+import { spawn as spawn2, execFile } from "child_process";
 function parseTunnelArgs(argv) {
   if (argv.includes("--no-tunnel")) return { tunnelMode: "disable" };
   if (argv.includes("--tunnel")) return { tunnelMode: "enable" };
@@ -3735,7 +4542,7 @@ function isCloudflaredAvailable() {
 }
 function startTunnel(port, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(
+    const child = spawn2(
       "cloudflared",
       ["tunnel", "--url", `http://localhost:${port}`],
       { stdio: ["ignore", "pipe", "pipe"] }
@@ -3807,10 +4614,10 @@ var init_tunnel = __esm({
 
 // src/service.ts
 import fs6 from "fs";
-import path4 from "path";
+import path5 from "path";
 import { homedir as homedir5 } from "os";
 import { execSync } from "child_process";
-import { fileURLToPath } from "url";
+import { fileURLToPath as fileURLToPath2 } from "url";
 function escapeXml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -3848,11 +4655,11 @@ ${programArgsXml}
   <key>KeepAlive</key>
   <true/>
   <key>WorkingDirectory</key>
-  <string>${escapeXml(__dirname)}</string>
+  <string>${escapeXml(__dirname2)}</string>
   <key>StandardOutPath</key>
-  <string>${escapeXml(path4.join(LOG_DIR, "remux.log"))}</string>
+  <string>${escapeXml(path5.join(LOG_DIR, "remux.log"))}</string>
   <key>StandardErrorPath</key>
-  <string>${escapeXml(path4.join(LOG_DIR, "remux.err"))}</string>${envXml}
+  <string>${escapeXml(path5.join(LOG_DIR, "remux.err"))}</string>${envXml}
 </dict>
 </plist>
 `;
@@ -3947,17 +4754,17 @@ Usage: remux service <install|uninstall|status>`
       return true;
   }
 }
-var __filename, __dirname, LABEL, PLIST_DIR, PLIST_PATH, LOG_DIR, SERVER_JS;
+var __filename2, __dirname2, LABEL, PLIST_DIR, PLIST_PATH, LOG_DIR, SERVER_JS;
 var init_service = __esm({
   "src/service.ts"() {
     "use strict";
-    __filename = fileURLToPath(import.meta.url);
-    __dirname = path4.dirname(__filename);
+    __filename2 = fileURLToPath2(import.meta.url);
+    __dirname2 = path5.dirname(__filename2);
     LABEL = "com.remux.agent";
-    PLIST_DIR = path4.join(homedir5(), "Library", "LaunchAgents");
-    PLIST_PATH = path4.join(PLIST_DIR, `${LABEL}.plist`);
-    LOG_DIR = path4.join(homedir5(), ".remux", "logs");
-    SERVER_JS = path4.join(__dirname, "server.js");
+    PLIST_DIR = path5.join(homedir5(), "Library", "LaunchAgents");
+    PLIST_PATH = path5.join(PLIST_DIR, `${LABEL}.plist`);
+    LOG_DIR = path5.join(homedir5(), ".remux", "logs");
+    SERVER_JS = path5.join(__dirname2, "server.js");
   }
 });
 
@@ -3968,16 +4775,16 @@ __export(server_exports, {
 });
 import fs7 from "fs";
 import http from "http";
-import path5 from "path";
+import path6 from "path";
 import { createRequire } from "module";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { fileURLToPath as fileURLToPath3 } from "url";
 import qrcode from "qrcode-terminal";
 function findGhosttyWeb() {
   const ghosttyWebMain = require2.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
-  const distPath2 = path5.join(ghosttyWebRoot, "dist");
-  const wasmPath2 = path5.join(ghosttyWebRoot, "ghostty-vt.wasm");
-  if (fs7.existsSync(path5.join(distPath2, "ghostty-web.js")) && fs7.existsSync(wasmPath2)) {
+  const distPath2 = path6.join(ghosttyWebRoot, "dist");
+  const wasmPath2 = path6.join(ghosttyWebRoot, "ghostty-vt.wasm");
+  if (fs7.existsSync(path6.join(distPath2, "ghostty-web.js")) && fs7.existsSync(wasmPath2)) {
     return { distPath: distPath2, wasmPath: wasmPath2 };
   }
   console.error("Error: ghostty-web package not found.");
@@ -3993,11 +4800,12 @@ async function startup() {
       const session = createSession(s.name);
       for (const t of s.tabs) {
         if (t.ended) continue;
-        const tab = createTab(session);
-        tab.title = t.title || tab.title;
-        if (t.scrollback) {
-          tab.scrollback.write(t.scrollback);
-          if (tab.vt) tab.vt.consume(t.scrollback);
+        const daemonSocket = findAliveDaemonSocket(t.id);
+        const restoredTab = createRestoredTab(session, t);
+        if (daemonSocket) {
+          reattachToDaemon(restoredTab, session, daemonSocket).catch(() => {
+            console.log(`[startup] daemon reattach failed for tab ${t.id}, staying in restored mode`);
+          });
         }
       }
       if (session.tabs.length === 0) createTab(session);
@@ -4024,7 +4832,7 @@ function initAdapters() {
   adapterRegistry.register(codexAdapter);
 }
 function serveFile(filePath, res) {
-  const ext = path5.extname(filePath);
+  const ext = path6.extname(filePath);
   fs7.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
@@ -4101,7 +4909,7 @@ function shutdown() {
   }
   process.exit(0);
 }
-var __filename2, __dirname2, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
+var __filename3, __dirname3, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
 var init_server = __esm({
   "src/server.ts"() {
     init_auth();
@@ -4114,14 +4922,14 @@ var init_server = __esm({
     init_git_service();
     init_tunnel();
     init_service();
-    __filename2 = fileURLToPath2(import.meta.url);
-    __dirname2 = path5.dirname(__filename2);
+    __filename3 = fileURLToPath3(import.meta.url);
+    __dirname3 = path6.dirname(__filename3);
     if (handleServiceCommand(process.argv)) {
       process.exit(0);
     }
     require2 = createRequire(import.meta.url);
     PKG = JSON.parse(
-      fs7.readFileSync(path5.join(__dirname2, "package.json"), "utf8")
+      fs7.readFileSync(path6.join(__dirname3, "package.json"), "utf8")
     );
     VERSION = PKG.version;
     PORT2 = process.env.PORT || 8767;
@@ -6208,9 +7016,9 @@ self.addEventListener('notificationclick', function(event) {
         return;
       }
       if (url.pathname.startsWith("/dist/")) {
-        const resolved = path5.resolve(distPath, url.pathname.slice(6));
-        const rel = path5.relative(distPath, resolved);
-        if (rel.startsWith("..") || path5.isAbsolute(rel)) {
+        const resolved = path6.resolve(distPath, url.pathname.slice(6));
+        const rel = path6.relative(distPath, resolved);
+        if (rel.startsWith("..") || path6.isAbsolute(rel)) {
           res.writeHead(403);
           res.end("Forbidden");
           return;
