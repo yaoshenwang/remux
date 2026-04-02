@@ -840,10 +840,68 @@ const HTML_TEMPLATE = `<!doctype html>
       let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
 
-      // Predictive echo disabled — injecting ANSI escape sequences into the
-      // terminal conflicts with server escape sequences and breaks non-ASCII input
-      // (CJK, Vietnamese, etc.). Needs a decoration-based approach (not available
-      // in ghostty-web) to be re-implemented safely. See #80 for future work.
+      // -- Predictive echo via DOM overlay (see #80 Phase 2) --
+      // Shows predicted characters as transparent HTML spans over the canvas.
+      // Does NOT inject any ANSI escape sequences into the terminal — the overlay
+      // is purely visual and the terminal data path is never modified.
+      // Adapted from VS Code TypeAheadAddon concept, using DOM overlay instead of
+      // xterm.js decorations (which ghostty-web lacks).
+      const _peOverlay = document.createElement('div');
+      _peOverlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:1;overflow:hidden;';
+      _termContainer.appendChild(_peOverlay);
+      const _pePreds = [];
+      let _peEnabled = true, _peLatency = 0, _peSamples = 0;
+      function _peCellSize() {
+        const cvs = _termContainer.querySelector('canvas');
+        if (!cvs) return { w: 8, h: 16 };
+        return { w: cvs.offsetWidth / term.cols, h: cvs.offsetHeight / term.rows };
+      }
+      function peOnInput(data) {
+        if (!_peEnabled || _isComposing) return;
+        if (term.buffer && term.buffer.active && term.buffer.active.type === 'alternate') return;
+        if (myRole && myRole !== 'active') return;
+        for (let i = 0; i < data.length; i++) {
+          const c = data.charCodeAt(i);
+          if (c >= 0x20 && c <= 0x7e && _pePreds.length < 32) {
+            const buf = term.buffer && term.buffer.active;
+            const cx = (buf ? buf.cursorX : 0) + _pePreds.length;
+            const cy = buf ? buf.cursorY : 0;
+            const cell = _peCellSize();
+            const span = document.createElement('span');
+            span.textContent = data[i];
+            span.style.cssText = 'position:absolute;display:inline-block;color:inherit;opacity:0.35;'
+              + 'font-family:Menlo,Monaco,Courier New,monospace;'
+              + 'left:' + (cx * cell.w) + 'px;top:' + (cy * cell.h) + 'px;'
+              + 'width:' + cell.w + 'px;height:' + cell.h + 'px;'
+              + 'font-size:14px;line-height:' + cell.h + 'px;text-align:center;';
+            _peOverlay.appendChild(span);
+            _pePreds.push({ ch: data[i], span, ts: Date.now() });
+          } else if (c < 0x20 || c === 0x7f) {
+            peClearAll();
+          }
+          // Non-ASCII: skip prediction, don't clear
+        }
+      }
+      function peOnServerData(data) {
+        // Match predictions against server echo, remove confirmed overlay spans.
+        // NEVER modify or consume data — always pass full data to term.write().
+        if (_pePreds.length === 0) return;
+        for (let i = 0; i < data.length && _pePreds.length > 0; i++) {
+          if (data.charCodeAt(i) === 0x1b) { peClearAll(); return; }
+          if (data[i] === _pePreds[0].ch) {
+            const p = _pePreds.shift();
+            const rtt = Date.now() - p.ts;
+            _peSamples === 0 ? (_peLatency = rtt) : (_peLatency = 0.3 * rtt + 0.7 * _peLatency);
+            _peSamples++;
+            if (_peLatency < 30 && _peSamples > 5) { _peEnabled = false; peClearAll(); }
+            p.span.remove();
+          } else { peClearAll(); return; }
+        }
+      }
+      function peClearAll() {
+        for (const p of _pePreds) p.span.remove();
+        _pePreds.length = 0;
+      }
       const $ = id => document.getElementById(id);
       const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
@@ -855,6 +913,7 @@ const HTML_TEMPLATE = `<!doctype html>
         $('btn-theme').innerHTML = mode === 'dark' ? '&#9728;' : '&#9790;';
         // Recreate terminal with new theme (ghostty-web doesn't support runtime theme change)
         createTerminal(mode);
+        peClearAll();
         // Rebind terminal I/O
         term.onData(data => {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -863,6 +922,7 @@ const HTML_TEMPLATE = `<!doctype html>
             const ch = data.toLowerCase().charCodeAt(0);
             if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
           }
+          peOnInput(data);
           sendTermData(data);
         });
         term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
@@ -1401,9 +1461,10 @@ const HTML_TEMPLATE = `<!doctype html>
               // Non-enveloped JSON (e.g. PTY output that looks like JSON) — fall through to term.write
             } catch {}
           }
+          peOnServerData(e.data);
           term.write(e.data);
         };
-        ws.onclose = () => { stopHeartbeat(); scheduleReconnect(); };
+        ws.onclose = () => { stopHeartbeat(); peClearAll(); scheduleReconnect(); };
         ws.onerror = () => setStatus('disconnected', 'Error');
       }
       connect();
@@ -1433,6 +1494,7 @@ const HTML_TEMPLATE = `<!doctype html>
           const ch = data.toLowerCase().charCodeAt(0);
           if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
         }
+        peOnInput(data);
         sendTermData(data);
       });
       term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
