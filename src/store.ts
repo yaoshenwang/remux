@@ -386,7 +386,7 @@ export function createDevice(
   const db = getDb();
   const id = explicitId || generateDeviceId();
   const now = Date.now();
-  const deviceName = name || `Device-${id.slice(0, 4).toUpperCase()}`;
+  const deviceName = name || `Device-${id.slice(0, 8).toUpperCase()}`;
 
   db.prepare(
     `INSERT INTO devices (id, name, fingerprint, trust, created_at, last_seen)
