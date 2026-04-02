@@ -276,7 +276,7 @@ function createDevice(fingerprint, trust = "untrusted", name, explicitId) {
   const db = getDb();
   const id = explicitId || generateDeviceId();
   const now = Date.now();
-  const deviceName = name || `Device-${id.slice(0, 4).toUpperCase()}`;
+  const deviceName = name || `Device-${id.slice(0, 8).toUpperCase()}`;
   db.prepare(
     `INSERT INTO devices (id, name, fingerprint, trust, created_at, last_seen)
      VALUES (?, ?, ?, ?, ?, ?)`
@@ -5340,11 +5340,11 @@ var init_server = __esm({
         color: var(--accent); letter-spacing: 4px; }
       .pair-expires { display: block; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
       .pair-input-area { display: flex; gap: 4px; }
-      .pair-input-area input { flex: 1; padding: 5px 8px; font-size: 13px; font-family: 'Menlo','Monaco',monospace;
+      .pair-input-area input { flex: 1; min-width: 0; padding: 5px 8px; font-size: 13px; font-family: 'Menlo','Monaco',monospace;
         background: var(--bg); border: 1px solid var(--compose-border); border-radius: 4px;
         color: var(--text); outline: none; text-align: center; letter-spacing: 2px; }
       .pair-input-area input:focus { border-color: var(--accent); }
-      .pair-input-area .pair-btn { width: auto; }
+      .pair-input-area .pair-btn { flex-shrink: 0; width: auto; }
 
       /* -- Push notification section -- */
       .push-section { padding: 4px 12px 8px; border-top: 1px solid var(--border); }
@@ -6018,7 +6018,7 @@ var init_server = __esm({
             // Use persistent device ID from localStorage so each browser context
             // is a distinct device even with identical User-Agent
             if (!localStorage.getItem('remux-device-id')) {
-              localStorage.setItem('remux-device-id', 'dev-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36));
+              localStorage.setItem('remux-device-id', Math.random().toString(36).slice(2, 10) + Date.now().toString(36));
             }
             ws.send(JSON.stringify({ type: 'auth', token: urlToken, deviceId: localStorage.getItem('remux-device-id') }));
           }
@@ -6091,6 +6091,12 @@ var init_server = __esm({
                 // Request device list and workspace data after auth
                 sendCtrl({ type: 'list_devices' });
                 sendCtrl({ type: 'list_notes' });
+                return;
+              }
+              if (msg.type === 'bootstrap') {
+                sessions = msg.sessions || [];
+                clientsList = msg.clients || [];
+                renderSessions(); renderTabs(); renderRole(); stabilizeFit();
                 return;
               }
               if (msg.type === 'auth_error') { setStatus('disconnected', 'Auth failed'); ws.close(); return; }
@@ -6381,16 +6387,18 @@ var init_server = __esm({
           list.appendChild(el);
         });
 
-        // Show actions only for trusted devices
+        // Show actions only for trusted devices; untrusted see pair input instead
         const isTrusted = devicesList.find(d => d.id === myDeviceId && d.trust === 'trusted');
         if (actions) {
-          actions.style.display = isTrusted ? 'block' : 'none';
+          actions.style.display = 'block';
+          const btnPair = $('btn-pair');
+          if (btnPair) {
+            btnPair.disabled = !isTrusted;
+            btnPair.title = isTrusted ? '' : 'Only trusted devices can generate pair codes';
+          }
           // Show pair input for untrusted devices
           const pairInput = $('pair-input-area');
-          if (pairInput && !isTrusted) {
-            pairInput.style.display = 'flex';
-            actions.style.display = 'block';
-          }
+          if (pairInput) pairInput.style.display = isTrusted ? 'none' : 'flex';
         }
       }
 
@@ -6407,7 +6415,8 @@ var init_server = __esm({
 
       $('btn-submit-pair').addEventListener('click', () => {
         const code = $('pair-code-input').value.trim();
-        if (code.length === 6) sendCtrl({ type: 'pair', code });
+        if (!/^d{6}$/.test(code)) { alert('Please enter a 6-digit pair code'); return; }
+        sendCtrl({ type: 'pair', code });
       });
 
       $('pair-code-input').addEventListener('keydown', e => {
@@ -6592,38 +6601,42 @@ var init_server = __esm({
         ).join('');
       }
 
+      // Track which artifact IDs are expanded (persists across re-renders)
+      const _expandedArtifacts = new Set();
+
       function renderWorkspaceArtifacts() {
         const el = $('ws-artifacts');
         if (!el) return;
         // Artifacts are already filtered by session_name on the server side
         const recent = wsArtifacts.slice(-10).reverse();
         if (recent.length === 0) { el.innerHTML = '<div class="ws-empty">No artifacts</div>'; return; }
-        el.innerHTML = recent.map((a, idx) => {
+        el.innerHTML = recent.map((a) => {
           var hasContent = a.content && a.content.trim();
           var ct = a.contentType || 'plain';
           var badge = (ct !== 'plain') ? ' <span class="ws-badge ' + esc(ct) + '">' + esc(ct) + '</span>' : '';
-          // Use server-rendered HTML if available, otherwise show raw text
           var rendered = a.renderedHtml || (hasContent ? '<pre style="margin:0;font-size:11px;color:var(--text-muted);white-space:pre-wrap;word-break:break-word">' + esc(a.content) + '</pre>' : '');
+          var isExpanded = _expandedArtifacts.has(a.id);
           return '<div class="ws-card">' +
             '<div class="ws-card-header">' +
               '<span class="ws-badge ' + esc(a.type) + '">' + esc(a.type) + '</span>' +
               badge +
               '<span class="ws-card-title">' + esc(a.title) + '</span>' +
               '<span class="ws-card-meta">' + timeAgo(a.createdAt) + '</span>' +
-              (hasContent ? '<button class="ws-card-toggle" data-toggle-idx="' + idx + '">Show</button>' : '') +
+              (hasContent ? '<button class="ws-card-toggle" data-toggle-art="' + esc(a.id) + '">' + (isExpanded ? 'Hide' : 'Show') + '</button>' : '') +
             '</div>' +
-            (hasContent ? '<div class="ws-card-content" id="ws-art-content-' + idx + '" style="display:none">' + rendered + '</div>' : '') +
+            (hasContent ? '<div class="ws-card-content" data-art-content="' + esc(a.id) + '" style="display:' + (isExpanded ? 'block' : 'none') + '">' + rendered + '</div>' : '') +
           '</div>';
         }).join('');
         // Wire up toggle buttons
-        el.querySelectorAll('[data-toggle-idx]').forEach(function(btn) {
+        el.querySelectorAll('[data-toggle-art]').forEach(function(btn) {
           btn.addEventListener('click', function() {
-            var idx = btn.getAttribute('data-toggle-idx');
-            var contentEl = document.getElementById('ws-art-content-' + idx);
+            var artId = btn.getAttribute('data-toggle-art');
+            var contentEl = el.querySelector('[data-art-content="' + artId + '"]');
             if (!contentEl) return;
             var visible = contentEl.style.display !== 'none';
             contentEl.style.display = visible ? 'none' : 'block';
             btn.textContent = visible ? 'Show' : 'Hide';
+            if (visible) _expandedArtifacts.delete(artId); else _expandedArtifacts.add(artId);
           });
         });
       }

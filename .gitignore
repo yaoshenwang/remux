@@ -51,6 +51,9 @@ packages/RemuxKit/Sources/RemuxKit/Terminal/Resources/ghostty-vt.wasm
 packages/RemuxKit/Sources/RemuxKit/Terminal/Resources/ghostty-web-version.txt
 
 # Build artifacts
+/build/
+apps/ios/build/
+docs/reports/
 src/backend/zellij/plugin/target/
 native/zellij-bridge/target/
 native/android/build/
