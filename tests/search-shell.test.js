@@ -117,7 +117,8 @@ function createTestDb() {
       content TEXT NOT NULL,
       pinned INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      session_name TEXT
     );
     CREATE TABLE IF NOT EXISTS commands (
       id TEXT PRIMARY KEY,

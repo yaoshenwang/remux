@@ -1,10 +1,15 @@
 /**
  * Session and tab management for Remux.
  * Data model, PTY lifecycle, scrollback, VT tracking, persistence.
+ * Supports both direct PTY and daemon-backed PTY modes.
  */
 
 import fs from "fs";
+import path from "path";
+import net from "net";
 import { homedir } from "os";
+import { spawn } from "child_process";
+import { fileURLToPath } from "url";
 import pty from "node-pty";
 import {
   upsertSession,
@@ -17,9 +22,22 @@ import {
   type CommandRecord,
 } from "./store.js";
 import { broadcastPush } from "./push.js";
+import {
+  encodeFrame,
+  FrameParser,
+  TAG_PTY_OUTPUT,
+  TAG_CLIENT_INPUT,
+  TAG_RESIZE,
+  TAG_STATUS_REQ,
+  TAG_SNAPSHOT_REQ,
+  TAG_SHUTDOWN,
+} from "./pty-daemon.js";
 import type { IPty } from "node-pty";
 import type WebSocket from "ws";
 import { createVtTerminal, type VtTerminal } from "./vt-tracker.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ── Idle activity tracking (for push on resume) ─────────────────
 
@@ -98,7 +116,7 @@ export interface ShellIntegration {
 
 export interface Tab {
   id: number;
-  pty: IPty;
+  pty: IPty | null;
   scrollback: RingBuffer;
   vt: VtTerminal | null;
   clients: Set<RemuxWebSocket>;
@@ -108,6 +126,12 @@ export interface Tab {
   title: string;
   /** Shell integration state for OSC 133 command tracking */
   shellIntegration: ShellIntegration;
+  /** Path to daemon Unix socket (null = direct PTY mode) */
+  daemonSocket: string | null;
+  /** Connected client socket to daemon (null = not connected) */
+  daemonClient: net.Socket | null;
+  /** True when tab was restored from DB with dead daemon (readonly until user presses Enter) */
+  restored: boolean;
 }
 
 export interface Session {
@@ -141,6 +165,197 @@ function getShell(): string {
 let tabIdCounter = 0;
 export const sessionMap = new Map<string, Session>();
 export const controlClients = new Set<RemuxWebSocket>();
+
+// ── Daemon helpers ──────────────────────────────────────────────
+
+/**
+ * Get the path to the compiled pty-daemon.js script.
+ * It's compiled alongside server.js in the same directory.
+ */
+function getDaemonScriptPath(): string {
+  return path.join(__dirname, "pty-daemon.js");
+}
+
+/**
+ * Build a unique socket path for a tab's daemon.
+ * Includes process PID to avoid collisions between server instances.
+ */
+function buildSocketPath(tabId: number): string {
+  return `/tmp/remux-pty-${tabId}-${process.pid}.sock`;
+}
+
+/**
+ * Spawn a PTY daemon as a detached child process.
+ * Returns the socket path where the daemon listens.
+ */
+function spawnDaemon(
+  tabId: number,
+  shell: string,
+  cols: number,
+  rows: number,
+  cwd: string,
+): string {
+  const socketPath = buildSocketPath(tabId);
+  const daemonScript = getDaemonScriptPath();
+
+  const child = spawn(process.execPath, [
+    daemonScript,
+    "--socket", socketPath,
+    "--shell", shell,
+    "--cols", String(cols),
+    "--rows", String(rows),
+    "--cwd", cwd,
+    "--tab-id", String(tabId),
+  ], {
+    detached: true,
+    stdio: "ignore",
+  });
+
+  child.unref();
+  console.log(`[session] spawned daemon for tab ${tabId}: pid=${child.pid} socket=${socketPath}`);
+  return socketPath;
+}
+
+/**
+ * Connect to a daemon's Unix socket. Returns a Promise that resolves
+ * with the connected socket, or rejects on timeout/error.
+ */
+function connectToDaemon(
+  socketPath: string,
+  retries = 20,
+  delayMs = 100,
+): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    let attempt = 0;
+
+    function tryConnect() {
+      attempt++;
+      const socket = net.createConnection({ path: socketPath }, () => {
+        resolve(socket);
+      });
+
+      socket.on("error", (err) => {
+        socket.destroy();
+        if (attempt < retries) {
+          setTimeout(tryConnect, delayMs);
+        } else {
+          reject(new Error(`Failed to connect to daemon at ${socketPath} after ${retries} attempts: ${err.message}`));
+        }
+      });
+    }
+
+    tryConnect();
+  });
+}
+
+/**
+ * Wire up daemon socket data to tab clients and shell integration.
+ * The daemon sends TLV frames; we parse them and broadcast PTY output.
+ */
+function wireDaemonToTab(
+  tab: Tab,
+  daemonSocket: net.Socket,
+  sessionName: string,
+): void {
+  const parser = new FrameParser((tag, payload) => {
+    if (tag === TAG_PTY_OUTPUT) {
+      const data = payload.toString("utf8");
+      tab.scrollback.write(data);
+      if (tab.vt) tab.vt.consume(data);
+      for (const ws of tab.clients) {
+        sendData(ws, data);
+      }
+
+      // Buffer PTY output for recently-disconnected devices watching this tab
+      if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
+
+      // Shell integration: parse OSC 133 / OSC 7 sequences
+      processShellIntegration(data, tab, sessionName);
+
+      // E10: dispatch terminal data to adapters
+      try {
+        const { adapterRegistry } = require("./server.js");
+        adapterRegistry?.dispatchTerminalData(sessionName, data);
+      } catch { /* adapter not initialized yet */ }
+
+      // Idle activity tracking: notify on resume after >5 min silence
+      const now = Date.now();
+      const wasIdle = isIdle || (now - lastOutputTimestamp > IDLE_THRESHOLD_MS);
+      if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS) {
+        isIdle = true;
+      }
+      if (wasIdle && isIdle) {
+        isIdle = false;
+        const connectedDeviceIds: string[] = [];
+        for (const ws of controlClients) {
+          if (ws._remuxDeviceId) connectedDeviceIds.push(ws._remuxDeviceId);
+        }
+        broadcastPush(
+          "Terminal Activity",
+          `New output in "${sessionName}" after idle`,
+          connectedDeviceIds,
+        ).catch(() => {});
+      }
+      lastOutputTimestamp = now;
+    }
+  });
+
+  daemonSocket.on("data", (data: Buffer) => {
+    parser.feed(data);
+  });
+
+  daemonSocket.on("close", () => {
+    console.log(`[session] daemon connection closed for tab ${tab.id}`);
+    tab.daemonClient = null;
+    // If the daemon connection closes unexpectedly and tab isn't ended, mark as ended
+    if (!tab.ended) {
+      tab.ended = true;
+      if (tab.vt) {
+        tab.vt.dispose();
+        tab.vt = null;
+      }
+      const msg = `\r\n\x1b[33mDaemon connection lost\x1b[0m\r\n`;
+      for (const ws of tab.clients) {
+        sendData(ws, msg);
+      }
+      broadcastState();
+    }
+  });
+
+  daemonSocket.on("error", (err) => {
+    console.error(`[session] daemon socket error for tab ${tab.id}:`, err.message);
+  });
+}
+
+/**
+ * Spawn a new daemon for a restored tab (user pressed Enter to revive).
+ */
+export async function reviveTab(tab: Tab, session: Session): Promise<boolean> {
+  if (!tab.restored) return false;
+
+  const shell = getShell();
+  const socketPath = spawnDaemon(tab.id, shell, tab.cols, tab.rows, homedir());
+
+  try {
+    const client = await connectToDaemon(socketPath);
+    tab.daemonSocket = socketPath;
+    tab.daemonClient = client;
+    tab.restored = false;
+    tab.ended = false;
+
+    // Create a new VT terminal for the revived tab
+    tab.vt = createVtTerminal(tab.cols, tab.rows);
+
+    wireDaemonToTab(tab, client, session.name);
+
+    console.log(`[session] revived tab ${tab.id} in session "${session.name}"`);
+    broadcastState();
+    return true;
+  } catch (err: any) {
+    console.error(`[session] failed to revive tab ${tab.id}:`, err.message);
+    return false;
+  }
+}
 
 // ── Shell Integration: OSC 133 + OSC 7 parsing ─────────────────
 
@@ -242,23 +457,20 @@ export function createTab(
   rows = 24,
 ): Tab {
   const id = tabIdCounter++;
-  const ptyProcess = pty.spawn(getShell(), [], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: homedir(),
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    },
-  });
+  const shell = getShell();
+
+  // Check if daemon script exists — if so, use daemon mode
+  const daemonScript = getDaemonScriptPath();
+  const useDaemon = fs.existsSync(daemonScript);
+
+  let ptyProcess: IPty | null = null;
+  let socketPath: string | null = null;
 
   const vtTerminal = createVtTerminal(cols, rows);
 
   const tab: Tab = {
     id,
-    pty: ptyProcess,
+    pty: null,
     scrollback: new RingBuffer(),
     vt: vtTerminal,
     clients: new Set(),
@@ -272,7 +484,62 @@ export function createTab(
       cwd: null,
       activeCommandId: null,
     },
+    daemonSocket: null,
+    daemonClient: null,
+    restored: false,
   };
+
+  if (useDaemon) {
+    // Daemon mode: spawn detached pty-daemon process
+    socketPath = spawnDaemon(id, shell, cols, rows, homedir());
+    tab.daemonSocket = socketPath;
+
+    // Connect to daemon asynchronously
+    connectToDaemon(socketPath).then((client) => {
+      tab.daemonClient = client;
+      wireDaemonToTab(tab, client, session.name);
+      console.log(`[tab] daemon connected for id=${id} in session "${session.name}"`);
+    }).catch((err) => {
+      console.error(`[tab] failed to connect to daemon for id=${id}:`, err.message);
+      // Fallback: spawn direct PTY
+      spawnDirectPty(tab, session, shell, cols, rows);
+    });
+  } else {
+    // Direct PTY mode (fallback when daemon script not available)
+    spawnDirectPty(tab, session, shell, cols, rows);
+  }
+
+  session.tabs.push(tab);
+  console.log(
+    `[tab] created id=${id} in session "${session.name}" (mode=${useDaemon ? "daemon" : "direct"})`,
+  );
+  return tab;
+}
+
+/**
+ * Spawn a direct PTY (non-daemon fallback mode).
+ * Used when pty-daemon.js is not available or daemon connection fails.
+ */
+function spawnDirectPty(
+  tab: Tab,
+  session: Session,
+  shell: string,
+  cols: number,
+  rows: number,
+): void {
+  const ptyProcess = pty.spawn(shell, [], {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd: homedir(),
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+    },
+  });
+
+  tab.pty = ptyProcess;
 
   ptyProcess.onData((data: string) => {
     tab.scrollback.write(data);
@@ -333,12 +600,6 @@ export function createTab(
       `"${session.name}" tab "${tab.title}" exited (code: ${exitCode})`,
     ).catch(() => {});
   });
-
-  session.tabs.push(tab);
-  console.log(
-    `[tab] created id=${id} in session "${session.name}" (pid=${ptyProcess.pid})`,
-  );
-  return tab;
 }
 
 // ── Session lifecycle ────────────────────────────────────────────
@@ -355,7 +616,16 @@ export function deleteSession(name: string): void {
   const session = sessionMap.get(name);
   if (!session) return;
   for (const tab of session.tabs) {
-    if (!tab.ended) tab.pty.kill();
+    if (!tab.ended) {
+      if (tab.daemonClient) {
+        // Send shutdown command to daemon
+        try {
+          tab.daemonClient.write(encodeFrame(TAG_SHUTDOWN, Buffer.alloc(0)));
+        } catch { /* ignore */ }
+      } else if (tab.pty) {
+        tab.pty.kill();
+      }
+    }
   }
   sessionMap.delete(name);
   removeSessionFromDb(name);
@@ -377,6 +647,7 @@ export function getState(): Array<{
     title: string;
     ended: boolean;
     clients: number;
+    restored: boolean;
   }>;
   createdAt: number;
 }> {
@@ -387,6 +658,7 @@ export function getState(): Array<{
       title: t.title,
       ended: t.ended,
       clients: t.clients.size,
+      restored: t.restored,
     })),
     createdAt: s.createdAt,
   }));
@@ -437,15 +709,25 @@ export function attachToTab(
   ws._remuxRows = rows;
   recalcTabSize(tab);
 
+  // Send restored banner if tab is in restored-readonly mode
+  if (tab.restored) {
+    const banner = `\r\n\x1b[33m[Session restored — shell has exited. Press Enter to start a new shell.]\x1b[0m\r\n`;
+    sendData(ws, banner);
+  }
+
   // Only send Ctrl+L redraw when a VT snapshot exists (app is actively
   // rendering).  Idle shells don't need it and it pollutes scrollback
   // with ^L artifacts visible in Inspect.
-  if (!tab.ended && tab.vt) {
+  if (!tab.ended && !tab.restored && tab.vt) {
     const { text } = tab.vt.textSnapshot();
     // Only redraw if there's real content beyond an empty prompt
     if (text && text.trim().length > 0) {
       setTimeout(() => {
-        tab.pty.write("\x0c");
+        if (tab.daemonClient) {
+          tab.daemonClient.write(encodeFrame(TAG_CLIENT_INPUT, "\x0c"));
+        } else if (tab.pty) {
+          tab.pty.write("\x0c");
+        }
       }, 50);
     }
   }
@@ -479,7 +761,13 @@ export function recalcTabSize(tab: Tab): void {
     minRows = Math.max(1, Math.min(minRows, 200));
     tab.cols = minCols;
     tab.rows = minRows;
-    tab.pty.resize(minCols, minRows);
+    if (tab.daemonClient) {
+      // Send resize to daemon
+      const resizePayload = JSON.stringify({ cols: minCols, rows: minRows });
+      tab.daemonClient.write(encodeFrame(TAG_RESIZE, resizePayload));
+    } else if (tab.pty) {
+      tab.pty.resize(minCols, minRows);
+    }
     if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
@@ -594,6 +882,97 @@ export function restoreSessions(): {
     return { sessions };
   } catch (e: any) {
     console.error("[persist] restore failed:", e.message);
+    return false;
+  }
+}
+
+/**
+ * Check if a daemon socket file exists and is connectable.
+ * Used during session restore to detect alive daemons.
+ */
+export function findAliveDaemonSocket(tabId: number): string | null {
+  // Look for any socket file matching the tab ID pattern
+  const tmpDir = "/tmp";
+  try {
+    const files = fs.readdirSync(tmpDir);
+    const pattern = `remux-pty-${tabId}-`;
+    for (const f of files) {
+      if (f.startsWith(pattern) && f.endsWith(".sock")) {
+        return path.join(tmpDir, f);
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Create a restored tab (from persisted data, without a live PTY).
+ * The tab is in restored-readonly mode until the user activates it.
+ */
+export function createRestoredTab(
+  session: Session,
+  savedTab: { id: number; title: string; scrollback: Buffer | null; ended: boolean },
+): Tab {
+  // Ensure tabIdCounter stays ahead of restored IDs
+  if (savedTab.id >= tabIdCounter) {
+    tabIdCounter = savedTab.id + 1;
+  }
+
+  const vtTerminal = createVtTerminal(80, 24);
+
+  const tab: Tab = {
+    id: savedTab.id,
+    pty: null,
+    scrollback: new RingBuffer(),
+    vt: vtTerminal,
+    clients: new Set(),
+    cols: 80,
+    rows: 24,
+    ended: savedTab.ended,
+    title: savedTab.title || `Tab ${session.tabs.length + 1}`,
+    shellIntegration: {
+      phase: "idle",
+      commandBuffer: "",
+      cwd: null,
+      activeCommandId: null,
+    },
+    daemonSocket: null,
+    daemonClient: null,
+    restored: !savedTab.ended, // only "restored" if not already ended
+  };
+
+  // Pre-fill scrollback
+  if (savedTab.scrollback) {
+    tab.scrollback.write(savedTab.scrollback);
+    if (tab.vt) tab.vt.consume(savedTab.scrollback);
+  }
+
+  session.tabs.push(tab);
+  return tab;
+}
+
+/**
+ * Attempt to reattach to an alive daemon for a restored tab.
+ * Returns true if reattach succeeded, false otherwise.
+ */
+export async function reattachToDaemon(
+  tab: Tab,
+  session: Session,
+  socketPath: string,
+): Promise<boolean> {
+  try {
+    const client = await connectToDaemon(socketPath, 3, 50);
+    tab.daemonSocket = socketPath;
+    tab.daemonClient = client;
+    tab.restored = false;
+    tab.ended = false;
+
+    wireDaemonToTab(tab, client, session.name);
+
+    console.log(`[session] reattached to daemon for tab ${tab.id} at ${socketPath}`);
+    return true;
+  } catch (err: any) {
+    console.log(`[session] daemon at ${socketPath} not reachable: ${err.message}`);
     return false;
   }
 }
