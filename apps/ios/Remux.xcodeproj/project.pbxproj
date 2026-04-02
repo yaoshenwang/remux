@@ -21,6 +21,7 @@
 		ECAFCC766BD77CCD21821612 /* ManualConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E3AE7922D1E43AE099D1D40 /* ManualConnectView.swift */; };
 		EE0A712F52F48C1AB61D7AEC /* RemuxKit in Frameworks */ = {isa = PBXBuildFile; productRef = EF63343AE24B477D7365EE17 /* RemuxKit */; };
 		F136D905F6E9BA7F2C1816F2 /* InspectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED7C2F66BB76FB8DE51725E /* InspectView.swift */; };
+		AA1234560000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA1234560000000000000002 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +41,7 @@
 		D548B0C91D3AABA26641D898 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
 		DBE379B0C119DDC9C8B324E5 /* NowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowView.swift; sourceTree = "<group>"; };
 		DEEEA01EB80CE2C1601F6228 /* InspectCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectCache.swift; sourceTree = "<group>"; };
+		AA1234560000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -67,6 +69,7 @@
 		0E70947CCFEAEFEDCCF14E35 /* Remux */ = {
 			isa = PBXGroup;
 			children = (
+				AA1234560000000000000002 /* Assets.xcassets */,
 				48C3DD287E421F1077A8923A /* MainTabView.swift */,
 				6C491FD55D84AC2BED5C5EBD /* Remux.entitlements */,
 				662FEE0E78ADAADEA731106C /* RemuxiOSApp.swift */,
@@ -174,6 +177,7 @@
 			buildPhases = (
 				204B591A381758166DA82963 /* Sources */,
 				03BDC461530EDD09CDB7FF29 /* Frameworks */,
+				AA1234560000000000000003 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -223,6 +227,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA1234560000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA1234560000000000000001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		204B591A381758166DA82963 /* Sources */ = {
@@ -378,6 +393,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/Remux/Remux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Remux uses the camera to scan QR codes for server pairing.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Remux uses Face ID to protect your terminal sessions.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -387,6 +403,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.3.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.remux.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -400,6 +418,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/Remux/Remux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Remux uses the camera to scan QR codes for server pairing.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Remux uses Face ID to protect your terminal sessions.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -409,6 +428,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.3.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.remux.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
