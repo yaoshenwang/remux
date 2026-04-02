@@ -4764,6 +4764,9 @@ var init_server = __esm({
 
       // -- IME composition guard --
       // Defer fit()/resize during active IME composition to avoid layout thrash.
+      // Note: ghostty-web binds composition listeners on the container, and
+      // browser-native composition events bubble from textarea to container,
+      // so no forwarding patch is needed. Just guard fit() during composition.
       let _isComposing = false;
       let _pendingFit = false;
       function safeFit() {
@@ -4771,31 +4774,12 @@ var init_server = __esm({
         if (fitAddon) fitAddon.fit();
       }
       window.addEventListener('resize', safeFit);
-
-      // -- Fix ghostty-web IME: coder/ghostty-web#120 --
-      // ghostty-web binds composition listeners on the container, but focus is on
-      // the textarea. Browsers fire composition events on the focused element, so
-      // the container never receives them. Fix: forward from textarea to container.
-      // IMPORTANT: do NOT manipulate textarea geometry during composition \u2014 the
-      // browser and IME depend on the textarea's stable position for candidate
-      // window placement. Tampering causes the "blank page" symptom.
-      function patchGhosttyIME(container) {
-        const ta = container.querySelector('textarea');
-        if (!ta) return;
-        // Forward composition events to container (where ghostty-web listens)
-        ['compositionstart', 'compositionupdate', 'compositionend'].forEach(evtName => {
-          ta.addEventListener(evtName, e => {
-            container.dispatchEvent(new CompositionEvent(evtName, { data: e.data }));
-          }, true);
-        });
-        // Track composing state for fit() deferral
-        ta.addEventListener('compositionstart', () => { _isComposing = true; }, true);
-        ta.addEventListener('compositionend', () => {
-          _isComposing = false;
-          if (_pendingFit) { _pendingFit = false; safeFit(); }
-        }, true);
-      }
-      patchGhosttyIME(document.getElementById('terminal'));
+      const _termContainer = document.getElementById('terminal');
+      _termContainer.addEventListener('compositionstart', () => { _isComposing = true; });
+      _termContainer.addEventListener('compositionend', () => {
+        _isComposing = false;
+        if (_pendingFit) { _pendingFit = false; safeFit(); }
+      });
 
       let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
@@ -4888,7 +4872,6 @@ var init_server = __esm({
         $('btn-theme').innerHTML = mode === 'dark' ? '&#9728;' : '&#9790;';
         // Recreate terminal with new theme (ghostty-web doesn't support runtime theme change)
         createTerminal(mode);
-        patchGhosttyIME(document.getElementById('terminal'));
         // Rebind terminal I/O + predictive echo
         pe.attach(term);
         term.onData(data => {
