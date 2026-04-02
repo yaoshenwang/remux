@@ -4761,49 +4761,39 @@ var init_server = __esm({
         return term;
       }
       createTerminal(initTheme);
-      window.addEventListener('resize', () => { if (fitAddon) fitAddon.fit(); });
 
-      // -- Fix ghostty-web IME: coder/ghostty-web#97 + #120 --
-      // ghostty-web listens composition events on the container instead of the
-      // textarea. Browsers fire composition events on the focused element (textarea),
-      // so the container never receives them. During IME composition the browser may
-      // also reposition/resize the textarea to show candidate text, which shifts the
-      // canvas out of view (the "blank page" symptom).
-      // Fix: re-dispatch composition events from textarea to container, and pin the
-      // textarea so it cannot shift the canvas layout during composition.
+      // -- IME composition guard --
+      // Defer fit()/resize during active IME composition to avoid layout thrash.
+      let _isComposing = false;
+      let _pendingFit = false;
+      function safeFit() {
+        if (_isComposing) { _pendingFit = true; return; }
+        if (fitAddon) fitAddon.fit();
+      }
+      window.addEventListener('resize', safeFit);
+
+      // -- Fix ghostty-web IME: coder/ghostty-web#120 --
+      // ghostty-web binds composition listeners on the container, but focus is on
+      // the textarea. Browsers fire composition events on the focused element, so
+      // the container never receives them. Fix: forward from textarea to container.
+      // IMPORTANT: do NOT manipulate textarea geometry during composition \u2014 the
+      // browser and IME depend on the textarea's stable position for candidate
+      // window placement. Tampering causes the "blank page" symptom.
       function patchGhosttyIME(container) {
         const ta = container.querySelector('textarea');
-        const cvs = container.querySelector('canvas');
         if (!ta) return;
-        // 1. Forward composition events from textarea to container
+        // Forward composition events to container (where ghostty-web listens)
         ['compositionstart', 'compositionupdate', 'compositionend'].forEach(evtName => {
           ta.addEventListener(evtName, e => {
             container.dispatchEvent(new CompositionEvent(evtName, { data: e.data }));
           }, true);
         });
-        // 2. Pin textarea during composition to prevent canvas shift
-        ta.addEventListener('compositionstart', () => {
-          ta.style.position = 'fixed';
-          ta.style.top = '-9999px';
-          ta.style.left = '-9999px';
-          ta.style.opacity = '0';
-          ta.style.width = '1px';
-          ta.style.height = '1px';
-          if (cvs) cvs.style.position = 'relative';
-        }, true);
+        // Track composing state for fit() deferral
+        ta.addEventListener('compositionstart', () => { _isComposing = true; }, true);
         ta.addEventListener('compositionend', () => {
-          ta.style.position = 'absolute';
-          ta.style.top = '0';
-          ta.style.left = '0';
-          ta.style.opacity = '0';
-          ta.style.width = '1px';
-          ta.style.height = '1px';
-          ta.style.clipPath = 'inset(50%)';
-          if (cvs) cvs.style.position = '';
+          _isComposing = false;
+          if (_pendingFit) { _pendingFit = false; safeFit(); }
         }, true);
-        // 3. Prevent container from scrolling due to textarea repositioning
-        container.style.overflow = 'hidden';
-        container.style.position = 'relative';
       }
       patchGhosttyIME(document.getElementById('terminal'));
 
@@ -4933,7 +4923,7 @@ var init_server = __esm({
           sidebar.classList.toggle('open');
           overlay.classList.toggle('visible', sidebar.classList.contains('open'));
         } else { sidebar.classList.toggle('collapsed'); }
-        setTimeout(() => fitAddon.fit(), 250);
+        setTimeout(safeFit, 250);
       }
       function closeSidebarMobile() {
         if (window.innerWidth <= 768) { sidebar.classList.remove('open'); overlay.classList.remove('visible'); }
@@ -5523,7 +5513,7 @@ var init_server = __esm({
           refreshWorkspace();
           wsRefreshTimer = setInterval(refreshWorkspace, 5000);
         }
-        if (mode === 'live') { term.focus(); fitAddon.fit(); }
+        if (mode === 'live') { term.focus(); safeFit(); }
       }
       $('btn-live').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('live'); });
       $('btn-inspect').addEventListener('pointerdown', e => { e.preventDefault(); closeSidebarMobile(); setView('inspect'); });
@@ -6035,7 +6025,7 @@ var init_server = __esm({
           const vh = window.visualViewport.height;
           if (vh > 0) document.body.style.height = vh + 'px';
           clearTimeout(fitDebounceTimer);
-          fitDebounceTimer = setTimeout(() => { if (fitAddon) fitAddon.fit(); }, 100);
+          fitDebounceTimer = setTimeout(safeFit, 100);
         });
         window.visualViewport.addEventListener('scroll', () => window.scrollTo(0, 0));
       }
