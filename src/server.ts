@@ -850,14 +850,13 @@ const HTML_TEMPLATE = `<!doctype html>
       _peOverlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:1;overflow:hidden;';
       _termContainer.appendChild(_peOverlay);
       const _pePreds = [];
-      let _peEnabled = true, _peLatency = 0, _peSamples = 0;
       function _peCellSize() {
         const cvs = _termContainer.querySelector('canvas');
         if (!cvs) return { w: 8, h: 16 };
         return { w: cvs.offsetWidth / term.cols, h: cvs.offsetHeight / term.rows };
       }
       function peOnInput(data) {
-        if (!_peEnabled || _isComposing) return;
+        if (_isComposing) return;
         if (term.buffer && term.buffer.active && term.buffer.active.type === 'alternate') return;
         if (myRole && myRole !== 'active') return;
         for (let i = 0; i < data.length; i++) {
@@ -869,7 +868,7 @@ const HTML_TEMPLATE = `<!doctype html>
             const cell = _peCellSize();
             const span = document.createElement('span');
             span.textContent = data[i];
-            span.style.cssText = 'position:absolute;display:inline-block;color:inherit;opacity:0.35;'
+            span.style.cssText = 'position:absolute;display:inline-block;color:var(--text,#d4d4d4);opacity:0.6;'
               + 'font-family:Menlo,Monaco,Courier New,monospace;'
               + 'left:' + (cx * cell.w) + 'px;top:' + (cy * cell.h) + 'px;'
               + 'width:' + cell.w + 'px;height:' + cell.h + 'px;'
@@ -890,10 +889,6 @@ const HTML_TEMPLATE = `<!doctype html>
           if (data.charCodeAt(i) === 0x1b) { peClearAll(); return; }
           if (data[i] === _pePreds[0].ch) {
             const p = _pePreds.shift();
-            const rtt = Date.now() - p.ts;
-            _peSamples === 0 ? (_peLatency = rtt) : (_peLatency = 0.3 * rtt + 0.7 * _peLatency);
-            _peSamples++;
-            if (_peLatency < 30 && _peSamples > 5) { _peEnabled = false; peClearAll(); }
             p.span.remove();
           } else { peClearAll(); return; }
         }
