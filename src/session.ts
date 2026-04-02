@@ -160,6 +160,34 @@ function getShell(): string {
   return "/bin/bash";
 }
 
+function formatPtyError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return "unknown PTY error";
+}
+
+function markTabUnavailable(
+  tab: Tab,
+  sessionName: string,
+  error: unknown,
+): void {
+  const reason = formatPtyError(error);
+  const banner =
+    `\r\n\x1b[31mShell unavailable on this machine: ${reason}\x1b[0m\r\n`;
+
+  tab.ended = true;
+  tab.pty = null;
+  tab.daemonSocket = null;
+  tab.daemonClient = null;
+  tab.restored = false;
+  tab.scrollback.write(banner);
+  if (tab.vt) tab.vt.consume(banner);
+
+  console.error(
+    `[tab] shell unavailable for id=${tab.id} in session "${sessionName}": ${reason}`,
+  );
+}
+
 // ── State ────────────────────────────────────────────────────────
 
 let tabIdCounter = 0;
@@ -353,6 +381,8 @@ export async function reviveTab(tab: Tab, session: Session): Promise<boolean> {
     return true;
   } catch (err: any) {
     console.error(`[session] failed to revive tab ${tab.id}:`, err.message);
+    markTabUnavailable(tab, session.name, err);
+    broadcastState();
     return false;
   }
 }
@@ -501,12 +531,20 @@ export function createTab(
       console.log(`[tab] daemon connected for id=${id} in session "${session.name}"`);
     }).catch((err) => {
       console.error(`[tab] failed to connect to daemon for id=${id}:`, err.message);
-      // Fallback: spawn direct PTY
-      spawnDirectPty(tab, session, shell, cols, rows);
+      try {
+        // Fallback: spawn direct PTY
+        spawnDirectPty(tab, session, shell, cols, rows);
+      } catch (spawnError) {
+        markTabUnavailable(tab, session.name, spawnError);
+      }
     });
   } else {
-    // Direct PTY mode (fallback when daemon script not available)
-    spawnDirectPty(tab, session, shell, cols, rows);
+    try {
+      // Direct PTY mode (fallback when daemon script not available)
+      spawnDirectPty(tab, session, shell, cols, rows);
+    } catch (err) {
+      markTabUnavailable(tab, session.name, err);
+    }
   }
 
   session.tabs.push(tab);

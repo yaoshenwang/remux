@@ -161,17 +161,23 @@ function main(): void {
   }
 
   // Create PTY
-  const ptyProcess: IPty = pty.spawn(args.shell, [], {
-    name: "xterm-256color",
-    cols: args.cols,
-    rows: args.rows,
-    cwd: args.cwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    },
-  });
+  let ptyProcess: IPty;
+  try {
+    ptyProcess = pty.spawn(args.shell, [], {
+      name: "xterm-256color",
+      cols: args.cols,
+      rows: args.rows,
+      cwd: args.cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+      },
+    });
+  } catch (err: any) {
+    console.error(`[pty-daemon] failed to spawn PTY: ${err?.message || err}`);
+    process.exit(1);
+  }
 
   const scrollback = new RingBuffer();
   const clients = new Set<net.Socket>();

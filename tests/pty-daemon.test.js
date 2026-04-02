@@ -7,6 +7,7 @@ import net from "net";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import pty from "node-pty";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DAEMON_SCRIPT = path.join(__dirname, "..", "pty-daemon.js");
@@ -20,6 +21,24 @@ const TAG_STATUS_RES = 0x05;
 const TAG_SNAPSHOT_REQ = 0x06;
 const TAG_SNAPSHOT_RES = 0x07;
 const TAG_SHUTDOWN = 0xff;
+
+function supportsNodePty() {
+  try {
+    const proc = pty.spawn("/bin/sh", ["-lc", "exit 0"], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: "/tmp",
+      env: process.env,
+    });
+    proc.kill();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const describePtyLifecycle = supportsNodePty() ? describe : describe.skip;
 
 function encodeFrame(tag, payload) {
   const data =
@@ -137,7 +156,7 @@ describe("TLV Frame Codec", () => {
   });
 });
 
-describe("PTY Daemon Lifecycle", () => {
+describePtyLifecycle("PTY Daemon Lifecycle", () => {
   let daemon;
   let socketPath;
 

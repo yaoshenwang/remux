@@ -11,6 +11,7 @@ import WebSocket from "ws";
 import fs from "fs";
 import path from "path";
 import { homedir } from "os";
+import pty from "node-pty";
 
 const PORT = 19876 + Math.floor(Math.random() * 1000); // randomized test port
 const TOKEN = "test-token-" + Date.now();
@@ -19,6 +20,24 @@ const PERSIST_DIR = path.join(homedir(), ".remux");
 const PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${INSTANCE_ID}.json`);
 const DB_FILE = path.join(PERSIST_DIR, `remux-${INSTANCE_ID}.db`);
 let serverProc;
+
+function supportsNodePty() {
+  try {
+    const proc = pty.spawn("/bin/sh", ["-lc", "exit 0"], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: "/tmp",
+      env: process.env,
+    });
+    proc.kill();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const PTY_SUPPORTED = supportsNodePty();
 
 function httpGet(urlPath) {
   return new Promise((resolve, reject) => {
@@ -113,7 +132,7 @@ beforeAll(async () => {
   // Explicitly remove REMUX_PASSWORD to avoid env leaking from parent
   const cleanEnv = { ...process.env };
   delete cleanEnv.REMUX_PASSWORD;
-  serverProc = spawn("node", ["server.js"], {
+  serverProc = spawn(process.execPath, ["server.js"], {
     env: {
       ...cleanEnv,
       PORT: String(PORT),
@@ -183,6 +202,15 @@ describe("HTTP", () => {
     expect(res.status).toBe(200);
     expect(res.body).toContain("ghostty-web");
     expect(res.body).toContain("<title>Remux</title>");
+  });
+
+  it("serves reduced shell without workspace or device chrome", async () => {
+    const res = await httpGet(`/?token=${TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("Inspect");
+    expect(res.body).not.toContain("Workspace");
+    expect(res.body).not.toContain("Devices");
+    expect(res.body).not.toContain("Enable Notifications");
   });
 
   it("serves ghostty-web JS", async () => {
@@ -513,16 +541,18 @@ describe("client connection state", () => {
     const ws2 = await connectAuthed();
 
     // ws1 attaches first (active)
-    await sendAndCollect(
+    const msgs1 = await sendAndCollect(
       ws1,
       { type: "attach_first", session: "main", cols: 80, rows: 24 },
       { timeout: 3000 },
     );
+    const att1 = msgs1.find((m) => m.type === "attached");
+    expect(att1).toBeDefined();
 
     // ws2 attaches to same tab (observer)
     const msgs2 = await sendAndCollect(
       ws2,
-      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { type: "attach_tab", tabId: att1.tabId, cols: 80, rows: 24 },
       { timeout: 3000 },
     );
     const att2 = msgs2.find((m) => m.type === "attached");
@@ -552,11 +582,12 @@ describe("client connection state", () => {
     const att1 = msgs1.find((m) => m.type === "attached");
     expect(att1.role).toBe("active");
     const clientId1 = att1.clientId;
+    const tabId = att1.tabId;
 
     // ws2 attaches (observer)
     const msgs2 = await sendAndCollect(
       ws2,
-      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { type: "attach_tab", tabId, cols: 80, rows: 24 },
       { timeout: 3000 },
     );
     const att2 = msgs2.find((m) => m.type === "attached");
@@ -617,11 +648,12 @@ describe("client connection state", () => {
     const att1 = msgs1.find((m) => m.type === "attached");
     expect(att1.role).toBe("active");
     const clientId1 = att1.clientId;
+    const tabId = att1.tabId;
 
     // ws2 attaches (observer)
     const msgs2 = await sendAndCollect(
       ws2,
-      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { type: "attach_tab", tabId, cols: 80, rows: 24 },
       { timeout: 3000 },
     );
     const att2 = msgs2.find((m) => m.type === "attached");
@@ -669,16 +701,18 @@ describe("client connection state", () => {
     const ws2 = await connectAuthed();
 
     // ws1 attaches (active)
-    await sendAndCollect(
+    const msgs1 = await sendAndCollect(
       ws1,
       { type: "attach_first", session: "main", cols: 80, rows: 24 },
       { timeout: 3000 },
     );
+    const att1 = msgs1.find((m) => m.type === "attached");
+    expect(att1).toBeDefined();
 
     // ws2 attaches (observer)
     const msgs2 = await sendAndCollect(
       ws2,
-      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { type: "attach_tab", tabId: att1.tabId, cols: 80, rows: 24 },
       { timeout: 3000 },
     );
     const att2 = msgs2.find((m) => m.type === "attached");
@@ -720,15 +754,15 @@ describe("multi-client", () => {
       { type: "attach_first", session: "main", cols: 100, rows: 30 },
       { timeout: 3000 },
     );
+    const att1 = msgs1.find((m) => m.type === "attached");
+    expect(att1).toBeDefined();
     const msgs2 = await sendAndCollect(
       ws2,
-      { type: "attach_first", session: "main", cols: 80, rows: 24 },
+      { type: "attach_tab", tabId: att1.tabId, cols: 80, rows: 24 },
       { timeout: 3000 },
     );
 
-    const att1 = msgs1.find((m) => m.type === "attached");
     const att2 = msgs2.find((m) => m.type === "attached");
-    expect(att1).toBeDefined();
     expect(att2).toBeDefined();
     expect(att1.tabId).toBe(att2.tabId);
 
@@ -840,7 +874,11 @@ describe("inspect", () => {
     const result = msgs.find((m) => m.type === "inspect_result");
     expect(result).toBeDefined();
     expect(typeof result.text).toBe("string");
-    expect(result.text).toContain("inspect-test-output");
+    if (PTY_SUPPORTED) {
+      expect(result.text).toContain("inspect-test-output");
+    } else {
+      expect(result.text).toContain("Shell unavailable on this machine");
+    }
     expect(result.meta).toBeDefined();
     expect(result.meta.session).toBe("main");
     expect(typeof result.meta.cols).toBe("number");

@@ -76,6 +76,11 @@ test.describe.serial("Remux E2E", () => {
     // Sidebar should show "main" session
     const sessionItem = page.locator(".session-item .name", { hasText: "main" });
     await expect(sessionItem).toBeVisible();
+
+    await expect(page.locator("#btn-inspect")).toBeVisible();
+    await expect(page.locator("#btn-workspace")).toHaveCount(0);
+    await expect(page.locator("#devices-section")).toHaveCount(0);
+    await expect(page.locator("#push-section")).toHaveCount(0);
   });
 
   // ── 2. Live terminal interaction ──
@@ -174,11 +179,10 @@ test.describe.serial("Remux E2E", () => {
       { timeout: 10000 },
     );
 
-    // Listen for the prompt dialog and accept with session name
-    page.on("dialog", (d) => d.accept("test-e2e-session"));
-
-    // Click "+" to create a new session
+    // Open the inline composer and create a session
     await page.locator("#btn-new-session").click();
+    await page.locator("#new-session-input").fill("test-e2e-session");
+    await page.locator("#btn-create-session").click();
 
     // Wait for the new session to appear in sidebar
     const newSession = page.locator(".session-item .name", {
@@ -316,6 +320,42 @@ test.describe.serial("Remux E2E", () => {
         );
         expect(hasMarks).toBe(true);
       }
+    }
+  });
+
+  test("mobile chrome keeps control button visible and hides compose bar outside live", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 390, height: 664 },
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(BASE);
+      await expect(page.locator("#terminal canvas")).toBeVisible({
+        timeout: 10000,
+      });
+      await page.waitForFunction(
+        () =>
+          window._remuxTerm &&
+          document.querySelector("#status-dot")?.classList.contains("connected"),
+        { timeout: 10000 },
+      );
+
+      await expect(page.locator("#btn-role")).toBeVisible();
+      await expect(page.locator("#devices-section")).toHaveCount(0);
+      await expect(page.locator("#compose-bar")).toHaveClass(/visible/);
+
+      await page.locator("#btn-inspect").click();
+      await expect(page.locator("#inspect")).toHaveClass(/visible/, {
+        timeout: 5000,
+      });
+      await expect(page.locator("#compose-bar")).not.toHaveClass(/visible/);
+    } finally {
+      await context.close();
     }
   });
 

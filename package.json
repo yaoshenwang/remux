@@ -1,6 +1,6 @@
 {
   "name": "@wangyaoshen/remux",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "Remote terminal workspace — powered by ghostty-web",
   "license": "MIT",
   "repository": {
