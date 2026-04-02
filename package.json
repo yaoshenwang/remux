@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "npx playwright test",
-    "postinstall": "node --input-type=commonjs -e \"var fs=require('fs'),p=require('path');['darwin-arm64','darwin-x64'].forEach(function(d){var f=p.join('node_modules','node-pty','prebuilds',d,'spawn-helper');try{fs.chmodSync(f,0o755)}catch(e){}})\" && node scripts/patch-ghostty-ime.mjs"
+    "postinstall": "node --input-type=commonjs -e \"var fs=require('fs'),p=require('path');['darwin-arm64','darwin-x64'].forEach(function(d){var f=p.join('node_modules','node-pty','prebuilds',d,'spawn-helper');try{fs.chmodSync(f,0o755)}catch(e){}})\""
   },
   "packageManager": "pnpm@10.26.2",
   "engines": {
