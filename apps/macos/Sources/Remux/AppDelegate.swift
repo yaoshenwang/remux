@@ -4,6 +4,7 @@ import RemuxKit
 
 /// Main application delegate. Manages windows, tray, and global state.
 /// Architecture ref: cmux AppDelegate.swift
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var additionalWindows: [NSWindow] = []
@@ -14,7 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var socketController: SocketController?
     private var finderIntegration: FinderIntegration?
 
-    @MainActor
     let state = RemuxState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -47,14 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Auto-connect after a brief delay to ensure UI is ready
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            Task { @MainActor in
-                self.autoConnectIfConfigured(savedSession: savedSession)
-            }
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            self.autoConnectIfConfigured(savedSession: savedSession)
         }
 
         // Check for crash reports from previous launch
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        Task {
+            try? await Task.sleep(for: .seconds(1))
             CrashReporter.shared.checkForPendingReports()
         }
     }
@@ -63,16 +63,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Stop socket controller
         socketController?.stop()
 
-        // Save session on quit
-        Task { @MainActor in
-            let session = buildCurrentSession()
-            SessionPersistence.shared.save(session)
-            SessionPersistence.shared.stopAutosave()
-        }
+        // Save session on quit (already on @MainActor via class annotation)
+        let session = buildCurrentSession()
+        SessionPersistence.shared.save(session)
+        SessionPersistence.shared.stopAutosave()
     }
 
     /// Build the current session state for persistence.
-    @MainActor
     private func buildCurrentSession() -> AppSession {
         var session = AppSession()
 
@@ -96,7 +93,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Auto-connect if REMUX_URL and REMUX_TOKEN environment variables are set,
     /// or if a saved session has a server URL.
-    @MainActor
     private func autoConnectIfConfigured(savedSession: AppSession?) {
         // Priority 1: Environment variables
         if let urlStr = ProcessInfo.processInfo.environment["REMUX_URL"],
@@ -109,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Priority 2: Saved session with server URL
         if let urlStr = savedSession?.serverURL,
-           let url = URL(string: urlStr) {
+           let _ = URL(string: urlStr) {
             NSLog("[remux] Saved session has server URL: %@, showing connection UI", urlStr)
             // Don't auto-connect without credentials — just pre-fill the URL
         }
@@ -177,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Cmd+Shift+R
             if event.modifierFlags.contains([.command, .shift]),
                event.charactersIgnoringModifiers == "r" {
-                DispatchQueue.main.async { @MainActor in
+                Task { @MainActor in
                     if let appDelegate = NSApp.delegate as? AppDelegate {
                         appDelegate.toggleWindow()
                     }
@@ -245,7 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.detachedWindows.removeValue(forKey: panelID)
+            Task { @MainActor in
+                self?.detachedWindows.removeValue(forKey: panelID)
+            }
         }
     }
 
