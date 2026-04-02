@@ -1999,12 +1999,16 @@ const HTML_TEMPLATE = `<!doctype html>
         input.addEventListener('blur', commit);
       });
 
-      // -- Mobile --
+      // -- Mobile virtual keyboard handling --
+      // Only apply visualViewport height adjustments on touch devices.
+      // On desktop, IME candidate windows trigger visualViewport resize
+      // with incorrect height values, causing the page to go blank.
       let fitDebounceTimer = null;
-      if (window.visualViewport) {
+      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      if (window.visualViewport && isTouchDevice) {
         window.visualViewport.addEventListener('resize', () => {
-          document.body.style.height = window.visualViewport.height + 'px';
-          // Debounce fit() to avoid excessive recalculations during keyboard animation
+          const vh = window.visualViewport.height;
+          if (vh > 0) document.body.style.height = vh + 'px';
           clearTimeout(fitDebounceTimer);
           fitDebounceTimer = setTimeout(() => { if (fitAddon) fitAddon.fit(); }, 100);
         });
