@@ -783,6 +783,50 @@ const HTML_TEMPLATE = `<!doctype html>
       createTerminal(initTheme);
       window.addEventListener('resize', () => { if (fitAddon) fitAddon.fit(); });
 
+      // -- Fix ghostty-web IME: coder/ghostty-web#97 + #120 --
+      // ghostty-web listens composition events on the container instead of the
+      // textarea. Browsers fire composition events on the focused element (textarea),
+      // so the container never receives them. During IME composition the browser may
+      // also reposition/resize the textarea to show candidate text, which shifts the
+      // canvas out of view (the "blank page" symptom).
+      // Fix: re-dispatch composition events from textarea to container, and pin the
+      // textarea so it cannot shift the canvas layout during composition.
+      function patchGhosttyIME(container) {
+        const ta = container.querySelector('textarea');
+        const cvs = container.querySelector('canvas');
+        if (!ta) return;
+        // 1. Forward composition events from textarea to container
+        ['compositionstart', 'compositionupdate', 'compositionend'].forEach(evtName => {
+          ta.addEventListener(evtName, e => {
+            container.dispatchEvent(new CompositionEvent(evtName, { data: e.data }));
+          }, true);
+        });
+        // 2. Pin textarea during composition to prevent canvas shift
+        ta.addEventListener('compositionstart', () => {
+          ta.style.position = 'fixed';
+          ta.style.top = '-9999px';
+          ta.style.left = '-9999px';
+          ta.style.opacity = '0';
+          ta.style.width = '1px';
+          ta.style.height = '1px';
+          if (cvs) cvs.style.position = 'relative';
+        }, true);
+        ta.addEventListener('compositionend', () => {
+          ta.style.position = 'absolute';
+          ta.style.top = '0';
+          ta.style.left = '0';
+          ta.style.opacity = '0';
+          ta.style.width = '1px';
+          ta.style.height = '1px';
+          ta.style.clipPath = 'inset(50%)';
+          if (cvs) cvs.style.position = '';
+        }, true);
+        // 3. Prevent container from scrolling due to textarea repositioning
+        container.style.overflow = 'hidden';
+        container.style.position = 'relative';
+      }
+      patchGhosttyIME(document.getElementById('terminal'));
+
       let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
 
@@ -874,6 +918,7 @@ const HTML_TEMPLATE = `<!doctype html>
         $('btn-theme').innerHTML = mode === 'dark' ? '&#9728;' : '&#9790;';
         // Recreate terminal with new theme (ghostty-web doesn't support runtime theme change)
         createTerminal(mode);
+        patchGhosttyIME(document.getElementById('terminal'));
         // Rebind terminal I/O + predictive echo
         pe.attach(term);
         term.onData(data => {
