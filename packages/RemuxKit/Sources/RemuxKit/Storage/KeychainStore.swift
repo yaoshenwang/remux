@@ -60,11 +60,11 @@ public struct KeychainStore: Sendable {
     }
 
     public func preferredCredential(forServer server: String) -> RemuxCredential? {
-        if let resumeToken = loadResumeToken(forServer: server) {
-            return .resumeToken(resumeToken)
-        }
         if let token = loadServerToken(forServer: server) {
             return .token(token)
+        }
+        if let resumeToken = loadResumeToken(forServer: server) {
+            return .resumeToken(resumeToken)
         }
         return nil
     }

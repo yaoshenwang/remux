@@ -29,6 +29,11 @@ let package = Package(
                 .linkedLibrary("z"),
             ]
         ),
+        .testTarget(
+            name: "RemuxTests",
+            dependencies: ["Remux"],
+            path: "Tests/RemuxTests"
+        ),
         .binaryTarget(
             name: "GhosttyKit",
             path: "../../vendor/ghostty/macos/GhosttyKit.xcframework"
