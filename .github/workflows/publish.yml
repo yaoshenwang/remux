@@ -55,9 +55,160 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ── macOS app (.dmg) → GitHub Release ────────────────
-  macos:
+  # ── iOS → TestFlight ─────────────────────────────────
+  ios:
     runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up signing
+        env:
+          CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}
+          CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
+          API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificates
+          echo "$CERTIFICATES_P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security import "$RUNNER_TEMP/certs.p12" \
+            -P "$CERTIFICATES_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add keychain to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          # Install Apple WWDR G3 intermediate cert
+          curl -sO https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          sudo security add-certificates -k /Library/Keychains/System.keychain AppleWWDRCAG3.cer
+
+          # Set up API key
+          mkdir -p ~/.private_keys
+          echo "$API_KEY_P8" | base64 --decode > ~/.private_keys/AuthKey_${API_KEY_ID}.p8
+
+          # Verify
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Archive
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+
+          xcodebuild archive \
+            -project apps/ios/Remux.xcodeproj \
+            -scheme Remux \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Remux.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.private_keys/AuthKey_${API_KEY_ID}.p8 \
+            -authenticationKeyID "$API_KEY_ID" \
+            -authenticationKeyIssuerID "$API_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$(git rev-list --count HEAD)" \
+            MARKETING_VERSION="$VERSION" \
+            -quiet
+
+      - name: Export IPA
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>uploadSymbols</key>
+              <true/>
+              <key>manageAppVersionAndBuildNumber</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Remux.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.private_keys/AuthKey_${API_KEY_ID}.p8 \
+            -authenticationKeyID "$API_KEY_ID" \
+            -authenticationKeyIssuerID "$API_ISSUER_ID" \
+            -quiet
+
+      - name: Upload to TestFlight
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" | head -1)
+          xcrun altool --upload-app --type ios \
+            --file "$IPA" \
+            --apiKey "$API_KEY_ID" \
+            --apiIssuer "$API_ISSUER_ID"
+
+      - name: Set export compliance
+        run: |
+          pip3 install PyJWT cryptography
+          python3 << 'PYEOF'
+          import jwt, time, json, urllib.request, os
+
+          with open(os.path.expanduser(f"~/.private_keys/AuthKey_{os.environ['API_KEY_ID']}.p8")) as f:
+              key = f.read()
+          token = jwt.encode(
+              {"iss": os.environ["API_ISSUER_ID"], "iat": int(time.time()),
+               "exp": int(time.time()) + 1200, "aud": "appstoreconnect-v1"},
+              key, algorithm="ES256",
+              headers={"kid": os.environ["API_KEY_ID"], "typ": "JWT"})
+
+          # Find latest build
+          req = urllib.request.Request(
+              f"https://api.appstoreconnect.apple.com/v1/builds?filter[app]=6761521429&sort=-uploadedDate&limit=1",
+              headers={"Authorization": f"Bearer {token}"})
+          data = json.loads(urllib.request.urlopen(req).read())
+          build_id = data["data"][0]["id"]
+
+          # Set usesNonExemptEncryption = false
+          body = json.dumps({"data": {"type": "builds", "id": build_id,
+                            "attributes": {"usesNonExemptEncryption": False}}}).encode()
+          req = urllib.request.Request(
+              f"https://api.appstoreconnect.apple.com/v1/builds/{build_id}",
+              data=body, method="PATCH",
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+          urllib.request.urlopen(req)
+          print(f"✓ Export compliance set for build {build_id}")
+          PYEOF
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+  # ── macOS app (.dmg) → signed + notarized + GitHub Release ──
+  # Runs on self-hosted runner (Mac Mini) which has Developer ID cert installed
+  macos:
+    runs-on: [self-hosted, remux-deploy]
     permissions:
       contents: write
     steps:
@@ -65,26 +216,52 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-
-      - name: Build GhosttyKit xcframework
+      - name: Verify signing identity
         run: |
-          cd vendor/ghostty
-          zig build -Demit-xcframework=true -Dxcframework-target=native -Doptimize=ReleaseFast
+          security find-identity -v -p codesigning | grep "Developer ID Application"
 
-      - name: Build macOS app (release)
+      - name: Build GhosttyKit xcframework (if needed)
         run: |
-          cd apps/macos
-          swift build -c release
+          XCFW="vendor/ghostty/macos/GhosttyKit.xcframework"
+          if [ ! -d "$XCFW" ] || [ ! -f "$XCFW/Info.plist" ]; then
+            cd vendor/ghostty
+            zig build -Demit-xcframework=true -Dxcframework-target=native -Doptimize=ReleaseFast
+          fi
 
-      - name: Create .app bundle and DMG
+      - name: Build, sign, and notarize DMG
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
+
+          # Build .app and DMG
           bash scripts/build-dmg.sh "$VERSION"
+
+          # Sign with Developer ID + hardened runtime + timestamp
+          codesign --force --deep --options runtime --timestamp \
+            --sign "Developer ID Application: Yaoshen Wang ($TEAM_ID)" \
+            "build/Remux.app"
+
+          # Rebuild DMG with signed app
+          DMG="build/Remux-${VERSION}-arm64.dmg"
+          rm -f "$DMG"
+          hdiutil create -volname "Remux" \
+            -srcfolder build/Remux.app \
+            -ov -format UDZO "$DMG"
+          codesign --force --timestamp \
+            --sign "Developer ID Application: Yaoshen Wang ($TEAM_ID)" "$DMG"
+
+          # Notarize
+          xcrun notarytool submit "$DMG" \
+            --key ~/.private_keys/AuthKey_${API_KEY_ID}.p8 \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER_ID" \
+            --wait
+
+          xcrun stapler staple "$DMG"
 
       - name: Upload DMG to GitHub Release
         env:
@@ -93,13 +270,10 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
           DMG="build/Remux-${VERSION}-arm64.dmg"
+
           if [ -f "$DMG" ]; then
             gh release upload "$TAG" "$DMG" --clobber
             echo "✓ Uploaded $DMG to release $TAG"
-          else
-            echo "⚠ DMG not found, uploading .app as zip"
-            cd build && zip -r "Remux-${VERSION}-arm64.zip" Remux.app
-            gh release upload "$TAG" "Remux-${VERSION}-arm64.zip" --clobber
           fi
 
   # ── Update Homebrew tap ─────────────────────────────
