@@ -813,83 +813,10 @@ const HTML_TEMPLATE = `<!doctype html>
       let sessions = [], currentSession = null, currentTabId = null, ws = null, ctrlActive = false;
       let myClientId = null, myRole = null, clientsList = [];
 
-      // -- Predictive echo (Mosh-style local echo, see #80) --
-      // Adapted from VS Code TypeAheadAddon + Mosh SSP prediction model
-      class PredictiveEcho {
-        constructor(t) { this.attach(t); this._tid = setInterval(() => this._timeout(), 500); }
-        attach(t) {
-          this.term = t; this.preds = []; this.enabled = true;
-          this.latency = 0; this.latSamples = 0;
-          this.total = 0; this.correct = 0; this.accuracy = 1;
-        }
-        dispose() { clearInterval(this._tid); this.preds = []; }
-        onInput(data) {
-          if (!this.enabled || !this.term) return;
-          if (this.term.buffer && this.term.buffer.active &&
-              this.term.buffer.active.type === 'alternate') return;
-          if (myRole && myRole !== 'active') return;
-          for (let i = 0; i < data.length; i++) {
-            const c = data.charCodeAt(i);
-            if (c >= 0x20 && c <= 0x7e) {
-              if (this.preds.length >= 32) return;
-              const buf = this.term.buffer && this.term.buffer.active;
-              const cx = buf ? buf.cursorX : 0, cy = buf ? buf.cursorY : 0;
-              this.term.write('\\x1b[2m' + data[i] + '\\x1b[22m');
-              this.preds.push({ ch: data[i], ts: Date.now(), x: cx, y: cy });
-            } else if (c === 0x7f && this.preds.length > 0) {
-              this.preds.pop();
-              this.term.write('\\x1b[D \\x1b[D');
-            } else if (c < 0x20 || c === 0x7f) {
-              // Control characters — rollback predictions (terminal state may change)
-              this._rollback();
-            }
-            // Non-ASCII (CJK, emoji, etc.) — skip prediction, don't rollback
-          }
-        }
-        onServerData(data) {
-          if (this.preds.length === 0) return data;
-          let consumed = 0;
-          for (let i = 0; i < data.length && this.preds.length > 0; i++) {
-            const b = data.charCodeAt(i);
-            if (b === 0x1b) { this._rollback(); return data.slice(consumed); }
-            const p = this.preds[0];
-            if (data[i] === p.ch) {
-              this.preds.shift(); consumed = i + 1;
-              const rtt = Date.now() - p.ts;
-              this.latSamples === 0 ? (this.latency = rtt) :
-                (this.latency = 0.3 * rtt + 0.7 * this.latency);
-              this.latSamples++;
-              if (this.latency < 30 && this.latSamples > 5) { this.enabled = false; this._rollback(); }
-              this.total++; this.correct++;
-              this.accuracy = this.correct / this.total;
-              // Un-dim confirmed char
-              this.term.write('\\x1b[s\\x1b[' + (p.y+1) + ';' + (p.x+1) + 'H\\x1b[22m' + p.ch + '\\x1b[u');
-            } else {
-              this._rollback(); return data.slice(consumed);
-            }
-          }
-          const rest = data.slice(consumed);
-          return rest.length > 0 ? rest : null;
-        }
-        _rollback() {
-          if (this.preds.length === 0) return;
-          this.term.write('\\x1b[s');
-          for (let i = this.preds.length - 1; i >= 0; i--) {
-            const p = this.preds[i];
-            this.term.write('\\x1b[' + (p.y+1) + ';' + (p.x+1) + 'H ');
-          }
-          const first = this.preds[0];
-          this.term.write('\\x1b[' + (first.y+1) + ';' + (first.x+1) + 'H');
-          this.total += this.preds.length; // count as misses
-          this.accuracy = this.total > 0 ? this.correct / this.total : 1;
-          if (this.total > 20 && this.accuracy < 0.3) this.enabled = false;
-          this.preds = [];
-        }
-        _timeout() {
-          if (this.preds.length > 0 && Date.now() - this.preds[0].ts > 2000) this._rollback();
-        }
-      }
-      const pe = new PredictiveEcho(term);
+      // Predictive echo disabled — injecting ANSI escape sequences into the
+      // terminal conflicts with server escape sequences and breaks non-ASCII input
+      // (CJK, Vietnamese, etc.). Needs a decoration-based approach (not available
+      // in ghostty-web) to be re-implemented safely. See #80 for future work.
       const $ = id => document.getElementById(id);
       const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       const setStatus = (s, t) => { $('status-dot').className = 'status-dot ' + s; $('status-text').textContent = t; };
@@ -901,8 +828,7 @@ const HTML_TEMPLATE = `<!doctype html>
         $('btn-theme').innerHTML = mode === 'dark' ? '&#9728;' : '&#9790;';
         // Recreate terminal with new theme (ghostty-web doesn't support runtime theme change)
         createTerminal(mode);
-        // Rebind terminal I/O + predictive echo
-        pe.attach(term);
+        // Rebind terminal I/O
         term.onData(data => {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
           if (ctrlActive) {
@@ -910,7 +836,6 @@ const HTML_TEMPLATE = `<!doctype html>
             const ch = data.toLowerCase().charCodeAt(0);
             if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
           }
-          pe.onInput(data);
           sendTermData(data);
         });
         term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
@@ -1282,8 +1207,7 @@ const HTML_TEMPLATE = `<!doctype html>
               if (msg.type === 'e2ee_msg') {
                 if (e2ee.established && msg.data) {
                   e2ee.decryptMessage(msg.data).then(decrypted => {
-                    const filtered = pe.onServerData(decrypted);
-                    if (filtered) term.write(filtered);
+                    term.write(decrypted);
                   }).catch(err => console.error('[e2ee] decrypt failed:', err));
                 }
                 return;
@@ -1449,10 +1373,9 @@ const HTML_TEMPLATE = `<!doctype html>
               // Non-enveloped JSON (e.g. PTY output that looks like JSON) — fall through to term.write
             } catch {}
           }
-          const filtered = pe.onServerData(e.data);
-          if (filtered) term.write(filtered);
+          term.write(e.data);
         };
-        ws.onclose = () => { stopHeartbeat(); pe._rollback(); scheduleReconnect(); };
+        ws.onclose = () => { stopHeartbeat(); scheduleReconnect(); };
         ws.onerror = () => setStatus('disconnected', 'Error');
       }
       connect();
@@ -1482,7 +1405,6 @@ const HTML_TEMPLATE = `<!doctype html>
           const ch = data.toLowerCase().charCodeAt(0);
           if (ch >= 0x61 && ch <= 0x7a) { sendTermData(String.fromCharCode(ch - 0x60)); return; }
         }
-        pe.onInput(data);
         sendTermData(data);
       });
       term.onResize(({ cols, rows }) => sendCtrl({ type: 'resize', cols, rows }));
