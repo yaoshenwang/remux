@@ -2024,6 +2024,7 @@ const HTML_TEMPLATE = `<!doctype html>
           const e = { t: Date.now() - _d.t0, type, ...detail };
           _d.events.push(e);
           if (_d.events.length > 300) _d.events.shift();
+          try { localStorage.setItem('_imeDiag', JSON.stringify(_d.events.slice(-50))); } catch {}
         }
         const _ta = document.querySelector('textarea');
         if (_ta) {
@@ -2047,8 +2048,38 @@ const HTML_TEMPLATE = `<!doctype html>
           h: document.body.style.height, oh: document.body.offsetHeight
         })).observe(document.body, { attributes: true, attributeFilter: ['style'] });
         window.addEventListener('error', e => _ilog('js-error', { msg: e.message, line: e.lineno }));
-        // Expose for retrieval: fetch /api/config then check console, or use: window._imeDiag.events
-        console.log('[remux] IME diagnostic active. Access via window._imeDiag.events');
+        // Track textarea style/size changes (IME may resize it)
+        if (_ta) {
+          new ResizeObserver(() => {
+            _ilog('ta-resize', { w: _ta.offsetWidth, h: _ta.offsetHeight, vis: getComputedStyle(_ta).visibility, op: getComputedStyle(_ta).opacity });
+          }).observe(_ta);
+        }
+        // Track canvas visibility
+        const _cvs = document.querySelector('#terminal canvas');
+        if (_cvs) {
+          new ResizeObserver(() => {
+            _ilog('canvas-resize', { w: _cvs.width, h: _cvs.height, display: getComputedStyle(_cvs).display });
+          }).observe(_cvs);
+        }
+        // Floating debug overlay — stays visible even when page goes "blank"
+        const _dbg = document.createElement('div');
+        _dbg.id = 'ime-debug';
+        _dbg.style.cssText = 'position:fixed;bottom:0;right:0;z-index:999999;background:rgba(0,0,0,0.85);color:#0f0;font:10px monospace;padding:4px 8px;max-width:50vw;max-height:30vh;overflow:auto;pointer-events:none;white-space:pre-wrap;';
+        document.documentElement.appendChild(_dbg);
+        function _updateDbg() {
+          const last = _d.events.slice(-8);
+          _dbg.textContent = last.map(e => {
+            const {t, type, ...r} = e;
+            return t + 'ms ' + type + ' ' + JSON.stringify(r);
+          }).join('\\n');
+        }
+        const _origIlog = _ilog;
+        // Patch _ilog to also update debug overlay
+        const _ilog2 = function(type, detail) { _origIlog(type, detail); _updateDbg(); };
+        // Re-register with patched logger — but since _ilog is used by closures above,
+        // we need to update the overlay via an interval instead
+        setInterval(_updateDbg, 200);
+        console.log('[remux] IME diagnostic active + overlay. Access via window._imeDiag.events or localStorage._imeDiag');
       }
     </script>
   </body>
