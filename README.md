@@ -16,7 +16,7 @@ Remux lets you monitor and control terminal sessions from any device — phone, 
 - Mobile-friendly compose bar for special keys (Esc, Tab, Ctrl, arrows)
 - Token authentication for secure access
 - Session persistence across server restarts
-- Zero configuration — `npx @yaoshenwang/remux` and go
+- Zero configuration — `npx @wangyaoshen/remux` and go
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ Remux lets you monitor and control terminal sessions from any device — phone, 
 ### Run from npm
 
 ```bash
-npx @yaoshenwang/remux
+npx @wangyaoshen/remux
 ```
 
 Remux prints a local URL. Open it from any browser.
@@ -35,7 +35,7 @@ Remux prints a local URL. Open it from any browser.
 ### Run with authentication
 
 ```bash
-REMUX_TOKEN=my-secret-token npx @yaoshenwang/remux
+REMUX_TOKEN=my-secret-token npx @wangyaoshen/remux
 ```
 
 Access via `http://localhost:8767/?token=my-secret-token`.

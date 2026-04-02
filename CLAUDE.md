@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Remux 是一个基于 Web 的远程终端控制台，使用 ghostty-web 渲染 + node-pty 直接管理 shell PTY（无 Zellij 依赖）。通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx @yaoshenwang/remux`）。使用 pnpm 作为包管理器。
+Remux 是一个基于 Web 的远程终端控制台，使用 ghostty-web 渲染 + node-pty 直接管理 shell PTY（无 Zellij 依赖）。通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx @wangyaoshen/remux`）。使用 pnpm 作为包管理器。
 
 - **GitHub**: github.com/yaoshenwang/remux
 - **许可证**: MIT
