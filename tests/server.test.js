@@ -12,7 +12,7 @@ import fs from "fs";
 import path from "path";
 import { homedir } from "os";
 
-const PORT = 19876; // test-only port
+const PORT = 19876 + Math.floor(Math.random() * 1000); // randomized test port
 const TOKEN = "test-token-" + Date.now();
 const INSTANCE_ID = "test-" + Date.now();
 const PERSIST_DIR = path.join(homedir(), ".remux");
