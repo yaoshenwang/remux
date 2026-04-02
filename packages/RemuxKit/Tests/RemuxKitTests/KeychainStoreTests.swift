@@ -12,7 +12,7 @@ struct KeychainStoreTests {
     let testServer = "test-server-\(UUID().uuidString)"
 
     static var keychainAvailable: Bool {
-        // Quick probe: try a Keychain operation
+        // Quick probe: try a full add+delete cycle to confirm Keychain works
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.remux.test-probe",
@@ -24,7 +24,9 @@ struct KeychainStoreTests {
             SecItemDelete(query as CFDictionary)
             return true
         }
-        return status != -25308 // errSecInteractionNotAllowed
+        // Any failure (interaction not allowed, internal error, etc.) means
+        // Keychain is not fully functional in this environment (e.g. CI)
+        return false
     }
 
     @Test("Save and load server token", .enabled(if: keychainAvailable))

@@ -128,7 +128,7 @@ jobs:
           sed -i "s|remux-.*\.tgz|remux-${VERSION}.tgz|" Formula/remux.rb
 
           # Compute sha256 for npm tarball
-          NPM_SHA=$(curl -sL "https://registry.npmjs.org/remux/-/remux-${VERSION}.tgz" | sha256sum | cut -d' ' -f1)
+          NPM_SHA=$(curl -sL "https://registry.npmjs.org/@yaoshenwang/remux/-/remux-${VERSION}.tgz" | sha256sum | cut -d' ' -f1)
           sed -i "s/sha256 \".*\"/sha256 \"${NPM_SHA}\"/" Formula/remux.rb
 
           git config user.name "github-actions[bot]"

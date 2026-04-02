@@ -1,5 +1,5 @@
 {
-  "name": "remux",
+  "name": "@yaoshenwang/remux",
   "version": "0.3.8",
   "description": "Remote terminal workspace — powered by ghostty-web",
   "license": "MIT",
