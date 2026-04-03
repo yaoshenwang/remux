@@ -39,6 +39,7 @@ jobs:
         working-directory: ${{ steps.target.outputs.worktree }}
         run: |
           git fetch origin ${{ steps.target.outputs.branch }}
+          git reset --hard
           git checkout --detach origin/${{ steps.target.outputs.branch }}
 
       - name: Install dependencies
