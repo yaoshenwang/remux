@@ -394,7 +394,7 @@ const HTML_TEMPLATE = `<!doctype html>
       <div class="session-list" id="session-list"></div>
 
       <div class="sidebar-footer">
-        <div class="version">v\${VERSION}</div>
+        <div class="version">v${VERSION}</div>
       </div>
     </aside>
     <div class="main">
