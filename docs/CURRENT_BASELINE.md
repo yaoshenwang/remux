@@ -1,6 +1,6 @@
 # Current Baseline
 
-Remux currently ships as a ghostty-web-backed remote terminal workspace. The production path is:
+Remux currently ships from a single GPL monorepo with a ghostty-web-backed remote terminal workspace at the root. The primary production path is:
 
 1. a Node.js + TypeScript gateway
 2. a browser shell served by the gateway
@@ -33,7 +33,7 @@ The repository should be read through that baseline first. Historical runtime ex
 - The gateway is implemented in Node.js and TypeScript.
 - The browser remains the primary shipped client surface for the npm package.
 - Session runtime truth is managed through PTYs, persistence, and detached daemons in the current codebase.
-- Native iOS and macOS shells exist in-repo, but they are adjacent surfaces rather than the npm package entrypoint.
+- Native iOS and macOS shells exist in-repo; `apps/macos/` is now the full desktop client tree, while the npm package entrypoint remains the root gateway.
 - The repository merge gate is `npm run typecheck && npm test && npm run build`.
 
 ## What Is Not Current

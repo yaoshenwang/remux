@@ -707,7 +707,7 @@ interface SemanticAdapter {
 |--------|------|
 | libghostty（Zig 终端渲染引擎） | Remux 使用 xterm.js，跨平台一致性更重要 |
 | Swift / AppKit UI 框架 | Remux 桌面端选择 Tauri + React |
-| GPL 许可代码 | Remux 为 MIT 许可，不兼容 GPL 传染 |
+| GPL 许可代码 | 该限制已失效；仓库现已切换到 GPL 主线，后续只需关注第三方许可证兼容与源码分发要求 |
 | macOS-only 架构假设 | Remux 必须全端 |
 
 ---

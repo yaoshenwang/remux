@@ -1,42 +1,28 @@
-// swift-tools-version: 6.0
-
+// swift-tools-version:5.9
 import PackageDescription
 
 let package = Package(
     name: "Remux",
-    platforms: [.macOS(.v14)],
+    platforms: [
+        .macOS(.v13)
+    ],
+    products: [
+        .executable(name: "Remux", targets: ["Remux"]),
+        .executable(name: "remux-bridge", targets: ["remux-bridge"]),
+    ],
     dependencies: [
-        .package(path: "../../packages/RemuxKit"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0"),
     ],
     targets: [
         .executableTarget(
             name: "Remux",
-            dependencies: ["RemuxKit", "GhosttyKit"],
-            path: "Sources/Remux",
-            linkerSettings: [
-                .linkedFramework("Cocoa"),
-                .linkedFramework("Metal"),
-                .linkedFramework("MetalKit"),
-                .linkedFramework("QuartzCore"),
-                .linkedFramework("Carbon"),
-                .linkedFramework("CoreText"),
-                .linkedFramework("CoreGraphics"),
-                .linkedFramework("Foundation"),
-                .linkedFramework("IOKit"),
-                .linkedFramework("IOSurface"),
-                .linkedFramework("UniformTypeIdentifiers"),
-                .linkedLibrary("c++"),
-                .linkedLibrary("z"),
-            ]
+            dependencies: ["SwiftTerm"],
+            path: "Sources"
         ),
-        .testTarget(
-            name: "RemuxTests",
-            dependencies: ["Remux"],
-            path: "Tests/RemuxTests"
-        ),
-        .binaryTarget(
-            name: "GhosttyKit",
-            path: "../../vendor/ghostty/macos/GhosttyKit.xcframework"
+        .executableTarget(
+            name: "remux-bridge",
+            path: "Bridge",
+            exclude: ["Package.swift"]
         ),
     ]
 )
