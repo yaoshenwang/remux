@@ -7,6 +7,8 @@
 
 Remux lets you monitor and control terminal sessions from any device — phone, tablet, or another computer — through a web browser. It runs a lightweight Node.js server that manages shell sessions and streams them via WebSocket using [ghostty-web](https://github.com/coder/ghostty-web) for stable, high-quality terminal rendering.
 
+This repository is now the Remux monorepo: the Node.js gateway and browser shell remain at the root, while the full macOS client lives in [`apps/macos`](./apps/macos) and the iOS surface remains in [`apps/ios`](./apps/ios).
+
 ## Why Remux
 
 - Access your terminal sessions from any browser, including mobile
@@ -49,6 +51,15 @@ pnpm install
 pnpm start
 ```
 
+### Build macOS client from source
+
+```bash
+cd apps/macos
+./scripts/reload.sh --tag local
+```
+
+For signed DMG releases, use the macOS release pipeline under `apps/macos/scripts/`.
+
 ## Features
 
 - **Multiple sessions** — create, switch, and delete named sessions from the sidebar
@@ -76,6 +87,15 @@ Browser (ghostty-web Canvas)
     ├── VT tracking (ghostty-vt WASM, server-side snapshots)
     └── Session persistence (JSON file, periodic save)
 ```
+
+## Repo Layout
+
+- `src/` — Node.js gateway, PTY runtime, auth, persistence, and browser shell template
+- `tests/` — backend and Playwright coverage for the web/runtime path
+- `apps/macos/` — GPL macOS desktop client, CLI, release scripts, and native tests
+- `apps/ios/` — iOS surface
+- `packages/` — shared libraries and package-level helpers
+- `docs/` — active baseline, testing guidance, ADRs, and roadmap docs
 
 ## Environment Variables
 
@@ -117,4 +137,4 @@ Made with [contrib.rocks](https://contrib.rocks).
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+GPL-3.0-or-later. See [LICENSE](./LICENSE) and [docs/licensing.md](./docs/licensing.md).

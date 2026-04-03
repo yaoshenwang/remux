@@ -15,6 +15,7 @@ This index classifies repository documents by authority level so implementation 
 | `README.md` | Active | Product positioning, installation, quick start |
 | `docs/README.md` | Active | Documentation entrypoint and routing |
 | `docs/CURRENT_BASELINE.md` | Active | Current shipping architecture truth |
+| `docs/licensing.md` | Active | Repository-wide GPL and third-party licensing rules |
 | `docs/SPEC.md` | Active | Current transport, API, and surface spec |
 | `docs/TESTING.md` | Active | Merge gate and test loops |
 | `docs/GLOSSARY.md` | Active | Canonical terms used across product and engineering |

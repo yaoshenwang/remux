@@ -44,6 +44,10 @@ DerivedData/
 # GhosttyKit xcframework (built from source, not tracked)
 vendor/ghostty/zig-out/
 vendor/ghostty/zig-cache/
+apps/macos/GhosttyKit.xcframework/
+apps/macos/Bridge/.build/
+apps/macos/ghostty/.zig-cache/
+apps/macos/vendor/bonsplit/.swiftpm/
 
 # ghostty-web bundled resources (synced from npm, not tracked)
 packages/RemuxKit/Sources/RemuxKit/Terminal/Resources/ghostty-web.js

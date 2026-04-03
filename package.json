@@ -2,7 +2,7 @@
   "name": "@wangyaoshen/remux",
   "version": "0.3.10",
   "description": "Remote terminal workspace — powered by ghostty-web",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/yaoshenwang/remux.git"

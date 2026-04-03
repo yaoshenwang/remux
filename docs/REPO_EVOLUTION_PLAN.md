@@ -1,12 +1,13 @@
 # Repo Evolution Plan
 
-Remux should evolve incrementally from the current single-package repository toward a multi-surface workspace platform without forcing an early rewrite.
+Remux should evolve incrementally inside the current monorepo toward a multi-surface workspace platform without forcing an early rewrite.
 
 ## Phase 0: Current Layout
 
 - `src/`: gateway, auth, session runtime, persistence, adapters, workspace logic, and browser shell template
 - `tests/`: backend, frontend, and e2e coverage
-- `apps/ios/` and `apps/macos/`: adjacent native clients under active exploration
+- `apps/ios/`: adjacent iOS client
+- `apps/macos/`: integrated macOS desktop client tree
 - `docs/`: active, draft, and archived documentation
 
 This is still the correct layout while the gateway and protocol are being hardened.
