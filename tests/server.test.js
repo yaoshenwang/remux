@@ -204,10 +204,10 @@ describe("HTTP", () => {
     expect(res.body).toContain("<title>Remux</title>");
   });
 
-  it("serves reduced shell without workspace or device chrome", async () => {
+  it("serves emergency mode shell without workspace or device chrome", async () => {
     const res = await httpGet(`/?token=${TOKEN}`);
     expect(res.status).toBe(200);
-    expect(res.body).toContain("Inspect");
+    expect(res.body).toContain("cmd-input");
     expect(res.body).not.toContain("Workspace");
     expect(res.body).not.toContain("Devices");
     expect(res.body).not.toContain("Enable Notifications");

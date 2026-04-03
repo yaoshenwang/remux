@@ -1,9 +1,6 @@
 /**
- * E2E tests for Remux using Playwright.
- * Starts the server, loads the app in a real browser, and tests core flows.
- *
- * ghostty-web renders into a <canvas> so terminal content isn't readable from DOM.
- * We use the Inspect view to verify terminal output as plain text.
+ * E2E tests for Remux emergency-mode web client.
+ * Read-only terminal display + compose input + session/tab management.
  */
 
 import { test, expect } from "@playwright/test";
@@ -27,7 +24,6 @@ test.beforeAll(async () => {
     cwd: process.cwd(),
   });
 
-  // Collect stderr for debugging
   server.stderr.on("data", (d) => {
     const msg = d.toString();
     if (msg.includes("Error") || msg.includes("error")) {
@@ -43,7 +39,6 @@ test.beforeAll(async () => {
     server.stdout.on("data", (d) => {
       if (d.toString().includes("Remux running")) {
         clearTimeout(timeout);
-        // Extra wait for WASM init to complete
         setTimeout(resolve, 3000);
       }
     });
@@ -57,19 +52,18 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   if (server) {
     server.kill("SIGTERM");
-    // Give process time to shut down gracefully
     await new Promise((r) => setTimeout(r, 500));
   }
 });
 
 test.describe.serial("Remux E2E", () => {
-  // ── 1. Page loads and shows terminal ──
+  // ── 1. Page loads and shows terminal + compose input ──
 
-  test("page loads and shows terminal", async ({ page }) => {
+  test("page loads and shows terminal with compose input", async ({ page }) => {
     await page.goto(BASE);
     await expect(page).toHaveTitle("Remux");
 
-    // Terminal canvas should be visible (ghostty-web renders to canvas)
+    // Terminal canvas should be visible
     const canvas = page.locator("#terminal canvas");
     await expect(canvas).toBeVisible({ timeout: 10000 });
 
@@ -77,21 +71,26 @@ test.describe.serial("Remux E2E", () => {
     const sessionItem = page.locator(".session-item .name", { hasText: "main" });
     await expect(sessionItem).toBeVisible();
 
-    await expect(page.locator("#btn-inspect")).toBeVisible();
+    // Compose input should be visible (emergency mode)
+    await expect(page.locator("#cmd-input")).toBeVisible();
+    await expect(page.locator("#btn-send")).toBeVisible();
+    await expect(page.locator("#btn-preset-toggle")).toBeVisible();
+
+    // Old features should NOT be present
+    await expect(page.locator("#btn-inspect")).toHaveCount(0);
     await expect(page.locator("#btn-workspace")).toHaveCount(0);
     await expect(page.locator("#devices-section")).toHaveCount(0);
-    await expect(page.locator("#push-section")).toHaveCount(0);
+    await expect(page.locator("#btn-role")).toHaveCount(0);
   });
 
-  // ── 2. Live terminal interaction ──
+  // ── 2. Compose input sends commands ──
 
-  test("live terminal interaction via Inspect", async ({ page }) => {
+  test("compose input sends command to terminal", async ({ page }) => {
     await page.goto(BASE);
     await expect(page.locator("#terminal canvas")).toBeVisible({
       timeout: 10000,
     });
 
-    // Wait for WebSocket to connect and terminal to be ready
     await page.waitForFunction(
       () =>
         window._remuxTerm &&
@@ -99,42 +98,31 @@ test.describe.serial("Remux E2E", () => {
       { timeout: 10000 },
     );
 
-    // Type into the terminal — ghostty-web uses a hidden textarea for keyboard input
-    const textarea = page.locator("#terminal textarea");
-    await textarea.focus();
-    await textarea.pressSequentially("echo e2e-test-output", { delay: 30 });
-    await textarea.press("Enter");
+    // Type a command in compose input
+    const cmdInput = page.locator("#cmd-input");
+    await cmdInput.fill("echo e2e-compose-test");
 
-    // Wait for shell to process the command
+    // Click Send
+    await page.locator("#btn-send").click();
+
+    // Input should be cleared after send
+    await expect(cmdInput).toHaveValue("");
+
+    // Wait for terminal to process (we can't read canvas, but verify no crash)
     await page.waitForTimeout(2000);
 
-    // Switch to Inspect to read terminal content as text
-    await page.locator("#btn-inspect").click();
-    await expect(page.locator("#inspect")).toHaveClass(/visible/, {
-      timeout: 5000,
-    });
-
-    // Wait for inspect data to arrive from server
-    await page.waitForFunction(
-      () => (window._inspectText || "").includes("e2e-test-output"),
-      { timeout: 10000 },
-    );
-
-    const inspectText = await page.evaluate(() => window._inspectText);
-    expect(inspectText).toContain("e2e-test-output");
-
-    // Go back to Live
-    await page.locator("#btn-live").click();
-    await expect(page.locator("#terminal")).not.toHaveClass(/hidden/);
+    // Terminal should still be visible
+    await expect(page.locator("#terminal canvas")).toBeVisible();
   });
 
-  // ── 3. Inspect view ──
+  // ── 3. Compose input sends on Enter key ──
 
-  test("inspect view shows content and meta", async ({ page }) => {
+  test("compose input sends on Enter", async ({ page }) => {
     await page.goto(BASE);
     await expect(page.locator("#terminal canvas")).toBeVisible({
       timeout: 10000,
     });
+
     await page.waitForFunction(
       () =>
         window._remuxTerm &&
@@ -142,30 +130,34 @@ test.describe.serial("Remux E2E", () => {
       { timeout: 10000 },
     );
 
-    // Click Inspect button
-    await page.locator("#btn-inspect").click();
-    await expect(page.locator("#inspect")).toHaveClass(/visible/, {
-      timeout: 5000,
-    });
+    const cmdInput = page.locator("#cmd-input");
+    await cmdInput.fill("echo enter-test");
+    await cmdInput.press("Enter");
 
-    // Wait for inspect data
-    await page.waitForFunction(() => !!window._inspectText, { timeout: 10000 });
-
-    // Inspect panel should have text content
-    const content = page.locator("#inspect-content");
-    await expect(content).toBeVisible();
-
-    // Meta info should contain session/tab reference
-    const meta = page.locator("#inspect-meta");
-    await expect(meta).toContainText("main");
-    await expect(meta).toContainText("Tab");
-
-    // Click Live to go back
-    await page.locator("#btn-live").click();
-    await expect(page.locator("#inspect")).not.toHaveClass(/visible/);
+    await expect(cmdInput).toHaveValue("");
   });
 
-  // ── 4. Session management ──
+  // ── 4. Preset quick keys toggle ──
+
+  test("preset bar toggles on button click", async ({ page }) => {
+    await page.goto(BASE);
+    await expect(page.locator("#terminal canvas")).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Preset bar should be hidden by default
+    await expect(page.locator("#preset-bar")).not.toHaveClass(/visible/);
+
+    // Click toggle button
+    await page.locator("#btn-preset-toggle").click();
+    await expect(page.locator("#preset-bar")).toHaveClass(/visible/);
+
+    // Click again to hide
+    await page.locator("#btn-preset-toggle").click();
+    await expect(page.locator("#preset-bar")).not.toHaveClass(/visible/);
+  });
+
+  // ── 5. Session management ──
 
   test("create and delete session", async ({ page }) => {
     await page.goto(BASE);
@@ -179,31 +171,26 @@ test.describe.serial("Remux E2E", () => {
       { timeout: 10000 },
     );
 
-    // Open the inline composer and create a session
     await page.locator("#btn-new-session").click();
     await page.locator("#new-session-input").fill("test-e2e-session");
     await page.locator("#btn-create-session").click();
 
-    // Wait for the new session to appear in sidebar
     const newSession = page.locator(".session-item .name", {
       hasText: "test-e2e-session",
     });
     await expect(newSession).toBeVisible({ timeout: 5000 });
 
-    // Delete the session — click the × button on its session-item
     const sessionItem = page.locator(".session-item", {
       has: page.locator('.name:text("test-e2e-session")'),
     });
     const delBtn = sessionItem.locator(".del");
-    // The delete button may be hidden until hover
     await sessionItem.hover();
     await delBtn.click();
 
-    // Expect the session to be removed
     await expect(newSession).not.toBeVisible({ timeout: 5000 });
   });
 
-  // ── 5. Tab management ──
+  // ── 6. Tab management ──
 
   test("create and close tab", async ({ page }) => {
     await page.goto(BASE);
@@ -217,26 +204,21 @@ test.describe.serial("Remux E2E", () => {
       { timeout: 10000 },
     );
 
-    // Count current tabs
     const tabList = page.locator("#tab-list");
     const initialCount = await tabList.locator(".tab").count();
 
-    // Click "+" to create a new tab
     await page.locator("#btn-new-tab").click();
 
-    // Wait for new tab to appear
     await expect(tabList.locator(".tab")).toHaveCount(initialCount + 1, { timeout: 5000 });
 
-    // Close the last tab (click its × button)
     const lastTab = tabList.locator(".tab").last();
     await lastTab.hover();
     await lastTab.locator(".close").click({ force: true });
 
-    // Tab count should return to initial
     await expect(tabList.locator(".tab")).toHaveCount(initialCount, { timeout: 5000 });
   });
 
-  // ── 6. Theme toggle ──
+  // ── 7. Theme toggle ──
 
   test("theme toggle switches dark/light", async ({ page }) => {
     await page.goto(BASE);
@@ -244,21 +226,16 @@ test.describe.serial("Remux E2E", () => {
       timeout: 10000,
     });
 
-    // Get initial theme
     const initialTheme = await page.getAttribute("html", "data-theme");
     expect(["dark", "light"]).toContain(initialTheme);
 
-    // Click theme toggle
     await page.locator("#btn-theme").click();
-
-    // Wait for theme to change (terminal recreates, so give it time)
     await page.waitForTimeout(1000);
 
     const newTheme = await page.getAttribute("html", "data-theme");
     expect(newTheme).not.toBe(initialTheme);
     expect(["dark", "light"]).toContain(newTheme);
 
-    // Toggle back
     await page.locator("#btn-theme").click();
     await page.waitForTimeout(1000);
 
@@ -266,64 +243,9 @@ test.describe.serial("Remux E2E", () => {
     expect(restoredTheme).toBe(initialTheme);
   });
 
-  // ── 7. Inspect search ──
+  // ── 8. Mobile compose input visible ──
 
-  test("inspect search highlights matches", async ({ page }) => {
-    await page.goto(BASE);
-    await expect(page.locator("#terminal canvas")).toBeVisible({
-      timeout: 10000,
-    });
-    await page.waitForFunction(
-      () =>
-        window._remuxTerm &&
-        document.querySelector("#status-dot")?.classList.contains("connected"),
-      { timeout: 10000 },
-    );
-
-    // Switch to Inspect
-    await page.locator("#btn-inspect").click();
-    await expect(page.locator("#inspect")).toHaveClass(/visible/, {
-      timeout: 5000,
-    });
-
-    // Wait for inspect data
-    await page.waitForFunction(() => !!window._inspectText, { timeout: 10000 });
-
-    // Type a search query that won't match anything
-    const searchInput = page.locator("#inspect-search-input");
-    await searchInput.fill("zzz-no-match-zzz");
-
-    // Should show "No matches"
-    const matchCount = page.locator("#inspect-match-count");
-    await expect(matchCount).toHaveText("No matches");
-
-    // Clear and search for something that exists (the shell prompt typically contains $)
-    await searchInput.fill("");
-
-    // Get the actual inspect text and search for a substring of it
-    const inspectText = await page.evaluate(() => window._inspectText || "");
-    // Find a short common substring to search for
-    // The terminal likely has the user's home dir, shell prompt, etc.
-    // Use a generic character that's almost certainly in any terminal output
-    if (inspectText.length > 0) {
-      // Search for first 3 printable chars from the inspect text
-      const searchable = inspectText.replace(/\s+/g, " ").trim();
-      const snippet = searchable.slice(0, 3);
-      if (snippet.length >= 1) {
-        await searchInput.fill(snippet);
-        // Should show match count or highlight
-        await expect(matchCount).not.toHaveText("");
-        // Check for highlight marks in content
-        const hasMarks = await page.evaluate(
-          () =>
-            document.querySelectorAll("#inspect-content mark").length > 0,
-        );
-        expect(hasMarks).toBe(true);
-      }
-    }
-  });
-
-  test("mobile chrome keeps control button visible and hides compose bar outside live", async ({
+  test("mobile view shows compose input and preset toggle", async ({
     browser,
   }) => {
     const context = await browser.newContext({
@@ -345,147 +267,54 @@ test.describe.serial("Remux E2E", () => {
         { timeout: 10000 },
       );
 
-      await expect(page.locator("#btn-role")).toBeVisible();
+      // Compose input should be visible
+      await expect(page.locator("#cmd-input")).toBeVisible();
+      await expect(page.locator("#btn-send")).toBeVisible();
+      await expect(page.locator("#btn-preset-toggle")).toBeVisible();
+
+      // Old features should NOT be present
+      await expect(page.locator("#btn-role")).toHaveCount(0);
       await expect(page.locator("#devices-section")).toHaveCount(0);
-      await expect(page.locator("#compose-bar")).toHaveClass(/visible/);
-
-      await page.locator("#btn-inspect").click();
-      await expect(page.locator("#inspect")).toHaveClass(/visible/, {
-        timeout: 5000,
-      });
-      await expect(page.locator("#compose-bar")).not.toHaveClass(/visible/);
     } finally {
       await context.close();
     }
   });
 
-  test("IME composition ignores viewport shrink on touch devices", async ({
-    browser,
-  }) => {
-    const context = await browser.newContext({
-      hasTouch: true,
-      isMobile: true,
-      viewport: { width: 1280, height: 720 },
+  // ── 9. Preset keys send sequences ──
+
+  test("preset quick keys send sequences", async ({ page }) => {
+    await page.goto(BASE);
+    await expect(page.locator("#terminal canvas")).toBeVisible({
+      timeout: 10000,
     });
-    const page = await context.newPage();
+    await page.waitForFunction(
+      () =>
+        window._remuxTerm &&
+        document.querySelector("#status-dot")?.classList.contains("connected"),
+      { timeout: 10000 },
+    );
 
-    try {
-      await page.goto(`${BASE}&debug=1`);
-      await expect(page.locator("#terminal canvas")).toBeVisible({
-        timeout: 10000,
-      });
-      await page.waitForFunction(
-        () =>
-          window._remuxTerm &&
-          document.querySelector("#status-dot")?.classList.contains("connected"),
-        { timeout: 10000 },
-      );
+    // Open preset bar
+    await page.locator("#btn-preset-toggle").click();
+    await expect(page.locator("#preset-bar")).toHaveClass(/visible/);
 
-      const snapshot = await page.evaluate(async () => {
-        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        const visualViewport = window.visualViewport;
-        const viewportProto = visualViewport
-          ? Object.getPrototypeOf(visualViewport)
-          : null;
-        const originalHeight =
-          viewportProto &&
-          Object.getOwnPropertyDescriptor(viewportProto, "height");
-        const textarea = document.querySelector("#terminal textarea");
-        const terminal = document.getElementById("terminal");
-        const canvas = document.querySelector("#terminal canvas");
+    // Click Ctrl+C — should not crash
+    await page.locator('[data-seq="ctrl-c"]').click();
+    await page.waitForTimeout(500);
 
-        if (
-          !visualViewport ||
-          !viewportProto ||
-          !originalHeight ||
-          !textarea ||
-          !terminal ||
-          !canvas
-        ) {
-          return {
-            missing: {
-              visualViewport: !!visualViewport,
-              textarea: !!textarea,
-              terminal: !!terminal,
-              canvas: !!canvas,
-            },
-          };
-        }
+    // Terminal should still be visible
+    await expect(page.locator("#terminal canvas")).toBeVisible();
 
-        const readLayout = () => ({
-          bodyHeight: document.body.offsetHeight,
-          bodyStyleHeight: document.body.style.height,
-          terminalHeight: terminal.offsetHeight,
-          canvasHeight: canvas.height,
-        });
-
-        const baseline = readLayout();
-
-        try {
-          textarea.focus();
-          textarea.dispatchEvent(
-            new CompositionEvent("compositionstart", {
-              bubbles: true,
-              data: "",
-            }),
-          );
-          textarea.dispatchEvent(
-            new CompositionEvent("compositionupdate", {
-              bubbles: true,
-              data: "zhong",
-            }),
-          );
-
-          Object.defineProperty(viewportProto, "height", {
-            configurable: true,
-            get: () => 120,
-          });
-          visualViewport.dispatchEvent(new Event("resize"));
-          await sleep(180);
-
-          const composing = readLayout();
-
-          textarea.dispatchEvent(
-            new CompositionEvent("compositionend", {
-              bubbles: true,
-              data: "中文",
-            }),
-          );
-          Object.defineProperty(viewportProto, "height", originalHeight);
-          visualViewport.dispatchEvent(new Event("resize"));
-          await sleep(180);
-
-          return { baseline, composing, recovered: readLayout() };
-        } finally {
-          Object.defineProperty(viewportProto, "height", originalHeight);
-        }
-      });
-
-      expect(snapshot.missing).toBeUndefined();
-      expect(snapshot.baseline.bodyHeight).toBeGreaterThan(400);
-      expect(snapshot.composing.bodyHeight).toBe(snapshot.baseline.bodyHeight);
-      expect(snapshot.composing.bodyStyleHeight).toBe(
-        snapshot.baseline.bodyStyleHeight,
-      );
-      expect(snapshot.composing.terminalHeight).toBe(
-        snapshot.baseline.terminalHeight,
-      );
-      expect(snapshot.composing.canvasHeight).toBe(
-        snapshot.baseline.canvasHeight,
-      );
-      expect(snapshot.recovered.bodyHeight).toBe(snapshot.baseline.bodyHeight);
-      expect(snapshot.recovered.terminalHeight).toBe(
-        snapshot.baseline.terminalHeight,
-      );
-    } finally {
-      await context.close();
-    }
+    // Click up arrow
+    await page.locator('[data-seq="up"]').click();
+    await page.waitForTimeout(500);
+    await expect(page.locator("#terminal canvas")).toBeVisible();
   });
 
-  test("desktop resize waits until composition ends before refit", async ({
-    page,
-  }) => {
-    await page.goto(`${BASE}&debug=1`);
+  // ── 10. Desktop viewport resize refit ──
+
+  test("desktop resize triggers terminal refit", async ({ page }) => {
+    await page.goto(BASE);
     await expect(page.locator("#terminal canvas")).toBeVisible({
       timeout: 10000,
     });
@@ -498,73 +327,29 @@ test.describe.serial("Remux E2E", () => {
 
     const snapshot = await page.evaluate(async () => {
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const textarea = document.querySelector("#terminal textarea");
       const sidebar = document.getElementById("sidebar");
       const term = window._remuxTerm;
 
-      if (!textarea || !sidebar || !term) {
-        return {
-          missing: {
-            textarea: !!textarea,
-            sidebar: !!sidebar,
-            term: !!term,
-          },
-        };
+      if (!sidebar || !term) {
+        return { missing: { sidebar: !!sidebar, term: !!term } };
       }
 
-      const baseline = {
-        cols: term.cols,
-        rows: term.rows,
-        sidebarCollapsed: sidebar.classList.contains("collapsed"),
-      };
+      const baseline = { cols: term.cols, rows: term.rows };
 
-      textarea.focus();
-      textarea.dispatchEvent(
-        new CompositionEvent("compositionstart", {
-          bubbles: true,
-          data: "",
-        }),
-      );
-      textarea.dispatchEvent(
-        new CompositionEvent("compositionupdate", {
-          bubbles: true,
-          data: "nihon",
-        }),
-      );
-
+      // Toggle sidebar to trigger resize
       sidebar.classList.add("collapsed");
-      await sleep(300);
-
-      const composing = {
-        cols: term.cols,
-        rows: term.rows,
-        sidebarCollapsed: sidebar.classList.contains("collapsed"),
-      };
-
-      textarea.dispatchEvent(
-        new CompositionEvent("compositionend", {
-          bubbles: true,
-          data: "日本語",
-        }),
-      );
       await sleep(400);
 
-      const recovered = {
-        cols: term.cols,
-        rows: term.rows,
-        sidebarCollapsed: sidebar.classList.contains("collapsed"),
-      };
+      const after = { cols: term.cols, rows: term.rows };
 
       sidebar.classList.remove("collapsed");
-      await sleep(300);
+      await sleep(400);
 
-      return { baseline, composing, recovered };
+      return { baseline, after };
     });
 
     expect(snapshot.missing).toBeUndefined();
-    expect(snapshot.composing.cols).toBe(snapshot.baseline.cols);
-    expect(snapshot.composing.rows).toBe(snapshot.baseline.rows);
-    expect(snapshot.recovered.cols).toBeGreaterThan(snapshot.baseline.cols);
-    expect(snapshot.recovered.sidebarCollapsed).toBe(true);
+    // After collapsing sidebar, terminal should have more columns
+    expect(snapshot.after.cols).toBeGreaterThan(snapshot.baseline.cols);
   });
 });
