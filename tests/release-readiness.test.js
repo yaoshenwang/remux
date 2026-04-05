@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  extractFirstRubySha256,
   evaluateExpectedAssets,
   findMissingDocSnippets,
-  findPublicLinkGroup,
-  isAllowedExternalBuildState,
   releaseTagForVersion,
 } from "../scripts/lib/release-readiness.mjs";
 
@@ -36,41 +33,13 @@ describe("release readiness helpers", () => {
       findMissingDocSnippets(content, [
         "https://remux.yaoshen.wang",
         "npx @wangyaoshen/remux",
-        "https://testflight.apple.com/join/DhXZEKUU",
+        "https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg",
       ]),
-    ).toEqual(["https://testflight.apple.com/join/DhXZEKUU"]);
-  });
-
-  it("treats approved external TestFlight states as installable", () => {
-    expect(isAllowedExternalBuildState("IN_BETA_TESTING")).toBe(true);
-    expect(isAllowedExternalBuildState("READY_FOR_BETA_TESTING")).toBe(true);
-    expect(isAllowedExternalBuildState("WAITING_FOR_REVIEW")).toBe(false);
-  });
-
-  it("selects the configured public TestFlight group", () => {
-    const group = findPublicLinkGroup(
-      [
-        { id: "a", attributes: { publicLink: "https://testflight.apple.com/join/old" } },
-        { id: "b", attributes: { publicLink: "https://testflight.apple.com/join/DhXZEKUU" } },
-      ],
-      "https://testflight.apple.com/join/DhXZEKUU",
-    );
-
-    expect(group?.id).toBe("b");
+    ).toEqual(["https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg"]);
   });
 
   it("normalizes package versions into release tags", () => {
     expect(releaseTagForVersion("0.3.14")).toBe("v0.3.14");
     expect(releaseTagForVersion("v0.3.14")).toBe("v0.3.14");
-  });
-
-  it("extracts sha256 values from Homebrew Ruby definitions", () => {
-    expect(
-      extractFirstRubySha256(`
-        cask "remux-app" do
-          sha256 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        end
-      `),
-    ).toBe("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
   });
 });

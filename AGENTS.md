@@ -58,8 +58,8 @@ Remux 是一个基于 ghostty-web 的跨端远程终端 workspace。当前 shipp
 - 当前必须同时满足的官方端与入口包括：
   - Web / browser shell：官方访问入口可达，鉴权与首次附着可用
   - npm / CLI：`npx @wangyaoshen/remux` 的官方安装与启动路径可用
-  - macOS：官方下载安装路径可用，例如签名 DMG 和/或 Homebrew cask
-  - iOS：官方安装路径可用，例如 TestFlight 或 App Store
+  - macOS：官方下载安装路径可用，例如签名 DMG
+- `apps/ios/` 中的相邻 iOS 工程仍保留在仓库内，但它不是当前公开 release-ready gate 的一部分；未恢复公开分发前，不得把 iOS 视为当前官方上线入口
 - 任一官方端缺失公开安装入口、构建产物不可下载、首次运行异常、或文档中的安装链接失效，都不得向用户表述为“可以上线”
 
 ### 当前运行时约束（强制）

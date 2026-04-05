@@ -55,7 +55,7 @@ What these commands cover:
 
 - `pnpm run verify:package-smoke`: builds the package, installs the packed tarball into a clean temp directory, launches the CLI, and probes the served UI
 - `pnpm run verify:release-readiness:docs`: confirms active docs point to the canonical public entrypoints
-- `pnpm run verify:release-readiness`: checks the hosted web shell, the published npm `latest` install/startup path, GitHub release assets (DMG, appcast, remote daemon binaries + manifest), Homebrew tap SHA parity, and public TestFlight link/state
+- `pnpm run verify:release-readiness`: checks the hosted web shell, the published npm `latest` install/startup path, and GitHub release assets (DMG, appcast, remote daemon binaries + manifest)
 
 ## Release Gate
 
@@ -66,14 +66,12 @@ Remux is only release-ready when every official user-facing surface is both heal
 - Web / browser shell
 - npm / CLI
 - macOS client
-- iOS client
 
 That means a release-ready state must include:
 
 - a working public web entrypoint with a verified first-run path
 - a working `npx @wangyaoshen/remux` install and startup path
-- a working official macOS install path such as a signed DMG or supported cask
-- a working official iOS install path such as TestFlight or App Store
+- a working official macOS install path such as a signed DMG
 - active documentation links that resolve to the real install or usage paths users need
 
 If any official surface lacks a current download path, public install route, or directly usable first-run experience, the repository may be merge-ready but it is not release-ready.
@@ -84,9 +82,11 @@ The public release gate command is:
 pnpm run verify:release-readiness
 ```
 
-That command verifies the current public Web, npm, macOS, and iOS entrypoints, including the active GitHub release assets, npm `latest` package, TestFlight public link, and the canonical docs entry.
+That command verifies the current public Web, npm, and macOS entrypoints, including the active GitHub release assets, the npm `latest` package, and the canonical docs entry.
 
-The stable publish workflow must end with the same public gate. A green build or deploy job is not sufficient if the public npm install path, GitHub release assets, Homebrew tap, or TestFlight entry are still broken.
+The stable publish workflow must end with the same public gate. A green build or deploy job is not sufficient if the public npm install path or GitHub release assets are still broken.
+
+The Homebrew tap is updated by a follow-on workflow after stable publish succeeds. It remains a convenience path, not the canonical release-ready gate.
 
 ## Native Dependency Note
 

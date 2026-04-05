@@ -7,16 +7,15 @@
 
 Remux lets you monitor and control terminal sessions from any device — phone, tablet, or another computer — through a web browser. It runs a lightweight Node.js server that owns session truth, keeps PTY-backed tabs alive, and streams them over WebSocket using [ghostty-web](https://github.com/coder/ghostty-web) for stable terminal rendering.
 
-This repository is now the Remux monorepo: the Node.js gateway and browser shell remain at the root, while the full macOS client lives in [`apps/macos`](./apps/macos) and the iOS surface remains in [`apps/ios`](./apps/ios).
+This repository is now the Remux monorepo: the Node.js gateway and browser shell remain at the root, the full macOS client lives in [`apps/macos`](./apps/macos), and adjacent iOS app work remains in [`apps/ios`](./apps/ios) without being part of the current public release gate.
 
 ## Official Surfaces
 
-The canonical public entrypoints for Web, npm, macOS, and iOS live in [`docs/OFFICIAL_SURFACES.md`](./docs/OFFICIAL_SURFACES.md).
+The canonical public entrypoints for Web, npm, and macOS live in [`docs/OFFICIAL_SURFACES.md`](./docs/OFFICIAL_SURFACES.md).
 
 - Web: `https://remux.yaoshen.wang`
 - npm / CLI: `npx @wangyaoshen/remux`
 - macOS: signed DMG on GitHub Releases
-- iOS: public TestFlight beta
 
 ## Why Remux
 
@@ -108,7 +107,7 @@ Browser / Native Surface
 - `src/integrations/` — adapters, git, push, tunnel, macOS service integration
 - `tests/` — backend and Playwright coverage for the web/runtime path
 - `apps/macos/` — GPL macOS desktop client, CLI, release scripts, and native tests
-- `apps/ios/` — iOS surface
+- `apps/ios/` — adjacent iOS app work that is not part of the current public release gate
 - `packages/` — shared libraries such as `RemuxKit`
 - `labs/` — archived or non-shipping lines kept for reference, not current product truth
 - `docs/` — active baseline, testing guidance, ADRs, and roadmap docs

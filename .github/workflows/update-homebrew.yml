@@ -1,0 +1,185 @@
+name: Update Homebrew Tap
+
+on:
+  workflow_run:
+    workflows: ["Publish"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (for example 0.3.18 or v0.3.18)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+
+          VERSION_INPUT="${{ github.event.inputs.version || '' }}"
+          if [ -n "$VERSION_INPUT" ]; then
+            VERSION="$VERSION_INPUT"
+          else
+            git fetch --tags --force
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            VERSION="$(
+              git tag --points-at "$HEAD_SHA" \
+                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sort -V \
+                | tail -n 1 \
+                || true
+            )"
+          fi
+
+          VERSION="${VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "No semver release tag found for this run; skipping Homebrew update."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Updating Homebrew tap for v$VERSION"
+
+      - name: Download published assets and compute SHA256
+        if: steps.version.outputs.skip != 'true'
+        id: sha
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_URL="https://github.com/yaoshenwang/remux/releases/download/v${VERSION}/remux-macos.dmg"
+          NPM_URL="https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
+          DMG_PATH="$RUNNER_TEMP/remux-macos.dmg"
+          NPM_PATH="$RUNNER_TEMP/remux-${VERSION}.tgz"
+          MAX_RETRIES=5
+
+          for i in $(seq 1 "$MAX_RETRIES"); do
+            HTTP_CODE="$(curl -sSL -w '%{http_code}' "$DMG_URL" -o "$DMG_PATH" || true)"
+            FILE_SIZE="$(stat -c%s "$DMG_PATH" 2>/dev/null || echo 0)"
+            if [ "$HTTP_CODE" = "200" ] && [ "$FILE_SIZE" -gt 1000000 ]; then
+              echo "DMG download OK: HTTP $HTTP_CODE, size $FILE_SIZE bytes"
+              break
+            fi
+
+            echo "Attempt $i/$MAX_RETRIES: HTTP ${HTTP_CODE:-000}, size ${FILE_SIZE:-0} bytes"
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "Failed to download published DMG after $MAX_RETRIES attempts" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+          curl -fsSL "$NPM_URL" -o "$NPM_PATH"
+
+          DMG_SHA="$(sha256sum "$DMG_PATH" | cut -d' ' -f1)"
+          NPM_SHA="$(sha256sum "$NPM_PATH" | cut -d' ' -f1)"
+          echo "dmg_sha=$DMG_SHA" >> "$GITHUB_OUTPUT"
+          echo "npm_sha=$NPM_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew formula and cask
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_SHA="${{ steps.sha.outputs.dmg_sha }}"
+          NPM_SHA="${{ steps.sha.outputs.npm_sha }}"
+
+          git clone https://x-access-token:${GH_TOKEN}@github.com/yaoshenwang/homebrew-tap /tmp/tap
+          cd /tmp/tap
+
+          cat > Casks/remux-app.rb <<EOF
+          cask "remux-app" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA}"
+
+            url "https://github.com/yaoshenwang/remux/releases/download/v#{version}/remux-macos.dmg"
+            name "Remux"
+            desc "Remote terminal workspace — native macOS app"
+            homepage "https://github.com/yaoshenwang/remux"
+
+            depends_on macos: ">= :sonoma"
+            depends_on arch: :arm64
+
+            app "remux.app"
+
+            zap trash: [
+              "~/Library/Application Support/com.remux",
+              "~/Library/Preferences/com.remux.desktop.plist",
+            ]
+          end
+          EOF
+
+          cat > Formula/remux.rb <<EOF
+          class Remux < Formula
+            desc "Remote terminal workspace — powered by ghostty-web"
+            homepage "https://github.com/yaoshenwang/remux"
+            license "GPL-3.0-or-later"
+
+            url "https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
+            sha256 "${NPM_SHA}"
+
+            depends_on "node@24"
+
+            def install
+              system Formula["node@24"].opt_bin/"npm", "install", *std_npm_args
+              bin.install_symlink Dir["#{libexec}/bin/*"]
+            end
+
+            test do
+              assert_predicate bin/"remux", :exist?
+            end
+          end
+          EOF
+
+      - name: Verify tap SHAs match downloaded assets
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          cd /tmp/tap
+          CASK_SHA="$(grep 'sha256' Casks/remux-app.rb | head -n 1 | sed 's/.*"\(.*\)".*/\1/')"
+          FORMULA_SHA="$(grep 'sha256' Formula/remux.rb | head -n 1 | sed 's/.*"\(.*\)".*/\1/')"
+
+          if [ "$CASK_SHA" != "${{ steps.sha.outputs.dmg_sha }}" ]; then
+            echo "Cask SHA mismatch: $CASK_SHA vs ${{ steps.sha.outputs.dmg_sha }}" >&2
+            exit 1
+          fi
+
+          if [ "$FORMULA_SHA" != "${{ steps.sha.outputs.npm_sha }}" ]; then
+            echo "Formula SHA mismatch: $FORMULA_SHA vs ${{ steps.sha.outputs.npm_sha }}" >&2
+            exit 1
+          fi
+
+          grep -Fq "version \"${VERSION}\"" Casks/remux-app.rb
+          grep -Fq "remux-${VERSION}.tgz" Formula/remux.rb
+
+      - name: Commit and push
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd /tmp/tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/remux-app.rb Formula/remux.rb
+          if git diff --staged --quiet; then
+            echo "Homebrew tap already up to date"
+          else
+            git commit -m "Update to v${VERSION}"
+            git push origin main
+          fi

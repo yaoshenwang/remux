@@ -29,7 +29,7 @@ This index classifies repository documents by authority level so implementation 
 | `docs/remux-master-plan-2026-v2.md` | Draft | Strategic plan and epic checklist for upcoming work |
 | `docs/ROADMAP_SCOPE.md` | Draft | Scope boundaries and roadmap thinking; does not override current source layout |
 | `docs/REPO_EVOLUTION_PLAN.md` | Draft | Historical repo-evolution notes kept for planning context |
-| `docs/RELEASE_READINESS_PLAN.md` | Draft | All-surface release-readiness definition and repair plan |
+| `docs/RELEASE_READINESS_PLAN.md` | Draft | Current public-surface release-readiness definition and repair plan |
 | `docs/LEGACY_PLAN_GAPS.md` | Draft | Mapping between old assumptions and current reality |
 | `docs/TERMINOLOGY_AUDIT.md` | Draft | Audit record for archived-runtime terms and exceptions |
 

@@ -12,9 +12,7 @@
         "requiredSnippets": [
           "https://remux.yaoshen.wang",
           "npx @wangyaoshen/remux",
-          "https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg",
-          "brew install --cask yaoshenwang/tap/remux-app",
-          "https://testflight.apple.com/join/DhXZEKUU"
+          "https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg"
         ]
       }
     ],
@@ -42,35 +40,7 @@
       ],
       "latestDownloadUrl": "https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg",
       "appcastUrl": "https://github.com/yaoshenwang/remux/releases/latest/download/appcast.xml",
-      "latestReleaseTagUrlTemplate": "https://github.com/yaoshenwang/remux/releases/download/v#{version}/remux-macos.dmg",
-      "homebrew": {
-        "caskRawUrl": "https://raw.githubusercontent.com/yaoshenwang/homebrew-tap/main/Casks/remux-app.rb",
-        "formulaRawUrl": "https://raw.githubusercontent.com/yaoshenwang/homebrew-tap/main/Formula/remux.rb"
-      }
-    },
-    "ios": {
-      "appId": "6761521429",
-      "internalGroupName": "Internal QA",
-      "externalGroupName": "Public Beta",
-      "publicLink": "https://testflight.apple.com/join/DhXZEKUU",
-      "reviewContact": {
-        "firstName": "Yaoshen",
-        "lastName": "Wang",
-        "email": "yaoshenwang@gmail.com",
-        "phone": "+8618611777240"
-      },
-      "localizations": [
-        {
-          "locale": "en-US",
-          "description": "Remux is a remote terminal workspace that lets you monitor and control active sessions from your iPhone or iPad. Use the beta to validate install, first launch, and manual connect with a server URL and token.",
-          "feedbackEmail": "yaoshenwang@gmail.com"
-        },
-        {
-          "locale": "zh-Hans",
-          "description": "Remux 是一个远程终端工作区应用，支持你在 iPhone 或 iPad 上查看并控制活跃会话。本次 Beta 重点验证安装、首启，以及通过服务器 URL 和 token 进行手动连接。",
-          "feedbackEmail": "yaoshenwang@gmail.com"
-        }
-      ]
+      "latestReleaseTagUrlTemplate": "https://github.com/yaoshenwang/remux/releases/download/v#{version}/remux-macos.dmg"
     }
   }
 }

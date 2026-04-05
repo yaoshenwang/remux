@@ -6,7 +6,7 @@ Start here:
 
 - [CURRENT_BASELINE.md](./CURRENT_BASELINE.md): the fastest way to understand the shipping architecture
 - [ACTIVE_DOCS_INDEX.md](./ACTIVE_DOCS_INDEX.md): authority map for active, draft, and archived documents
-- [OFFICIAL_SURFACES.md](./OFFICIAL_SURFACES.md): canonical public Web, npm, macOS, and iOS entrypoints
+- [OFFICIAL_SURFACES.md](./OFFICIAL_SURFACES.md): canonical public Web, npm, and macOS entrypoints
 - [SPEC.md](./SPEC.md): current transport, API, and surface specification
 - [TESTING.md](./TESTING.md): current validation loop and merge gate
 - [GLOSSARY.md](./GLOSSARY.md): canonical product and runtime terminology

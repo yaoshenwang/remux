@@ -24,7 +24,3 @@ jobs:
       - run: pnpm run verify:release-readiness:docs
       - run: pnpm run verify:package-smoke
       - run: pnpm run verify:release-readiness
-        env:
-          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}

@@ -10,11 +10,14 @@ function readRepoFile(relativePath) {
 }
 
 describe("publish workflow guards", () => {
-  it("keeps WWDR certificate install non-fatal on GitHub-hosted macOS runners", () => {
+  it("guards immutable macOS release assets before rebuilding or uploading", () => {
     const workflow = readRepoFile(".github/workflows/publish.yml");
-    expect(workflow).toMatch(
-      /sudo security add-certificates -k \/Library\/Keychains\/System\.keychain AppleWWDRCAG3\.cer \|\| true/,
-    );
+    const guardScript = readRepoFile("scripts/release-asset-guard.cjs");
+    expect(workflow).toContain("Guard immutable release assets");
+    expect(workflow).toContain("actions/github-script@v7");
+    expect(workflow).toContain("release-asset-guard.cjs");
+    expect(workflow).toContain("partial immutable asset state");
+    expect(guardScript).toContain("IMMUTABLE_RELEASE_ASSETS");
   });
 
   it("installs native build prerequisites in the Docker image", () => {
@@ -29,11 +32,11 @@ describe("publish workflow guards", () => {
     expect(script).toMatch(/curl -fsSL --max-time 8 "\$LATEST_RELEASE_APPCAST_URL" 2>\/dev\/null \|\| true/);
   });
 
-  it("uses a virtualenv when configuring TestFlight distribution", () => {
+  it("does not run the removed iOS TestFlight publish path in the stable workflow", () => {
     const workflow = readRepoFile(".github/workflows/publish.yml");
-    expect(workflow).toContain('python3 -m venv "$RUNNER_TEMP/asc-venv"');
-    expect(workflow).toContain('source "$RUNNER_TEMP/asc-venv/bin/activate"');
-    expect(workflow).toContain("python -m pip install PyJWT cryptography");
+    expect(workflow).not.toMatch(/^\s{2}ios:\s*$/m);
+    expect(workflow).not.toContain("Configure TestFlight distribution");
+    expect(workflow).not.toContain("Upload to TestFlight");
   });
 
   it("fails the macOS publish job if the release assets were not uploaded", () => {
@@ -43,16 +46,18 @@ describe("publish workflow guards", () => {
     expect(workflow).toContain('gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets');
   });
 
-  it("uses strict shell handling when updating the Homebrew tap", () => {
-    const workflow = readRepoFile(".github/workflows/publish.yml");
-    expect(workflow).toMatch(/- name: Update Homebrew formula and cask[\s\S]*set -euo pipefail/);
-    expect(workflow).toContain('curl -fsSL "$DMG_URL" -o "$DMG_PATH"');
+  it("updates Homebrew in a separate post-publish workflow", () => {
+    const workflow = readRepoFile(".github/workflows/update-homebrew.yml");
+    expect(workflow).toContain('workflows: ["Publish"]');
+    expect(workflow).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(workflow).toContain("Download published assets and compute SHA256");
+    expect(workflow).toContain("set -euo pipefail");
     expect(workflow).toContain('curl -fsSL "$NPM_URL" -o "$NPM_PATH"');
   });
 
-  it("runs the public release gate after publish jobs finish", () => {
+  it("runs the public release gate after the npm and macOS jobs finish", () => {
     const workflow = readRepoFile(".github/workflows/publish.yml");
-    expect(workflow).toMatch(/release-gate:[\s\S]*needs: \[npm, docker, ios, macos, homebrew\]/);
+    expect(workflow).toMatch(/release-gate:[\s\S]*needs: \[npm, macos\]/);
     expect(workflow).toMatch(/release-gate:[\s\S]*pnpm run verify:release-readiness:docs/);
     expect(workflow).toMatch(/release-gate:[\s\S]*pnpm run verify:release-readiness/);
   });

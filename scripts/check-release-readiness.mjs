@@ -5,19 +5,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  createAscJwt,
   evaluateExpectedAssets,
-  extractFirstRubySha256,
-  fetchAscJson,
   fetchJson,
   fetchSha256,
   fetchText,
   findMissingDocSnippets,
-  findPublicLinkGroup,
-  isAllowedExternalBuildState,
   loadPackageVersion,
   loadReleaseReadinessConfig,
-  readAscPrivateKeyFromEnv,
   releaseTagForVersion,
 } from "./lib/release-readiness.mjs";
 import { smokeNpmPackageSpec } from "./lib/package-smoke.mjs";
@@ -145,93 +139,6 @@ async function runPublicChecks(config, version, results) {
       : "remote daemon manifest missing",
   });
 
-  if (config.macos.homebrew) {
-    const caskResponse = await fetchText(config.macos.homebrew.caskRawUrl);
-    const formulaResponse = await fetchText(config.macos.homebrew.formulaRawUrl);
-    const caskSha = extractFirstRubySha256(caskResponse.text);
-    const formulaSha = extractFirstRubySha256(formulaResponse.text);
-    const caskOk =
-      caskResponse.ok &&
-      caskResponse.text.includes(`version "${version}"`) &&
-      caskResponse.text.includes(config.macos.latestReleaseTagUrlTemplate) &&
-      caskSha !== null &&
-      caskSha === dmgDownload.sha256;
-    const formulaOk =
-      formulaResponse.ok &&
-      formulaResponse.text.includes(`url "https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${version}.tgz"`) &&
-      formulaResponse.text.includes('depends_on "node@24"') &&
-      formulaSha !== null &&
-      formulaSha === tarballDownload?.sha256;
-
-    pushResult(results, {
-      key: "homebrew-cask",
-      ok: caskOk,
-      detail: caskResponse.ok
-        ? `sha=${caskSha ?? "missing"}, expected=${dmgDownload.sha256 ?? "missing"}`
-        : `${caskResponse.status} ${config.macos.homebrew.caskRawUrl}`,
-    });
-    pushResult(results, {
-      key: "homebrew-formula",
-      ok: formulaOk,
-      detail: formulaResponse.ok
-        ? `sha=${formulaSha ?? "missing"}, expected=${tarballDownload?.sha256 ?? "missing"}`
-        : `${formulaResponse.status} ${config.macos.homebrew.formulaRawUrl}`,
-    });
-  }
-
-  const testFlightResponse = await fetchText(config.ios.publicLink);
-  pushResult(results, {
-    key: "ios-public-link",
-    ok: testFlightResponse.ok && testFlightResponse.text.includes("TestFlight"),
-    detail: `${testFlightResponse.status} ${testFlightResponse.url}`,
-  });
-
-  const ascPrivateKey = readAscPrivateKeyFromEnv();
-  if (ascPrivateKey && process.env.APP_STORE_CONNECT_API_KEY_ID && process.env.APP_STORE_CONNECT_ISSUER_ID) {
-    const ascToken = createAscJwt({
-      issuerId: process.env.APP_STORE_CONNECT_ISSUER_ID,
-      keyId: process.env.APP_STORE_CONNECT_API_KEY_ID,
-      privateKeyPem: ascPrivateKey,
-    });
-
-    const betaGroups = await fetchAscJson(
-      `https://api.appstoreconnect.apple.com/v1/betaGroups?filter[app]=${config.ios.appId}&limit=200`,
-      ascToken,
-    );
-    const publicGroup = findPublicLinkGroup(betaGroups.data ?? [], config.ios.publicLink);
-    const groupBuilds = publicGroup
-      ? await fetchAscJson(
-        `https://api.appstoreconnect.apple.com/v1/betaGroups/${publicGroup.id}/builds`,
-        ascToken,
-      )
-      : { data: [] };
-
-    const externalStates = [];
-    for (const build of groupBuilds.data ?? []) {
-      const buildBetaDetails = await fetchAscJson(
-        `https://api.appstoreconnect.apple.com/v1/buildBetaDetails?filter[build]=${build.id}`,
-        ascToken,
-      );
-      const externalState = buildBetaDetails.data?.[0]?.attributes?.externalBuildState;
-      if (externalState) externalStates.push(externalState);
-    }
-
-    pushResult(results, {
-      key: "ios-testflight",
-      ok:
-        Boolean(publicGroup?.attributes?.publicLinkEnabled) &&
-        externalStates.some((state) => isAllowedExternalBuildState(state)),
-      detail: publicGroup
-        ? `group=${publicGroup.attributes.name}, states=${externalStates.join(", ") || "none"}`
-        : "public beta group missing",
-    });
-  } else {
-    pushResult(results, {
-      key: "ios-testflight",
-      ok: true,
-      detail: "skipped App Store Connect state check (missing API env)",
-    });
-  }
 }
 
 async function main() {

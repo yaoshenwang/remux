@@ -1,6 +1,5 @@
 name: Publish
 
-# Triggered by release-please creating a tag, or manual tag push
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
@@ -26,7 +25,6 @@ jobs:
             gh release create "$TAG" --repo "$REPO" --verify-tag --generate-notes --latest
           fi
 
-  # ── npm publish (@latest) ────────────────────────────
   npm:
     runs-on: ubuntu-latest
     permissions:
@@ -50,339 +48,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # ── Docker image → ghcr.io ──────────────────────────
-  docker:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v6
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  # ── iOS → TestFlight ─────────────────────────────────
-  ios:
-    runs-on: macos-15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up signing
-        env:
-          CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}
-          CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
-          API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-        run: |
-          # Create temporary keychain
-          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Import certificates
-          python3 <<'PYEOF'
-          import base64, os, pathlib
-
-          runner_temp = pathlib.Path(os.environ["RUNNER_TEMP"])
-          runner_temp.joinpath("certs.p12").write_bytes(
-              base64.b64decode(os.environ["CERTIFICATES_P12"])
-          )
-
-          private_keys = pathlib.Path.home() / ".private_keys"
-          private_keys.mkdir(parents=True, exist_ok=True)
-          private_keys.joinpath(f"AuthKey_{os.environ['API_KEY_ID']}.p8").write_bytes(
-              base64.b64decode(os.environ["API_KEY_P8"])
-          )
-          PYEOF
-          security import "$RUNNER_TEMP/certs.p12" \
-            -P "$CERTIFICATES_PASSWORD" \
-            -A -t cert -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Add keychain to search list
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-
-          # Install Apple WWDR G3 intermediate cert
-          curl -sO https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          # GitHub-hosted macOS images may already contain this cert.
-          sudo security add-certificates -k /Library/Keychains/System.keychain AppleWWDRCAG3.cer || true
-
-          # Verify
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-
-      - name: Archive
-        env:
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-
-          xcodebuild archive \
-            -project apps/ios/Remux.xcodeproj \
-            -scheme Remux \
-            -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/Remux.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/.private_keys/AuthKey_${API_KEY_ID}.p8 \
-            -authenticationKeyID "$API_KEY_ID" \
-            -authenticationKeyIssuerID "$API_ISSUER_ID" \
-            CURRENT_PROJECT_VERSION="$(git rev-list --count HEAD)" \
-            MARKETING_VERSION="$VERSION" \
-            -quiet
-
-      - name: Export IPA
-        env:
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: |
-          cat > "$RUNNER_TEMP/ExportOptions.plist" << 'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store-connect</string>
-              <key>signingStyle</key>
-              <string>automatic</string>
-              <key>uploadSymbols</key>
-              <true/>
-              <key>manageAppVersionAndBuildNumber</key>
-              <true/>
-          </dict>
-          </plist>
-          PLIST
-
-          xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/Remux.xcarchive" \
-            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
-            -exportPath "$RUNNER_TEMP/export" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/.private_keys/AuthKey_${API_KEY_ID}.p8 \
-            -authenticationKeyID "$API_KEY_ID" \
-            -authenticationKeyIssuerID "$API_ISSUER_ID" \
-            -quiet
-
-      - name: Upload to TestFlight
-        env:
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: |
-          IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" | head -1)
-          xcrun altool --upload-app --type ios \
-            --file "$IPA" \
-            --apiKey "$API_KEY_ID" \
-            --apiIssuer "$API_ISSUER_ID"
-
-      - name: Configure TestFlight distribution
-        run: |
-          set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/asc-venv"
-          source "$RUNNER_TEMP/asc-venv/bin/activate"
-          python -m pip install --upgrade pip
-          python -m pip install PyJWT cryptography
-          python << 'PYEOF'
-          import jwt, time, json, pathlib, urllib.request, urllib.error, os
-
-          with open(os.path.expanduser(f"~/.private_keys/AuthKey_{os.environ['API_KEY_ID']}.p8")) as f:
-              key = f.read()
-          token = jwt.encode(
-              {"iss": os.environ["API_ISSUER_ID"], "iat": int(time.time()),
-               "exp": int(time.time()) + 1200, "aud": "appstoreconnect-v1"},
-              key, algorithm="ES256",
-              headers={"kid": os.environ["API_KEY_ID"], "typ": "JWT"})
-
-          ios_config = json.loads(pathlib.Path("scripts/release-readiness.config.json").read_text())["stable"]["ios"]
-
-          def asc_request(method, url, payload=None):
-              body = None if payload is None else json.dumps(payload).encode()
-              req = urllib.request.Request(
-                  url,
-                  data=body,
-                  method=method,
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Content-Type": "application/json",
-                  },
-              )
-              try:
-                  response = urllib.request.urlopen(req).read().decode()
-                  return json.loads(response) if response else None
-              except urllib.error.HTTPError as exc:
-                  error_body = exc.read().decode()
-                  if exc.code in (409, 422):
-                      return {"error": {"status": exc.code, "body": error_body}}
-                  raise RuntimeError(f"{method} {url} failed: {exc.code} {error_body}") from exc
-
-          def list_groups():
-              data = asc_request(
-                  "GET",
-                  f"https://api.appstoreconnect.apple.com/v1/betaGroups?filter[app]={ios_config['appId']}&limit=200",
-              )
-              return data.get("data", [])
-
-          def ensure_group(name, is_internal, public_link_enabled=False):
-              groups = list_groups()
-              for group in groups:
-                  attrs = group.get("attributes", {})
-                  if attrs.get("name") == name and attrs.get("isInternalGroup") == is_internal:
-                      return group
-
-              payload = {
-                  "data": {
-                      "type": "betaGroups",
-                      "attributes": {
-                          "name": name,
-                          "isInternalGroup": is_internal,
-                          "feedbackEnabled": True,
-                      },
-                      "relationships": {
-                          "app": {"data": {"type": "apps", "id": ios_config["appId"]}}
-                      },
-                  }
-              }
-              if not is_internal:
-                  payload["data"]["attributes"]["publicLinkEnabled"] = public_link_enabled
-                  payload["data"]["attributes"]["publicLinkLimitEnabled"] = False
-
-              created = asc_request("POST", "https://api.appstoreconnect.apple.com/v1/betaGroups", payload)
-              return created["data"]
-
-          def ensure_localization(localization):
-              current = asc_request(
-                  "GET",
-                  f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations?filter[app]={ios_config['appId']}&limit=200",
-              ).get("data", [])
-              if any(item.get("attributes", {}).get("locale") == localization["locale"] for item in current):
-                  return
-
-              payload = {
-                  "data": {
-                      "type": "betaAppLocalizations",
-                      "attributes": localization,
-                      "relationships": {
-                          "app": {"data": {"type": "apps", "id": ios_config["appId"]}}
-                      },
-                  }
-              }
-              asc_request("POST", "https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", payload)
-
-          def ensure_review_detail():
-              review = ios_config["reviewContact"]
-              payload = {
-                  "data": {
-                      "type": "betaAppReviewDetails",
-                      "id": ios_config["appId"],
-                      "attributes": {
-                          "contactFirstName": review["firstName"],
-                          "contactLastName": review["lastName"],
-                          "contactEmail": review["email"],
-                          "contactPhone": review["phone"],
-                          "demoAccountRequired": False,
-                          "notes": "Validate install, first launch, and manual connect using a Remux server URL and token.",
-                      },
-                  }
-              }
-              asc_request(
-                  "PATCH",
-                  f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{ios_config['appId']}",
-                  payload,
-              )
-
-          # Find latest build
-          req = urllib.request.Request(
-              f"https://api.appstoreconnect.apple.com/v1/builds?filter[app]={ios_config['appId']}&sort=-uploadedDate&limit=1",
-              headers={"Authorization": f"Bearer {token}"})
-          data = json.loads(urllib.request.urlopen(req).read())
-          build_id = data["data"][0]["id"]
-
-          # Set usesNonExemptEncryption = false
-          body = json.dumps({"data": {"type": "builds", "id": build_id,
-                            "attributes": {"usesNonExemptEncryption": False}}}).encode()
-          req = urllib.request.Request(
-              f"https://api.appstoreconnect.apple.com/v1/builds/{build_id}",
-              data=body, method="PATCH",
-              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-          urllib.request.urlopen(req)
-          print(f"✓ Export compliance set for build {build_id}")
-
-          ensure_group(ios_config["internalGroupName"], True)
-          public_group = ensure_group(ios_config["externalGroupName"], False, True)
-          for localization in ios_config["localizations"]:
-              ensure_localization(localization)
-          ensure_review_detail()
-
-          add_build_payload = {
-              "data": [
-                  {"type": "builds", "id": build_id}
-              ]
-          }
-          asc_request(
-              "POST",
-              f"https://api.appstoreconnect.apple.com/v1/betaGroups/{public_group['id']}/relationships/builds",
-              add_build_payload,
-          )
-
-          build_beta_details = asc_request(
-              "GET",
-              f"https://api.appstoreconnect.apple.com/v1/buildBetaDetails?filter[build]={build_id}",
-          )
-          external_state = build_beta_details["data"][0]["attributes"]["externalBuildState"]
-          if external_state == "READY_FOR_BETA_SUBMISSION":
-              submission_payload = {
-                  "data": {
-                      "type": "betaAppReviewSubmissions",
-                      "relationships": {
-                          "build": {"data": {"type": "builds", "id": build_id}}
-                      },
-                  }
-              }
-              asc_request(
-                  "POST",
-                  "https://api.appstoreconnect.apple.com/v1/betaAppReviewSubmissions",
-                  submission_payload,
-              )
-              external_state = "WAITING_FOR_REVIEW"
-
-          public_link = public_group["attributes"].get("publicLink") or ios_config["publicLink"]
-          print(f"✓ Public TestFlight link: {public_link}")
-          print(f"✓ External beta state: {external_state}")
-          PYEOF
-        env:
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-
-      - name: Clean up keychain
-        if: always()
-        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
-
-  # ── macOS app (.dmg) → signed + notarized + GitHub Release ──
-  # Runs on self-hosted runner (Mac Mini) which has Developer ID cert installed
   macos:
     needs: [ensure-release]
     runs-on: [self-hosted, remux-deploy]
@@ -393,7 +58,64 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Guard immutable release assets
+        id: guard_release_assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { evaluateReleaseAssetGuard } = require(
+              `${process.env.GITHUB_WORKSPACE}/scripts/release-asset-guard.cjs`
+            );
+            const tag = context.ref.replace('refs/tags/', '');
+            core.setOutput('skip_all', 'false');
+            core.setOutput('release_state', 'clear');
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              const existingAssetNames = (release.data.assets || []).map((asset) => asset.name);
+              const {
+                conflicts,
+                missingImmutableAssets,
+                guardState,
+                hasPartialConflict,
+                shouldSkipBuildAndUpload,
+              } = evaluateReleaseAssetGuard({ existingAssetNames });
+
+              core.setOutput('release_state', guardState);
+
+              if (hasPartialConflict) {
+                core.setFailed(
+                  `Release ${tag} has a partial immutable asset state. Existing immutable assets: ` +
+                  `${conflicts.join(', ')}. Missing immutable assets: ${missingImmutableAssets.join(', ')}. ` +
+                  'Resolve release assets manually before rerunning.'
+                );
+                return;
+              }
+
+              if (shouldSkipBuildAndUpload) {
+                core.notice(
+                  `Release ${tag} already contains immutable assets (${conflicts.join(', ')}). ` +
+                  'Skipping build, notarization, and upload to preserve the published assets.'
+                );
+                core.setOutput('skip_all', 'true');
+                return;
+              }
+
+              core.notice(`Release ${tag} exists but has no immutable assets yet; continuing.`);
+            } catch (error) {
+              if (error.status === 404) {
+                core.notice(`Release ${tag} does not exist yet; safe to build and publish assets.`);
+                return;
+              }
+              throw error;
+            }
+
       - name: Prepare macOS notary credentials
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
         env:
           API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -410,10 +132,12 @@ jobs:
           PYEOF
 
       - name: Verify signing identity
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
           security find-identity -v -p codesigning | grep "Developer ID Application"
 
       - name: Align macOS app version with release tag
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
@@ -421,6 +145,7 @@ jobs:
           ./scripts/bump-version.sh "$VERSION"
 
       - name: Build, sign, notarize, and upload DMG
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
         env:
           REMUX_SKIP_HOMEBREW_UPDATE: "true"
           GH_TOKEN: ${{ github.token }}
@@ -433,6 +158,7 @@ jobs:
           bash scripts/build-dmg.sh "$TAG"
 
       - name: Verify macOS release assets
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -457,87 +183,8 @@ jobs:
             fi
           done
 
-  # ── Update Homebrew tap ─────────────────────────────
-  homebrew:
-    needs: [npm, macos]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Update Homebrew formula and cask
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-
-          git clone https://x-access-token:${GH_TOKEN}@github.com/yaoshenwang/homebrew-tap /tmp/tap
-          cd /tmp/tap
-
-          DMG_URL="https://github.com/yaoshenwang/remux/releases/download/${TAG}/remux-macos.dmg"
-          NPM_URL="https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
-          DMG_PATH="$RUNNER_TEMP/remux-macos.dmg"
-          NPM_PATH="$RUNNER_TEMP/remux-${VERSION}.tgz"
-          curl -fsSL "$DMG_URL" -o "$DMG_PATH"
-          curl -fsSL "$NPM_URL" -o "$NPM_PATH"
-          DMG_SHA=$(sha256sum "$DMG_PATH" | cut -d' ' -f1)
-          NPM_SHA=$(sha256sum "$NPM_PATH" | cut -d' ' -f1)
-
-          cat > Casks/remux-app.rb <<EOF
-          cask "remux-app" do
-            version "${VERSION}"
-            sha256 "${DMG_SHA}"
-
-            url "https://github.com/yaoshenwang/remux/releases/download/v#{version}/remux-macos.dmg"
-            name "Remux"
-            desc "Remote terminal workspace — native macOS app"
-            homepage "https://github.com/yaoshenwang/remux"
-
-            depends_on macos: ">= :sonoma"
-            depends_on arch: :arm64
-
-            app "remux.app"
-
-            zap trash: [
-              "~/Library/Application Support/com.remux",
-              "~/Library/Preferences/com.remux.desktop.plist",
-            ]
-          end
-          EOF
-
-          cat > Formula/remux.rb <<EOF
-          class Remux < Formula
-            desc "Remote terminal workspace — powered by ghostty-web"
-            homepage "https://github.com/yaoshenwang/remux"
-            license "GPL-3.0-or-later"
-
-            url "https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
-            sha256 "${NPM_SHA}"
-
-            depends_on "node@24"
-
-            def install
-              system Formula["node@24"].opt_bin/"npm", "install", *std_npm_args
-              bin.install_symlink Dir["#{libexec}/bin/*"]
-            end
-
-            test do
-              assert_predicate bin/"remux", :exist?
-            end
-          end
-          EOF
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "Update to v${VERSION}"
-          git push origin main
-
   release-gate:
-    needs: [npm, docker, ios, macos, homebrew]
+    needs: [npm, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -551,7 +198,3 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run verify:release-readiness:docs
       - run: pnpm run verify:release-readiness
-        env:
-          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
