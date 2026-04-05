@@ -39,6 +39,10 @@ echo "[2/4] 编码证书和 API Key..."
 
 CERTS_B64=$(base64 < "$TMPDIR/certs.p12")
 P8_B64=$(base64 < ~/.private_keys/AuthKey_2D79888WND.p8)
+SPARKLE_PRIVATE_KEY_VALUE="${SPARKLE_PRIVATE_KEY:-}"
+if [[ -z "$SPARKLE_PRIVATE_KEY_VALUE" && -f "$HOME/.secrets/remux.env" ]]; then
+  SPARKLE_PRIVATE_KEY_VALUE="$(grep '^SPARKLE_PRIVATE_KEY=' "$HOME/.secrets/remux.env" | head -n 1 | cut -d= -f2-)"
+fi
 
 echo "✓ 编码完成"
 
@@ -64,6 +68,13 @@ echo "  ✓ APP_STORE_CONNECT_API_KEY_P8"
 gh secret set APPLE_TEAM_ID --repo "$REPO" --body "LY8QD6TJN6"
 echo "  ✓ APPLE_TEAM_ID"
 
+if [[ -n "$SPARKLE_PRIVATE_KEY_VALUE" ]]; then
+  gh secret set SPARKLE_PRIVATE_KEY --repo "$REPO" --body "$SPARKLE_PRIVATE_KEY_VALUE"
+  echo "  ✓ SPARKLE_PRIVATE_KEY"
+else
+  echo "  ! SPARKLE_PRIVATE_KEY 未在环境变量或 ~/.secrets/remux.env 中找到，请单独配置"
+fi
+
 # Step 4: Verify
 echo ""
 echo "[4/4] 验证..."
@@ -78,3 +89,4 @@ echo "  APP_STORE_CONNECT_API_KEY_ID    — API Key ID"
 echo "  APP_STORE_CONNECT_ISSUER_ID     — Issuer ID"
 echo "  APP_STORE_CONNECT_API_KEY_P8    — API Key .p8 (base64)"
 echo "  APPLE_TEAM_ID                   — Apple Team ID"
+echo "  SPARKLE_PRIVATE_KEY             — Sparkle update signing private key"

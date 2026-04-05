@@ -58,7 +58,9 @@ describe("publish workflow guards", () => {
   });
 
   it("allows the macOS release script to take Sparkle and notary credentials from the environment", () => {
+    const workflow = readRepoFile(".github/workflows/publish.yml");
     const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
+    expect(workflow).toContain("SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}");
     expect(script).toContain("Missing macOS release environment file:");
     expect(script).toContain("APP_STORE_CONNECT_API_KEY_PATH");
     expect(script).toContain("Using App Store Connect API key for notarization");
