@@ -17,6 +17,60 @@ do
   fi
 done
 
+for file in \
+  "$REPO_ROOT/vendor/ghostty/include/ghostty.h" \
+  "$REPO_ROOT/vendor/ghostty/src/apprt/embedded.zig"
+do
+  if ! grep -Fq -- 'ghostty_surface_select_cursor_cell' "$file"; then
+    echo "FAIL: $file must expose ghostty_surface_select_cursor_cell for vendor GhosttyKit builds"
+    exit 1
+  fi
+  if ! grep -Fq -- 'ghostty_surface_clear_selection' "$file"; then
+    echo "FAIL: $file must expose ghostty_surface_clear_selection for vendor GhosttyKit builds"
+    exit 1
+  fi
+done
+
+if ! grep -Fq -- 'pub fn selectCursorCell(self: *Surface) !bool' "$REPO_ROOT/vendor/ghostty/src/Surface.zig"; then
+  echo "FAIL: vendor/ghostty/src/Surface.zig must provide selectCursorCell for stable macOS builds"
+  exit 1
+fi
+
+if grep -Fq -- '| tail -5' "$ROOT_DIR/scripts/build-sign-upload.sh"; then
+  echo "FAIL: build-sign-upload.sh must not truncate xcodebuild errors with tail -5"
+  exit 1
+fi
+
+if ! grep -Fq -- 'tee "$BUILD_LOG"' "$ROOT_DIR/scripts/build-sign-upload.sh"; then
+  echo "FAIL: build-sign-upload.sh must preserve the full xcodebuild log"
+  exit 1
+fi
+
+if ! grep -Fq -- 'MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"' "$ROOT_DIR/scripts/build-ghostty-cli-helper.sh"; then
+  echo "FAIL: build-ghostty-cli-helper.sh must define a monorepo vendor/ghostty fallback"
+  exit 1
+fi
+
+if ! grep -Fq -- 'falling back to monorepo vendor/ghostty' "$ROOT_DIR/scripts/build-ghostty-cli-helper.sh"; then
+  echo "FAIL: build-ghostty-cli-helper.sh must fall back to vendor/ghostty when apps/macos/ghostty is incomplete"
+  exit 1
+fi
+
+if ! grep -Fq -- 'using monorepo vendor/ghostty' "$ROOT_DIR/scripts/setup.sh"; then
+  echo "FAIL: setup.sh must fall back to vendor/ghostty when apps/macos/ghostty is incomplete"
+  exit 1
+fi
+
+if ! grep -Fq -- 'b.step("cli-helper", "Build the Ghostty CLI helper")' "$REPO_ROOT/vendor/ghostty/build.zig"; then
+  echo "FAIL: vendor/ghostty/build.zig must expose a cli-helper step for the Xcode Run Script fallback"
+  exit 1
+fi
+
+if ! grep -Fq -- 'cli_helper_step.dependOn(&exe.install_step.step);' "$REPO_ROOT/vendor/ghostty/build.zig"; then
+  echo "FAIL: vendor/ghostty/build.zig must wire cli-helper to the installed ghostty binary"
+  exit 1
+fi
+
 if ! awk '
   /\/\* Release \*\// { in_release=1; next }
   in_release && /ONLY_ACTIVE_ARCH = YES;/ { saw_yes=1 }

@@ -75,13 +75,35 @@ describe("publish workflow guards", () => {
 
   it("builds GhosttyKit from the monorepo vendor checkout when the embedded macOS tree is incomplete", () => {
     const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
+    const cliHelper = readRepoFile("apps/macos/scripts/build-ghostty-cli-helper.sh");
     const helper = readRepoFile("scripts/build-ghostty-kit.sh");
+    const setup = readRepoFile("apps/macos/scripts/setup.sh");
+    const vendorHeader = readRepoFile("vendor/ghostty/include/ghostty.h");
+    const vendorBuild = readRepoFile("vendor/ghostty/build.zig");
+    const vendorSurface = readRepoFile("vendor/ghostty/src/Surface.zig");
+    const vendorEmbedded = readRepoFile("vendor/ghostty/src/apprt/embedded.zig");
     expect(script).toContain("ghostty/src/build/main.zig");
     expect(script).toContain('MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"');
     expect(script).toContain('$MONOREPO_GHOSTTY_DIR/src/build/main.zig');
     expect(script).toContain("scripts/build-ghostty-kit.sh");
     expect(script).toContain('local vendor_xcframework="$MONOREPO_GHOSTTY_DIR/macos/GhosttyKit.xcframework"');
+    expect(script).toContain('BUILD_LOG="build/xcodebuild-release.log"');
+    expect(script).toContain('tee "$BUILD_LOG"');
+    expect(script).not.toContain("| tail -5");
+    expect(cliHelper).toContain('MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"');
+    expect(cliHelper).toContain("Embedded apps/macos/ghostty tree is incomplete; falling back to monorepo vendor/ghostty");
+    expect(cliHelper).toContain('! -f "$GHOSTTY_DIR/src/build/main.zig"');
+    expect(setup).toContain('MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"');
+    expect(setup).toContain("Embedded apps/macos/ghostty tree is incomplete; using monorepo vendor/ghostty");
+    expect(setup).toContain('git -C "$MONOREPO_ROOT" rev-parse HEAD:vendor/ghostty');
+    expect(vendorBuild).toContain('b.step("cli-helper", "Build the Ghostty CLI helper")');
+    expect(vendorBuild).toContain("cli_helper_step.dependOn(&exe.install_step.step);");
     expect(helper).toContain("-Dxcframework-target=universal");
     expect(helper).toContain("-Demit-macos-app=false");
+    expect(vendorHeader).toContain("ghostty_surface_select_cursor_cell");
+    expect(vendorHeader).toContain("ghostty_surface_clear_selection");
+    expect(vendorSurface).toContain("pub fn selectCursorCell(self: *Surface) !bool");
+    expect(vendorEmbedded).toContain("export fn ghostty_surface_select_cursor_cell(surface: *Surface) bool");
+    expect(vendorEmbedded).toContain("export fn ghostty_surface_clear_selection(surface: *Surface) bool");
   });
 });
