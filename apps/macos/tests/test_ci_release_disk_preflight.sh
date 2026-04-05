@@ -68,4 +68,18 @@ do
   fi
 done
 
+mkdir -p "$WORKSPACE/apps/macos/build/output"
+touch "$WORKSPACE/apps/macos/build/output/marker"
+
+REMUX_CI_HOME_DIR="$HOME_DIR" \
+REMUX_CI_WORKSPACE="$WORKSPACE" \
+REMUX_CI_FREE_SPACE_PATH="$TMPDIR_ROOT" \
+REMUX_CI_MIN_FREE_GB=0 \
+bash "$SCRIPT" >/dev/null
+
+if [ -e "$WORKSPACE/apps/macos/build" ]; then
+  echo "FAIL: ci-preflight-free-space.sh must still clean workspace caches when no GhosttyTabs DerivedData is present"
+  exit 1
+fi
+
 echo "PASS: ci-preflight-free-space.sh reclaims release runner caches"

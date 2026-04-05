@@ -52,7 +52,10 @@ main() {
 
   echo "Reclaiming release runner caches..."
   print_free_space
-  remove_if_present "${cleanup_targets[@]}" "${derived_data_targets[@]}"
+  remove_if_present "${cleanup_targets[@]}"
+  if ((${#derived_data_targets[@]} > 0)); then
+    remove_if_present "${derived_data_targets[@]}"
+  fi
   print_free_space
 
   free_kb="$(available_kb)"
