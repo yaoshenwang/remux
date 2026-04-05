@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  extractFirstRubySha256,
   evaluateExpectedAssets,
   findMissingDocSnippets,
   findPublicLinkGroup,
@@ -61,5 +62,15 @@ describe("release readiness helpers", () => {
   it("normalizes package versions into release tags", () => {
     expect(releaseTagForVersion("0.3.14")).toBe("v0.3.14");
     expect(releaseTagForVersion("v0.3.14")).toBe("v0.3.14");
+  });
+
+  it("extracts sha256 values from Homebrew Ruby definitions", () => {
+    expect(
+      extractFirstRubySha256(`
+        cask "remux-app" do
+          sha256 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        end
+      `),
+    ).toBe("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
   });
 });

@@ -15,6 +15,16 @@ Options:
 EOF
 }
 
+load_release_env_file() {
+  local env_file="${REMUX_RELEASE_ENV_FILE:-$HOME/.secrets/remux.env}"
+  if [[ ! -f "$env_file" ]]; then
+    return 1
+  fi
+
+  # shellcheck disable=SC1090
+  source "$env_file"
+}
+
 ALLOW_OVERWRITE="false"
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
@@ -55,9 +65,52 @@ REMOTE_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remux-release-assets.XXXXXX")"
 trap 'rm -rf "$REMOTE_ASSET_DIR" build/ remux-macos.dmg appcast.xml' EXIT
 
 # --- Pre-flight ---
-source ~/.secrets/remux.env
+REQUIRES_LOCAL_RELEASE_ENV="false"
+if [[ -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
+  REQUIRES_LOCAL_RELEASE_ENV="true"
+fi
+if [[ -z "${APP_STORE_CONNECT_API_KEY_ID:-}" || -z "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+  if [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]]; then
+    REQUIRES_LOCAL_RELEASE_ENV="true"
+  fi
+fi
+
+if [[ "$REQUIRES_LOCAL_RELEASE_ENV" == "true" ]]; then
+  if ! load_release_env_file; then
+    echo "Missing macOS release environment file: ${REMUX_RELEASE_ENV_FILE:-$HOME/.secrets/remux.env}" >&2
+    echo "Provide SPARKLE_PRIVATE_KEY via workflow env or restore the local release env file." >&2
+    exit 1
+  fi
+fi
+
+: "${SPARKLE_PRIVATE_KEY:?Missing SPARKLE_PRIVATE_KEY for Sparkle appcast signing}"
 export SPARKLE_PRIVATE_KEY
-for tool in zig xcodebuild create-dmg xcrun codesign ditto gh go python3 plutil; do
+
+if [[ -n "${APP_STORE_CONNECT_API_KEY_ID:-}" && -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ]]; then
+  APP_STORE_CONNECT_API_KEY_PATH="${APP_STORE_CONNECT_API_KEY_PATH:-$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8}"
+  if [[ ! -f "$APP_STORE_CONNECT_API_KEY_PATH" ]]; then
+    echo "Missing App Store Connect API key file at $APP_STORE_CONNECT_API_KEY_PATH" >&2
+    exit 1
+  fi
+  NOTARY_ARGS=(
+    --key "$APP_STORE_CONNECT_API_KEY_PATH"
+    --key-id "$APP_STORE_CONNECT_API_KEY_ID"
+    --issuer "$APP_STORE_CONNECT_ISSUER_ID"
+  )
+  echo "Using App Store Connect API key for notarization"
+else
+  : "${APPLE_ID:?Missing APPLE_ID for notarization fallback}"
+  : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID for notarization fallback}"
+  : "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD for notarization fallback}"
+  NOTARY_ARGS=(
+    --apple-id "$APPLE_ID"
+    --team-id "$APPLE_TEAM_ID"
+    --password "$APPLE_APP_SPECIFIC_PASSWORD"
+  )
+  echo "Using Apple ID credentials for notarization"
+fi
+
+for tool in zig xcodebuild create-dmg xcrun codesign ditto gh go python3 plutil swift; do
   command -v "$tool" >/dev/null || { echo "MISSING: $tool" >&2; exit 1; }
 done
 echo "Pre-flight checks passed"
@@ -131,7 +184,7 @@ echo "Codesign verified"
 echo "Notarizing app..."
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" remux-notary.zip
 xcrun notarytool submit remux-notary.zip \
-  --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+  "${NOTARY_ARGS[@]}" --wait
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
 rm -f remux-notary.zip
@@ -143,7 +196,7 @@ rm -f remux-macos.dmg
 create-dmg --codesign "$SIGN_HASH" remux-macos.dmg "$APP_PATH"
 echo "Notarizing DMG..."
 xcrun notarytool submit remux-macos.dmg \
-  --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+  "${NOTARY_ARGS[@]}" --wait
 xcrun stapler staple remux-macos.dmg
 xcrun stapler validate remux-macos.dmg
 echo "DMG notarized"

@@ -55,7 +55,7 @@ What these commands cover:
 
 - `pnpm run verify:package-smoke`: builds the package, installs the packed tarball into a clean temp directory, launches the CLI, and probes the served UI
 - `pnpm run verify:release-readiness:docs`: confirms active docs point to the canonical public entrypoints
-- `pnpm run verify:release-readiness`: checks the hosted web shell, npm dist-tag, GitHub release assets (DMG, appcast, remote daemon binaries + manifest), Homebrew tap, and public TestFlight link/state
+- `pnpm run verify:release-readiness`: checks the hosted web shell, the published npm `latest` install/startup path, GitHub release assets (DMG, appcast, remote daemon binaries + manifest), Homebrew tap SHA parity, and public TestFlight link/state
 
 ## Release Gate
 
@@ -85,6 +85,8 @@ pnpm run verify:release-readiness
 ```
 
 That command verifies the current public Web, npm, macOS, and iOS entrypoints, including the active GitHub release assets, npm `latest` package, TestFlight public link, and the canonical docs entry.
+
+The stable publish workflow must end with the same public gate. A green build or deploy job is not sufficient if the public npm install path, GitHub release assets, Homebrew tap, or TestFlight entry are still broken.
 
 ## Native Dependency Note
 

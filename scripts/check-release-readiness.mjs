@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import {
   createAscJwt,
   evaluateExpectedAssets,
+  extractFirstRubySha256,
   fetchAscJson,
   fetchJson,
+  fetchSha256,
   fetchText,
   findMissingDocSnippets,
   findPublicLinkGroup,
@@ -18,6 +20,7 @@ import {
   readAscPrivateKeyFromEnv,
   releaseTagForVersion,
 } from "./lib/release-readiness.mjs";
+import { smokeNpmPackageSpec } from "./lib/package-smoke.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,11 +75,28 @@ async function runPublicChecks(config, version, results) {
   const npmMetadata = await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(config.npm.packageName)}`);
   const distTagVersion = npmMetadata["dist-tags"]?.[config.npm.distTag];
   const tarballUrl = npmMetadata.versions?.[distTagVersion]?.dist?.tarball;
-  const tarballResponse = tarballUrl ? await fetchText(tarballUrl) : null;
+  const tarballDownload = tarballUrl ? await fetchSha256(tarballUrl) : null;
   pushResult(results, {
     key: "npm",
-    ok: distTagVersion === version && tarballResponse?.ok === true,
+    ok: distTagVersion === version && tarballDownload?.ok === true,
     detail: `${config.npm.distTag}=${distTagVersion ?? "missing"}`,
+  });
+  let npmInstallFailure = null;
+  if (distTagVersion === version) {
+    try {
+      await smokeNpmPackageSpec(`${config.npm.packageName}@${version}`, { cwd: REPO_ROOT });
+    } catch (error) {
+      npmInstallFailure = error;
+    }
+  }
+  pushResult(results, {
+    key: "npm-install",
+    ok: distTagVersion === version && npmInstallFailure === null,
+    detail: distTagVersion !== version
+      ? `${config.npm.distTag} resolves to ${distTagVersion ?? "missing"} instead of ${version}`
+      : npmInstallFailure === null
+        ? `installed ${config.npm.packageName}@${version} from npm and reached the served UI`
+        : npmInstallFailure.message.split("\n")[0],
   });
 
   const latestRelease = await fetchJson(`https://api.github.com/repos/${config.github.repository}/releases/latest`);
@@ -90,7 +110,7 @@ async function runPublicChecks(config, version, results) {
     detail: `tag=${latestRelease.tag_name}, missing=${assetCoverage.missingAssetNames.join(", ") || "none"}`,
   });
 
-  const dmgResponse = await fetchText(config.macos.latestDownloadUrl);
+  const dmgDownload = await fetchSha256(config.macos.latestDownloadUrl);
   const appcastResponse = await fetchText(config.macos.appcastUrl);
   const remoteManifestAsset = latestRelease.assets.find((asset) => asset.name === "remuxd-remote-manifest.json");
   const remoteManifest = remoteManifestAsset ? await fetchJson(remoteManifestAsset.browser_download_url) : null;
@@ -106,8 +126,8 @@ async function runPublicChecks(config, version, results) {
   const missingRemoteTargets = expectedRemoteTargets.filter((target) => !actualRemoteTargets.has(target));
   pushResult(results, {
     key: "macos-download",
-    ok: dmgResponse.ok,
-    detail: `${dmgResponse.status} ${dmgResponse.url}`,
+    ok: dmgDownload.ok,
+    detail: `${dmgDownload.status} ${dmgDownload.url}`,
   });
   pushResult(results, {
     key: "macos-appcast",
@@ -128,24 +148,34 @@ async function runPublicChecks(config, version, results) {
   if (config.macos.homebrew) {
     const caskResponse = await fetchText(config.macos.homebrew.caskRawUrl);
     const formulaResponse = await fetchText(config.macos.homebrew.formulaRawUrl);
+    const caskSha = extractFirstRubySha256(caskResponse.text);
+    const formulaSha = extractFirstRubySha256(formulaResponse.text);
     const caskOk =
       caskResponse.ok &&
       caskResponse.text.includes(`version "${version}"`) &&
-      caskResponse.text.includes(config.macos.latestReleaseTagUrlTemplate);
+      caskResponse.text.includes(config.macos.latestReleaseTagUrlTemplate) &&
+      caskSha !== null &&
+      caskSha === dmgDownload.sha256;
     const formulaOk =
       formulaResponse.ok &&
       formulaResponse.text.includes(`url "https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${version}.tgz"`) &&
-      formulaResponse.text.includes('depends_on "node@24"');
+      formulaResponse.text.includes('depends_on "node@24"') &&
+      formulaSha !== null &&
+      formulaSha === tarballDownload?.sha256;
 
     pushResult(results, {
       key: "homebrew-cask",
       ok: caskOk,
-      detail: caskResponse.ok ? "tap cask matches current version" : `${caskResponse.status} ${config.macos.homebrew.caskRawUrl}`,
+      detail: caskResponse.ok
+        ? `sha=${caskSha ?? "missing"}, expected=${dmgDownload.sha256 ?? "missing"}`
+        : `${caskResponse.status} ${config.macos.homebrew.caskRawUrl}`,
     });
     pushResult(results, {
       key: "homebrew-formula",
       ok: formulaOk,
-      detail: formulaResponse.ok ? "tap formula matches current version" : `${formulaResponse.status} ${config.macos.homebrew.formulaRawUrl}`,
+      detail: formulaResponse.ok
+        ? `sha=${formulaSha ?? "missing"}, expected=${tarballDownload?.sha256 ?? "missing"}`
+        : `${formulaResponse.status} ${config.macos.homebrew.formulaRawUrl}`,
     });
   }
 

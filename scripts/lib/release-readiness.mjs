@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,6 +37,11 @@ export function isAllowedExternalBuildState(state) {
 
 export function findPublicLinkGroup(groups, publicLink) {
   return groups.find((group) => group?.attributes?.publicLink === publicLink) ?? null;
+}
+
+export function extractFirstRubySha256(content) {
+  const match = content.match(/sha256\s+"([a-f0-9]{64})"/i);
+  return match?.[1]?.toLowerCase() ?? null;
 }
 
 export function loadReleaseReadinessConfig(configPath = path.join(REPO_ROOT, "scripts", "release-readiness.config.json")) {
@@ -80,6 +86,45 @@ export async function fetchText(url, { headers = {} } = {}) {
     statusText: response.statusText,
     url: response.url,
     text,
+  };
+}
+
+export async function fetchSha256(url, { headers = {} } = {}) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "*/*",
+      "User-Agent": "remux-release-readiness",
+      ...headers,
+    },
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel?.();
+    return {
+      ok: false,
+      status: response.status,
+      statusText: response.statusText,
+      url: response.url,
+      sha256: null,
+    };
+  }
+
+  const hash = crypto.createHash("sha256");
+  const stream = response.body ? Readable.fromWeb(response.body) : null;
+
+  if (stream) {
+    for await (const chunk of stream) {
+      hash.update(chunk);
+    }
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    statusText: response.statusText,
+    url: response.url,
+    sha256: hash.digest("hex"),
   };
 }
 

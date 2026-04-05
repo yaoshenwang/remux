@@ -201,8 +201,12 @@ jobs:
 
       - name: Configure TestFlight distribution
         run: |
-          pip3 install PyJWT cryptography
-          python3 << 'PYEOF'
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/asc-venv"
+          source "$RUNNER_TEMP/asc-venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install PyJWT cryptography
+          python << 'PYEOF'
           import jwt, time, json, pathlib, urllib.request, urllib.error, os
 
           with open(os.path.expanduser(f"~/.private_keys/AuthKey_{os.environ['API_KEY_ID']}.p8")) as f:
@@ -389,6 +393,22 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Prepare macOS notary credentials
+        env:
+          API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYEOF'
+          import base64, os, pathlib
+
+          private_keys = pathlib.Path.home() / ".private_keys"
+          private_keys.mkdir(parents=True, exist_ok=True)
+          key_path = private_keys / f"AuthKey_{os.environ['API_KEY_ID']}.p8"
+          key_path.write_bytes(base64.b64decode(os.environ["API_KEY_P8"]))
+          key_path.chmod(0o600)
+          PYEOF
+
       - name: Verify signing identity
         run: |
           security find-identity -v -p codesigning | grep "Developer ID Application"
@@ -403,9 +423,38 @@ jobs:
       - name: Build, sign, notarize, and upload DMG
         env:
           REMUX_SKIP_HOMEBREW_UPDATE: "true"
+          GH_TOKEN: ${{ github.token }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           bash scripts/build-dmg.sh "$TAG"
+
+      - name: Verify macOS release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          RELEASE_ASSETS="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' || true)"
+          EXPECTED_ASSETS=(
+            remux-macos.dmg
+            appcast.xml
+            remuxd-remote-darwin-arm64
+            remuxd-remote-darwin-amd64
+            remuxd-remote-linux-arm64
+            remuxd-remote-linux-amd64
+            remuxd-remote-checksums.txt
+            remuxd-remote-manifest.json
+          )
+
+          for asset in "${EXPECTED_ASSETS[@]}"; do
+            if ! printf '%s\n' "$RELEASE_ASSETS" | grep -Fxq "$asset"; then
+              echo "Missing release asset: $asset" >&2
+              exit 1
+            fi
+          done
 
   # ── Update Homebrew tap ─────────────────────────────
   homebrew:
@@ -420,6 +469,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
 
@@ -428,8 +478,12 @@ jobs:
 
           DMG_URL="https://github.com/yaoshenwang/remux/releases/download/${TAG}/remux-macos.dmg"
           NPM_URL="https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
-          DMG_SHA=$(curl -fsSL "$DMG_URL" | sha256sum | cut -d' ' -f1)
-          NPM_SHA=$(curl -fsSL "$NPM_URL" | sha256sum | cut -d' ' -f1)
+          DMG_PATH="$RUNNER_TEMP/remux-macos.dmg"
+          NPM_PATH="$RUNNER_TEMP/remux-${VERSION}.tgz"
+          curl -fsSL "$DMG_URL" -o "$DMG_PATH"
+          curl -fsSL "$NPM_URL" -o "$NPM_PATH"
+          DMG_SHA=$(sha256sum "$DMG_PATH" | cut -d' ' -f1)
+          NPM_SHA=$(sha256sum "$NPM_PATH" | cut -d' ' -f1)
 
           cat > Casks/remux-app.rb <<EOF
           cask "remux-app" do
@@ -480,3 +534,23 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -m "Update to v${VERSION}"
           git push origin main
+
+  release-gate:
+    needs: [npm, docker, ios, macos, homebrew]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run verify:release-readiness:docs
+      - run: pnpm run verify:release-readiness
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}

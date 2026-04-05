@@ -28,4 +28,39 @@ describe("publish workflow guards", () => {
     expect(script).toContain("REMUX_RELEASE_APPCAST_URL");
     expect(script).toMatch(/curl -fsSL --max-time 8 "\$LATEST_RELEASE_APPCAST_URL" 2>\/dev\/null \|\| true/);
   });
+
+  it("uses a virtualenv when configuring TestFlight distribution", () => {
+    const workflow = readRepoFile(".github/workflows/publish.yml");
+    expect(workflow).toContain('python3 -m venv "$RUNNER_TEMP/asc-venv"');
+    expect(workflow).toContain('source "$RUNNER_TEMP/asc-venv/bin/activate"');
+    expect(workflow).toContain("python -m pip install PyJWT cryptography");
+  });
+
+  it("fails the macOS publish job if the release assets were not uploaded", () => {
+    const workflow = readRepoFile(".github/workflows/publish.yml");
+    expect(workflow).toContain("Verify macOS release assets");
+    expect(workflow).toContain("Missing release asset:");
+    expect(workflow).toContain('gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets');
+  });
+
+  it("uses strict shell handling when updating the Homebrew tap", () => {
+    const workflow = readRepoFile(".github/workflows/publish.yml");
+    expect(workflow).toMatch(/- name: Update Homebrew formula and cask[\s\S]*set -euo pipefail/);
+    expect(workflow).toContain('curl -fsSL "$DMG_URL" -o "$DMG_PATH"');
+    expect(workflow).toContain('curl -fsSL "$NPM_URL" -o "$NPM_PATH"');
+  });
+
+  it("runs the public release gate after publish jobs finish", () => {
+    const workflow = readRepoFile(".github/workflows/publish.yml");
+    expect(workflow).toMatch(/release-gate:[\s\S]*needs: \[npm, docker, ios, macos, homebrew\]/);
+    expect(workflow).toMatch(/release-gate:[\s\S]*pnpm run verify:release-readiness:docs/);
+    expect(workflow).toMatch(/release-gate:[\s\S]*pnpm run verify:release-readiness/);
+  });
+
+  it("allows the macOS release script to take Sparkle and notary credentials from the environment", () => {
+    const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
+    expect(script).toContain("Missing macOS release environment file:");
+    expect(script).toContain("APP_STORE_CONNECT_API_KEY_PATH");
+    expect(script).toContain("Using App Store Connect API key for notarization");
+  });
 });
