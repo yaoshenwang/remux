@@ -67,7 +67,21 @@ REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"
 MONOREPO_GHOSTTYKIT_BUILD_SCRIPT="$REPO_ROOT/scripts/build-ghostty-kit.sh"
 REMOTE_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remux-release-assets.XXXXXX")"
-trap 'rm -rf "$REMOTE_ASSET_DIR" build/ remux-macos.dmg appcast.xml' EXIT
+
+cleanup_release_artifacts() {
+  rm -rf \
+    "$REMOTE_ASSET_DIR" \
+    build/ \
+    remux-macos.dmg \
+    appcast.xml \
+    remux-notary.zip \
+    "$APP_DIR/GhosttyKit.xcframework" \
+    "$MONOREPO_GHOSTTY_DIR/.zig-cache" \
+    "$MONOREPO_GHOSTTY_DIR/zig-out" \
+    "$MONOREPO_GHOSTTY_DIR/macos/GhosttyKit.xcframework"
+}
+
+trap cleanup_release_artifacts EXIT
 
 build_local_ghosttykit() {
   (
