@@ -14,8 +14,11 @@ EOF
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GHOSTTY_DIR="$REPO_ROOT/ghostty"
+APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MONOREPO_ROOT="$(cd "$APP_ROOT/../.." && pwd)"
+LOCAL_GHOSTTY_DIR="$APP_ROOT/ghostty"
+MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"
+GHOSTTY_DIR="$LOCAL_GHOSTTY_DIR"
 
 OUTPUT_PATH=""
 TARGET_TRIPLE=""
@@ -95,8 +98,16 @@ if ! command -v zig >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -f "$GHOSTTY_DIR/build.zig" ]]; then
-  echo "error: Ghostty submodule is missing at $GHOSTTY_DIR" >&2
+if [[ ! -f "$GHOSTTY_DIR/src/build/main.zig" ]]; then
+  if [[ -f "$MONOREPO_GHOSTTY_DIR/src/build/main.zig" ]]; then
+    echo "Embedded apps/macos/ghostty tree is incomplete; falling back to monorepo vendor/ghostty"
+    GHOSTTY_DIR="$MONOREPO_GHOSTTY_DIR"
+  fi
+fi
+
+if [[ ! -f "$GHOSTTY_DIR/build.zig" || ! -f "$GHOSTTY_DIR/src/build/main.zig" ]]; then
+  echo "error: unable to locate a complete ghostty source tree for the CLI helper" >&2
+  echo "checked: $LOCAL_GHOSTTY_DIR and $MONOREPO_GHOSTTY_DIR" >&2
   exit 1
 fi
 

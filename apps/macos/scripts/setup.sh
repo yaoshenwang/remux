@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+MONOREPO_ROOT="$(cd "$PROJECT_DIR/../.." && pwd)"
+LOCAL_GHOSTTY_DIR="$PROJECT_DIR/ghostty"
+MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"
 
 cd "$PROJECT_DIR"
 
@@ -16,17 +19,33 @@ if ! command -v zig &> /dev/null; then
     exit 1
 fi
 
-GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
+ACTIVE_GHOSTTY_DIR="$LOCAL_GHOSTTY_DIR"
+if [[ ! -f "$ACTIVE_GHOSTTY_DIR/src/build/main.zig" ]]; then
+    if [[ -f "$MONOREPO_GHOSTTY_DIR/src/build/main.zig" ]]; then
+        echo "==> Embedded apps/macos/ghostty tree is incomplete; using monorepo vendor/ghostty"
+        ACTIVE_GHOSTTY_DIR="$MONOREPO_GHOSTTY_DIR"
+    else
+        echo "Error: unable to locate a complete ghostty source tree."
+        echo "Checked: $LOCAL_GHOSTTY_DIR and $MONOREPO_GHOSTTY_DIR"
+        exit 1
+    fi
+fi
+
+if [[ "$ACTIVE_GHOSTTY_DIR" == "$LOCAL_GHOSTTY_DIR" ]]; then
+    GHOSTTY_SHA="$(git -C "$ACTIVE_GHOSTTY_DIR" rev-parse HEAD)"
+else
+    GHOSTTY_SHA="$(git -C "$MONOREPO_ROOT" rev-parse HEAD:vendor/ghostty)"
+fi
 CACHE_ROOT="${REMUX_GHOSTTYKIT_CACHE_DIR:-$HOME/.cache/remux/ghosttykit}"
 CACHE_DIR="$CACHE_ROOT/$GHOSTTY_SHA"
 CACHE_XCFRAMEWORK="$CACHE_DIR/GhosttyKit.xcframework"
-LOCAL_XCFRAMEWORK="$PROJECT_DIR/ghostty/macos/GhosttyKit.xcframework"
+LOCAL_XCFRAMEWORK="$ACTIVE_GHOSTTY_DIR/macos/GhosttyKit.xcframework"
 LOCAL_SHA_STAMP="$LOCAL_XCFRAMEWORK/.ghostty_sha"
 LOCK_DIR="$CACHE_ROOT/$GHOSTTY_SHA.lock"
 
 mkdir -p "$CACHE_ROOT"
 
-echo "==> Ghostty submodule commit: $GHOSTTY_SHA"
+echo "==> Ghostty source key: $GHOSTTY_SHA"
 
 LOCK_TIMEOUT=300
 LOCK_START=$SECONDS
@@ -57,7 +76,7 @@ else
     else
         echo "==> Building GhosttyKit.xcframework (this may take a few minutes)..."
         (
-            cd ghostty
+            cd "$ACTIVE_GHOSTTY_DIR"
             zig build -Demit-xcframework=true -Dxcframework-target=universal -Doptimize=ReleaseFast
         )
         # Stamp the build output with the SHA it was built from

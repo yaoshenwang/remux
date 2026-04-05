@@ -168,7 +168,12 @@ fi
 # --- Build app (Release, unsigned) ---
 echo "Building app..."
 rm -rf build/
-xcodebuild -scheme remux -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -5
+mkdir -p build
+BUILD_LOG="build/xcodebuild-release.log"
+if ! xcodebuild -scheme remux -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$BUILD_LOG"; then
+  echo "xcodebuild failed; full log at $BUILD_LOG" >&2
+  exit 1
+fi
 echo "Build succeeded"
 
 HELPER_PATH="$APP_PATH/Contents/Resources/bin/ghostty"
