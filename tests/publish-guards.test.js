@@ -106,6 +106,22 @@ describe("publish workflow guards", () => {
     expect(vendorGitlink).toContain("ae3cc5d298d6a913297fc4dc7cd8b08283e1fa01");
   });
 
+  it("reclaims macOS runner disk space before release builds and cleans ghostty build caches on exit", () => {
+    const workflow = readRepoFile(".github/workflows/publish.yml");
+    const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
+    const preflight = readRepoFile("apps/macos/scripts/ci-preflight-free-space.sh");
+    expect(workflow).toContain("Reclaim macOS runner disk space");
+    expect(workflow).toContain("bash apps/macos/scripts/ci-preflight-free-space.sh");
+    expect(preflight).toContain('REMUX_CI_MIN_FREE_GB="${REMUX_CI_MIN_FREE_GB:-8}"');
+    expect(preflight).toContain('vendor/ghostty/.zig-cache');
+    expect(preflight).toContain('vendor/ghostty/macos/GhosttyKit.xcframework');
+    expect(preflight).toContain('Library/Developer/Xcode/DerivedData/GhosttyTabs-');
+    expect(script).toContain("cleanup_release_artifacts()");
+    expect(script).toContain('$MONOREPO_GHOSTTY_DIR/.zig-cache');
+    expect(script).toContain('$MONOREPO_GHOSTTY_DIR/macos/GhosttyKit.xcframework');
+    expect(script).toContain('$APP_DIR/GhosttyKit.xcframework');
+  });
+
   it("self-heals an invalid runtime worktree before deploy fetches the target branch", () => {
     const workflow = readRepoFile(".github/workflows/deploy.yml");
     expect(workflow).toContain('REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git"');

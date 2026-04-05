@@ -115,6 +115,12 @@ jobs:
               throw error;
             }
 
+      - name: Reclaim macOS runner disk space
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
+        run: |
+          set -euo pipefail
+          bash apps/macos/scripts/ci-preflight-free-space.sh
+
       - name: Prepare macOS notary credentials
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         env:
