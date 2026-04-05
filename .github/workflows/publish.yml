@@ -129,7 +129,8 @@ jobs:
 
           # Install Apple WWDR G3 intermediate cert
           curl -sO https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          sudo security add-certificates -k /Library/Keychains/System.keychain AppleWWDRCAG3.cer
+          # GitHub-hosted macOS images may already contain this cert.
+          sudo security add-certificates -k /Library/Keychains/System.keychain AppleWWDRCAG3.cer || true
 
           # Verify
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
