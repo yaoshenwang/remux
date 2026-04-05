@@ -16,13 +16,14 @@ jobs:
     steps:
       - name: Ensure GitHub release exists
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --latest
+          REPO="${GITHUB_REPOSITORY}"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$REPO" --latest
           else
-            gh release create "$TAG" --verify-tag --generate-notes --latest
+            gh release create "$TAG" --repo "$REPO" --verify-tag --generate-notes --latest
           fi
 
   # ── npm publish (@latest) ────────────────────────────
@@ -102,7 +103,20 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # Import certificates
-          echo "$CERTIFICATES_P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          python3 <<'PYEOF'
+          import base64, os, pathlib
+
+          runner_temp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          runner_temp.joinpath("certs.p12").write_bytes(
+              base64.b64decode(os.environ["CERTIFICATES_P12"])
+          )
+
+          private_keys = pathlib.Path.home() / ".private_keys"
+          private_keys.mkdir(parents=True, exist_ok=True)
+          private_keys.joinpath(f"AuthKey_{os.environ['API_KEY_ID']}.p8").write_bytes(
+              base64.b64decode(os.environ["API_KEY_P8"])
+          )
+          PYEOF
           security import "$RUNNER_TEMP/certs.p12" \
             -P "$CERTIFICATES_PASSWORD" \
             -A -t cert -f pkcs12 \
@@ -116,10 +130,6 @@ jobs:
           # Install Apple WWDR G3 intermediate cert
           curl -sO https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
           sudo security add-certificates -k /Library/Keychains/System.keychain AppleWWDRCAG3.cer
-
-          # Set up API key
-          mkdir -p ~/.private_keys
-          echo "$API_KEY_P8" | base64 --decode > ~/.private_keys/AuthKey_${API_KEY_ID}.p8
 
           # Verify
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"

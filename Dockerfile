@@ -3,14 +3,11 @@ FROM node:24-slim
 
 WORKDIR /app
 
-# Install only production dependencies
-COPY package.json pnpm-lock.yaml ./
+# Install only production dependencies and ship the bundled entrypoints
+COPY package.json pnpm-lock.yaml server.js pty-daemon.js ./
 RUN corepack enable && pnpm install --frozen-lockfile --prod
 
-# Copy built server and assets
-COPY server.js ./
-COPY node_modules/ghostty-web/dist/ ./node_modules/ghostty-web/dist/
-COPY node_modules/ghostty-web/ghostty-vt.wasm ./node_modules/ghostty-web/
+ENV NODE_ENV=production
 
 # Default port
 ENV PORT=8767
