@@ -147,7 +147,8 @@ jobs:
       - name: Verify signing identity
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
-          security find-identity -v -p codesigning | grep "Developer ID Application"
+          set -euo pipefail
+          bash apps/macos/scripts/resolve-signing-identity.sh
 
       - name: Align macOS app version with release tag
         if: steps.guard_release_assets.outputs.skip_all != 'true'
