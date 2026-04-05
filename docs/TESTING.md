@@ -42,6 +42,21 @@ pnpm run typecheck && pnpm test && pnpm run build
 
 Add `pnpm run test:e2e` when the change affects frontend or transport behavior.
 
+## Release Static Checks
+
+When a change touches packaging, official install docs, native release automation, or promotion-to-`main` policy, also run:
+
+```bash
+pnpm run verify:package-smoke
+pnpm run verify:release-readiness:docs
+```
+
+What these commands cover:
+
+- `pnpm run verify:package-smoke`: builds the package, installs the packed tarball into a clean temp directory, launches the CLI, and probes the served UI
+- `pnpm run verify:release-readiness:docs`: confirms active docs point to the canonical public entrypoints
+- `pnpm run verify:release-readiness`: checks the hosted web shell, npm dist-tag, GitHub release assets (DMG, appcast, remote daemon binaries + manifest), Homebrew tap, and public TestFlight link/state
+
 ## Release Gate
 
 Passing the merge gate is not enough to call Remux "release-ready".
@@ -62,6 +77,14 @@ That means a release-ready state must include:
 - active documentation links that resolve to the real install or usage paths users need
 
 If any official surface lacks a current download path, public install route, or directly usable first-run experience, the repository may be merge-ready but it is not release-ready.
+
+The public release gate command is:
+
+```bash
+pnpm run verify:release-readiness
+```
+
+That command verifies the current public Web, npm, macOS, and iOS entrypoints, including the active GitHub release assets, npm `latest` package, TestFlight public link, and the canonical docs entry.
 
 ## Native Dependency Note
 

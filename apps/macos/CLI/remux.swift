@@ -4655,13 +4655,11 @@ struct REMUXCLI {
         let downloadURL = entry?.downloadURL ?? "unknown"
         let checksumsAssetName = manifest?.checksumsAssetName ?? "unknown"
         let checksumsURL = manifest?.checksumsURL ?? "unknown"
-        let downloadCommand = "gh release download \(releaseTag) --repo yaoshenwang/remux-macos --pattern \(assetName)"
-        let downloadChecksumsCommand = "gh release download \(releaseTag) --repo yaoshenwang/remux-macos --pattern \(checksumsAssetName)"
+        let downloadCommand = "gh release download \(releaseTag) --repo yaoshenwang/remux --pattern \(assetName)"
+        let downloadChecksumsCommand = "gh release download \(releaseTag) --repo yaoshenwang/remux --pattern \(checksumsAssetName)"
         let checksumVerifyCommand = "shasum -a 256 -c \(checksumsAssetName) --ignore-missing"
-        let signerWorkflow = releaseTag == "nightly"
-            ? "yaoshenwang/remux-macos/.github/workflows/nightly.yml"
-            : "yaoshenwang/remux-macos/.github/workflows/release.yml"
-        let verifyCommand = "gh attestation verify ./\(assetName) --repo yaoshenwang/remux-macos --signer-workflow \(signerWorkflow)"
+        let signerWorkflow = "yaoshenwang/remux/.github/workflows/publish.yml"
+        let verifyCommand = "gh attestation verify ./\(assetName) --repo yaoshenwang/remux --signer-workflow \(signerWorkflow)"
 
         let payload: [String: Any] = [
             "app_version": remoteDaemonVersionString(from: info),
@@ -13273,7 +13271,7 @@ struct REMUXCLI {
         print()
         print("  \(bold)Docs\(reset)\(subdued)                https://remux.yaoshen.wang/docs\(reset)")
         print("  \(bold)Discord\(reset)\(subdued)             https://discord.gg/xsgFEVrWCZ\(reset)")
-        print("  \(bold)GitHub\(reset)\(subdued)              https://github.com/yaoshenwang/remux-macos (please leave a star ⭐)\(reset)")
+        print("  \(bold)GitHub\(reset)\(subdued)              https://github.com/yaoshenwang/remux (please leave a star ⭐)\(reset)")
         print("  \(bold)Email\(reset)\(subdued)               founders@manaflow.com\(reset)")
         print()
         print("  \(subdued)Run \(reset)\(bold)remux --help\(reset)\(subdued) for all commands.\(reset)")

@@ -2,7 +2,7 @@
 <p align="center">A Ghostty-based macOS terminal with vertical tabs and notifications for AI coding agents</p>
 
 <p align="center">
-  <a href="https://github.com/manaflow-ai/remux/releases/latest/download/remux-macos.dmg">
+  <a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
     <img src="./docs/assets/macos-badge.png" alt="Download remux for macOS" width="180" />
   </a>
 </p>
@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://x.com/manaflowai"><img src="https://img.shields.io/badge/@manaflow-555?logo=x" alt="X / Twitter" /></a>
   <a href="https://discord.gg/xsgFEVrWCZ"><img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord" /></a>
-  <a href="https://github.com/manaflow-ai/remux"><img src="https://img.shields.io/github/stars/manaflow-ai/remux?style=flat&logo=github&label=stars&color=4c71f2" alt="GitHub stars" /></a>
+  <a href="https://github.com/yaoshenwang/remux"><img src="https://img.shields.io/github/stars/yaoshenwang/remux?style=flat&logo=github&label=stars&color=4c71f2" alt="GitHub stars" /></a>
 </p>
 
 <p align="center">
@@ -95,7 +95,7 @@ Sidebar shows git branch, linked PR status/number, working directory, listening 
 
 ### DMG (recommended)
 
-<a href="https://github.com/manaflow-ai/remux/releases/latest/download/remux-macos.dmg">
+<a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
   <img src="./docs/assets/macos-badge.png" alt="Download remux for macOS" width="180" />
 </a>
 
@@ -104,14 +104,13 @@ Open the `.dmg` and drag remux to your Applications folder. remux auto-updates v
 ### Homebrew
 
 ```bash
-brew tap manaflow-ai/remux
-brew install --cask remux
+brew install --cask yaoshenwang/tap/remux-app
 ```
 
 To update later:
 
 ```bash
-brew upgrade --cask remux
+brew upgrade --cask yaoshenwang/tap/remux-app
 ```
 
 On first launch, macOS may ask you to confirm opening an app from an identified developer. Click **Open** to proceed.
@@ -230,11 +229,9 @@ Browser developer-tool shortcuts follow Safari defaults and are customizable in 
 
 ## Nightly Builds
 
-[Download remux NIGHTLY](https://github.com/manaflow-ai/remux/releases/download/nightly/remux-nightly-macos.dmg)
+Nightly macOS artifacts are not currently published from `yaoshenwang/remux`.
 
-remux NIGHTLY is a separate app with its own bundle ID, so it runs alongside the stable version. Built automatically from the latest `main` commit and auto-updates via its own Sparkle feed.
-
-Report nightly bugs on [GitHub Issues](https://github.com/manaflow-ai/remux/issues) or in [#nightly-bugs on Discord](https://discord.gg/xsgFEVrWCZ).
+Until a nightly pipeline is restored in this repository, use the stable DMG above as the official public macOS install path.
 
 ## Session restore (current behavior)
 
@@ -248,11 +245,11 @@ remux does **not** restore live process state inside terminal apps. For example,
 
 ## Star History
 
-<a href="https://star-history.com/#manaflow-ai/remux&Date">
+<a href="https://star-history.com/#yaoshenwang/remux&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/remux&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/remux&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=manaflow-ai/remux&type=Date" width="600" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" width="600" />
  </picture>
 </a>
 
@@ -262,13 +259,13 @@ Ways to get involved:
 
 - Follow us on X for updates [@manaflowai](https://x.com/manaflowai), [@lawrencecchen](https://x.com/lawrencecchen), and [@austinywang](https://x.com/austinywang)
 - Join the conversation on [Discord](https://discord.gg/xsgFEVrWCZ)
-- Create and participate in [GitHub issues](https://github.com/manaflow-ai/remux/issues) and [discussions](https://github.com/manaflow-ai/remux/discussions)
+- Create and participate in [GitHub issues](https://github.com/yaoshenwang/remux/issues) and [discussions](https://github.com/yaoshenwang/remux/discussions)
 - Let us know what you're building with remux
 
 ## Community
 
 - [Discord](https://discord.gg/xsgFEVrWCZ)
-- [GitHub](https://github.com/manaflow-ai/remux)
+- [GitHub](https://github.com/yaoshenwang/remux)
 - [X / Twitter](https://twitter.com/manaflowai)
 - [YouTube](https://www.youtube.com/channel/UCAa89_j-TWkrXfk9A3CbASw)
 - [LinkedIn](https://www.linkedin.com/company/manaflow-ai/)

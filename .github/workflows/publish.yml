@@ -9,6 +9,22 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  ensure-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --latest
+          else
+            gh release create "$TAG" --verify-tag --generate-notes --latest
+          fi
+
   # ── npm publish (@latest) ────────────────────────────
   npm:
     runs-on: ubuntu-latest
@@ -172,11 +188,11 @@ jobs:
             --apiKey "$API_KEY_ID" \
             --apiIssuer "$API_ISSUER_ID"
 
-      - name: Set export compliance
+      - name: Configure TestFlight distribution
         run: |
           pip3 install PyJWT cryptography
           python3 << 'PYEOF'
-          import jwt, time, json, urllib.request, os
+          import jwt, time, json, pathlib, urllib.request, urllib.error, os
 
           with open(os.path.expanduser(f"~/.private_keys/AuthKey_{os.environ['API_KEY_ID']}.p8")) as f:
               key = f.read()
@@ -186,9 +202,106 @@ jobs:
               key, algorithm="ES256",
               headers={"kid": os.environ["API_KEY_ID"], "typ": "JWT"})
 
+          ios_config = json.loads(pathlib.Path("scripts/release-readiness.config.json").read_text())["stable"]["ios"]
+
+          def asc_request(method, url, payload=None):
+              body = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  url,
+                  data=body,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+              )
+              try:
+                  response = urllib.request.urlopen(req).read().decode()
+                  return json.loads(response) if response else None
+              except urllib.error.HTTPError as exc:
+                  error_body = exc.read().decode()
+                  if exc.code in (409, 422):
+                      return {"error": {"status": exc.code, "body": error_body}}
+                  raise RuntimeError(f"{method} {url} failed: {exc.code} {error_body}") from exc
+
+          def list_groups():
+              data = asc_request(
+                  "GET",
+                  f"https://api.appstoreconnect.apple.com/v1/betaGroups?filter[app]={ios_config['appId']}&limit=200",
+              )
+              return data.get("data", [])
+
+          def ensure_group(name, is_internal, public_link_enabled=False):
+              groups = list_groups()
+              for group in groups:
+                  attrs = group.get("attributes", {})
+                  if attrs.get("name") == name and attrs.get("isInternalGroup") == is_internal:
+                      return group
+
+              payload = {
+                  "data": {
+                      "type": "betaGroups",
+                      "attributes": {
+                          "name": name,
+                          "isInternalGroup": is_internal,
+                          "feedbackEnabled": True,
+                      },
+                      "relationships": {
+                          "app": {"data": {"type": "apps", "id": ios_config["appId"]}}
+                      },
+                  }
+              }
+              if not is_internal:
+                  payload["data"]["attributes"]["publicLinkEnabled"] = public_link_enabled
+                  payload["data"]["attributes"]["publicLinkLimitEnabled"] = False
+
+              created = asc_request("POST", "https://api.appstoreconnect.apple.com/v1/betaGroups", payload)
+              return created["data"]
+
+          def ensure_localization(localization):
+              current = asc_request(
+                  "GET",
+                  f"https://api.appstoreconnect.apple.com/v1/betaAppLocalizations?filter[app]={ios_config['appId']}&limit=200",
+              ).get("data", [])
+              if any(item.get("attributes", {}).get("locale") == localization["locale"] for item in current):
+                  return
+
+              payload = {
+                  "data": {
+                      "type": "betaAppLocalizations",
+                      "attributes": localization,
+                      "relationships": {
+                          "app": {"data": {"type": "apps", "id": ios_config["appId"]}}
+                      },
+                  }
+              }
+              asc_request("POST", "https://api.appstoreconnect.apple.com/v1/betaAppLocalizations", payload)
+
+          def ensure_review_detail():
+              review = ios_config["reviewContact"]
+              payload = {
+                  "data": {
+                      "type": "betaAppReviewDetails",
+                      "id": ios_config["appId"],
+                      "attributes": {
+                          "contactFirstName": review["firstName"],
+                          "contactLastName": review["lastName"],
+                          "contactEmail": review["email"],
+                          "contactPhone": review["phone"],
+                          "demoAccountRequired": False,
+                          "notes": "Validate install, first launch, and manual connect using a Remux server URL and token.",
+                      },
+                  }
+              }
+              asc_request(
+                  "PATCH",
+                  f"https://api.appstoreconnect.apple.com/v1/betaAppReviewDetails/{ios_config['appId']}",
+                  payload,
+              )
+
           # Find latest build
           req = urllib.request.Request(
-              f"https://api.appstoreconnect.apple.com/v1/builds?filter[app]=6761521429&sort=-uploadedDate&limit=1",
+              f"https://api.appstoreconnect.apple.com/v1/builds?filter[app]={ios_config['appId']}&sort=-uploadedDate&limit=1",
               headers={"Authorization": f"Bearer {token}"})
           data = json.loads(urllib.request.urlopen(req).read())
           build_id = data["data"][0]["id"]
@@ -202,6 +315,48 @@ jobs:
               headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
           urllib.request.urlopen(req)
           print(f"✓ Export compliance set for build {build_id}")
+
+          ensure_group(ios_config["internalGroupName"], True)
+          public_group = ensure_group(ios_config["externalGroupName"], False, True)
+          for localization in ios_config["localizations"]:
+              ensure_localization(localization)
+          ensure_review_detail()
+
+          add_build_payload = {
+              "data": [
+                  {"type": "builds", "id": build_id}
+              ]
+          }
+          asc_request(
+              "POST",
+              f"https://api.appstoreconnect.apple.com/v1/betaGroups/{public_group['id']}/relationships/builds",
+              add_build_payload,
+          )
+
+          build_beta_details = asc_request(
+              "GET",
+              f"https://api.appstoreconnect.apple.com/v1/buildBetaDetails?filter[build]={build_id}",
+          )
+          external_state = build_beta_details["data"][0]["attributes"]["externalBuildState"]
+          if external_state == "READY_FOR_BETA_SUBMISSION":
+              submission_payload = {
+                  "data": {
+                      "type": "betaAppReviewSubmissions",
+                      "relationships": {
+                          "build": {"data": {"type": "builds", "id": build_id}}
+                      },
+                  }
+              }
+              asc_request(
+                  "POST",
+                  "https://api.appstoreconnect.apple.com/v1/betaAppReviewSubmissions",
+                  submission_payload,
+              )
+              external_state = "WAITING_FOR_REVIEW"
+
+          public_link = public_group["attributes"].get("publicLink") or ios_config["publicLink"]
+          print(f"✓ Public TestFlight link: {public_link}")
+          print(f"✓ External beta state: {external_state}")
           PYEOF
         env:
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -214,6 +369,7 @@ jobs:
   # ── macOS app (.dmg) → signed + notarized + GitHub Release ──
   # Runs on self-hosted runner (Mac Mini) which has Developer ID cert installed
   macos:
+    needs: [ensure-release]
     runs-on: [self-hosted, remux-deploy]
     permissions:
       contents: write
@@ -226,61 +382,19 @@ jobs:
         run: |
           security find-identity -v -p codesigning | grep "Developer ID Application"
 
-      - name: Build GhosttyKit xcframework (if needed)
-        run: |
-          XCFW="vendor/ghostty/macos/GhosttyKit.xcframework"
-          if [ ! -d "$XCFW" ] || [ ! -f "$XCFW/Info.plist" ]; then
-            cd vendor/ghostty
-            zig build -Demit-xcframework=true -Dxcframework-target=native -Doptimize=ReleaseFast
-          fi
-
-      - name: Build, sign, and notarize DMG
-        env:
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Align macOS app version with release tag
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
+          cd apps/macos
+          ./scripts/bump-version.sh "$VERSION"
 
-          # Build .app and DMG
-          bash scripts/build-dmg.sh "$VERSION"
-
-          # Sign with Developer ID + hardened runtime + timestamp
-          codesign --force --deep --options runtime --timestamp \
-            --sign "Developer ID Application: Yaoshen Wang ($TEAM_ID)" \
-            "build/Remux.app"
-
-          # Rebuild DMG with signed app
-          DMG="build/Remux-${VERSION}-arm64.dmg"
-          rm -f "$DMG"
-          hdiutil create -volname "Remux" \
-            -srcfolder build/Remux.app \
-            -ov -format UDZO "$DMG"
-          codesign --force --timestamp \
-            --sign "Developer ID Application: Yaoshen Wang ($TEAM_ID)" "$DMG"
-
-          # Notarize
-          xcrun notarytool submit "$DMG" \
-            --key ~/.private_keys/AuthKey_${API_KEY_ID}.p8 \
-            --key-id "$API_KEY_ID" \
-            --issuer "$API_ISSUER_ID" \
-            --wait
-
-          xcrun stapler staple "$DMG"
-
-      - name: Upload DMG to GitHub Release
+      - name: Build, sign, notarize, and upload DMG
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REMUX_SKIP_HOMEBREW_UPDATE: "true"
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-          DMG="build/Remux-${VERSION}-arm64.dmg"
-
-          if [ -f "$DMG" ]; then
-            gh release upload "$TAG" "$DMG" --clobber
-            echo "✓ Uploaded $DMG to release $TAG"
-          fi
+          bash scripts/build-dmg.sh "$TAG"
 
   # ── Update Homebrew tap ─────────────────────────────
   homebrew:
@@ -301,15 +415,54 @@ jobs:
           git clone https://x-access-token:${GH_TOKEN}@github.com/yaoshenwang/homebrew-tap /tmp/tap
           cd /tmp/tap
 
-          # Update cask version
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/remux-app.rb
+          DMG_URL="https://github.com/yaoshenwang/remux/releases/download/${TAG}/remux-macos.dmg"
+          NPM_URL="https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
+          DMG_SHA=$(curl -fsSL "$DMG_URL" | sha256sum | cut -d' ' -f1)
+          NPM_SHA=$(curl -fsSL "$NPM_URL" | sha256sum | cut -d' ' -f1)
 
-          # Update formula URL
-          sed -i "s|remux-.*\.tgz|remux-${VERSION}.tgz|" Formula/remux.rb
+          cat > Casks/remux-app.rb <<EOF
+          cask "remux-app" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA}"
 
-          # Compute sha256 for npm tarball
-          NPM_SHA=$(curl -sL "https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz" | sha256sum | cut -d' ' -f1)
-          sed -i "s/sha256 \".*\"/sha256 \"${NPM_SHA}\"/" Formula/remux.rb
+            url "https://github.com/yaoshenwang/remux/releases/download/v#{version}/remux-macos.dmg"
+            name "Remux"
+            desc "Remote terminal workspace — native macOS app"
+            homepage "https://github.com/yaoshenwang/remux"
+
+            depends_on macos: ">= :sonoma"
+            depends_on arch: :arm64
+
+            app "remux.app"
+
+            zap trash: [
+              "~/Library/Application Support/com.remux",
+              "~/Library/Preferences/com.remux.desktop.plist",
+            ]
+          end
+          EOF
+
+          cat > Formula/remux.rb <<EOF
+          class Remux < Formula
+            desc "Remote terminal workspace — powered by ghostty-web"
+            homepage "https://github.com/yaoshenwang/remux"
+            license "GPL-3.0-or-later"
+
+            url "https://registry.npmjs.org/@wangyaoshen/remux/-/remux-${VERSION}.tgz"
+            sha256 "${NPM_SHA}"
+
+            depends_on "node@24"
+
+            def install
+              system Formula["node@24"].opt_bin/"npm", "install", *std_npm_args
+              bin.install_symlink Dir["#{libexec}/bin/*"]
+            end
+
+            test do
+              assert_predicate bin/"remux", :exist?
+            end
+          end
+          EOF
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

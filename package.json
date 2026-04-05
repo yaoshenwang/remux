@@ -1,6 +1,6 @@
 {
   "name": "@wangyaoshen/remux",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "Remote terminal workspace — powered by ghostty-web",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -19,6 +19,9 @@
     "pretest": "pnpm run build",
     "test": "vitest run",
     "test:e2e": "npx playwright test",
+    "verify:package-smoke": "node scripts/smoke-npm-package.mjs",
+    "verify:release-readiness:docs": "node scripts/check-release-readiness.mjs --mode docs",
+    "verify:release-readiness": "node scripts/check-release-readiness.mjs --mode public",
     "postinstall": "node --input-type=commonjs -e \"var fs=require('fs'),p=require('path');['darwin-arm64','darwin-x64'].forEach(function(d){var f=p.join('node_modules','node-pty','prebuilds',d,'spawn-helper');try{fs.chmodSync(f,0o755)}catch(e){}})\""
   },
   "packageManager": "pnpm@10.26.2",

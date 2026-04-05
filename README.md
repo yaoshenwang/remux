@@ -9,6 +9,15 @@ Remux lets you monitor and control terminal sessions from any device — phone, 
 
 This repository is now the Remux monorepo: the Node.js gateway and browser shell remain at the root, while the full macOS client lives in [`apps/macos`](./apps/macos) and the iOS surface remains in [`apps/ios`](./apps/ios).
 
+## Official Surfaces
+
+The canonical public entrypoints for Web, npm, macOS, and iOS live in [`docs/OFFICIAL_SURFACES.md`](./docs/OFFICIAL_SURFACES.md).
+
+- Web: `https://remux.yaoshen.wang`
+- npm / CLI: `npx @wangyaoshen/remux`
+- macOS: signed DMG on GitHub Releases
+- iOS: public TestFlight beta
+
 ## Why Remux
 
 - Access your terminal sessions from any browser, including mobile

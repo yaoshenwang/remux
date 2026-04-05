@@ -46,14 +46,18 @@ if [[ $# -ne 1 ]]; then
 fi
 
 TAG="$1"
+VERSION="${TAG#v}"
+REPO_SLUG="yaoshenwang/remux"
 SIGN_HASH="A050CC7E193C8221BDBA204E731B046CDCCC1B30"
 ENTITLEMENTS="remux.entitlements"
 APP_PATH="build/Build/Products/Release/remux.app"
+REMOTE_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remux-release-assets.XXXXXX")"
+trap 'rm -rf "$REMOTE_ASSET_DIR" build/ remux-macos.dmg appcast.xml' EXIT
 
 # --- Pre-flight ---
 source ~/.secrets/remux.env
 export SPARKLE_PRIVATE_KEY
-for tool in zig xcodebuild create-dmg xcrun codesign ditto gh; do
+for tool in zig xcodebuild create-dmg xcrun codesign ditto gh go python3 plutil; do
   command -v "$tool" >/dev/null || { echo "MISSING: $tool" >&2; exit 1; }
 done
 echo "Pre-flight checks passed"
@@ -80,14 +84,34 @@ if [ ! -x "$HELPER_PATH" ]; then
   exit 1
 fi
 
+# --- Build remote daemon release assets and embed manifest ---
+echo "Building remote daemon release assets..."
+./scripts/build_remote_daemon_release_assets.sh \
+  --version "$VERSION" \
+  --release-tag "$TAG" \
+  --repo "$REPO_SLUG" \
+  --output-dir "$REMOTE_ASSET_DIR"
+
+REMOTE_MANIFEST_PATH="$REMOTE_ASSET_DIR/remuxd-remote-manifest.json"
+if [ ! -f "$REMOTE_MANIFEST_PATH" ]; then
+  echo "Missing remote daemon manifest at $REMOTE_MANIFEST_PATH" >&2
+  exit 1
+fi
+
 # --- Inject Sparkle keys ---
 echo "Injecting Sparkle keys..."
 SPARKLE_PUBLIC_KEY_DERIVED=$(swift scripts/derive_sparkle_public_key.swift "$SPARKLE_PRIVATE_KEY")
+REMOTE_MANIFEST_JSON=$(
+  python3 -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",", ":")))' \
+    "$REMOTE_MANIFEST_PATH"
+)
 APP_PLIST="$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$APP_PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP_PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY_DERIVED" "$APP_PLIST"
 /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://github.com/yaoshenwang/remux/releases/latest/download/appcast.xml" "$APP_PLIST"
+plutil -remove REMUXRemoteDaemonManifestJSON "$APP_PLIST" >/dev/null 2>&1 || true
+plutil -insert REMUXRemoteDaemonManifestJSON -string "$REMOTE_MANIFEST_JSON" "$APP_PLIST"
 echo "Sparkle keys injected"
 
 # --- Codesign ---
@@ -128,12 +152,19 @@ echo "DMG notarized"
 echo "Generating appcast..."
 ./scripts/sparkle_generate_appcast.sh remux-macos.dmg "$TAG" appcast.xml
 
+REMOTE_RELEASE_ASSET_PATHS=( "$REMOTE_ASSET_DIR"/remuxd-remote-* )
+RELEASE_ASSET_PATHS=( remux-macos.dmg appcast.xml "${REMOTE_RELEASE_ASSET_PATHS[@]}" )
+RELEASE_ASSET_NAMES=()
+for asset_path in "${RELEASE_ASSET_PATHS[@]}"; do
+  RELEASE_ASSET_NAMES+=( "$(basename "$asset_path")" )
+done
+
 # --- Create GitHub release (if needed) and upload ---
 if gh release view "$TAG" >/dev/null 2>&1; then
   echo "Release $TAG already exists"
   EXISTING_ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)"
   HAS_CONFLICTING_ASSET="false"
-  for asset in remux-macos.dmg appcast.xml; do
+  for asset in "${RELEASE_ASSET_NAMES[@]}"; do
     if printf '%s\n' "$EXISTING_ASSETS" | grep -Fxq "$asset"; then
       HAS_CONFLICTING_ASSET="true"
       break
@@ -148,21 +179,21 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 
   if [[ "$ALLOW_OVERWRITE" == "true" ]]; then
     echo "Uploading with overwrite enabled for existing release $TAG..."
-    gh release upload "$TAG" remux-macos.dmg appcast.xml --clobber
+    gh release upload "$TAG" "${RELEASE_ASSET_PATHS[@]}" --clobber
   else
     echo "Uploading to existing release $TAG..."
-    gh release upload "$TAG" remux-macos.dmg appcast.xml
+    gh release upload "$TAG" "${RELEASE_ASSET_PATHS[@]}"
   fi
 else
   echo "Creating release $TAG and uploading..."
-  gh release create "$TAG" remux-macos.dmg appcast.xml --title "$TAG" --notes "See CHANGELOG.md for details"
+  gh release create "$TAG" "${RELEASE_ASSET_PATHS[@]}" --title "$TAG" --notes "See CHANGELOG.md for details"
 fi
 
 # --- Verify ---
 gh release view "$TAG"
 
 # --- Update Homebrew cask (skip for nightlies) ---
-if [[ "$TAG" != *"-nightly"* ]]; then
+if [[ "${REMUX_SKIP_HOMEBREW_UPDATE:-false}" != "true" && "$TAG" != *"-nightly"* ]]; then
   VERSION="${TAG#v}"
   DMG_SHA256=$(shasum -a 256 remux-macos.dmg | cut -d' ' -f1)
   echo "Updating homebrew cask to $VERSION (SHA: $DMG_SHA256)..."
@@ -210,8 +241,6 @@ CASKEOF
   fi
 fi
 
-# --- Cleanup ---
-rm -rf build/ remux-macos.dmg appcast.xml
 echo ""
 echo "=== Release $TAG complete ==="
 say "remux release complete"

@@ -209,7 +209,7 @@ function HomeContent() {
                 {t.rich("faqFreeA", {
                   link: (chunks) => (
                     <a
-                      href="https://github.com/manaflow-ai/cmux"
+                      href="https://github.com/yaoshenwang/remux"
                       className={linkClass}
                     >
                       {chunks}

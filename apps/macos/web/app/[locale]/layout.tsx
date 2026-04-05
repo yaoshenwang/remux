@@ -97,7 +97,7 @@ export default async function LocaleLayout({
     applicationCategory: "DeveloperApplication",
     url: "https://cmux.com",
     downloadUrl:
-      "https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg",
+      "https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg",
     description:
       "Native macOS terminal built on Ghostty. Works with Claude Code, Codex, OpenCode, Gemini CLI, Kiro, Aider, and any CLI tool. Vertical tabs, notification rings, split panes, and a socket API.",
     keywords:

@@ -500,7 +500,7 @@ enum UpdateState: Equatable {
 
             if let semver = Self.extractSemanticVersion(from: version) {
                 let tag = semver.hasPrefix("v") ? semver : "v\(semver)"
-                if let url = URL(string: "https://github.com/yaoshenwang/remux-macos/releases/tag/\(tag)") {
+                if let url = URL(string: "https://github.com/yaoshenwang/remux/releases/tag/\(tag)") {
                     self = .tagged(url)
                     return
                 }
@@ -510,7 +510,7 @@ enum UpdateState: Equatable {
                 return nil
             }
 
-            if let url = URL(string: "https://github.com/yaoshenwang/remux-macos/commit/\(newHash)") {
+            if let url = URL(string: "https://github.com/yaoshenwang/remux/commit/\(newHash)") {
                 self = .commit(url)
             } else {
                 return nil

@@ -56,6 +56,25 @@ function connectWs() {
   });
 }
 
+function waitForChildExit(proc, timeout = 5000) {
+  if (!proc || proc.exitCode !== null) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const handleExit = () => {
+      clearTimeout(timer);
+      proc.removeListener("exit", handleExit);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      if (proc.exitCode === null) proc.kill("SIGKILL");
+    }, timeout);
+
+    proc.once("exit", handleExit);
+    proc.kill("SIGTERM");
+  });
+}
+
 /**
  * Unwrap envelope: if message has v:1, flatten type + payload.
  * This allows tests to work with both enveloped and legacy messages.
@@ -83,6 +102,24 @@ async function connectAuthed() {
 function sendAndCollect(ws, msg, { timeout = 3000, filter } = {}) {
   return new Promise((resolve) => {
     const messages = [];
+    let sawMessage = false;
+    let idleTimer = null;
+    let finished = false;
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(maxTimer);
+      clearTimeout(idleTimer);
+      ws.removeListener("message", handler);
+      resolve(messages);
+    };
+
+    const armIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(finish, 150);
+    };
+
     const handler = (raw) => {
       const s = raw.toString();
       try {
@@ -91,12 +128,13 @@ function sendAndCollect(ws, msg, { timeout = 3000, filter } = {}) {
       } catch {
         messages.push({ _raw: s });
       }
+      sawMessage = true;
+      armIdleTimer();
     };
     ws.on("message", handler);
     if (msg) ws.send(JSON.stringify(msg));
-    setTimeout(() => {
-      ws.removeListener("message", handler);
-      resolve(messages);
+    const maxTimer = setTimeout(() => {
+      if (!sawMessage) finish();
     }, timeout);
   });
 }
@@ -175,8 +213,8 @@ beforeAll(async () => {
   throw new Error(`Server HTTP not ready after polling. stderr: ${stderrBuf}`);
 }, 35000);
 
-afterAll(() => {
-  if (serverProc) serverProc.kill("SIGTERM");
+afterAll(async () => {
+  await waitForChildExit(serverProc);
   fs.rmSync(REMUX_HOME, { recursive: true, force: true });
 });
 

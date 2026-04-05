@@ -10542,8 +10542,8 @@ enum FeedbackComposerBridge {
 private struct SidebarHelpMenuButton: View {
     private let docsURL = URL(string: "https://remux.yaoshen.wang/docs")
     private let changelogURL = URL(string: "https://remux.yaoshen.wang/docs/changelog")
-    private let githubURL = URL(string: "https://github.com/yaoshenwang/remux-macos")
-    private let githubIssuesURL = URL(string: "https://github.com/yaoshenwang/remux-macos/issues")
+    private let githubURL = URL(string: "https://github.com/yaoshenwang/remux")
+    private let githubIssuesURL = URL(string: "https://github.com/yaoshenwang/remux/issues")
     private let discordURL = URL(string: "https://discord.gg/xsgFEVrWCZ")
     private let helpTitle = String(localized: "sidebar.help.button", defaultValue: "Help")
     private let buttonSize: CGFloat = 22

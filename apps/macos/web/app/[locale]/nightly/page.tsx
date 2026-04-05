@@ -53,7 +53,7 @@ export default function NightlyPage() {
 
         {/* Download button */}
         <a
-          href="https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-macos.dmg"
+          href="https://github.com/yaoshenwang/remux/releases"
           className="inline-flex items-center gap-2.5 rounded-full font-medium bg-foreground hover:opacity-85 transition-opacity px-5 py-2.5 text-[15px]"
           style={{ color: "var(--background)", textDecoration: "none" }}
         >
@@ -75,7 +75,7 @@ export default function NightlyPage() {
           {t.rich("warning", {
             githubLink: (chunks) => (
               <a
-                href="https://github.com/manaflow-ai/cmux/issues"
+                href="https://github.com/yaoshenwang/remux/issues"
                 target="_blank"
                 rel="noopener noreferrer"
                 className={linkClass}

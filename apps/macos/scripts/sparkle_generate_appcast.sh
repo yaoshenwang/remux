@@ -16,8 +16,8 @@ if [[ -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
 fi
 
 SPARKLE_VERSION="${SPARKLE_VERSION:-2.8.1}"
-DOWNLOAD_URL_PREFIX="${DOWNLOAD_URL_PREFIX:-https://github.com/yaoshenwang/remux-macos/releases/download/$TAG/}"
-RELEASE_NOTES_URL="${RELEASE_NOTES_URL:-https://github.com/yaoshenwang/remux-macos/releases/tag/$TAG}"
+DOWNLOAD_URL_PREFIX="${DOWNLOAD_URL_PREFIX:-https://github.com/yaoshenwang/remux/releases/download/$TAG/}"
+RELEASE_NOTES_URL="${RELEASE_NOTES_URL:-https://github.com/yaoshenwang/remux/releases/tag/$TAG}"
 
 work_dir="$(mktemp -d)"
 cleanup() {
