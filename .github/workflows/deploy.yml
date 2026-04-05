@@ -41,11 +41,24 @@ jobs:
           fi
 
       - name: Pull latest code
-        working-directory: ${{ steps.target.outputs.worktree }}
         run: |
-          git fetch origin ${{ steps.target.outputs.branch }}
-          git reset --hard
-          git checkout --detach origin/${{ steps.target.outputs.branch }}
+          set -euo pipefail
+          WORKTREE="${{ steps.target.outputs.worktree }}"
+          BRANCH="${{ steps.target.outputs.branch }}"
+          REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git"
+
+          mkdir -p "$(dirname "$WORKTREE")"
+
+          if ! git -C "$WORKTREE" rev-parse --show-toplevel >/dev/null 2>&1; then
+            echo "Runtime worktree at $WORKTREE is missing or invalid; recreating checkout"
+            rm -rf "$WORKTREE"
+            git clone --no-checkout "$REPO_URL" "$WORKTREE"
+          fi
+
+          git -C "$WORKTREE" remote set-url origin "$REPO_URL"
+          git -C "$WORKTREE" fetch origin "$BRANCH"
+          git -C "$WORKTREE" reset --hard
+          git -C "$WORKTREE" checkout --detach "origin/$BRANCH"
 
       - name: Install dependencies
         working-directory: ${{ steps.target.outputs.worktree }}
