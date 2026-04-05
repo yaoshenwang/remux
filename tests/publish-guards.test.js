@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -7,6 +8,13 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
 function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+}
+
+function readGitlink(relativePath) {
+  return execFileSync("git", ["ls-tree", "HEAD", relativePath], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
 }
 
 describe("publish workflow guards", () => {
@@ -78,10 +86,7 @@ describe("publish workflow guards", () => {
     const cliHelper = readRepoFile("apps/macos/scripts/build-ghostty-cli-helper.sh");
     const helper = readRepoFile("scripts/build-ghostty-kit.sh");
     const setup = readRepoFile("apps/macos/scripts/setup.sh");
-    const vendorHeader = readRepoFile("vendor/ghostty/include/ghostty.h");
-    const vendorBuild = readRepoFile("vendor/ghostty/build.zig");
-    const vendorSurface = readRepoFile("vendor/ghostty/src/Surface.zig");
-    const vendorEmbedded = readRepoFile("vendor/ghostty/src/apprt/embedded.zig");
+    const vendorGitlink = readGitlink("vendor/ghostty");
     expect(script).toContain("ghostty/src/build/main.zig");
     expect(script).toContain('MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"');
     expect(script).toContain('$MONOREPO_GHOSTTY_DIR/src/build/main.zig');
@@ -96,14 +101,17 @@ describe("publish workflow guards", () => {
     expect(setup).toContain('MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"');
     expect(setup).toContain("Embedded apps/macos/ghostty tree is incomplete; using monorepo vendor/ghostty");
     expect(setup).toContain('git -C "$MONOREPO_ROOT" rev-parse HEAD:vendor/ghostty');
-    expect(vendorBuild).toContain('b.step("cli-helper", "Build the Ghostty CLI helper")');
-    expect(vendorBuild).toContain("cli_helper_step.dependOn(&exe.install_step.step);");
     expect(helper).toContain("-Dxcframework-target=universal");
     expect(helper).toContain("-Demit-macos-app=false");
-    expect(vendorHeader).toContain("ghostty_surface_select_cursor_cell");
-    expect(vendorHeader).toContain("ghostty_surface_clear_selection");
-    expect(vendorSurface).toContain("pub fn selectCursorCell(self: *Surface) !bool");
-    expect(vendorEmbedded).toContain("export fn ghostty_surface_select_cursor_cell(surface: *Surface) bool");
-    expect(vendorEmbedded).toContain("export fn ghostty_surface_clear_selection(surface: *Surface) bool");
+    expect(vendorGitlink).toContain("ae3cc5d298d6a913297fc4dc7cd8b08283e1fa01");
+  });
+
+  it("self-heals an invalid runtime worktree before deploy fetches the target branch", () => {
+    const workflow = readRepoFile(".github/workflows/deploy.yml");
+    expect(workflow).toContain('REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git"');
+    expect(workflow).toContain('if ! git -C "$WORKTREE" rev-parse --show-toplevel >/dev/null 2>&1; then');
+    expect(workflow).toContain('rm -rf "$WORKTREE"');
+    expect(workflow).toContain('git clone --no-checkout "$REPO_URL" "$WORKTREE"');
+    expect(workflow).toContain('git -C "$WORKTREE" checkout --detach "origin/$BRANCH"');
   });
 });
