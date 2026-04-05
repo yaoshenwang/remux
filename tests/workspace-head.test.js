@@ -3,8 +3,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
-import { _resetDbForTest, closeDb } from "../src/store.js";
-import { initWorkspaceHeadTable, getHead, updateHead } from "../src/workspace-head.js";
+import { _resetDbForTest, closeDb } from "../src/persistence/store.js";
+import { initWorkspaceHeadTable, getHead, updateHead } from "../src/domain/workspace/workspace-head.js";
 
 describe("workspace_head", () => {
   let db;

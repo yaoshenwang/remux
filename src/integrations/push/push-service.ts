@@ -14,7 +14,7 @@ import {
   getPushSubscription,
   listPushSubscriptions,
   removePushSubscription,
-} from "./store.js";
+} from "../../persistence/store.js";
 
 // ── VAPID Keys ──────────────────────────────────────────────────
 

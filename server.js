@@ -26,15 +26,165 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/store.ts
+// src/integrations/git/git-service.ts
+var git_service_exports = {};
+__export(git_service_exports, {
+  compareBranches: () => compareBranches,
+  createWorktree: () => createWorktree,
+  getGitDiff: () => getGitDiff,
+  getGitStatus: () => getGitStatus,
+  getWorktrees: () => getWorktrees,
+  initGitService: () => initGitService,
+  watchGitChanges: () => watchGitChanges
+});
+import simpleGit from "simple-git";
+function assertSafeRef(ref) {
+  if (!ref || ref.startsWith("-") || !SAFE_REF_RE.test(ref)) {
+    throw new Error(`Invalid git ref: ${ref}`);
+  }
+}
+function initGitService(cwd) {
+  git = simpleGit(cwd || process.cwd());
+}
+function getGit() {
+  if (!git) initGitService();
+  return git;
+}
+async function getGitStatus() {
+  const g = getGit();
+  const status = await g.status();
+  const log = await g.log({ maxCount: 10 });
+  return {
+    branch: status.current || "unknown",
+    status,
+    recentCommits: log.all.map((c) => ({
+      hash: c.hash.substring(0, 7),
+      message: c.message,
+      date: c.date,
+      author: c.author_name
+    }))
+  };
+}
+async function getGitDiff(base) {
+  const g = getGit();
+  const diffBase = base || "HEAD";
+  assertSafeRef(diffBase);
+  const diffText = await g.diff([diffBase]);
+  const diffStat = await g.diffSummary([diffBase]);
+  return {
+    diff: diffText.substring(0, 1024 * 1024),
+    // 1MB limit
+    files: diffStat.files.map((f) => ({
+      file: f.file,
+      insertions: "binary" in f && f.binary ? 0 : f.insertions,
+      deletions: "binary" in f && f.binary ? 0 : f.deletions
+    }))
+  };
+}
+async function getWorktrees() {
+  const g = getGit();
+  const result = await g.raw(["worktree", "list", "--porcelain"]);
+  const worktrees = [];
+  let current = {};
+  for (const line of result.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current.path) worktrees.push({
+        path: current.path,
+        branch: current.branch || "",
+        head: current.head || ""
+      });
+      current = { path: line.replace("worktree ", "") };
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.replace("HEAD ", "").substring(0, 7);
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.replace("branch refs/heads/", "");
+    }
+  }
+  if (current.path) worktrees.push({
+    path: current.path,
+    branch: current.branch || "",
+    head: current.head || ""
+  });
+  return worktrees;
+}
+async function createWorktree(branch, worktreePath) {
+  assertSafeRef(branch);
+  if (worktreePath.includes("..") || worktreePath.startsWith("/")) {
+    throw new Error(`Invalid worktree path: ${worktreePath}`);
+  }
+  const g = getGit();
+  await g.raw(["worktree", "add", "-b", branch, worktreePath, "dev"]);
+}
+async function compareBranches(base, head) {
+  assertSafeRef(base);
+  assertSafeRef(head);
+  const g = getGit();
+  const diffStat = await g.diffSummary([`${base}...${head}`]);
+  const aheadLog = await g.log({ from: base, to: head });
+  const behindLog = await g.log({ from: head, to: base });
+  return {
+    ahead: aheadLog.total,
+    behind: behindLog.total,
+    files: diffStat.files.map((f) => ({
+      file: f.file,
+      insertions: "binary" in f && f.binary ? 0 : f.insertions,
+      deletions: "binary" in f && f.binary ? 0 : f.deletions
+    }))
+  };
+}
+function watchGitChanges(onChange) {
+  const fs8 = __require("fs");
+  const path7 = __require("path");
+  const gitDir = path7.join(process.cwd(), ".git");
+  try {
+    const watcher = fs8.watch(
+      gitDir,
+      { recursive: false },
+      (eventType, filename) => {
+        if (filename === "HEAD" || filename?.startsWith("refs")) {
+          onChange();
+        }
+      }
+    );
+    return () => watcher.close();
+  } catch {
+    return () => {
+    };
+  }
+}
+var SAFE_REF_RE, git;
+var init_git_service = __esm({
+  "src/integrations/git/git-service.ts"() {
+    "use strict";
+    SAFE_REF_RE = /^[a-zA-Z0-9._\/@{}\[\]:^~-]+$/;
+    git = null;
+  }
+});
+
+// src/cli/remux-server.ts
+import fs7 from "fs";
+import http from "http";
+import path6 from "path";
+import { createRequire } from "module";
+import { fileURLToPath as fileURLToPath3 } from "url";
+import qrcode from "qrcode-terminal";
+
+// src/domain/auth/auth-service.ts
+import crypto2 from "crypto";
+
+// src/persistence/store.ts
 import Database from "better-sqlite3";
 import path from "path";
 import { homedir } from "os";
 import fs from "fs";
 import crypto from "crypto";
+var REMUX_DIR = path.join(homedir(), ".remux");
+var PORT = process.env.PORT || 8767;
+var PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
 function getDbPath() {
   return path.join(REMUX_DIR, `remux-${PERSIST_ID}.db`);
 }
+var _db = null;
 function getDb() {
   if (_db) return _db;
   if (!fs.existsSync(REMUX_DIR)) {
@@ -803,19 +953,16 @@ function getDeviceCursor(deviceId, tabId) {
     updatedAt: row.updated_at
   };
 }
-var REMUX_DIR, PORT, PERSIST_ID, _db;
-var init_store = __esm({
-  "src/store.ts"() {
-    "use strict";
-    REMUX_DIR = path.join(homedir(), ".remux");
-    PORT = process.env.PORT || 8767;
-    PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
-    _db = null;
-  }
-});
 
-// src/auth.ts
-import crypto2 from "crypto";
+// src/domain/auth/auth-service.ts
+var PASSWORD_TOKEN_TTL_MS = 24 * 60 * 60 * 1e3;
+var passwordTokens = /* @__PURE__ */ new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, expiresAt] of passwordTokens) {
+    if (now >= expiresAt) passwordTokens.delete(token);
+  }
+}, 10 * 60 * 1e3).unref();
 function addPasswordToken(token) {
   passwordTokens.set(token, Date.now() + PASSWORD_TOKEN_TTL_MS);
 }
@@ -865,20 +1012,7 @@ function registerDevice(req, clientDeviceId) {
   const device = createDevice(fingerprint, trust);
   return { device, isNew: true };
 }
-var PASSWORD_TOKEN_TTL_MS, passwordTokens, PASSWORD_PAGE;
-var init_auth = __esm({
-  "src/auth.ts"() {
-    "use strict";
-    init_store();
-    PASSWORD_TOKEN_TTL_MS = 24 * 60 * 60 * 1e3;
-    passwordTokens = /* @__PURE__ */ new Map();
-    setInterval(() => {
-      const now = Date.now();
-      for (const [token, expiresAt] of passwordTokens) {
-        if (now >= expiresAt) passwordTokens.delete(token);
-      }
-    }, 10 * 60 * 1e3).unref();
-    PASSWORD_PAGE = `<!doctype html>
+var PASSWORD_PAGE = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -915,11 +1049,11 @@ var init_auth = __esm({
   </script>
 </body>
 </html>`;
-  }
-});
 
-// src/vt-tracker.ts
+// src/runtime/vt-snapshot.ts
 import fs2 from "fs";
+var wasmExports = null;
+var wasmMemory = null;
 async function initGhosttyVt(wasmPath2) {
   const wasmBytes = fs2.readFileSync(wasmPath2);
   const result = await WebAssembly.instantiate(wasmBytes, {
@@ -1048,17 +1182,14 @@ function createVtTerminal(cols, rows) {
     }
   };
 }
-var wasmExports, wasmMemory;
-var init_vt_tracker = __esm({
-  "src/vt-tracker.ts"() {
-    "use strict";
-    wasmExports = null;
-    wasmMemory = null;
-  }
-});
 
-// src/push.ts
+// src/integrations/push/push-service.ts
 import webpush from "web-push";
+var VAPID_PUBLIC_KEY = "vapid_public_key";
+var VAPID_PRIVATE_KEY = "vapid_private_key";
+var VAPID_SUBJECT = "mailto:remux@localhost";
+var vapidPublicKey = null;
+var vapidReady = false;
 function initPush() {
   let pubKey = getSetting(VAPID_PUBLIC_KEY);
   let privKey = getSetting(VAPID_PRIVATE_KEY);
@@ -1112,23 +1243,30 @@ async function broadcastPush(title, body, excludeDeviceIds = []) {
   const promises = subs.filter((s) => !excludeSet.has(s.deviceId)).map((s) => sendPushNotification(s.deviceId, title, body));
   await Promise.allSettled(promises);
 }
-var VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, vapidPublicKey, vapidReady;
-var init_push = __esm({
-  "src/push.ts"() {
-    "use strict";
-    init_store();
-    VAPID_PUBLIC_KEY = "vapid_public_key";
-    VAPID_PRIVATE_KEY = "vapid_private_key";
-    VAPID_SUBJECT = "mailto:remux@localhost";
-    vapidPublicKey = null;
-    vapidReady = false;
-  }
-});
 
-// src/pty-daemon.ts
+// src/runtime/session-runtime.ts
+import fs5 from "fs";
+import path4 from "path";
+import net2 from "net";
+import { homedir as homedir4 } from "os";
+import { spawn } from "child_process";
+import { fileURLToPath } from "url";
+import pty2 from "node-pty";
+
+// src/runtime/pty-daemon.ts
 import net from "net";
 import pty from "node-pty";
 import { parseArgs } from "util";
+var TAG_PTY_OUTPUT = 1;
+var TAG_CLIENT_INPUT = 2;
+var TAG_RESIZE = 3;
+var TAG_STATUS_REQ = 4;
+var TAG_STATUS_RES = 5;
+var TAG_SNAPSHOT_REQ = 6;
+var TAG_SNAPSHOT_RES = 7;
+var TAG_SCROLLBACK_REQ = 8;
+var TAG_SCROLLBACK_RES = 9;
+var TAG_SHUTDOWN = 255;
 function encodeFrame(tag, payload) {
   const data = typeof payload === "string" ? Buffer.from(payload, "utf8") : payload;
   const frame = Buffer.alloc(5 + data.length);
@@ -1137,6 +1275,64 @@ function encodeFrame(tag, payload) {
   data.copy(frame, 5);
   return frame;
 }
+var FrameParser = class {
+  buffer = Buffer.alloc(0);
+  onFrame;
+  constructor(onFrame) {
+    this.onFrame = onFrame;
+  }
+  feed(data) {
+    this.buffer = Buffer.concat([this.buffer, data]);
+    while (this.buffer.length >= 5) {
+      const tag = this.buffer[0];
+      const length = this.buffer.readUInt32BE(1);
+      if (this.buffer.length < 5 + length) break;
+      const payload = this.buffer.subarray(5, 5 + length);
+      this.buffer = this.buffer.subarray(5 + length);
+      this.onFrame(tag, payload);
+    }
+  }
+};
+var RingBuffer = class {
+  buf;
+  maxBytes;
+  writePos;
+  length;
+  constructor(maxBytes = 10 * 1024 * 1024) {
+    this.buf = Buffer.alloc(maxBytes);
+    this.maxBytes = maxBytes;
+    this.writePos = 0;
+    this.length = 0;
+  }
+  write(data) {
+    const bytes = typeof data === "string" ? Buffer.from(data) : data;
+    if (bytes.length >= this.maxBytes) {
+      bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
+      this.writePos = 0;
+      this.length = this.maxBytes;
+      return;
+    }
+    const space = this.maxBytes - this.writePos;
+    if (bytes.length <= space) {
+      bytes.copy(this.buf, this.writePos);
+    } else {
+      bytes.copy(this.buf, this.writePos, 0, space);
+      bytes.copy(this.buf, 0, space);
+    }
+    this.writePos = (this.writePos + bytes.length) % this.maxBytes;
+    this.length = Math.min(this.length + bytes.length, this.maxBytes);
+  }
+  read() {
+    if (this.length === 0) return Buffer.alloc(0);
+    if (this.length < this.maxBytes) {
+      return Buffer.from(this.buf.subarray(this.writePos - this.length, this.writePos));
+    }
+    return Buffer.concat([
+      this.buf.subarray(this.writePos),
+      this.buf.subarray(0, this.writePos)
+    ]);
+  }
+};
 function parseCliArgs() {
   const { values } = parseArgs({
     options: {
@@ -1340,98 +1536,448 @@ function main() {
   process.on("SIGINT", () => {
   });
 }
-var TAG_PTY_OUTPUT, TAG_CLIENT_INPUT, TAG_RESIZE, TAG_STATUS_REQ, TAG_STATUS_RES, TAG_SNAPSHOT_REQ, TAG_SNAPSHOT_RES, TAG_SCROLLBACK_REQ, TAG_SCROLLBACK_RES, TAG_SHUTDOWN, FrameParser, RingBuffer, isMainEntry;
-var init_pty_daemon = __esm({
-  "src/pty-daemon.ts"() {
-    "use strict";
-    TAG_PTY_OUTPUT = 1;
-    TAG_CLIENT_INPUT = 2;
-    TAG_RESIZE = 3;
-    TAG_STATUS_REQ = 4;
-    TAG_STATUS_RES = 5;
-    TAG_SNAPSHOT_REQ = 6;
-    TAG_SNAPSHOT_RES = 7;
-    TAG_SCROLLBACK_REQ = 8;
-    TAG_SCROLLBACK_RES = 9;
-    TAG_SHUTDOWN = 255;
-    FrameParser = class {
-      buffer = Buffer.alloc(0);
-      onFrame;
-      constructor(onFrame) {
-        this.onFrame = onFrame;
-      }
-      feed(data) {
-        this.buffer = Buffer.concat([this.buffer, data]);
-        while (this.buffer.length >= 5) {
-          const tag = this.buffer[0];
-          const length = this.buffer.readUInt32BE(1);
-          if (this.buffer.length < 5 + length) break;
-          const payload = this.buffer.subarray(5, 5 + length);
-          this.buffer = this.buffer.subarray(5 + length);
-          this.onFrame(tag, payload);
-        }
-      }
+var isMainEntry = process.argv[1]?.includes("pty-daemon") || process.argv.includes("--socket");
+if (isMainEntry) {
+  main();
+}
+
+// src/integrations/adapters/registry.ts
+var AdapterRegistry = class {
+  adapters = /* @__PURE__ */ new Map();
+  eventSeq = 0;
+  listeners = [];
+  register(adapter) {
+    const existing = this.adapters.get(adapter.id);
+    if (existing) existing.stop?.();
+    this.adapters.set(adapter.id, adapter);
+    adapter.start?.();
+  }
+  unregister(id) {
+    const adapter = this.adapters.get(id);
+    adapter?.stop?.();
+    this.adapters.delete(id);
+  }
+  get(id) {
+    return this.adapters.get(id);
+  }
+  getAll() {
+    return Array.from(this.adapters.values());
+  }
+  getAllStates() {
+    return this.getAll().map((a) => a.getCurrentState());
+  }
+  /** Subscribe to adapter events */
+  onEvent(listener) {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
     };
-    RingBuffer = class {
-      buf;
-      maxBytes;
-      writePos;
-      length;
-      constructor(maxBytes = 10 * 1024 * 1024) {
-        this.buf = Buffer.alloc(maxBytes);
-        this.maxBytes = maxBytes;
-        this.writePos = 0;
-        this.length = 0;
-      }
-      write(data) {
-        const bytes = typeof data === "string" ? Buffer.from(data) : data;
-        if (bytes.length >= this.maxBytes) {
-          bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
-          this.writePos = 0;
-          this.length = this.maxBytes;
-          return;
-        }
-        const space = this.maxBytes - this.writePos;
-        if (bytes.length <= space) {
-          bytes.copy(this.buf, this.writePos);
-        } else {
-          bytes.copy(this.buf, this.writePos, 0, space);
-          bytes.copy(this.buf, 0, space);
-        }
-        this.writePos = (this.writePos + bytes.length) % this.maxBytes;
-        this.length = Math.min(this.length + bytes.length, this.maxBytes);
-      }
-      read() {
-        if (this.length === 0) return Buffer.alloc(0);
-        if (this.length < this.maxBytes) {
-          return Buffer.from(this.buf.subarray(this.writePos - this.length, this.writePos));
-        }
-        return Buffer.concat([
-          this.buf.subarray(this.writePos),
-          this.buf.subarray(0, this.writePos)
-        ]);
-      }
+  }
+  /** Emit an event from an adapter */
+  emit(adapterId, type, data) {
+    const event = {
+      type,
+      seq: ++this.eventSeq,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      data,
+      adapterId
     };
-    isMainEntry = process.argv[1]?.includes("pty-daemon") || process.argv.includes("--socket");
-    if (isMainEntry) {
-      main();
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        console.error(`[adapter-registry] listener error:`, err);
+      }
     }
   }
-});
+  /** Stop all adapters and clear state (for clean shutdown). */
+  shutdown() {
+    for (const adapter of this.adapters.values()) {
+      try {
+        adapter.stop?.();
+      } catch {
+      }
+    }
+    this.adapters.clear();
+    this.listeners = [];
+  }
+  /** Forward terminal data to all passive adapters */
+  dispatchTerminalData(sessionName, data) {
+    for (const adapter of this.adapters.values()) {
+      if (adapter.mode === "passive" && adapter.onTerminalData) {
+        try {
+          adapter.onTerminalData(sessionName, data);
+        } catch (err) {
+          console.error(`[adapter:${adapter.id}] onTerminalData error:`, err);
+        }
+      }
+    }
+  }
+  /** Forward event file data to all passive adapters */
+  dispatchEventFile(path7, event) {
+    for (const adapter of this.adapters.values()) {
+      if (adapter.mode === "passive" && adapter.onEventFile) {
+        try {
+          adapter.onEventFile(path7, event);
+        } catch (err) {
+          console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
+        }
+      }
+    }
+  }
+};
 
-// src/session.ts
-import fs3 from "fs";
-import path2 from "path";
-import net2 from "net";
-import { homedir as homedir2 } from "os";
-import { spawn } from "child_process";
-import { fileURLToPath } from "url";
-import pty2 from "node-pty";
+// src/integrations/adapters/generic-shell.ts
+var GenericShellAdapter = class {
+  id = "generic-shell";
+  name = "Shell";
+  mode = "passive";
+  capabilities = ["cwd", "last-command", "exit-code"];
+  state = {
+    adapterId: "generic-shell",
+    name: "Shell",
+    mode: "passive",
+    capabilities: this.capabilities,
+    currentState: "idle"
+  };
+  lastCwd = null;
+  lastCommand = null;
+  onTerminalData(sessionName, data) {
+    const osc7Match = data.match(/\x1b\]7;file:\/\/[^/]*([^\x07\x1b]+)/);
+    if (osc7Match) {
+      this.lastCwd = decodeURIComponent(osc7Match[1]);
+    }
+    const osc133B = data.match(/\x1b\]133;B\x07/);
+    if (osc133B) {
+      this.state.currentState = "running";
+    }
+    const osc133D = data.match(/\x1b\]133;D;?(\d*)\x07/);
+    if (osc133D) {
+      this.state.currentState = "idle";
+    }
+  }
+  getCurrentState() {
+    return {
+      ...this.state,
+      lastEvent: this.lastCwd ? {
+        type: "cwd",
+        seq: 0,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        data: { cwd: this.lastCwd, lastCommand: this.lastCommand },
+        adapterId: this.id
+      } : void 0
+    };
+  }
+};
+
+// src/integrations/adapters/claude-code.ts
+import * as fs3 from "fs";
+import * as path2 from "path";
+import * as os from "os";
+var ClaudeCodeAdapter = class {
+  id = "claude-code";
+  name = "Claude Code";
+  mode = "passive";
+  capabilities = ["run-status", "conversation-events", "tool-use"];
+  state = {
+    adapterId: "claude-code",
+    name: "Claude Code",
+    mode: "passive",
+    capabilities: this.capabilities,
+    currentState: "idle"
+  };
+  watcher = null;
+  fileSizes = /* @__PURE__ */ new Map();
+  eventsDir;
+  onEmit;
+  constructor(onEmit) {
+    this.onEmit = onEmit;
+    this.eventsDir = path2.join(os.homedir(), ".claude", "projects");
+  }
+  start() {
+    this.watchForEvents();
+  }
+  stop() {
+    this.watcher?.close();
+    this.watcher = null;
+  }
+  onTerminalData(sessionName, data) {
+    if (data.includes("claude") || data.includes("Claude")) {
+      if (data.includes("Thinking...") || data.includes("\u23F3")) {
+        this.updateState("running");
+      } else if (data.includes("Done") || data.includes("\u2713") || data.includes("Complete")) {
+        this.updateState("idle");
+      } else if (data.includes("Permission") || data.includes("approve") || data.includes("Allow")) {
+        this.updateState("waiting_approval");
+      }
+    }
+  }
+  getCurrentState() {
+    return { ...this.state };
+  }
+  updateState(newState) {
+    if (this.state.currentState !== newState) {
+      this.state.currentState = newState;
+      if (this.onEmit) {
+        this.onEmit({
+          type: "state_change",
+          seq: Date.now(),
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          data: { state: newState },
+          adapterId: this.id
+        });
+      }
+    }
+  }
+  watchForEvents() {
+    if (!fs3.existsSync(this.eventsDir)) return;
+    try {
+      this.watcher = fs3.watch(
+        this.eventsDir,
+        { recursive: true },
+        (eventType, filename) => {
+          if (filename && (filename.endsWith("events.jsonl") || filename.endsWith("conversation.jsonl"))) {
+            this.processEventFile(path2.join(this.eventsDir, filename));
+          }
+        }
+      );
+    } catch {
+    }
+  }
+  processEventFile(filePath) {
+    try {
+      const stat = fs3.statSync(filePath);
+      const lastSize = this.fileSizes.get(filePath) ?? 0;
+      if (stat.size <= lastSize) return;
+      let newData;
+      const fd = fs3.openSync(filePath, "r");
+      try {
+        newData = Buffer.alloc(stat.size - lastSize);
+        fs3.readSync(fd, newData, 0, newData.length, lastSize);
+        this.fileSizes.set(filePath, stat.size);
+      } finally {
+        fs3.closeSync(fd);
+      }
+      const lines = newData.toString().split("\n").filter((l) => l.trim());
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          this.handleConversationEvent(event);
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  handleConversationEvent(event) {
+    const type = event.type;
+    if (type === "assistant" || type === "tool_use") {
+      this.updateState("running");
+    } else if (type === "result" || type === "end_turn") {
+      this.updateState("idle");
+    } else if (type === "permission_request") {
+      this.updateState("waiting_approval");
+    } else if (type === "error") {
+      this.updateState("error");
+    }
+  }
+};
+
+// src/integrations/adapters/codex.ts
+import * as fs4 from "fs";
+import * as path3 from "path";
+import * as os2 from "os";
+var CodexAdapter = class {
+  id = "codex";
+  name = "OpenAI Codex";
+  mode = "passive";
+  capabilities = ["run-status", "conversation-events", "tool-use"];
+  state = {
+    adapterId: "codex",
+    name: "OpenAI Codex",
+    mode: "passive",
+    capabilities: this.capabilities,
+    currentState: "idle"
+  };
+  watcher = null;
+  fileSizes = /* @__PURE__ */ new Map();
+  eventsDir;
+  onEmit;
+  constructor(onEmit) {
+    this.onEmit = onEmit;
+    this.eventsDir = path3.join(os2.homedir(), ".codex");
+  }
+  start() {
+    this.watchForEvents();
+  }
+  stop() {
+    this.watcher?.close();
+    this.watcher = null;
+  }
+  onTerminalData(sessionName, data) {
+    if (data.includes("Thinking...") || data.includes("Working...") || data.includes("\u280B") || data.includes("\u2819") || data.includes("\u2839") || data.includes("\u2838") || data.includes("\u283C") || data.includes("\u2834") || data.includes("\u2826") || data.includes("\u2827") || data.includes("\u2807") || data.includes("\u280F")) {
+      this.updateState("running");
+      return;
+    }
+    if (data.includes("Reading file:") || data.includes("Writing file:") || data.includes("Editing file:") || data.includes("Running:") || data.includes("Patch:") || data.includes("[tool_use]")) {
+      this.updateState("running");
+      return;
+    }
+    if (data.includes("Approve?") || data.includes("[y/N]") || data.includes("[y/n]") || data.includes("Allow this?") || data.includes("Run command?")) {
+      this.updateState("waiting_approval");
+      return;
+    }
+    if (data.includes("Error:") || data.includes("Failed:")) {
+      if (data.includes("codex") || data.includes("Codex") || data.includes("codex>")) {
+        this.updateState("error");
+        return;
+      }
+    }
+    if (data.includes("codex>") || data.includes("Done")) {
+      this.updateState("idle");
+      return;
+    }
+  }
+  getCurrentState() {
+    return { ...this.state };
+  }
+  updateState(newState) {
+    if (this.state.currentState !== newState) {
+      this.state.currentState = newState;
+      if (this.onEmit) {
+        this.onEmit({
+          type: "state_change",
+          seq: Date.now(),
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          data: { state: newState },
+          adapterId: this.id
+        });
+      }
+    }
+  }
+  watchForEvents() {
+    if (!fs4.existsSync(this.eventsDir)) return;
+    try {
+      this.watcher = fs4.watch(
+        this.eventsDir,
+        { recursive: true },
+        (eventType, filename) => {
+          if (filename && (filename.endsWith(".jsonl") || filename.endsWith(".json"))) {
+            this.processEventFile(path3.join(this.eventsDir, filename));
+          }
+        }
+      );
+    } catch {
+    }
+  }
+  processEventFile(filePath) {
+    try {
+      const stat = fs4.statSync(filePath);
+      const lastSize = this.fileSizes.get(filePath) ?? 0;
+      if (stat.size <= lastSize) return;
+      let newData;
+      const fd = fs4.openSync(filePath, "r");
+      try {
+        newData = Buffer.alloc(stat.size - lastSize);
+        fs4.readSync(fd, newData, 0, newData.length, lastSize);
+        this.fileSizes.set(filePath, stat.size);
+      } finally {
+        fs4.closeSync(fd);
+      }
+      const lines = newData.toString().split("\n").filter((l) => l.trim());
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          this.handleSessionEvent(event);
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  handleSessionEvent(event) {
+    const type = event.type;
+    if (type === "item.created" || type === "tool_use" || type === "turn.started") {
+      this.updateState("running");
+    } else if (type === "turn.completed" || type === "done") {
+      this.updateState("idle");
+    } else if (type === "permission_request") {
+      this.updateState("waiting_approval");
+    } else if (type === "error") {
+      this.updateState("error");
+    }
+  }
+};
+
+// src/integrations/adapters/runtime.ts
+var adapterRegistry = new AdapterRegistry();
+var initialized = false;
+function initAdapterRuntime() {
+  if (initialized) return adapterRegistry;
+  adapterRegistry.register(new GenericShellAdapter());
+  const claudeAdapter = new ClaudeCodeAdapter((event) => {
+    adapterRegistry.emit(event.adapterId, event.type, event.data);
+  });
+  adapterRegistry.register(claudeAdapter);
+  const codexAdapter = new CodexAdapter((event) => {
+    adapterRegistry.emit(event.adapterId, event.type, event.data);
+  });
+  adapterRegistry.register(codexAdapter);
+  initialized = true;
+  return adapterRegistry;
+}
+
+// src/runtime/session-runtime.ts
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = path4.dirname(__filename);
+var IDLE_THRESHOLD_MS = 5 * 60 * 1e3;
+var lastOutputTimestamp = Date.now();
+var isIdle = false;
+var RingBuffer2 = class {
+  buf;
+  maxBytes;
+  writePos;
+  length;
+  constructor(maxBytes = 10 * 1024 * 1024) {
+    this.buf = Buffer.alloc(maxBytes);
+    this.maxBytes = maxBytes;
+    this.writePos = 0;
+    this.length = 0;
+  }
+  write(data) {
+    const bytes = typeof data === "string" ? Buffer.from(data) : data;
+    if (bytes.length >= this.maxBytes) {
+      bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
+      this.writePos = 0;
+      this.length = this.maxBytes;
+      return;
+    }
+    const space = this.maxBytes - this.writePos;
+    if (bytes.length <= space) {
+      bytes.copy(this.buf, this.writePos);
+    } else {
+      bytes.copy(this.buf, this.writePos, 0, space);
+      bytes.copy(this.buf, 0, space);
+    }
+    this.writePos = (this.writePos + bytes.length) % this.maxBytes;
+    this.length = Math.min(this.length + bytes.length, this.maxBytes);
+  }
+  read() {
+    if (this.length === 0) return Buffer.alloc(0);
+    if (this.length < this.maxBytes) {
+      return Buffer.from(this.buf.subarray(this.writePos - this.length, this.writePos));
+    }
+    return Buffer.concat([
+      this.buf.subarray(this.writePos),
+      this.buf.subarray(0, this.writePos)
+    ]);
+  }
+};
 function getShell() {
   if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
   if (process.env.SHELL) return process.env.SHELL;
   try {
-    fs3.accessSync("/bin/zsh", fs3.constants.X_OK);
+    fs5.accessSync("/bin/zsh", fs5.constants.X_OK);
     return "/bin/zsh";
   } catch {
   }
@@ -1458,8 +2004,11 @@ function markTabUnavailable(tab, sessionName, error) {
     `[tab] shell unavailable for id=${tab.id} in session "${sessionName}": ${reason}`
   );
 }
+var tabIdCounter = 0;
+var sessionMap = /* @__PURE__ */ new Map();
+var controlClients = /* @__PURE__ */ new Set();
 function getDaemonScriptPath() {
-  return path2.join(__dirname, "pty-daemon.js");
+  return path4.join(__dirname, "pty-daemon.js");
 }
 function buildSocketPath(tabId) {
   return `/tmp/remux-pty-${tabId}-${process.pid}.sock`;
@@ -1520,11 +2069,7 @@ function wireDaemonToTab(tab, daemonSocket, sessionName) {
       }
       if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
       processShellIntegration(data, tab, sessionName);
-      try {
-        const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
-        adapterRegistry2?.dispatchTerminalData(sessionName, data);
-      } catch {
-      }
+      adapterRegistry.dispatchTerminalData(sessionName, data);
       const now = Date.now();
       const wasIdle = isIdle || now - lastOutputTimestamp > IDLE_THRESHOLD_MS;
       if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS) {
@@ -1574,7 +2119,7 @@ function wireDaemonToTab(tab, daemonSocket, sessionName) {
 async function reviveTab(tab, session) {
   if (!tab.restored) return false;
   const shell = getShell();
-  const socketPath = spawnDaemon(tab.id, shell, tab.cols, tab.rows, homedir2());
+  const socketPath = spawnDaemon(tab.id, shell, tab.cols, tab.rows, homedir4());
   try {
     const client = await connectToDaemon(socketPath);
     tab.daemonSocket = socketPath;
@@ -1655,7 +2200,7 @@ function createTab(session, cols = 80, rows = 24) {
   const id = tabIdCounter++;
   const shell = getShell();
   const daemonScript = getDaemonScriptPath();
-  const useDaemon = fs3.existsSync(daemonScript);
+  const useDaemon = fs5.existsSync(daemonScript);
   let ptyProcess = null;
   let socketPath = null;
   const vtTerminal = createVtTerminal(cols, rows);
@@ -1680,7 +2225,7 @@ function createTab(session, cols = 80, rows = 24) {
     restored: false
   };
   if (useDaemon) {
-    socketPath = spawnDaemon(id, shell, cols, rows, homedir2());
+    socketPath = spawnDaemon(id, shell, cols, rows, homedir4());
     tab.daemonSocket = socketPath;
     connectToDaemon(socketPath).then((client) => {
       tab.daemonClient = client;
@@ -1712,7 +2257,7 @@ function spawnDirectPty(tab, session, shell, cols, rows) {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: homedir2(),
+    cwd: homedir4(),
     env: {
       ...process.env,
       TERM: "xterm-256color",
@@ -1728,11 +2273,7 @@ function spawnDirectPty(tab, session, shell, cols, rows) {
     }
     if (_bufferTabOutputFn) _bufferTabOutputFn(tab.id, data);
     processShellIntegration(data, tab, session.name);
-    try {
-      const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
-      adapterRegistry2?.dispatchTerminalData(session.name, data);
-    } catch {
-    }
+    adapterRegistry.dispatchTerminalData(session.name, data);
     const now = Date.now();
     const wasIdle = isIdle || now - lastOutputTimestamp > IDLE_THRESHOLD_MS;
     if (now - lastOutputTimestamp > IDLE_THRESHOLD_MS) {
@@ -1893,6 +2434,11 @@ function recalcTabSize(tab) {
     if (tab.vt) tab.vt.resize(minCols, minRows);
   }
 }
+var _sendEnvelopeFn = null;
+var _getClientListFn = null;
+var _sendDataFn = null;
+var _bufferTabOutputFn = null;
+var _bufferStateForDisconnectedFn = null;
 function setBroadcastHooks(sendFn, clientListFn, sendDataFn) {
   _sendEnvelopeFn = sendFn;
   _getClientListFn = clientListFn;
@@ -1923,6 +2469,7 @@ function broadcastState() {
   }
   if (_bufferStateForDisconnectedFn) _bufferStateForDisconnectedFn();
 }
+var PERSIST_INTERVAL_MS = 8e3;
 function persistSessions() {
   try {
     for (const session of sessionMap.values()) {
@@ -1955,11 +2502,11 @@ function restoreSessions() {
 function findAliveDaemonSocket(tabId) {
   const tmpDir = "/tmp";
   try {
-    const files = fs3.readdirSync(tmpDir);
+    const files = fs5.readdirSync(tmpDir);
     const pattern = `remux-pty-${tabId}-`;
     for (const f of files) {
       if (f.startsWith(pattern) && f.endsWith(".sock")) {
-        return path2.join(tmpDir, f);
+        return path4.join(tmpDir, f);
       }
     }
   } catch {
@@ -2014,73 +2561,19 @@ async function reattachToDaemon(tab, session, socketPath) {
     return false;
   }
 }
-var __filename, __dirname, IDLE_THRESHOLD_MS, lastOutputTimestamp, isIdle, RingBuffer2, tabIdCounter, sessionMap, controlClients, _sendEnvelopeFn, _getClientListFn, _sendDataFn, _bufferTabOutputFn, _bufferStateForDisconnectedFn, PERSIST_INTERVAL_MS;
-var init_session = __esm({
-  "src/session.ts"() {
-    "use strict";
-    init_store();
-    init_push();
-    init_pty_daemon();
-    init_vt_tracker();
-    __filename = fileURLToPath(import.meta.url);
-    __dirname = path2.dirname(__filename);
-    IDLE_THRESHOLD_MS = 5 * 60 * 1e3;
-    lastOutputTimestamp = Date.now();
-    isIdle = false;
-    RingBuffer2 = class {
-      buf;
-      maxBytes;
-      writePos;
-      length;
-      constructor(maxBytes = 10 * 1024 * 1024) {
-        this.buf = Buffer.alloc(maxBytes);
-        this.maxBytes = maxBytes;
-        this.writePos = 0;
-        this.length = 0;
-      }
-      write(data) {
-        const bytes = typeof data === "string" ? Buffer.from(data) : data;
-        if (bytes.length >= this.maxBytes) {
-          bytes.copy(this.buf, 0, bytes.length - this.maxBytes);
-          this.writePos = 0;
-          this.length = this.maxBytes;
-          return;
-        }
-        const space = this.maxBytes - this.writePos;
-        if (bytes.length <= space) {
-          bytes.copy(this.buf, this.writePos);
-        } else {
-          bytes.copy(this.buf, this.writePos, 0, space);
-          bytes.copy(this.buf, 0, space);
-        }
-        this.writePos = (this.writePos + bytes.length) % this.maxBytes;
-        this.length = Math.min(this.length + bytes.length, this.maxBytes);
-      }
-      read() {
-        if (this.length === 0) return Buffer.alloc(0);
-        if (this.length < this.maxBytes) {
-          return Buffer.from(this.buf.subarray(this.writePos - this.length, this.writePos));
-        }
-        return Buffer.concat([
-          this.buf.subarray(this.writePos),
-          this.buf.subarray(0, this.writePos)
-        ]);
-      }
-    };
-    tabIdCounter = 0;
-    sessionMap = /* @__PURE__ */ new Map();
-    controlClients = /* @__PURE__ */ new Set();
-    _sendEnvelopeFn = null;
-    _getClientListFn = null;
-    _sendDataFn = null;
-    _bufferTabOutputFn = null;
-    _bufferStateForDisconnectedFn = null;
-    PERSIST_INTERVAL_MS = 8e3;
-  }
-});
 
-// src/e2ee.ts
+// src/gateway/ws/websocket-server.ts
+import crypto4 from "crypto";
+import { WebSocketServer } from "ws";
+
+// src/gateway/ws/e2ee-session.ts
 import crypto3 from "crypto";
+var HKDF_SALT = "remux-e2ee-v1";
+var HKDF_INFO = "aes-256-gcm";
+var AES_KEY_LENGTH = 32;
+var IV_LENGTH = 12;
+var IV_PREFIX_LENGTH = 4;
+var AUTH_TAG_LENGTH = 16;
 function generateKeyPair() {
   const { publicKey, privateKey } = crypto3.generateKeyPairSync("x25519", {
     publicKeyEncoding: { type: "spki", format: "der" },
@@ -2138,198 +2631,180 @@ function decrypt(key, ciphertext, tag, iv) {
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
-var HKDF_SALT, HKDF_INFO, AES_KEY_LENGTH, IV_LENGTH, IV_PREFIX_LENGTH, AUTH_TAG_LENGTH, E2EESession;
-var init_e2ee = __esm({
-  "src/e2ee.ts"() {
-    "use strict";
-    HKDF_SALT = "remux-e2ee-v1";
-    HKDF_INFO = "aes-256-gcm";
-    AES_KEY_LENGTH = 32;
-    IV_LENGTH = 12;
-    IV_PREFIX_LENGTH = 4;
-    AUTH_TAG_LENGTH = 16;
-    E2EESession = class {
-      sharedKey = null;
-      sendCounter = 0n;
-      recvCounter = -1n;
-      // last received counter; -1 means none yet
-      localKeyPair;
-      constructor() {
-        this.localKeyPair = generateKeyPair();
-      }
-      /** Get our public key as a base64-encoded string for transmission. */
-      getPublicKey() {
-        return this.localKeyPair.publicKey.toString("base64");
-      }
-      /**
-       * Complete the ECDH handshake with the peer's base64-encoded public key.
-       * After this, encrypt/decrypt operations become available.
-       */
-      completeHandshake(peerPublicKeyB64) {
-        const peerPublicKey = Buffer.from(peerPublicKeyB64, "base64");
-        this.sharedKey = deriveSharedSecret(
-          this.localKeyPair.privateKey,
-          peerPublicKey
-        );
-      }
-      /**
-       * Encrypt a plaintext string for sending.
-       * Returns a base64-encoded string containing: iv (12) + ciphertext (variable) + tag (16).
-       * Increments the send counter after each call.
-       */
-      encryptMessage(plaintext) {
-        if (!this.sharedKey) {
-          throw new Error("E2EE handshake not completed");
-        }
-        const plaintextBuf = Buffer.from(plaintext, "utf8");
-        const { ciphertext, tag, iv } = encrypt(
-          this.sharedKey,
-          plaintextBuf,
-          this.sendCounter
-        );
-        this.sendCounter++;
-        const packed = Buffer.concat([iv, ciphertext, tag]);
-        return packed.toString("base64");
-      }
-      /**
-       * Decrypt a base64-encoded encrypted message.
-       * Validates that the counter is monotonically increasing (anti-replay).
-       */
-      decryptMessage(encrypted) {
-        if (!this.sharedKey) {
-          throw new Error("E2EE handshake not completed");
-        }
-        const packed = Buffer.from(encrypted, "base64");
-        if (packed.length < IV_LENGTH + AUTH_TAG_LENGTH) {
-          throw new Error("E2EE message too short");
-        }
-        const iv = packed.subarray(0, IV_LENGTH);
-        const ciphertext = packed.subarray(IV_LENGTH, packed.length - AUTH_TAG_LENGTH);
-        const tag = packed.subarray(packed.length - AUTH_TAG_LENGTH);
-        const counter = iv.readBigUInt64BE(IV_PREFIX_LENGTH);
-        if (counter <= this.recvCounter) {
-          throw new Error("E2EE replay detected: counter not monotonically increasing");
-        }
-        const decrypted = decrypt(this.sharedKey, ciphertext, tag, iv);
-        this.recvCounter = counter;
-        return decrypted.toString("utf8");
-      }
-      /** Whether the handshake has been completed and encryption is available. */
-      isEstablished() {
-        return this.sharedKey !== null;
-      }
-    };
+var E2EESession = class {
+  sharedKey = null;
+  sendCounter = 0n;
+  recvCounter = -1n;
+  // last received counter; -1 means none yet
+  localKeyPair;
+  constructor() {
+    this.localKeyPair = generateKeyPair();
   }
-});
+  /** Get our public key as a base64-encoded string for transmission. */
+  getPublicKey() {
+    return this.localKeyPair.publicKey.toString("base64");
+  }
+  /**
+   * Complete the ECDH handshake with the peer's base64-encoded public key.
+   * After this, encrypt/decrypt operations become available.
+   */
+  completeHandshake(peerPublicKeyB64) {
+    const peerPublicKey = Buffer.from(peerPublicKeyB64, "base64");
+    this.sharedKey = deriveSharedSecret(
+      this.localKeyPair.privateKey,
+      peerPublicKey
+    );
+  }
+  /**
+   * Encrypt a plaintext string for sending.
+   * Returns a base64-encoded string containing: iv (12) + ciphertext (variable) + tag (16).
+   * Increments the send counter after each call.
+   */
+  encryptMessage(plaintext) {
+    if (!this.sharedKey) {
+      throw new Error("E2EE handshake not completed");
+    }
+    const plaintextBuf = Buffer.from(plaintext, "utf8");
+    const { ciphertext, tag, iv } = encrypt(
+      this.sharedKey,
+      plaintextBuf,
+      this.sendCounter
+    );
+    this.sendCounter++;
+    const packed = Buffer.concat([iv, ciphertext, tag]);
+    return packed.toString("base64");
+  }
+  /**
+   * Decrypt a base64-encoded encrypted message.
+   * Validates that the counter is monotonically increasing (anti-replay).
+   */
+  decryptMessage(encrypted) {
+    if (!this.sharedKey) {
+      throw new Error("E2EE handshake not completed");
+    }
+    const packed = Buffer.from(encrypted, "base64");
+    if (packed.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+      throw new Error("E2EE message too short");
+    }
+    const iv = packed.subarray(0, IV_LENGTH);
+    const ciphertext = packed.subarray(IV_LENGTH, packed.length - AUTH_TAG_LENGTH);
+    const tag = packed.subarray(packed.length - AUTH_TAG_LENGTH);
+    const counter = iv.readBigUInt64BE(IV_PREFIX_LENGTH);
+    if (counter <= this.recvCounter) {
+      throw new Error("E2EE replay detected: counter not monotonically increasing");
+    }
+    const decrypted = decrypt(this.sharedKey, ciphertext, tag, iv);
+    this.recvCounter = counter;
+    return decrypted.toString("utf8");
+  }
+  /** Whether the handshake has been completed and encryption is available. */
+  isEstablished() {
+    return this.sharedKey !== null;
+  }
+};
 
-// src/message-buffer.ts
-var MessageBuffer, BufferRegistry;
-var init_message_buffer = __esm({
-  "src/message-buffer.ts"() {
-    "use strict";
-    MessageBuffer = class {
-      buffer = [];
-      maxSize;
-      maxAgeMs;
-      constructor(maxSize = 1e3, maxAgeMs = 10 * 60 * 1e3) {
-        this.maxSize = maxSize;
-        this.maxAgeMs = maxAgeMs;
-      }
-      /**
-       * Add a message to the buffer.
-       * Evicts the oldest message if buffer is at capacity.
-       */
-      push(data) {
-        if (this.buffer.length >= this.maxSize) {
-          this.buffer.shift();
-        }
-        this.buffer.push({ timestamp: Date.now(), data });
-      }
-      /**
-       * Return all messages (optionally since a given timestamp).
-       * Filters out expired messages (older than maxAgeMs).
-       * Clears returned messages from the buffer.
-       */
-      drain(since) {
-        const now = Date.now();
-        const cutoff = now - this.maxAgeMs;
-        let result = this.buffer.filter((m) => m.timestamp > cutoff);
-        if (since !== void 0) {
-          result = result.filter((m) => m.timestamp > since);
-        }
-        this.buffer = [];
-        return result;
-      }
-      /**
-       * Clear all messages from the buffer.
-       */
-      clear() {
-        this.buffer = [];
-      }
-      /**
-       * Number of messages currently in the buffer.
-       */
-      get size() {
-        return this.buffer.length;
-      }
-      /**
-       * Remove messages older than maxAgeMs.
-       */
-      pruneExpired() {
-        const cutoff = Date.now() - this.maxAgeMs;
-        this.buffer = this.buffer.filter((m) => m.timestamp > cutoff);
-      }
-    };
-    BufferRegistry = class {
-      buffers = /* @__PURE__ */ new Map();
-      cleanupInterval = null;
-      constructor() {
-        this.cleanupInterval = setInterval(() => this.cleanup(), 6e4);
-      }
-      /**
-       * Get or create a MessageBuffer for a device.
-       */
-      getOrCreate(deviceId) {
-        let buf = this.buffers.get(deviceId);
-        if (!buf) {
-          buf = new MessageBuffer();
-          this.buffers.set(deviceId, buf);
-        }
-        return buf;
-      }
-      /**
-       * Remove the buffer for a device.
-       */
-      remove(deviceId) {
+// src/runtime/message-buffer.ts
+var MessageBuffer = class {
+  buffer = [];
+  maxSize;
+  maxAgeMs;
+  constructor(maxSize = 1e3, maxAgeMs = 10 * 60 * 1e3) {
+    this.maxSize = maxSize;
+    this.maxAgeMs = maxAgeMs;
+  }
+  /**
+   * Add a message to the buffer.
+   * Evicts the oldest message if buffer is at capacity.
+   */
+  push(data) {
+    if (this.buffer.length >= this.maxSize) {
+      this.buffer.shift();
+    }
+    this.buffer.push({ timestamp: Date.now(), data });
+  }
+  /**
+   * Return all messages (optionally since a given timestamp).
+   * Filters out expired messages (older than maxAgeMs).
+   * Clears returned messages from the buffer.
+   */
+  drain(since) {
+    const now = Date.now();
+    const cutoff = now - this.maxAgeMs;
+    let result = this.buffer.filter((m) => m.timestamp > cutoff);
+    if (since !== void 0) {
+      result = result.filter((m) => m.timestamp > since);
+    }
+    this.buffer = [];
+    return result;
+  }
+  /**
+   * Clear all messages from the buffer.
+   */
+  clear() {
+    this.buffer = [];
+  }
+  /**
+   * Number of messages currently in the buffer.
+   */
+  get size() {
+    return this.buffer.length;
+  }
+  /**
+   * Remove messages older than maxAgeMs.
+   */
+  pruneExpired() {
+    const cutoff = Date.now() - this.maxAgeMs;
+    this.buffer = this.buffer.filter((m) => m.timestamp > cutoff);
+  }
+};
+var BufferRegistry = class {
+  buffers = /* @__PURE__ */ new Map();
+  cleanupInterval = null;
+  constructor() {
+    this.cleanupInterval = setInterval(() => this.cleanup(), 6e4);
+  }
+  /**
+   * Get or create a MessageBuffer for a device.
+   */
+  getOrCreate(deviceId) {
+    let buf = this.buffers.get(deviceId);
+    if (!buf) {
+      buf = new MessageBuffer();
+      this.buffers.set(deviceId, buf);
+    }
+    return buf;
+  }
+  /**
+   * Remove the buffer for a device.
+   */
+  remove(deviceId) {
+    this.buffers.delete(deviceId);
+  }
+  /**
+   * Remove empty buffers that have no messages (stale).
+   * Prune expired messages in all remaining buffers.
+   */
+  cleanup() {
+    for (const [deviceId, buf] of this.buffers) {
+      buf.pruneExpired();
+      if (buf.size === 0) {
         this.buffers.delete(deviceId);
       }
-      /**
-       * Remove empty buffers that have no messages (stale).
-       * Prune expired messages in all remaining buffers.
-       */
-      cleanup() {
-        for (const [deviceId, buf] of this.buffers) {
-          buf.pruneExpired();
-          if (buf.size === 0) {
-            this.buffers.delete(deviceId);
-          }
-        }
-      }
-      /**
-       * Tear down: clear the cleanup interval and all buffers.
-       */
-      destroy() {
-        if (this.cleanupInterval) {
-          clearInterval(this.cleanupInterval);
-          this.cleanupInterval = null;
-        }
-        this.buffers.clear();
-      }
-    };
+    }
   }
-});
+  /**
+   * Tear down: clear the cleanup interval and all buffers.
+   */
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    this.buffers.clear();
+  }
+};
 
-// src/workspace-head.ts
+// src/domain/workspace/workspace-head.ts
 function getHead() {
   const db = getDb();
   const row = db.prepare("SELECT * FROM workspace_head WHERE id = 'global'").get();
@@ -2406,14 +2881,8 @@ function updateHead(fields, deviceId) {
   );
   return updated;
 }
-var init_workspace_head = __esm({
-  "src/workspace-head.ts"() {
-    "use strict";
-    init_store();
-  }
-});
 
-// src/workspace.ts
+// src/domain/workspace/workspace-service.ts
 function captureSnapshot(sessionName, tabId, topicId) {
   const found = findTab(tabId);
   if (!found) return null;
@@ -2462,15 +2931,8 @@ function generateHandoffBundle() {
     keyArtifacts
   };
 }
-var init_workspace = __esm({
-  "src/workspace.ts"() {
-    "use strict";
-    init_store();
-    init_session();
-  }
-});
 
-// src/renderers.ts
+// src/domain/workspace/artifact-renderers.ts
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -2680,6 +3142,26 @@ function renderMarkdown(md) {
   out.push("</div>");
   return out.join("\n");
 }
+var ANSI_COLORS = {
+  30: "#000000",
+  31: "#cc0000",
+  32: "#00cc00",
+  33: "#cccc00",
+  34: "#0000cc",
+  35: "#cc00cc",
+  36: "#00cccc",
+  37: "#cccccc"
+};
+var ANSI_BRIGHT_COLORS = {
+  90: "#555555",
+  91: "#ff5555",
+  92: "#55ff55",
+  93: "#ffff55",
+  94: "#5555ff",
+  95: "#ff55ff",
+  96: "#55ffff",
+  97: "#ffffff"
+};
 function renderAnsi(ansiText) {
   let cleaned = ansiText.replace(/\x1b\][^\x07]*\x07/g, "");
   cleaned = cleaned.replace(/\x1b\[[\d;]*[A-LN-Za-ln-z]/g, "");
@@ -2759,334 +3241,11 @@ function renderAnsi(ansiText) {
   }
   return parts.join("");
 }
-var ANSI_COLORS, ANSI_BRIGHT_COLORS;
-var init_renderers = __esm({
-  "src/renderers.ts"() {
-    "use strict";
-    ANSI_COLORS = {
-      30: "#000000",
-      31: "#cc0000",
-      32: "#00cc00",
-      33: "#cccc00",
-      34: "#0000cc",
-      35: "#cc00cc",
-      36: "#00cccc",
-      37: "#cccccc"
-    };
-    ANSI_BRIGHT_COLORS = {
-      90: "#555555",
-      91: "#ff5555",
-      92: "#55ff55",
-      93: "#ffff55",
-      94: "#5555ff",
-      95: "#ff55ff",
-      96: "#55ffff",
-      97: "#ffffff"
-    };
-  }
-});
 
-// src/git-service.ts
-var git_service_exports = {};
-__export(git_service_exports, {
-  compareBranches: () => compareBranches,
-  createWorktree: () => createWorktree,
-  getGitDiff: () => getGitDiff,
-  getGitStatus: () => getGitStatus,
-  getWorktrees: () => getWorktrees,
-  initGitService: () => initGitService,
-  watchGitChanges: () => watchGitChanges
-});
-import simpleGit from "simple-git";
-function assertSafeRef(ref) {
-  if (!ref || ref.startsWith("-") || !SAFE_REF_RE.test(ref)) {
-    throw new Error(`Invalid git ref: ${ref}`);
-  }
-}
-function initGitService(cwd) {
-  git = simpleGit(cwd || process.cwd());
-}
-function getGit() {
-  if (!git) initGitService();
-  return git;
-}
-async function getGitStatus() {
-  const g = getGit();
-  const status = await g.status();
-  const log = await g.log({ maxCount: 10 });
-  return {
-    branch: status.current || "unknown",
-    status,
-    recentCommits: log.all.map((c) => ({
-      hash: c.hash.substring(0, 7),
-      message: c.message,
-      date: c.date,
-      author: c.author_name
-    }))
-  };
-}
-async function getGitDiff(base) {
-  const g = getGit();
-  const diffBase = base || "HEAD";
-  assertSafeRef(diffBase);
-  const diffText = await g.diff([diffBase]);
-  const diffStat = await g.diffSummary([diffBase]);
-  return {
-    diff: diffText.substring(0, 1024 * 1024),
-    // 1MB limit
-    files: diffStat.files.map((f) => ({
-      file: f.file,
-      insertions: "binary" in f && f.binary ? 0 : f.insertions,
-      deletions: "binary" in f && f.binary ? 0 : f.deletions
-    }))
-  };
-}
-async function getWorktrees() {
-  const g = getGit();
-  const result = await g.raw(["worktree", "list", "--porcelain"]);
-  const worktrees = [];
-  let current = {};
-  for (const line of result.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      if (current.path) worktrees.push({
-        path: current.path,
-        branch: current.branch || "",
-        head: current.head || ""
-      });
-      current = { path: line.replace("worktree ", "") };
-    } else if (line.startsWith("HEAD ")) {
-      current.head = line.replace("HEAD ", "").substring(0, 7);
-    } else if (line.startsWith("branch ")) {
-      current.branch = line.replace("branch refs/heads/", "");
-    }
-  }
-  if (current.path) worktrees.push({
-    path: current.path,
-    branch: current.branch || "",
-    head: current.head || ""
-  });
-  return worktrees;
-}
-async function createWorktree(branch, worktreePath) {
-  assertSafeRef(branch);
-  if (worktreePath.includes("..") || worktreePath.startsWith("/")) {
-    throw new Error(`Invalid worktree path: ${worktreePath}`);
-  }
-  const g = getGit();
-  await g.raw(["worktree", "add", "-b", branch, worktreePath, "dev"]);
-}
-async function compareBranches(base, head) {
-  assertSafeRef(base);
-  assertSafeRef(head);
-  const g = getGit();
-  const diffStat = await g.diffSummary([`${base}...${head}`]);
-  const aheadLog = await g.log({ from: base, to: head });
-  const behindLog = await g.log({ from: head, to: base });
-  return {
-    ahead: aheadLog.total,
-    behind: behindLog.total,
-    files: diffStat.files.map((f) => ({
-      file: f.file,
-      insertions: "binary" in f && f.binary ? 0 : f.insertions,
-      deletions: "binary" in f && f.binary ? 0 : f.deletions
-    }))
-  };
-}
-function watchGitChanges(onChange) {
-  const fs8 = __require("fs");
-  const path7 = __require("path");
-  const gitDir = path7.join(process.cwd(), ".git");
-  try {
-    const watcher = fs8.watch(
-      gitDir,
-      { recursive: false },
-      (eventType, filename) => {
-        if (filename === "HEAD" || filename?.startsWith("refs")) {
-          onChange();
-        }
-      }
-    );
-    return () => watcher.close();
-  } catch {
-    return () => {
-    };
-  }
-}
-var SAFE_REF_RE, git;
-var init_git_service = __esm({
-  "src/git-service.ts"() {
-    "use strict";
-    SAFE_REF_RE = /^[a-zA-Z0-9._\/@{}\[\]:^~-]+$/;
-    git = null;
-  }
-});
-
-// src/adapters/agent-events.ts
-var agent_events_exports = {};
-__export(agent_events_exports, {
-  parseClaudeCodeEvent: () => parseClaudeCodeEvent,
-  parseCodexEvent: () => parseCodexEvent
-});
-function parseClaudeCodeEvent(event) {
-  const type = event.type;
-  if (!type) return null;
-  switch (type) {
-    case "assistant": {
-      const message = event.message;
-      const contentBlocks = message?.content ?? [];
-      const textParts = contentBlocks.filter((b) => b.type === "text").map((b) => b.text);
-      return {
-        role: "assistant",
-        content: textParts.join("\n") || "",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "tool_use": {
-      const toolCall = {
-        tool: event.name ?? "unknown",
-        args: event.input ?? {},
-        status: "running"
-      };
-      return {
-        role: "assistant",
-        content: "",
-        toolCalls: [toolCall],
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "tool_result": {
-      const toolCall = {
-        tool: event.name ?? "unknown",
-        args: {},
-        status: "completed",
-        output: typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "")
-      };
-      return {
-        role: "assistant",
-        content: "",
-        toolCalls: [toolCall],
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "permission_request": {
-      const approval = {
-        id: event.id ?? `perm-${Date.now()}`,
-        tool: event.tool ?? "unknown",
-        description: event.description ?? "",
-        status: "pending"
-      };
-      return {
-        role: "assistant",
-        content: "",
-        approvals: [approval],
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "result":
-    case "end_turn":
-      return {
-        role: "assistant",
-        content: typeof event.result === "string" ? event.result : "",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    case "error":
-      return {
-        role: "assistant",
-        content: `Error: ${event.error ?? "unknown error"}`,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    default:
-      return null;
-  }
-}
-function parseCodexEvent(event) {
-  const type = event.type;
-  if (!type) return null;
-  switch (type) {
-    case "item.created": {
-      const item = event.item;
-      if (!item) return null;
-      const role = item.role === "user" ? "user" : "assistant";
-      const contentBlocks = item.content ?? [];
-      const textParts = contentBlocks.filter((b) => b.type === "text" || b.type === "output_text").map((b) => b.text ?? b.output ?? "");
-      return {
-        role,
-        content: textParts.join("\n") || "",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "tool_use": {
-      const toolCall = {
-        tool: event.name ?? "unknown",
-        args: event.input ?? {},
-        status: "running"
-      };
-      return {
-        role: "assistant",
-        content: "",
-        toolCalls: [toolCall],
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "tool_result": {
-      const toolCall = {
-        tool: event.name ?? "unknown",
-        args: {},
-        status: "completed",
-        output: typeof event.output === "string" ? event.output : JSON.stringify(event.output ?? "")
-      };
-      return {
-        role: "assistant",
-        content: "",
-        toolCalls: [toolCall],
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "permission_request": {
-      const approval = {
-        id: event.id ?? `perm-${Date.now()}`,
-        tool: event.command ?? "unknown",
-        description: event.description ?? "",
-        status: "pending"
-      };
-      return {
-        role: "assistant",
-        content: "",
-        approvals: [approval],
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    }
-    case "turn.started":
-      return {
-        role: "assistant",
-        content: "",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    case "turn.completed":
-      return {
-        role: "assistant",
-        content: "",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    case "error":
-      return {
-        role: "assistant",
-        content: `Error: ${event.message ?? "unknown error"}`,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-    default:
-      return null;
-  }
-}
-var init_agent_events = __esm({
-  "src/adapters/agent-events.ts"() {
-    "use strict";
-  }
-});
-
-// src/ws-handler.ts
-import crypto4 from "crypto";
-import { WebSocketServer } from "ws";
+// src/gateway/ws/websocket-server.ts
+var bufferRegistry = new BufferRegistry();
+var disconnectedDevices = /* @__PURE__ */ new Set();
+var disconnectedDeviceTab = /* @__PURE__ */ new Map();
 function bufferForDevice(deviceId, type, payload) {
   if (!disconnectedDevices.has(deviceId)) return;
   const buf = bufferRegistry.getOrCreate(deviceId);
@@ -3123,6 +3282,9 @@ function unwrapMessage(parsed) {
   }
   return parsed;
 }
+var ACTIVE_IDLE_TIMEOUT_MS = 12e4;
+var clientStates = /* @__PURE__ */ new Map();
+var e2eeSessions = /* @__PURE__ */ new Map();
 function e2eeSend(ws, data) {
   if (ws.readyState !== ws.OPEN) return;
   const session = e2eeSessions.get(ws);
@@ -3202,6 +3364,7 @@ function broadcastHead() {
     }
   }
 }
+var deviceSockets = /* @__PURE__ */ new Map();
 function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   setBroadcastHooks(sendEnvelope, getClientList, e2eeSend);
   setBufferHooks(bufferTabOutput, bufferStateForDisconnected);
@@ -4030,15 +4193,12 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
             return;
           }
           if (p.type === "request_adapter_state") {
-            const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
-            const states = adapterRegistry2?.getAllStates() ?? [];
+            const states = adapterRegistry?.getAllStates() ?? [];
             sendEnvelope(ws, "adapter_state", { adapters: states });
             return;
           }
           if (p.type === "request_agent_summary") {
-            const { adapterRegistry: adapterRegistry2 } = (init_server(), __toCommonJS(server_exports));
-            const { AgentSessionSummary: AgentSessionSummary2 } = (init_agent_events(), __toCommonJS(agent_events_exports));
-            const states = adapterRegistry2?.getAllStates() ?? [];
+            const states = adapterRegistry?.getAllStates() ?? [];
             const summaries = states.map((s) => ({
               agentId: s.adapterId,
               agentName: s.name,
@@ -4133,437 +4293,11 @@ function setupWebSocket(httpServer2, TOKEN2, PASSWORD2) {
   }
   return wss2;
 }
-var bufferRegistry, disconnectedDevices, disconnectedDeviceTab, ACTIVE_IDLE_TIMEOUT_MS, clientStates, e2eeSessions, deviceSockets;
-var init_ws_handler = __esm({
-  "src/ws-handler.ts"() {
-    "use strict";
-    init_e2ee();
-    init_message_buffer();
-    init_session();
-    init_workspace_head();
-    init_pty_daemon();
-    init_auth();
-    init_store();
-    init_push();
-    init_store();
-    init_workspace();
-    init_store();
-    init_renderers();
-    bufferRegistry = new BufferRegistry();
-    disconnectedDevices = /* @__PURE__ */ new Set();
-    disconnectedDeviceTab = /* @__PURE__ */ new Map();
-    ACTIVE_IDLE_TIMEOUT_MS = 12e4;
-    clientStates = /* @__PURE__ */ new Map();
-    e2eeSessions = /* @__PURE__ */ new Map();
-    deviceSockets = /* @__PURE__ */ new Map();
-  }
-});
 
-// src/adapters/registry.ts
-var AdapterRegistry;
-var init_registry = __esm({
-  "src/adapters/registry.ts"() {
-    "use strict";
-    AdapterRegistry = class {
-      adapters = /* @__PURE__ */ new Map();
-      eventSeq = 0;
-      listeners = [];
-      register(adapter) {
-        const existing = this.adapters.get(adapter.id);
-        if (existing) existing.stop?.();
-        this.adapters.set(adapter.id, adapter);
-        adapter.start?.();
-      }
-      unregister(id) {
-        const adapter = this.adapters.get(id);
-        adapter?.stop?.();
-        this.adapters.delete(id);
-      }
-      get(id) {
-        return this.adapters.get(id);
-      }
-      getAll() {
-        return Array.from(this.adapters.values());
-      }
-      getAllStates() {
-        return this.getAll().map((a) => a.getCurrentState());
-      }
-      /** Subscribe to adapter events */
-      onEvent(listener) {
-        this.listeners.push(listener);
-        return () => {
-          this.listeners = this.listeners.filter((l) => l !== listener);
-        };
-      }
-      /** Emit an event from an adapter */
-      emit(adapterId, type, data) {
-        const event = {
-          type,
-          seq: ++this.eventSeq,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          data,
-          adapterId
-        };
-        for (const listener of this.listeners) {
-          try {
-            listener(event);
-          } catch (err) {
-            console.error(`[adapter-registry] listener error:`, err);
-          }
-        }
-      }
-      /** Stop all adapters and clear state (for clean shutdown). */
-      shutdown() {
-        for (const adapter of this.adapters.values()) {
-          try {
-            adapter.stop?.();
-          } catch {
-          }
-        }
-        this.adapters.clear();
-        this.listeners = [];
-      }
-      /** Forward terminal data to all passive adapters */
-      dispatchTerminalData(sessionName, data) {
-        for (const adapter of this.adapters.values()) {
-          if (adapter.mode === "passive" && adapter.onTerminalData) {
-            try {
-              adapter.onTerminalData(sessionName, data);
-            } catch (err) {
-              console.error(`[adapter:${adapter.id}] onTerminalData error:`, err);
-            }
-          }
-        }
-      }
-      /** Forward event file data to all passive adapters */
-      dispatchEventFile(path7, event) {
-        for (const adapter of this.adapters.values()) {
-          if (adapter.mode === "passive" && adapter.onEventFile) {
-            try {
-              adapter.onEventFile(path7, event);
-            } catch (err) {
-              console.error(`[adapter:${adapter.id}] onEventFile error:`, err);
-            }
-          }
-        }
-      }
-    };
-  }
-});
+// src/cli/remux-server.ts
+init_git_service();
 
-// src/adapters/generic-shell.ts
-var GenericShellAdapter;
-var init_generic_shell = __esm({
-  "src/adapters/generic-shell.ts"() {
-    "use strict";
-    GenericShellAdapter = class {
-      id = "generic-shell";
-      name = "Shell";
-      mode = "passive";
-      capabilities = ["cwd", "last-command", "exit-code"];
-      state = {
-        adapterId: "generic-shell",
-        name: "Shell",
-        mode: "passive",
-        capabilities: this.capabilities,
-        currentState: "idle"
-      };
-      lastCwd = null;
-      lastCommand = null;
-      onTerminalData(sessionName, data) {
-        const osc7Match = data.match(/\x1b\]7;file:\/\/[^/]*([^\x07\x1b]+)/);
-        if (osc7Match) {
-          this.lastCwd = decodeURIComponent(osc7Match[1]);
-        }
-        const osc133B = data.match(/\x1b\]133;B\x07/);
-        if (osc133B) {
-          this.state.currentState = "running";
-        }
-        const osc133D = data.match(/\x1b\]133;D;?(\d*)\x07/);
-        if (osc133D) {
-          this.state.currentState = "idle";
-        }
-      }
-      getCurrentState() {
-        return {
-          ...this.state,
-          lastEvent: this.lastCwd ? {
-            type: "cwd",
-            seq: 0,
-            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-            data: { cwd: this.lastCwd, lastCommand: this.lastCommand },
-            adapterId: this.id
-          } : void 0
-        };
-      }
-    };
-  }
-});
-
-// src/adapters/claude-code.ts
-import * as fs4 from "fs";
-import * as path3 from "path";
-import * as os from "os";
-var ClaudeCodeAdapter;
-var init_claude_code = __esm({
-  "src/adapters/claude-code.ts"() {
-    "use strict";
-    ClaudeCodeAdapter = class {
-      id = "claude-code";
-      name = "Claude Code";
-      mode = "passive";
-      capabilities = ["run-status", "conversation-events", "tool-use"];
-      state = {
-        adapterId: "claude-code",
-        name: "Claude Code",
-        mode: "passive",
-        capabilities: this.capabilities,
-        currentState: "idle"
-      };
-      watcher = null;
-      fileSizes = /* @__PURE__ */ new Map();
-      eventsDir;
-      onEmit;
-      constructor(onEmit) {
-        this.onEmit = onEmit;
-        this.eventsDir = path3.join(os.homedir(), ".claude", "projects");
-      }
-      start() {
-        this.watchForEvents();
-      }
-      stop() {
-        this.watcher?.close();
-        this.watcher = null;
-      }
-      onTerminalData(sessionName, data) {
-        if (data.includes("claude") || data.includes("Claude")) {
-          if (data.includes("Thinking...") || data.includes("\u23F3")) {
-            this.updateState("running");
-          } else if (data.includes("Done") || data.includes("\u2713") || data.includes("Complete")) {
-            this.updateState("idle");
-          } else if (data.includes("Permission") || data.includes("approve") || data.includes("Allow")) {
-            this.updateState("waiting_approval");
-          }
-        }
-      }
-      getCurrentState() {
-        return { ...this.state };
-      }
-      updateState(newState) {
-        if (this.state.currentState !== newState) {
-          this.state.currentState = newState;
-          if (this.onEmit) {
-            this.onEmit({
-              type: "state_change",
-              seq: Date.now(),
-              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-              data: { state: newState },
-              adapterId: this.id
-            });
-          }
-        }
-      }
-      watchForEvents() {
-        if (!fs4.existsSync(this.eventsDir)) return;
-        try {
-          this.watcher = fs4.watch(
-            this.eventsDir,
-            { recursive: true },
-            (eventType, filename) => {
-              if (filename && (filename.endsWith("events.jsonl") || filename.endsWith("conversation.jsonl"))) {
-                this.processEventFile(path3.join(this.eventsDir, filename));
-              }
-            }
-          );
-        } catch {
-        }
-      }
-      processEventFile(filePath) {
-        try {
-          const stat = fs4.statSync(filePath);
-          const lastSize = this.fileSizes.get(filePath) ?? 0;
-          if (stat.size <= lastSize) return;
-          let newData;
-          const fd = fs4.openSync(filePath, "r");
-          try {
-            newData = Buffer.alloc(stat.size - lastSize);
-            fs4.readSync(fd, newData, 0, newData.length, lastSize);
-            this.fileSizes.set(filePath, stat.size);
-          } finally {
-            fs4.closeSync(fd);
-          }
-          const lines = newData.toString().split("\n").filter((l) => l.trim());
-          for (const line of lines) {
-            try {
-              const event = JSON.parse(line);
-              this.handleConversationEvent(event);
-            } catch {
-            }
-          }
-        } catch {
-        }
-      }
-      handleConversationEvent(event) {
-        const type = event.type;
-        if (type === "assistant" || type === "tool_use") {
-          this.updateState("running");
-        } else if (type === "result" || type === "end_turn") {
-          this.updateState("idle");
-        } else if (type === "permission_request") {
-          this.updateState("waiting_approval");
-        } else if (type === "error") {
-          this.updateState("error");
-        }
-      }
-    };
-  }
-});
-
-// src/adapters/codex.ts
-import * as fs5 from "fs";
-import * as path4 from "path";
-import * as os2 from "os";
-var CodexAdapter;
-var init_codex = __esm({
-  "src/adapters/codex.ts"() {
-    "use strict";
-    CodexAdapter = class {
-      id = "codex";
-      name = "OpenAI Codex";
-      mode = "passive";
-      capabilities = ["run-status", "conversation-events", "tool-use"];
-      state = {
-        adapterId: "codex",
-        name: "OpenAI Codex",
-        mode: "passive",
-        capabilities: this.capabilities,
-        currentState: "idle"
-      };
-      watcher = null;
-      fileSizes = /* @__PURE__ */ new Map();
-      eventsDir;
-      onEmit;
-      constructor(onEmit) {
-        this.onEmit = onEmit;
-        this.eventsDir = path4.join(os2.homedir(), ".codex");
-      }
-      start() {
-        this.watchForEvents();
-      }
-      stop() {
-        this.watcher?.close();
-        this.watcher = null;
-      }
-      onTerminalData(sessionName, data) {
-        if (data.includes("Thinking...") || data.includes("Working...") || data.includes("\u280B") || data.includes("\u2819") || data.includes("\u2839") || data.includes("\u2838") || data.includes("\u283C") || data.includes("\u2834") || data.includes("\u2826") || data.includes("\u2827") || data.includes("\u2807") || data.includes("\u280F")) {
-          this.updateState("running");
-          return;
-        }
-        if (data.includes("Reading file:") || data.includes("Writing file:") || data.includes("Editing file:") || data.includes("Running:") || data.includes("Patch:") || data.includes("[tool_use]")) {
-          this.updateState("running");
-          return;
-        }
-        if (data.includes("Approve?") || data.includes("[y/N]") || data.includes("[y/n]") || data.includes("Allow this?") || data.includes("Run command?")) {
-          this.updateState("waiting_approval");
-          return;
-        }
-        if (data.includes("Error:") || data.includes("Failed:")) {
-          if (data.includes("codex") || data.includes("Codex") || data.includes("codex>")) {
-            this.updateState("error");
-            return;
-          }
-        }
-        if (data.includes("codex>") || data.includes("Done")) {
-          this.updateState("idle");
-          return;
-        }
-      }
-      getCurrentState() {
-        return { ...this.state };
-      }
-      updateState(newState) {
-        if (this.state.currentState !== newState) {
-          this.state.currentState = newState;
-          if (this.onEmit) {
-            this.onEmit({
-              type: "state_change",
-              seq: Date.now(),
-              timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-              data: { state: newState },
-              adapterId: this.id
-            });
-          }
-        }
-      }
-      watchForEvents() {
-        if (!fs5.existsSync(this.eventsDir)) return;
-        try {
-          this.watcher = fs5.watch(
-            this.eventsDir,
-            { recursive: true },
-            (eventType, filename) => {
-              if (filename && (filename.endsWith(".jsonl") || filename.endsWith(".json"))) {
-                this.processEventFile(path4.join(this.eventsDir, filename));
-              }
-            }
-          );
-        } catch {
-        }
-      }
-      processEventFile(filePath) {
-        try {
-          const stat = fs5.statSync(filePath);
-          const lastSize = this.fileSizes.get(filePath) ?? 0;
-          if (stat.size <= lastSize) return;
-          let newData;
-          const fd = fs5.openSync(filePath, "r");
-          try {
-            newData = Buffer.alloc(stat.size - lastSize);
-            fs5.readSync(fd, newData, 0, newData.length, lastSize);
-            this.fileSizes.set(filePath, stat.size);
-          } finally {
-            fs5.closeSync(fd);
-          }
-          const lines = newData.toString().split("\n").filter((l) => l.trim());
-          for (const line of lines) {
-            try {
-              const event = JSON.parse(line);
-              this.handleSessionEvent(event);
-            } catch {
-            }
-          }
-        } catch {
-        }
-      }
-      handleSessionEvent(event) {
-        const type = event.type;
-        if (type === "item.created" || type === "tool_use" || type === "turn.started") {
-          this.updateState("running");
-        } else if (type === "turn.completed" || type === "done") {
-          this.updateState("idle");
-        } else if (type === "permission_request") {
-          this.updateState("waiting_approval");
-        } else if (type === "error") {
-          this.updateState("error");
-        }
-      }
-    };
-  }
-});
-
-// src/adapters/index.ts
-var init_adapters = __esm({
-  "src/adapters/index.ts"() {
-    "use strict";
-    init_registry();
-    init_generic_shell();
-    init_claude_code();
-    init_codex();
-    init_agent_events();
-  }
-});
-
-// src/tunnel.ts
+// src/integrations/tunnel/tunnel-service.ts
 import { spawn as spawn2, execFile } from "child_process";
 function parseTunnelArgs(argv) {
   if (argv.includes("--no-tunnel")) return { tunnelMode: "disable" };
@@ -4577,6 +4311,7 @@ function isCloudflaredAvailable() {
     });
   });
 }
+var TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 function startTunnel(port, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn2(
@@ -4641,20 +4376,20 @@ function buildTunnelAccessUrl(tunnelUrl, token, password) {
   if (token) return `${tunnelUrl}?token=${token}`;
   return tunnelUrl;
 }
-var TUNNEL_URL_RE;
-var init_tunnel = __esm({
-  "src/tunnel.ts"() {
-    "use strict";
-    TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
-  }
-});
 
-// src/service.ts
+// src/integrations/macos/launchd-service.ts
 import fs6 from "fs";
 import path5 from "path";
 import { homedir as homedir5 } from "os";
 import { execSync } from "child_process";
 import { fileURLToPath as fileURLToPath2 } from "url";
+var __filename2 = fileURLToPath2(import.meta.url);
+var __dirname2 = path5.dirname(__filename2);
+var LABEL = "com.remux.agent";
+var PLIST_DIR = path5.join(homedir5(), "Library", "LaunchAgents");
+var PLIST_PATH = path5.join(PLIST_DIR, `${LABEL}.plist`);
+var LOG_DIR = path5.join(homedir5(), ".remux", "logs");
+var SERVER_JS = path5.join(__dirname2, "server.js");
 function escapeXml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -4791,31 +4526,22 @@ Usage: remux service <install|uninstall|status>`
       return true;
   }
 }
-var __filename2, __dirname2, LABEL, PLIST_DIR, PLIST_PATH, LOG_DIR, SERVER_JS;
-var init_service = __esm({
-  "src/service.ts"() {
-    "use strict";
-    __filename2 = fileURLToPath2(import.meta.url);
-    __dirname2 = path5.dirname(__filename2);
-    LABEL = "com.remux.agent";
-    PLIST_DIR = path5.join(homedir5(), "Library", "LaunchAgents");
-    PLIST_PATH = path5.join(PLIST_DIR, `${LABEL}.plist`);
-    LOG_DIR = path5.join(homedir5(), ".remux", "logs");
-    SERVER_JS = path5.join(__dirname2, "server.js");
-  }
-});
 
-// src/server.ts
-var server_exports = {};
-__export(server_exports, {
-  adapterRegistry: () => adapterRegistry
-});
-import fs7 from "fs";
-import http from "http";
-import path6 from "path";
-import { createRequire } from "module";
-import { fileURLToPath as fileURLToPath3 } from "url";
-import qrcode from "qrcode-terminal";
+// src/cli/remux-server.ts
+var __filename3 = fileURLToPath3(import.meta.url);
+var __dirname3 = path6.dirname(__filename3);
+if (handleServiceCommand(process.argv)) {
+  process.exit(0);
+}
+var require2 = createRequire(import.meta.url);
+var PKG = JSON.parse(
+  fs7.readFileSync(path6.join(__dirname3, "package.json"), "utf8")
+);
+var VERSION = PKG.version;
+var PORT2 = process.env.PORT || 8767;
+var { TOKEN, PASSWORD } = resolveAuth(process.argv);
+var { tunnelMode } = parseTunnelArgs(process.argv);
+var tunnelProcess = null;
 function findGhosttyWeb() {
   const ghosttyWebMain = require2.resolve("ghostty-web");
   const ghosttyWebRoot = ghosttyWebMain.replace(/[/\\]dist[/\\].*$/, "");
@@ -4827,6 +4553,8 @@ function findGhosttyWeb() {
   console.error("Error: ghostty-web package not found.");
   process.exit(1);
 }
+var { distPath, wasmPath } = findGhosttyWeb();
+var startupDone = false;
 async function startup() {
   getDb();
   initPush();
@@ -4854,137 +4582,18 @@ async function startup() {
   }
   setInterval(persistSessions, PERSIST_INTERVAL_MS);
   initGitService();
-  initAdapters();
+  initAdapterRuntime();
   startupDone = true;
 }
-function initAdapters() {
-  adapterRegistry.register(new GenericShellAdapter());
-  const claudeAdapter = new ClaudeCodeAdapter((event) => {
-    adapterRegistry.emit(event.adapterId, event.type, event.data);
-  });
-  adapterRegistry.register(claudeAdapter);
-  const codexAdapter = new CodexAdapter((event) => {
-    adapterRegistry.emit(event.adapterId, event.type, event.data);
-  });
-  adapterRegistry.register(codexAdapter);
-}
-function serveFile(filePath, res) {
-  const ext = path6.extname(filePath);
-  fs7.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      res.end("Not Found");
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Type": MIME[ext] || "application/octet-stream"
-    });
-    res.end(data);
-  });
-}
-async function launchTunnel() {
-  if (tunnelMode === "disable") return;
-  const available = await isCloudflaredAvailable();
-  if (!available) {
-    if (tunnelMode === "enable") {
-      console.log(
-        "\n  [tunnel] cloudflared not found -- install it for tunnel support"
-      );
-      console.log(
-        "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
-      );
-    }
-    return;
+startup().catch((e) => {
+  console.error("[startup] fatal:", e);
+  if (sessionMap.size === 0) {
+    const s = createSession("main");
+    createTab(s);
   }
-  console.log("  [tunnel] starting cloudflare tunnel...");
-  try {
-    const { url: tunnelUrl, process: child } = await startTunnel(
-      Number(PORT2)
-    );
-    tunnelProcess = child;
-    const accessUrl = buildTunnelAccessUrl(tunnelUrl, TOKEN, PASSWORD);
-    console.log(`
-  Tunnel: ${accessUrl}
-`);
-    qrcode.generate(accessUrl, { small: true }, (code) => {
-      console.log(code);
-    });
-    child.on("close", (code) => {
-      if (code !== null && code !== 0) {
-        console.log(`  [tunnel] cloudflared exited (code ${code})`);
-      }
-      tunnelProcess = null;
-    });
-  } catch (err) {
-    console.log(`  [tunnel] failed to start: ${err.message}`);
-    tunnelProcess = null;
-  }
-}
-function shutdown() {
-  try {
-    persistSessions();
-  } catch (e) {
-    console.error("[shutdown] persist failed:", e.message);
-  }
-  closeDb();
-  adapterRegistry.shutdown();
-  if (tunnelProcess) {
-    try {
-      tunnelProcess.kill("SIGTERM");
-    } catch {
-    }
-    tunnelProcess = null;
-  }
-  for (const session of sessionMap.values()) {
-    for (const tab of session.tabs) {
-      if (tab.vt) {
-        tab.vt.dispose();
-        tab.vt = null;
-      }
-      if (!tab.ended && tab.pty) tab.pty.kill();
-    }
-  }
-  process.exit(0);
-}
-var __filename3, __dirname3, require2, PKG, VERSION, PORT2, TOKEN, PASSWORD, tunnelMode, tunnelProcess, distPath, wasmPath, startupDone, adapterRegistry, HTML_TEMPLATE, SW_SCRIPT, MIME, httpServer, wss;
-var init_server = __esm({
-  "src/server.ts"() {
-    init_auth();
-    init_vt_tracker();
-    init_store();
-    init_push();
-    init_session();
-    init_ws_handler();
-    init_adapters();
-    init_git_service();
-    init_tunnel();
-    init_service();
-    __filename3 = fileURLToPath3(import.meta.url);
-    __dirname3 = path6.dirname(__filename3);
-    if (handleServiceCommand(process.argv)) {
-      process.exit(0);
-    }
-    require2 = createRequire(import.meta.url);
-    PKG = JSON.parse(
-      fs7.readFileSync(path6.join(__dirname3, "package.json"), "utf8")
-    );
-    VERSION = PKG.version;
-    PORT2 = process.env.PORT || 8767;
-    ({ TOKEN, PASSWORD } = resolveAuth(process.argv));
-    ({ tunnelMode } = parseTunnelArgs(process.argv));
-    tunnelProcess = null;
-    ({ distPath, wasmPath } = findGhosttyWeb());
-    startupDone = false;
-    adapterRegistry = new AdapterRegistry();
-    startup().catch((e) => {
-      console.error("[startup] fatal:", e);
-      if (sessionMap.size === 0) {
-        const s = createSession("main");
-        createTab(s);
-      }
-      startupDone = true;
-    });
-    HTML_TEMPLATE = `<!doctype html>
+  startupDone = true;
+});
+var HTML_TEMPLATE = `<!doctype html>
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
@@ -5704,7 +5313,7 @@ var init_server = __esm({
     </script>
   </body>
 </html>`;
-    SW_SCRIPT = `self.addEventListener('push', function(event) {
+var SW_SCRIPT = `self.addEventListener('push', function(event) {
   if (!event.data) return;
   try {
     var data = event.data.json();
@@ -5741,117 +5350,189 @@ self.addEventListener('notificationclick', function(event) {
   );
 });
 `;
-    MIME = {
-      ".html": "text/html",
-      ".js": "application/javascript",
-      ".wasm": "application/wasm",
-      ".css": "text/css",
-      ".json": "application/json"
-    };
-    httpServer = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://${req.headers.host}`);
-      if (url.pathname === "/auth" && req.method === "POST") {
-        let body = "";
-        req.on("data", (chunk) => body += chunk);
-        req.on("end", () => {
-          const params = new URLSearchParams(body);
-          const submitted = params.get("password");
-          if (PASSWORD && submitted === PASSWORD) {
-            const sessionToken = generateToken();
-            addPasswordToken(sessionToken);
-            res.writeHead(302, { Location: `/?token=${sessionToken}` });
-            res.end();
-          } else {
-            res.writeHead(302, { Location: "/?error=1" });
-            res.end();
-          }
-        });
-        return;
+var MIME = {
+  ".html": "text/html",
+  ".js": "application/javascript",
+  ".wasm": "application/wasm",
+  ".css": "text/css",
+  ".json": "application/json"
+};
+var httpServer = http.createServer((req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname === "/auth" && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => body += chunk);
+    req.on("end", () => {
+      const params = new URLSearchParams(body);
+      const submitted = params.get("password");
+      if (PASSWORD && submitted === PASSWORD) {
+        const sessionToken = generateToken();
+        addPasswordToken(sessionToken);
+        res.writeHead(302, { Location: `/?token=${sessionToken}` });
+        res.end();
+      } else {
+        res.writeHead(302, { Location: "/?error=1" });
+        res.end();
       }
-      if (url.pathname === "/" || url.pathname === "/index.html") {
-        const urlToken = url.searchParams.get("token");
-        const isAuthed = !TOKEN && !PASSWORD || // no auth configured (impossible after auto-gen, but safe)
-        urlToken != null && validateToken(urlToken, TOKEN);
-        if (!isAuthed) {
-          if (PASSWORD) {
-            res.writeHead(200, { "Content-Type": "text/html" });
-            res.end(PASSWORD_PAGE);
-            return;
-          }
-          res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remux</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u2B1B</text></svg>"><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1e1e1e;color:#ccc}div{text-align:center;max-width:400px;padding:2rem}h1{font-size:1.5rem;margin:0 0 1rem}p{color:#888;line-height:1.6}code{background:#333;padding:2px 6px;border-radius:3px;font-size:0.9em}</style></head><body><div><h1>Remux</h1><p>Access requires a valid token.</p><p>Add <code>?token=YOUR_TOKEN</code> to the URL.</p></div></body></html>`);
-          return;
-        }
+    });
+    return;
+  }
+  if (url.pathname === "/" || url.pathname === "/index.html") {
+    const urlToken = url.searchParams.get("token");
+    const isAuthed = !TOKEN && !PASSWORD || // no auth configured (impossible after auto-gen, but safe)
+    urlToken != null && validateToken(urlToken, TOKEN);
+    if (!isAuthed) {
+      if (PASSWORD) {
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(HTML_TEMPLATE);
+        res.end(PASSWORD_PAGE);
         return;
       }
-      if (url.pathname.startsWith("/dist/")) {
-        const resolved = path6.resolve(distPath, url.pathname.slice(6));
-        const rel = path6.relative(distPath, resolved);
-        if (rel.startsWith("..") || path6.isAbsolute(rel)) {
-          res.writeHead(403);
-          res.end("Forbidden");
-          return;
-        }
-        return serveFile(resolved, res);
-      }
-      if (url.pathname === "/ghostty-vt.wasm") {
-        return serveFile(wasmPath, res);
-      }
-      if (url.pathname === "/sw.js") {
-        res.writeHead(200, {
-          "Content-Type": "application/javascript",
-          "Service-Worker-Allowed": "/"
-        });
-        res.end(SW_SCRIPT);
-        return;
-      }
+      res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remux</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u2B1B</text></svg>"><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1e1e1e;color:#ccc}div{text-align:center;max-width:400px;padding:2rem}h1{font-size:1.5rem;margin:0 0 1rem}p{color:#888;line-height:1.6}code{background:#333;padding:2px 6px;border-radius:3px;font-size:0.9em}</style></head><body><div><h1>Remux</h1><p>Access requires a valid token.</p><p>Add <code>?token=YOUR_TOKEN</code> to the URL.</p></div></body></html>`);
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(HTML_TEMPLATE);
+    return;
+  }
+  if (url.pathname.startsWith("/dist/")) {
+    const resolved = path6.resolve(distPath, url.pathname.slice(6));
+    const rel = path6.relative(distPath, resolved);
+    if (rel.startsWith("..") || path6.isAbsolute(rel)) {
+      res.writeHead(403);
+      res.end("Forbidden");
+      return;
+    }
+    return serveFile(resolved, res);
+  }
+  if (url.pathname === "/ghostty-vt.wasm") {
+    return serveFile(wasmPath, res);
+  }
+  if (url.pathname === "/sw.js") {
+    res.writeHead(200, {
+      "Content-Type": "application/javascript",
+      "Service-Worker-Allowed": "/"
+    });
+    res.end(SW_SCRIPT);
+    return;
+  }
+  res.writeHead(404);
+  res.end("Not Found");
+});
+function serveFile(filePath, res) {
+  const ext = path6.extname(filePath);
+  fs7.readFile(filePath, (err, data) => {
+    if (err) {
       res.writeHead(404);
       res.end("Not Found");
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": MIME[ext] || "application/octet-stream"
     });
-    wss = setupWebSocket(httpServer, TOKEN, PASSWORD);
-    adapterRegistry.onEvent((event) => {
-      const envelope = JSON.stringify({
-        v: 1,
-        type: "adapter_event",
-        domain: "semantic",
-        emittedAt: event.timestamp,
-        source: "server",
-        payload: event
-      });
-      for (const client of wss.clients) {
-        if (client.readyState === 1) {
-          if (client._remuxAuthed) {
-            client.send(envelope);
-          }
-        }
+    res.end(data);
+  });
+}
+var wss = setupWebSocket(httpServer, TOKEN, PASSWORD);
+adapterRegistry.onEvent((event) => {
+  const envelope = JSON.stringify({
+    v: 1,
+    type: "adapter_event",
+    domain: "semantic",
+    emittedAt: event.timestamp,
+    source: "server",
+    payload: event
+  });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      if (client._remuxAuthed) {
+        client.send(envelope);
       }
-    });
-    httpServer.listen(PORT2, () => {
-      let url = `http://localhost:${PORT2}`;
-      if (TOKEN) url += `?token=${TOKEN}`;
-      console.log(`
-  Remux running at ${url}
-`);
-      if (PASSWORD) {
-        console.log(`  Password authentication enabled`);
-        console.log(`  Login page: http://localhost:${PORT2}
-`);
-      } else if (TOKEN) {
-        console.log(`  Token: ${TOKEN}
-`);
-      }
-      qrcode.generate(url, { small: true }, (code) => {
-        console.log(code);
-      });
-      launchTunnel();
-    });
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+    }
   }
 });
-init_server();
-export {
-  adapterRegistry
-};
+httpServer.listen(PORT2, () => {
+  let url = `http://localhost:${PORT2}`;
+  if (TOKEN) url += `?token=${TOKEN}`;
+  console.log(`
+  Remux running at ${url}
+`);
+  if (PASSWORD) {
+    console.log(`  Password authentication enabled`);
+    console.log(`  Login page: http://localhost:${PORT2}
+`);
+  } else if (TOKEN) {
+    console.log(`  Token: ${TOKEN}
+`);
+  }
+  qrcode.generate(url, { small: true }, (code) => {
+    console.log(code);
+  });
+  launchTunnel();
+});
+async function launchTunnel() {
+  if (tunnelMode === "disable") return;
+  const available = await isCloudflaredAvailable();
+  if (!available) {
+    if (tunnelMode === "enable") {
+      console.log(
+        "\n  [tunnel] cloudflared not found -- install it for tunnel support"
+      );
+      console.log(
+        "  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
+      );
+    }
+    return;
+  }
+  console.log("  [tunnel] starting cloudflare tunnel...");
+  try {
+    const { url: tunnelUrl, process: child } = await startTunnel(
+      Number(PORT2)
+    );
+    tunnelProcess = child;
+    const accessUrl = buildTunnelAccessUrl(tunnelUrl, TOKEN, PASSWORD);
+    console.log(`
+  Tunnel: ${accessUrl}
+`);
+    qrcode.generate(accessUrl, { small: true }, (code) => {
+      console.log(code);
+    });
+    child.on("close", (code) => {
+      if (code !== null && code !== 0) {
+        console.log(`  [tunnel] cloudflared exited (code ${code})`);
+      }
+      tunnelProcess = null;
+    });
+  } catch (err) {
+    console.log(`  [tunnel] failed to start: ${err.message}`);
+    tunnelProcess = null;
+  }
+}
+function shutdown() {
+  try {
+    persistSessions();
+  } catch (e) {
+    console.error("[shutdown] persist failed:", e.message);
+  }
+  closeDb();
+  adapterRegistry.shutdown();
+  if (tunnelProcess) {
+    try {
+      tunnelProcess.kill("SIGTERM");
+    } catch {
+    }
+    tunnelProcess = null;
+  }
+  for (const session of sessionMap.values()) {
+    for (const tab of session.tabs) {
+      if (tab.vt) {
+        tab.vt.dispose();
+        tab.vt = null;
+      }
+      if (!tab.ended && tab.pty) tab.pty.kill();
+    }
+  }
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

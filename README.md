@@ -1,11 +1,11 @@
 # Remux
 
-**Remote terminal workspace — powered by ghostty-web.**
+**Remote terminal workspace with tsm-style attach / reattach semantics.**
 
 [![GitHub stars](https://img.shields.io/github/stars/yaoshenwang/remux?style=social)](https://github.com/yaoshenwang/remux/stargazers)
 ![GitHub contributors](https://img.shields.io/github/contributors/yaoshenwang/remux)
 
-Remux lets you monitor and control terminal sessions from any device — phone, tablet, or another computer — through a web browser. It runs a lightweight Node.js server that manages shell sessions and streams them via WebSocket using [ghostty-web](https://github.com/coder/ghostty-web) for stable, high-quality terminal rendering.
+Remux lets you monitor and control terminal sessions from any device — phone, tablet, or another computer — through a web browser. It runs a lightweight Node.js server that owns session truth, keeps PTY-backed tabs alive, and streams them over WebSocket using [ghostty-web](https://github.com/coder/ghostty-web) for stable terminal rendering.
 
 This repository is now the Remux monorepo: the Node.js gateway and browser shell remain at the root, while the full macOS client lives in [`apps/macos`](./apps/macos) and the iOS surface remains in [`apps/ios`](./apps/ios).
 
@@ -75,26 +75,33 @@ For signed DMG releases, use the macOS release pipeline under `apps/macos/script
 ## Architecture
 
 ```
-Browser (ghostty-web Canvas)
+Browser / Native Surface
     │
-    └── WebSocket /ws (control + terminal data)
+    └── WebSocket /ws
             │
             ▼
-    server.js (Node.js)
-    ├── HTTP server (serves app + ghostty-web assets)
-    ├── WebSocket server (session/tab control + terminal I/O)
-    ├── PTY management (node-pty, direct shell)
-    ├── VT tracking (ghostty-vt WASM, server-side snapshots)
-    └── Session persistence (JSON file, periodic save)
+    server.js
+    ├── src/cli/remux-server.ts
+    ├── src/gateway/ws/
+    ├── src/runtime/
+    ├── src/persistence/
+    ├── src/domain/
+    └── src/integrations/
 ```
 
 ## Repo Layout
 
-- `src/` — Node.js gateway, PTY runtime, auth, persistence, and browser shell template
+- `src/cli/` — CLI bootstrap and server assembly
+- `src/gateway/` — transport-facing entrypoints, currently centered on WebSocket handling
+- `src/runtime/` — PTY lifecycle, detached daemon protocol, VT snapshotting, buffering
+- `src/persistence/` — SQLite-backed state and repositories
+- `src/domain/` — auth and workspace-domain logic
+- `src/integrations/` — adapters, git, push, tunnel, macOS service integration
 - `tests/` — backend and Playwright coverage for the web/runtime path
 - `apps/macos/` — GPL macOS desktop client, CLI, release scripts, and native tests
 - `apps/ios/` — iOS surface
-- `packages/` — shared libraries and package-level helpers
+- `packages/` — shared libraries such as `RemuxKit`
+- `labs/` — archived or non-shipping lines kept for reference, not current product truth
 - `docs/` — active baseline, testing guidance, ADRs, and roadmap docs
 
 ## Environment Variables
@@ -113,7 +120,6 @@ Browser (ghostty-web Canvas)
 - **WebSocket**: [ws](https://github.com/websockets/ws)
 - **Server-side VT**: ghostty-vt WASM (same engine as browser, loaded server-side)
 - **Testing**: [Vitest](https://vitest.dev/)
-- **TUI companion**: Go + Bubbletea (in `tui/`)
 
 ## Development
 

@@ -12,7 +12,7 @@ import {
   getLatestSnapshot,
   updateDeviceCursor,
   getDeviceCursor,
-} from "../src/store.js";
+} from "../src/persistence/store.js";
 
 describe("durable stream", () => {
   let db;

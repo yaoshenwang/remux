@@ -25,7 +25,7 @@ import {
   computeFingerprint,
   createPairCode,
   consumePairCode,
-} from "../src/store.ts";
+} from "../src/persistence/store.ts";
 
 /** Create an in-memory SQLite DB with the same schema as store.ts. */
 function createTestDb() {

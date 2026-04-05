@@ -15,7 +15,7 @@ import {
   touchDevice,
   type Device,
   type TrustLevel,
-} from "./store.js";
+} from "../../persistence/store.js";
 
 // ── State ────────────────────────────────────────────────────────
 

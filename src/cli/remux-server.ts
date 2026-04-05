@@ -9,10 +9,17 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import qrcode from "qrcode-terminal";
-import { resolveAuth, generateToken, validateToken, addPasswordToken, passwordTokens, PASSWORD_PAGE } from "./auth.js";
-import { initGhosttyVt } from "./vt-tracker.js";
-import { getDb, closeDb } from "./store.js";
-import { initPush } from "./push.js";
+import {
+  resolveAuth,
+  generateToken,
+  validateToken,
+  addPasswordToken,
+  passwordTokens,
+  PASSWORD_PAGE,
+} from "../domain/auth/auth-service.js";
+import { initGhosttyVt } from "../runtime/vt-snapshot.js";
+import { getDb, closeDb } from "../persistence/store.js";
+import { initPush } from "../integrations/push/push-service.js";
 import {
   sessionMap,
   createSession,
@@ -23,18 +30,18 @@ import {
   createRestoredTab,
   findAliveDaemonSocket,
   reattachToDaemon,
-} from "./session.js";
-import { setupWebSocket } from "./ws-handler.js";
-import { AdapterRegistry, GenericShellAdapter, ClaudeCodeAdapter, CodexAdapter } from "./adapters/index.js";
-import { initGitService } from "./git-service.js";
+} from "../runtime/session-runtime.js";
+import { setupWebSocket } from "../gateway/ws/websocket-server.js";
+import { adapterRegistry, initAdapterRuntime } from "../integrations/adapters/runtime.js";
+import { initGitService } from "../integrations/git/git-service.js";
 import {
   parseTunnelArgs,
   isCloudflaredAvailable,
   startTunnel,
   buildTunnelAccessUrl,
-} from "./tunnel.js";
+} from "../integrations/tunnel/tunnel-service.js";
 import type { ChildProcess } from "child_process";
-import { handleServiceCommand } from "./service.js";
+import { handleServiceCommand } from "../integrations/macos/launchd-service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -131,29 +138,9 @@ async function startup(): Promise<void> {
   initGitService();
 
   // Initialize adapter registry (E10)
-  initAdapters();
+  initAdapterRuntime();
 
   startupDone = true;
-}
-
-// ── Adapter Registry (E10) ──────────────────────────────────────
-export const adapterRegistry = new AdapterRegistry();
-
-function initAdapters(): void {
-  // E10-004: generic-shell adapter (always available)
-  adapterRegistry.register(new GenericShellAdapter());
-
-  // E10-005: claude-code adapter (passive, watches events.jsonl)
-  const claudeAdapter = new ClaudeCodeAdapter((event) => {
-    adapterRegistry.emit(event.adapterId, event.type, event.data);
-  });
-  adapterRegistry.register(claudeAdapter);
-
-  // E10-008: codex adapter (passive, watches events and terminal)
-  const codexAdapter = new CodexAdapter((event) => {
-    adapterRegistry.emit(event.adapterId, event.type, event.data);
-  });
-  adapterRegistry.register(codexAdapter);
 }
 
 startup().catch((e) => {

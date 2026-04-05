@@ -9,7 +9,7 @@ import {
   renderDiff,
   renderMarkdown,
   renderAnsi,
-} from "../src/renderers.ts";
+} from "../src/domain/workspace/artifact-renderers.ts";
 
 // ── detectContentType ──────────────────────────────────────────
 

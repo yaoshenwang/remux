@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Will import from the source module once implemented
-import { MessageBuffer, BufferRegistry } from "../src/message-buffer.js";
+import { MessageBuffer, BufferRegistry } from "../src/runtime/message-buffer.js";
 
 // ── MessageBuffer ───────────────────────────────────────────────
 

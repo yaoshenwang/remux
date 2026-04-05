@@ -12,7 +12,7 @@ import {
   encrypt,
   decrypt,
   E2EESession,
-} from "../src/e2ee.js";
+} from "../src/gateway/ws/e2ee-session.js";
 
 describe("e2ee", () => {
   // ── Key pair generation ──

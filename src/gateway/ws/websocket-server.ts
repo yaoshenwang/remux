@@ -14,9 +14,9 @@
 import crypto from "crypto";
 import type http from "http";
 import { WebSocketServer } from "ws";
-import { E2EESession } from "./e2ee.js";
+import { E2EESession } from "./e2ee-session.js";
 import type WebSocket from "ws";
-import { BufferRegistry } from "./message-buffer.js";
+import { BufferRegistry } from "../../runtime/message-buffer.js";
 import {
   type RemuxWebSocket,
   controlClients,
@@ -34,16 +34,16 @@ import {
   setBroadcastHooks,
   setBufferHooks,
   reviveTab,
-} from "./session.js";
+} from "../../runtime/session-runtime.js";
 import {
   getHead,
   updateHead,
-} from "./workspace-head.js";
+} from "../../domain/workspace/workspace-head.js";
 import {
   encodeFrame,
   TAG_CLIENT_INPUT,
-} from "./pty-daemon.js";
-import { validateToken, registerDevice } from "./auth.js";
+} from "../../runtime/pty-daemon.js";
+import { validateToken, registerDevice } from "../../domain/auth/auth-service.js";
 import {
   listDevices,
   updateDeviceTrust,
@@ -57,12 +57,12 @@ import {
   removePushSubscription,
   getPushSubscription,
   type Device,
-} from "./store.js";
+} from "../../persistence/store.js";
 import {
   getVapidPublicKey,
   sendPushNotification,
   broadcastPush,
-} from "./push.js";
+} from "../../integrations/push/push-service.js";
 import {
   createTopic,
   updateTopic,
@@ -84,13 +84,13 @@ import {
   listCommands,
   removeStaleTab,
   removeSession as removeSessionFromDb,
-} from "./store.js";
+} from "../../persistence/store.js";
 import {
   captureSnapshot,
   createCommandCard,
   getTopicSummary,
   generateHandoffBundle,
-} from "./workspace.js";
+} from "../../domain/workspace/workspace-service.js";
 import {
   getChunksSince,
   getDeviceCursor,
@@ -98,13 +98,14 @@ import {
   getLatestSnapshot,
   saveStreamChunk,
   saveTabSnapshot,
-} from "./store.js";
+} from "../../persistence/store.js";
 import {
   detectContentType,
   renderDiff,
   renderMarkdown,
   renderAnsi,
-} from "./renderers.js";
+} from "../../domain/workspace/artifact-renderers.js";
+import { adapterRegistry } from "../../integrations/adapters/runtime.js";
 
 // ── Offline Message Buffer ──────────────────────────────────────
 
@@ -1358,25 +1359,25 @@ export function setupWebSocket(
           // ── E11: Git / Review ──
 
           if (p.type === "git_status") {
-            const { getGitStatus } = require("./git-service.js");
+            const { getGitStatus } = require("../../integrations/git/git-service.js");
             getGitStatus().then((status: any) => sendEnvelope(ws, "git_status_result", status)).catch(() => {});
             return;
           }
 
           if (p.type === "git_diff") {
-            const { getGitDiff } = require("./git-service.js");
+            const { getGitDiff } = require("../../integrations/git/git-service.js");
             getGitDiff(p.base).then((diff: any) => sendEnvelope(ws, "git_diff_result", diff)).catch(() => {});
             return;
           }
 
           if (p.type === "git_worktrees") {
-            const { getWorktrees } = require("./git-service.js");
+            const { getWorktrees } = require("../../integrations/git/git-service.js");
             getWorktrees().then((worktrees: any) => sendEnvelope(ws, "git_worktrees_result", { worktrees })).catch(() => {});
             return;
           }
 
           if (p.type === "git_compare") {
-            const { compareBranches } = require("./git-service.js");
+            const { compareBranches } = require("../../integrations/git/git-service.js");
             compareBranches(p.base || "main", p.head || "HEAD").then((result: any) => sendEnvelope(ws, "git_compare_result", result)).catch(() => {});
             return;
           }
@@ -1386,7 +1387,6 @@ export function setupWebSocket(
           if (p.type === "request_adapter_state") {
             // E10-007: return all adapter states
             // Lazy import to avoid circular dependency with server.ts
-            const { adapterRegistry } = require("./server.js");
             const states = adapterRegistry?.getAllStates() ?? [];
             sendEnvelope(ws, "adapter_state", { adapters: states });
             return;
@@ -1394,8 +1394,6 @@ export function setupWebSocket(
 
           if (p.type === "request_agent_summary") {
             // E10-009: build AgentSessionSummary for each adapter
-            const { adapterRegistry } = require("./server.js");
-            const { AgentSessionSummary } = require("./adapters/agent-events.js");
             const states = adapterRegistry?.getAllStates() ?? [];
             const summaries = states.map((s: any) => ({
               agentId: s.adapterId,

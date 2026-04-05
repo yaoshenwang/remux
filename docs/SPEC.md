@@ -21,7 +21,6 @@ Remux exposes three product surfaces:
 - `Live`: a real terminal stream for interactive shell I/O
 - `Control`: structured session, tab, and pane operations
 
-The product is intentionally awareness-first. Zellij owns runtime truth; Remux makes that truth remotely accessible and easier to understand on mobile and secondary devices.
 The product is intentionally awareness-first. The current server owns runtime truth for sessions, tabs, devices, and persisted workspace state, and exposes that truth to browsers and adjacent clients.
 
 ## Current Architecture
@@ -30,20 +29,20 @@ The product is intentionally awareness-first. The current server owns runtime tr
 
 The backend is a Node.js service built around:
 
-- `src/server.ts`: CLI bootstrap, HTTP routes, static asset serving, browser shell template, and startup orchestration
-- `src/ws-handler.ts`: `/ws` upgrade handling, auth gate, protocol envelope, terminal/control routing, buffering, and device flows
-- `src/session.ts`: session/tab model, PTY lifecycle, detached daemon reattach, broadcast, and resize behavior
-- `src/store.ts`: SQLite persistence for sessions, devices, push, search, workspace objects, and durable stream state
-- `src/push.ts`: VAPID initialization, subscription persistence, and web-push delivery
-- `src/workspace.ts` and `src/workspace-head.ts`: snapshots, handoff bundle, shared focus state, and workspace objects
-- `src/service.ts`: launchd service install/uninstall/status for macOS
-- `src/adapters/`: generic shell, Claude Code, and Codex adapter hooks
+- `src/cli/remux-server.ts`: CLI bootstrap, HTTP routes, static asset serving, browser shell template, and startup orchestration
+- `src/gateway/ws/websocket-server.ts`: `/ws` upgrade handling, auth gate, protocol envelope, terminal/control routing, buffering, and device flows
+- `src/runtime/session-runtime.ts`: session/tab model, PTY lifecycle, detached daemon reattach, broadcast, and resize behavior
+- `src/persistence/store.ts`: SQLite persistence for sessions, devices, push, search, workspace objects, and durable stream state
+- `src/integrations/push/push-service.ts`: VAPID initialization, subscription persistence, and web-push delivery
+- `src/domain/workspace/workspace-service.ts` and `src/domain/workspace/workspace-head.ts`: snapshots, handoff bundle, shared focus state, and workspace objects
+- `src/integrations/macos/launchd-service.ts`: launchd service install/uninstall/status for macOS
+- `src/integrations/adapters/`: generic shell, Claude Code, and Codex adapter hooks
 
 ### Frontend
 
 The browser client is currently served inline by the Node.js gateway:
 
-- `src/server.ts`: HTML template, browser runtime, sidebar, inspect/live/control interactions, and service worker payload
+- `src/cli/remux-server.ts`: HTML template, browser runtime, sidebar, inspect/live/control interactions, and service worker payload
 - `ghostty-web` package assets: browser-side terminal renderer and WASM runtime
 - `/sw.js`: notification click handling and window focus behavior
 

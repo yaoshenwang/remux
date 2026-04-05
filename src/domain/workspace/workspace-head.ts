@@ -6,7 +6,7 @@
  * Inspired by CRDTs and Figma's multiplayer cursor model.
  */
 
-import { getDb } from "./store.js";
+import { getDb } from "../../persistence/store.js";
 
 // ── Types ───────────────────────────────────────────────────────
 

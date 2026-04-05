@@ -13,8 +13,8 @@ import {
   type Run,
   type Artifact,
   type Approval,
-} from "./store.js";
-import { findTab, sessionMap } from "./session.js";
+} from "../../persistence/store.js";
+import { findTab, sessionMap } from "../../runtime/session-runtime.js";
 
 /**
  * Capture a terminal snapshot as an artifact.

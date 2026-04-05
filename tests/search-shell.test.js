@@ -24,8 +24,8 @@ import {
   listCommands,
   listApprovals,
   createApproval,
-} from "../src/store.ts";
-import { processShellIntegration } from "../src/session.ts";
+} from "../src/persistence/store.ts";
+import { processShellIntegration } from "../src/runtime/session-runtime.ts";
 
 /** Create an in-memory SQLite DB with full schema including new tables. */
 function createTestDb() {
@@ -472,7 +472,7 @@ describe("Handoff bundle generation", () => {
 
   it("generates a bundle with basic structure", async () => {
     // Need to import dynamically to avoid circular dependency issues
-    const { generateHandoffBundle } = await import("../src/workspace.ts");
+    const { generateHandoffBundle } = await import("../src/domain/workspace/workspace-service.ts");
 
     const bundle = generateHandoffBundle();
     expect(bundle.timestamp).toBeGreaterThan(0);
@@ -484,7 +484,7 @@ describe("Handoff bundle generation", () => {
   });
 
   it("includes recent runs and active topics", async () => {
-    const { generateHandoffBundle } = await import("../src/workspace.ts");
+    const { generateHandoffBundle } = await import("../src/domain/workspace/workspace-service.ts");
 
     createTopic("main", "Active Topic");
     createRun({ sessionName: "main", command: "npm test" });

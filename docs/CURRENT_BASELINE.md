@@ -12,11 +12,11 @@ The repository should be read through that baseline first. Historical runtime ex
 
 | Layer | Current implementation | Key entrypoints |
 | --- | --- | --- |
-| Package / CLI | npm package `@wangyaoshen/remux` | `package.json`, `build.mjs`, `src/server.ts` |
-| Backend gateway | Node.js + TypeScript + `ws` | `src/server.ts`, `src/ws-handler.ts`, `src/auth.ts`, `src/service.ts` |
-| Runtime substrate | `node-pty` direct shell tabs + detached PTY daemon | `src/session.ts`, `src/pty-daemon.ts`, `src/vt-tracker.ts` |
-| Browser shell | inline HTML/JS + ghostty-web assets | `src/server.ts`, `ghostty-web` package assets |
-| Persistence / workspace | SQLite store, device trust, push, search, workspace objects | `src/store.ts`, `src/push.ts`, `src/workspace.ts`, `src/workspace-head.ts` |
+| Package / CLI | npm package `@wangyaoshen/remux` | `package.json`, `build.mjs`, `src/cli/remux-server.ts` |
+| Backend gateway | Node.js + TypeScript + `ws` | `src/cli/remux-server.ts`, `src/gateway/ws/websocket-server.ts`, `src/domain/auth/auth-service.ts`, `src/integrations/macos/launchd-service.ts` |
+| Runtime substrate | `node-pty` direct shell tabs + detached PTY daemon | `src/runtime/session-runtime.ts`, `src/runtime/pty-daemon.ts`, `src/runtime/vt-snapshot.ts` |
+| Browser shell | inline HTML/JS + ghostty-web assets | `src/cli/remux-server.ts`, `ghostty-web` package assets |
+| Persistence / workspace | SQLite store, device trust, push, search, workspace objects | `src/persistence/store.ts`, `src/integrations/push/push-service.ts`, `src/domain/workspace/workspace-service.ts`, `src/domain/workspace/workspace-head.ts` |
 | Native surfaces | adjacent iOS and macOS apps in-repo | `apps/ios/`, `apps/macos/` |
 | Tests | Vitest + Playwright | `tests/*.test.js`, `tests/e2e/app.spec.js` |
 | Documentation | repo root README + `docs/` active index | `README.md`, `docs/README.md`, `docs/SPEC.md`, `docs/TESTING.md` |
@@ -29,19 +29,45 @@ The repository should be read through that baseline first. Historical runtime ex
 
 ## What Is Current
 
-- The checked-in source layout is still centered on the root `src/` tree.
+- The source tree is organized by responsibility under `src/cli`, `src/gateway`, `src/runtime`, `src/persistence`, `src/domain`, and `src/integrations`.
 - The gateway is implemented in Node.js and TypeScript.
 - The browser remains the primary shipped client surface for the npm package.
 - Session runtime truth is managed through PTYs, persistence, and detached daemons in the current codebase.
-- Native iOS and macOS shells exist in-repo; `apps/macos/` is now the full desktop client tree, while the npm package entrypoint remains the root gateway.
+- Native iOS and macOS shells exist in-repo; `apps/macos/` and `apps/ios/` consume the same server truth rather than defining it.
+- `labs/` contains non-shipping or historical lines and is not part of the current product contract.
 - The repository merge gate is `npm run typecheck && npm test && npm run build`.
+
+## Current Source Map
+
+```text
+src/
+  cli/
+  gateway/
+  runtime/
+  persistence/
+  domain/
+  integrations/
+
+apps/
+  ios/
+  macos/
+
+packages/
+  RemuxKit/
+
+labs/
+  discovery-service/
+  protocol-goldens/
+  team-mode/
+  tui/
+```
 
 ## What Is Not Current
 
-- The old `src/backend/` and `src/frontend/` split is not the current checked-in layout.
+- The old flat `src/*.ts` root-module layout is no longer the architecture authority.
 - A standalone React + Vite web package is not the current browser implementation at this HEAD.
 - Archived runtime research is not the active implementation path.
-- Rust sidecars remain research or future platform work until explicitly promoted by code and docs.
+- `labs/` content does not define current runtime or client behavior.
 
 ## Fast Orientation
 

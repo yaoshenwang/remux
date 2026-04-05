@@ -31,9 +31,6 @@ AGENTS.md
 !pnpm-lock.yaml
 !.github/workflows/*.yml
 
-# Docs (planning docs, not tracked)
-docs/
-
 # Swift / Xcode
 .build/
 *.xcodeproj/xcuserdata/

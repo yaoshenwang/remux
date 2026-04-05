@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
 
-// src/pty-daemon.ts
+// src/runtime/pty-daemon.ts
 import net from "net";
 import pty from "node-pty";
 import { parseArgs } from "util";

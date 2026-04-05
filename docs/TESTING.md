@@ -1,6 +1,6 @@
 # Remux Testing Guide
 
-Remux's public product path is the Zellij-backed backend. The default test loop should optimize for fast TypeScript feedback and browser behavior.
+Remux's current product path is the Node.js gateway plus direct PTY runtime. The default test loop should optimize for fast TypeScript feedback and browser behavior.
 
 ## Quick Loop
 
@@ -15,7 +15,7 @@ npm run build
 What each command covers:
 
 - `npm run typecheck`: backend and frontend TypeScript compile safety
-- `npm test`: Vitest coverage for backend and frontend logic, including Zellij control/runtime helpers
+- `npm test`: Vitest coverage for gateway, runtime, persistence, and browser behavior
 - `npm run build`: produces the backend output and frontend bundle used by the packaged CLI
 
 ## Browser Check
@@ -40,3 +40,7 @@ npm run typecheck && npm test && npm run build
 ```
 
 Add `npm run test:e2e` when the change affects frontend or transport behavior.
+
+## Native Dependency Note
+
+`better-sqlite3` and `node-pty` are native modules. If local verification fails with an ABI mismatch, rerun the test loop with the Node LTS toolchain used to build local dependencies or reinstall them for your active Node version.

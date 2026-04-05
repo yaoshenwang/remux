@@ -4,7 +4,7 @@
  * Team Mode: multi-user with roles and permissions.
  */
 
-import { getDb } from "./store.js";
+import { getDb } from "../../src/persistence/store.js";
 
 // E17-001: User Identity
 export interface UserIdentity {

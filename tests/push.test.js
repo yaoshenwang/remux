@@ -15,7 +15,7 @@ import {
   removePushSubscription,
   listPushSubscriptions,
   createDevice,
-} from "../src/store.ts";
+} from "../src/persistence/store.ts";
 
 /** Create an in-memory SQLite DB with the same schema as store.ts. */
 function createTestDb() {
@@ -181,7 +181,7 @@ describe("push: VAPID key generation and persistence", () => {
 
   it("initPush generates and persists VAPID keys on first run", async () => {
     // Dynamic import to get fresh module state
-    const { initPush, getVapidPublicKey, isPushReady } = await import("../src/push.ts");
+    const { initPush, getVapidPublicKey, isPushReady } = await import("../src/integrations/push/push-service.ts");
 
     // Before init
     // Note: module state persists across tests, so we just verify initPush works
@@ -203,7 +203,7 @@ describe("push: VAPID key generation and persistence", () => {
 
   it("initPush loads existing VAPID keys on subsequent run", async () => {
     // Pre-populate settings with known keys
-    const { initPush: initPush2, getVapidPublicKey: getKey2 } = await import("../src/push.ts");
+    const { initPush: initPush2, getVapidPublicKey: getKey2 } = await import("../src/integrations/push/push-service.ts");
 
     // First init generates keys
     initPush2();
@@ -233,7 +233,7 @@ describe("push: sendPushNotification", () => {
   });
 
   it("returns false when no subscription exists for device", async () => {
-    const { initPush, sendPushNotification } = await import("../src/push.ts");
+    const { initPush, sendPushNotification } = await import("../src/integrations/push/push-service.ts");
     initPush();
 
     const result = await sendPushNotification("no-such-device", "Title", "Body");
@@ -255,7 +255,7 @@ describe("push: broadcastPush", () => {
   });
 
   it("skips excluded device IDs", async () => {
-    const { initPush, broadcastPush } = await import("../src/push.ts");
+    const { initPush, broadcastPush } = await import("../src/integrations/push/push-service.ts");
     initPush();
 
     // Add subscriptions for two devices
@@ -272,7 +272,7 @@ describe("push: broadcastPush", () => {
   });
 
   it("handles empty subscription list gracefully", async () => {
-    const { initPush, broadcastPush } = await import("../src/push.ts");
+    const { initPush, broadcastPush } = await import("../src/integrations/push/push-service.ts");
     initPush();
 
     // Should not throw

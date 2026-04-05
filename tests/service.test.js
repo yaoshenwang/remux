@@ -40,7 +40,7 @@ beforeEach(async () => {
     execSync: mockExecSync,
   }));
 
-  service = await import("../src/service.ts");
+  service = await import("../src/integrations/macos/launchd-service.ts");
 });
 
 afterEach(() => {

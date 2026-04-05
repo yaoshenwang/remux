@@ -20,8 +20,8 @@ import {
   createCommand,
   completeCommand,
   type CommandRecord,
-} from "./store.js";
-import { broadcastPush } from "./push.js";
+} from "../persistence/store.js";
+import { broadcastPush } from "../integrations/push/push-service.js";
 import {
   encodeFrame,
   FrameParser,
@@ -34,7 +34,8 @@ import {
 } from "./pty-daemon.js";
 import type { IPty } from "node-pty";
 import type WebSocket from "ws";
-import { createVtTerminal, type VtTerminal } from "./vt-tracker.js";
+import { createVtTerminal, type VtTerminal } from "./vt-snapshot.js";
+import { adapterRegistry } from "../integrations/adapters/runtime.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -301,10 +302,7 @@ function wireDaemonToTab(
       processShellIntegration(data, tab, sessionName);
 
       // E10: dispatch terminal data to adapters
-      try {
-        const { adapterRegistry } = require("./server.js");
-        adapterRegistry?.dispatchTerminalData(sessionName, data);
-      } catch { /* adapter not initialized yet */ }
+      adapterRegistry.dispatchTerminalData(sessionName, data);
 
       // Idle activity tracking: notify on resume after >5 min silence
       const now = Date.now();
@@ -593,10 +591,7 @@ function spawnDirectPty(
     processShellIntegration(data, tab, session.name);
 
     // E10: dispatch terminal data to adapters
-    try {
-      const { adapterRegistry } = require("./server.js");
-      adapterRegistry?.dispatchTerminalData(session.name, data);
-    } catch { /* adapter not initialized yet */ }
+    adapterRegistry.dispatchTerminalData(session.name, data);
 
     // Idle activity tracking: notify on resume after >5 min silence
     const now = Date.now();

@@ -20,7 +20,7 @@ import {
   createApproval,
   listApprovals,
   resolveApproval,
-} from "../src/store.ts";
+} from "../src/persistence/store.ts";
 
 /** Create an in-memory SQLite DB with the full schema including workspace tables. */
 function createTestDb() {
