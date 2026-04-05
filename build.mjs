@@ -11,7 +11,7 @@ import esbuild from "esbuild";
 const commonOptions = {
   bundle: true,
   platform: "node",
-  target: "node20",
+  target: "node24",
   format: "esm",
   external: ["node-pty", "ws", "ghostty-web", "qrcode-terminal", "better-sqlite3", "web-push", "simple-git"],
 };

@@ -4,10 +4,10 @@
 
 ## 项目概述
 
-Remux 是一个基于 Web 的远程终端控制台，使用 ghostty-web 渲染 + node-pty 直接管理 shell PTY（无 Zellij 依赖）。通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx @wangyaoshen/remux`）。使用 pnpm 作为包管理器。
+Remux 是一个基于 Web 的远程终端 workspace，使用 ghostty-web 渲染 + node-pty 直接管理 shell PTY（无 Zellij 依赖）。通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx @wangyaoshen/remux`）。使用 pnpm 作为包管理器。
 
 - **GitHub**: github.com/yaoshenwang/remux
-- **许可证**: MIT
+- **许可证**: GPL-3.0-or-later
 
 ## 沟通语言
 
@@ -43,9 +43,14 @@ Remux 是一个基于 Web 的远程终端控制台，使用 ghostty-web 渲染 +
 ## 常用命令
 
 ```bash
+pnpm install
 pnpm start
 pnpm run dev
+pnpm run typecheck
 pnpm test
+pnpm run test:e2e
+pnpm run build
+cd packages/RemuxKit && swift test
 ```
 
 ### 构建检查（强制）
@@ -53,7 +58,13 @@ pnpm test
 合并到 `dev` 之前必须通过：
 
 ```bash
-pnpm test
+pnpm run typecheck && pnpm test && pnpm run build
+```
+
+涉及浏览器 transport、终端渲染、认证、Inspect、上传或 resize 行为的改动，还必须补跑：
+
+```bash
+pnpm run test:e2e
 ```
 
 ## 开发规范
@@ -81,7 +92,7 @@ pnpm test
 ### 安全要点
 
 - 单一 WebSocket 端点 `/ws`，使用 `REMUX_TOKEN` 环境变量进行 token 认证
-- shell 相关命令使用参数数组，禁止退化为 shell 拼接字符串
+- shell、PTY daemon、tunnel 和 service 相关命令使用参数数组，禁止退化为 shell 拼接字符串
 
 ### 浏览器自动化（强制）
 
@@ -97,7 +108,7 @@ pnpm test
 
 ### 交付流程（强制）
 
-1. 在 feature 分支完成开发 + 自测（`pnpm test` 全部通过）
+1. 在 feature 分支完成开发 + 自测（`pnpm run typecheck && pnpm test && pnpm run build` 全部通过；必要时补 `pnpm run test:e2e` 和 `cd packages/RemuxKit && swift test`）
 2. 确认功能开发完全后，立即合并到 `dev`
 3. 立刻 push 到远程 `origin/dev`，禁止只做本地合并
 4. 基于远程 `dev` 对应的真实环境执行必要的实机验证

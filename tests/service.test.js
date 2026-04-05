@@ -108,6 +108,19 @@ describe("generatePlist", () => {
     }
   });
 
+  it("includes REMUX_HOME from env if set", () => {
+    const origHome = process.env.REMUX_HOME;
+    process.env.REMUX_HOME = "/tmp/remux-service-home";
+    try {
+      const xml = service.generatePlist({});
+      expect(xml).toContain("<key>REMUX_HOME</key>");
+      expect(xml).toContain("<string>/tmp/remux-service-home</string>");
+    } finally {
+      if (origHome === undefined) delete process.env.REMUX_HOME;
+      else process.env.REMUX_HOME = origHome;
+    }
+  });
+
   it("sets correct log paths", () => {
     const xml = service.generatePlist({});
     expect(xml).toContain(path.join(LOG_DIR, "remux.log"));

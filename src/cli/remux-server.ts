@@ -147,7 +147,7 @@ startup().catch((e) => {
   console.error("[startup] fatal:", e);
   // Fallback: create default session without VT tracking
   if (sessionMap.size === 0) {
-    const s = createSession("main");
+    const s = createSession("default");
     createTab(s);
   }
   startupDone = true;

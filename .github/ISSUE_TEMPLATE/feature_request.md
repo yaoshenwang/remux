@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Propose a feature aligned with the current Zellij-era roadmap
+about: Propose a feature aligned with the current direct-PTY roadmap
 title: "[feature] "
 labels: ["enhancement"]
 assignees: []
@@ -35,4 +35,3 @@ How will we know the work is done?
 ## Risks / Dependencies
 
 What could block or complicate this?
-

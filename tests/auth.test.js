@@ -7,7 +7,9 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn } from "child_process";
 import http from "http";
 import WebSocket from "ws";
+import fs from "fs";
 import path from "path";
+import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -97,15 +99,24 @@ function waitForMsg(ws, type, timeout = 3000) {
 function startServer(env, port) {
   return new Promise((resolve, reject) => {
     let stdout = "";
+    let timeout;
+    const remuxHome =
+      env.REMUX_HOME || fs.mkdtempSync(path.join(tmpdir(), "remux-auth-"));
     const cleanEnv = { ...process.env };
     delete cleanEnv.REMUX_TOKEN;
     delete cleanEnv.REMUX_PASSWORD;
-    const proc = spawn(process.execPath, [SERVER_JS], {
-      env: { ...cleanEnv, ...env, PORT: String(port) },
+    const proc = spawn(process.execPath, [SERVER_JS, "--no-tunnel"], {
+      env: { ...cleanEnv, ...env, PORT: String(port), REMUX_HOME: remuxHome },
       stdio: "pipe",
     });
-    const timeout = setTimeout(
-      () => reject(new Error("server start timeout")),
+    const fail = (error) => {
+      clearTimeout(timeout);
+      proc.kill("SIGTERM");
+      fs.rmSync(remuxHome, { recursive: true, force: true });
+      reject(error);
+    };
+    timeout = setTimeout(
+      () => fail(new Error("server start timeout")),
       10000,
     );
     proc.stdout.on("data", (d) => {
@@ -113,14 +124,21 @@ function startServer(env, port) {
       if (stdout.includes("Remux running")) {
         clearTimeout(timeout);
         // Extra delay for WASM init
-        setTimeout(() => resolve({ proc, port, stdout }), 2000);
+        setTimeout(() => resolve({ proc, port, stdout, remuxHome }), 2000);
       }
     });
     proc.stderr.on("data", (d) => {
       stdout += d.toString();
     });
-    proc.on("error", reject);
+    proc.on("error", fail);
   });
+}
+
+function cleanupServer(server) {
+  server?.proc?.kill("SIGTERM");
+  if (server?.remuxHome) {
+    fs.rmSync(server.remuxHome, { recursive: true, force: true });
+  }
 }
 
 // ── Auto-generated token ─────────────────────────────────────────
@@ -135,7 +153,7 @@ describe("auto-generated token (no REMUX_TOKEN, no REMUX_PASSWORD)", () => {
     );
   }, 15000);
 
-  afterAll(() => server?.proc?.kill("SIGTERM"));
+  afterAll(() => cleanupServer(server));
 
   it("prints full URL with auto-generated token on startup", () => {
     expect(server.stdout).toMatch(/http:\/\/localhost:\d+\?token=[a-f0-9]{32}/);
@@ -184,7 +202,7 @@ describe("password authentication (REMUX_PASSWORD set)", () => {
     );
   }, 15000);
 
-  afterAll(() => server?.proc?.kill("SIGTERM"));
+  afterAll(() => cleanupServer(server));
 
   it("shows password page when accessing root without token", async () => {
     const res = await httpGet(server.port, "/");

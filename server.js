@@ -178,7 +178,8 @@ import path from "path";
 import { homedir } from "os";
 import fs from "fs";
 import crypto from "crypto";
-var REMUX_DIR = path.join(homedir(), ".remux");
+var REMUX_HOME = process.env.REMUX_HOME || path.join(homedir(), ".remux");
+var REMUX_DIR = REMUX_HOME;
 var PORT = process.env.PORT || 8767;
 var PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
 function getDbPath() {
@@ -4388,7 +4389,8 @@ var __dirname2 = path5.dirname(__filename2);
 var LABEL = "com.remux.agent";
 var PLIST_DIR = path5.join(homedir5(), "Library", "LaunchAgents");
 var PLIST_PATH = path5.join(PLIST_DIR, `${LABEL}.plist`);
-var LOG_DIR = path5.join(homedir5(), ".remux", "logs");
+var REMUX_HOME2 = process.env.REMUX_HOME || path5.join(homedir5(), ".remux");
+var LOG_DIR = path5.join(REMUX_HOME2, "logs");
 var SERVER_JS = path5.join(__dirname2, "server.js");
 function escapeXml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -4400,6 +4402,7 @@ function generatePlist(options = {}) {
   const envVars = {};
   if (port) envVars.PORT = String(port);
   if (process.env.REMUX_TOKEN) envVars.REMUX_TOKEN = process.env.REMUX_TOKEN;
+  if (process.env.REMUX_HOME) envVars.REMUX_HOME = process.env.REMUX_HOME;
   let envXml = "";
   if (Object.keys(envVars).length > 0) {
     const entries = Object.entries(envVars).map(
@@ -4588,7 +4591,7 @@ async function startup() {
 startup().catch((e) => {
   console.error("[startup] fatal:", e);
   if (sessionMap.size === 0) {
-    const s = createSession("main");
+    const s = createSession("default");
     createTab(s);
   }
   startupDone = true;

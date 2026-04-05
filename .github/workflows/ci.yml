@@ -17,8 +17,23 @@ jobs:
           node-version: 24.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
       - run: pnpm run build
       - run: pnpm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: npx playwright install --with-deps chromium
+      - run: pnpm run build
+      - run: pnpm run test:e2e
 
   swift-test:
     runs-on: macos-15
@@ -31,7 +46,7 @@ jobs:
   # ── Dev prerelease: publish @dev tag on push to dev ──
   prerelease:
     if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
-    needs: test
+    needs: [test, e2e, swift-test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,6 +60,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
       - run: pnpm run build
 
       - name: Set prerelease version

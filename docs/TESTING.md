@@ -7,28 +7,29 @@ Remux's current product path is the Node.js gateway plus direct PTY runtime. The
 Use the smallest meaningful loop while iterating:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 What each command covers:
 
-- `npm run typecheck`: backend and frontend TypeScript compile safety
-- `npm test`: Vitest coverage for gateway, runtime, persistence, and browser behavior
-- `npm run build`: produces the backend output and frontend bundle used by the packaged CLI
+- `pnpm run typecheck`: backend and frontend TypeScript compile safety
+- `pnpm test`: rebuilds the server bundle first, then runs Vitest coverage for gateway, runtime, persistence, and browser behavior
+- `pnpm run build`: produces the backend output and frontend bundle used by the packaged CLI
 
 ## Browser Check
 
 When a change touches browser transport, terminal rendering, inspect output, upload behavior, auth, or resize handling, also run:
 
 ```bash
-npm run test:e2e
+pnpm run test:e2e
 ```
 
 Notes:
 
-- `npm run test:e2e` is the Playwright smoke pass shipped in this repository
+- `pnpm run test:e2e` is the Playwright smoke pass shipped in this repository
+- CI on `dev` / `main` also runs this browser smoke job before prerelease / release publication
 - some local harness file names still carry legacy naming; treat that as harness internals, not as the current product contract
 
 ## Merge Gate
@@ -36,10 +37,10 @@ Notes:
 Before merging to `dev`, the required gate is:
 
 ```bash
-npm run typecheck && npm test && npm run build
+pnpm run typecheck && pnpm test && pnpm run build
 ```
 
-Add `npm run test:e2e` when the change affects frontend or transport behavior.
+Add `pnpm run test:e2e` when the change affects frontend or transport behavior.
 
 ## Native Dependency Note
 

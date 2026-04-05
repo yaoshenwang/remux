@@ -3,7 +3,7 @@
  * Provides install/uninstall/status for macOS background service.
  *
  * Plist goes to ~/Library/LaunchAgents/com.remux.agent.plist
- * Logs go to ~/.remux/logs/
+ * Logs go to REMUX_HOME/logs (default: ~/.remux/logs/)
  *
  * Inspired by Homebrew's launchd service pattern and similar projects
  * (e.g. remodex) that use launchd for daemon management.
@@ -21,7 +21,8 @@ const __dirname = path.dirname(__filename);
 export const LABEL = "com.remux.agent";
 export const PLIST_DIR = path.join(homedir(), "Library", "LaunchAgents");
 export const PLIST_PATH = path.join(PLIST_DIR, `${LABEL}.plist`);
-export const LOG_DIR = path.join(homedir(), ".remux", "logs");
+export const REMUX_HOME = process.env.REMUX_HOME || path.join(homedir(), ".remux");
+export const LOG_DIR = path.join(REMUX_HOME, "logs");
 export const SERVER_JS = path.join(__dirname, "server.js");
 
 function escapeXml(str: string): string {
@@ -51,6 +52,7 @@ export function generatePlist(options: {
   const envVars: Record<string, string> = {};
   if (port) envVars.PORT = String(port);
   if (process.env.REMUX_TOKEN) envVars.REMUX_TOKEN = process.env.REMUX_TOKEN;
+  if (process.env.REMUX_HOME) envVars.REMUX_HOME = process.env.REMUX_HOME;
 
   let envXml = "";
   if (Object.keys(envVars).length > 0) {

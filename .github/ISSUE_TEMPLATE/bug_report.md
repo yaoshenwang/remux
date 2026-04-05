@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a regression or defect in the current Zellij-era product path
+about: Report a regression or defect in the current ghostty-web + direct-PTY product path
 title: "[bug] "
 labels: ["bug"]
 assignees: []
@@ -13,7 +13,7 @@ Describe the problem in one paragraph.
 ## Affected Layer
 
 - [ ] backend gateway
-- [ ] zellij integration
+- [ ] PTY / runtime
 - [ ] web frontend
 - [ ] docs / devex
 - [ ] tests / CI
@@ -22,7 +22,7 @@ Describe the problem in one paragraph.
 
 - Remux version:
 - Node.js version:
-- Zellij version:
+- Shell / PTY environment:
 - Browser / device:
 
 ## Reproduction
@@ -37,11 +37,10 @@ What should have happened?
 
 ## Validation
 
-- [ ] `npm run typecheck`
-- [ ] `npm test`
-- [ ] `npm run build`
+- [ ] `pnpm run typecheck`
+- [ ] `pnpm test`
+- [ ] `pnpm run build`
 
 ## Notes
 
 Include logs, screenshots, or links when relevant.
-

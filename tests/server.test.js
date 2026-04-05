@@ -10,15 +10,14 @@ import http from "http";
 import WebSocket from "ws";
 import fs from "fs";
 import path from "path";
-import { homedir } from "os";
+import { tmpdir } from "os";
 import pty from "node-pty";
 
 const PORT = 19876 + Math.floor(Math.random() * 1000); // randomized test port
 const TOKEN = "test-token-" + Date.now();
 const INSTANCE_ID = "test-" + Date.now();
-const PERSIST_DIR = path.join(homedir(), ".remux");
-const PERSIST_FILE = path.join(PERSIST_DIR, `sessions-${INSTANCE_ID}.json`);
-const DB_FILE = path.join(PERSIST_DIR, `remux-${INSTANCE_ID}.db`);
+const REMUX_HOME = fs.mkdtempSync(path.join(tmpdir(), "remux-server-"));
+const DB_FILE = path.join(REMUX_HOME, `remux-${INSTANCE_ID}.db`);
 let serverProc;
 
 function supportsNodePty() {
@@ -123,21 +122,16 @@ function waitForMsg(ws, type, timeout = 3000) {
 }
 
 beforeAll(async () => {
-  // Clean persistence files to ensure clean state
-  try { fs.unlinkSync(PERSIST_FILE); } catch {}
-  try { fs.unlinkSync(DB_FILE); } catch {}
-  try { fs.unlinkSync(DB_FILE + "-wal"); } catch {}
-  try { fs.unlinkSync(DB_FILE + "-shm"); } catch {}
-
   // Explicitly remove REMUX_PASSWORD to avoid env leaking from parent
   const cleanEnv = { ...process.env };
   delete cleanEnv.REMUX_PASSWORD;
-  serverProc = spawn(process.execPath, ["server.js"], {
+  serverProc = spawn(process.execPath, ["server.js", "--no-tunnel"], {
     env: {
       ...cleanEnv,
       PORT: String(PORT),
       REMUX_TOKEN: TOKEN,
       REMUX_INSTANCE_ID: INSTANCE_ID,
+      REMUX_HOME,
     },
     stdio: "pipe",
   });
@@ -183,10 +177,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   if (serverProc) serverProc.kill("SIGTERM");
-  try { fs.unlinkSync(PERSIST_FILE); } catch {}
-  try { fs.unlinkSync(DB_FILE); } catch {}
-  try { fs.unlinkSync(DB_FILE + "-wal"); } catch {}
-  try { fs.unlinkSync(DB_FILE + "-shm"); } catch {}
+  fs.rmSync(REMUX_HOME, { recursive: true, force: true });
 });
 
 // ── HTTP ──────────────────────────────────────────────────────────
@@ -335,7 +326,7 @@ describe("session and tab management", () => {
 
   afterAll(() => ws?.close());
 
-  it("default state has main session with tabs", async () => {
+  it("attach_first creates a requested session with tabs", async () => {
     // Request state by attaching (triggers broadcastState)
     const msgs = await sendAndCollect(
       ws,

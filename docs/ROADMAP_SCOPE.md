@@ -4,7 +4,7 @@ This document keeps the current roadmap honest. It separates immediate shipping 
 
 ## v1 Must Ship
 
-- Keep the public runtime substrate on Zellij.
+- Keep the public runtime substrate on the Node.js gateway plus direct shell / PTY runtime.
 - Harden the Node.js + TypeScript gateway.
 - Improve Inspect, Live, and Control for web and mobile browser usage.
 - Preserve current authentication, safety, and test gates.
@@ -15,7 +15,7 @@ This document keeps the current roadmap honest. It separates immediate shipping 
 - Desktop host alpha work once it can launch the existing gateway cleanly.
 - Device trust and pairing UX on top of the current gateway.
 - Deeper review, artifact, and worktree flows.
-- Adapter growth that still preserves the Zellij-era baseline.
+- Adapter growth that still preserves the current ghostty-web + direct-PTY baseline.
 
 ## v2 / Research
 
@@ -28,5 +28,4 @@ This document keeps the current roadmap honest. It separates immediate shipping 
 
 - Research lines do not block current shipping work.
 - New proposals should say whether they belong to v1, v1.5, or research before implementation starts.
-- If a task depends on replacing Zellij outright, it is not v1 work.
-
+- If a task depends on reviving archived Zellij-era or React/Vite assumptions as the current shipping path, it is not v1 work.

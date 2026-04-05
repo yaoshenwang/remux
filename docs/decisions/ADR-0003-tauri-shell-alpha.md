@@ -1,7 +1,12 @@
 # ADR-0003: Tauri Shell Alpha Direction
 
-- Status: Accepted
+- Status: Superseded / Archive Only
 - Date: 2026-03-31
+
+> [!WARNING]
+> This ADR is preserved for history only. It describes a superseded desktop
+> direction from the Zellij-era baseline and is not current implementation
+> authority.
 
 ## Context
 

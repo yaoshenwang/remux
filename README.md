@@ -111,6 +111,7 @@ Browser / Native Surface
 | `PORT` | Server port (default: 8767) |
 | `REMUX_TOKEN` | Authentication token (optional; if set, required for access) |
 | `REMUX_INSTANCE_ID` | Instance identifier for persistence file isolation |
+| `REMUX_HOME` | Override the state directory used for databases and logs (default: `~/.remux`) |
 
 ## Tech Stack
 
@@ -126,7 +127,7 @@ Browser / Native Surface
 ```bash
 pnpm install
 pnpm run dev      # start server
-pnpm test         # run tests
+pnpm test         # rebuild bundles, then run tests
 ```
 
 ## Contributors

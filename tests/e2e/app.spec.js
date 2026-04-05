@@ -5,20 +5,25 @@
 
 import { test, expect } from "@playwright/test";
 import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
+import { tmpdir } from "os";
 
 const PORT = 29876;
 const TOKEN = "e2e-test-token";
 const BASE = `http://localhost:${PORT}/?token=${TOKEN}`;
+const REMUX_HOME = fs.mkdtempSync(path.join(tmpdir(), "remux-e2e-"));
 
 let server;
 
 test.beforeAll(async () => {
-  server = spawn("node", ["server.js"], {
+  server = spawn("node", ["server.js", "--no-tunnel"], {
     env: {
       ...process.env,
       PORT: String(PORT),
       REMUX_TOKEN: TOKEN,
       REMUX_INSTANCE_ID: "e2e-test",
+      REMUX_HOME,
     },
     stdio: "pipe",
     cwd: process.cwd(),
@@ -54,6 +59,7 @@ test.afterAll(async () => {
     server.kill("SIGTERM");
     await new Promise((r) => setTimeout(r, 500));
   }
+  fs.rmSync(REMUX_HOME, { recursive: true, force: true });
 });
 
 test.describe.serial("Remux E2E", () => {
@@ -67,8 +73,8 @@ test.describe.serial("Remux E2E", () => {
     const canvas = page.locator("#terminal canvas");
     await expect(canvas).toBeVisible({ timeout: 10000 });
 
-    // Sidebar should show "main" session
-    const sessionItem = page.locator(".session-item .name", { hasText: "main" });
+    // Sidebar should show the bootstrap session
+    const sessionItem = page.locator(".session-item .name", { hasText: "default" });
     await expect(sessionItem).toBeVisible();
 
     // Compose input should be visible (emergency mode)

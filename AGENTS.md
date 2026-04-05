@@ -4,10 +4,10 @@
 
 ## 项目概述
 
-Remux 是一个基于 Zellij 的跨端 AI-native workspace cockpit。当前 shipping path 是 Node.js/TypeScript gateway + React Web shell，通过 tunnel 让用户从手机、平板或其他电脑监控和控制终端会话。以 npm 包分发（`npx remux`）。
+Remux 是一个基于 ghostty-web 的跨端远程终端 workspace。当前 shipping path 是 Node.js/TypeScript gateway + browser shell，使用 node-pty 直接管理 shell PTY，并可选通过 tunnel 暴露给手机、平板或其他电脑访问。以 npm 包分发（`npx @wangyaoshen/remux`），使用 pnpm 作为包管理器。
 
 - **GitHub**: github.com/yaoshenwang/remux
-- **许可证**: MIT
+- **许可证**: GPL-3.0-or-later
 
 ### 当前权威文档
 
@@ -51,24 +51,22 @@ Remux 是一个基于 Zellij 的跨端 AI-native workspace cockpit。当前 ship
 - Minor/Major 版本变更需用户明确批准
 - 每次 feature 合并到 `dev` 后 bump patch
 
-### Zellij Backend 约束（强制）
+### 当前运行时约束（强制）
 
-- `zellij` 是当前公开产品路径与唯一默认后端，**禁止**把 public `main` / `dev` 服务重新引回任何归档运行时线
-- session 持久化、断线恢复、Inspect、宽度和多端一致性问题，必须在当前 Node.js + node-pty + Zellij 架构内解决
-- 对 `https://remux.yaoshen.wang` 和 `https://remux-dev.yaoshen.wang` 的修复，目标是两者在需要时附着到同一套机器级 Zellij 会话真相，而不是各自维护独立易失 workspace
-- `docs/archive/` 下的文档只属于归档资料，不得再把它当成当前实现或产品要求
+- 当前公开产品路径是 Node.js gateway + ghostty-web browser shell + direct shell PTY；**禁止**把 `main` / `dev` 的实现重新引回任何归档的 Zellij、React/Vite 或其他替代运行时线
+- session 持久化、断线恢复、Inspect、宽度和多端一致性问题，必须在当前 Node.js + node-pty + detached PTY daemon 架构内解决
+- `docs/archive/` 和 `docs/decisions/` 中已标记为 Archive 的文档只用于历史参考，不得重新当成当前实现或产品要求
 
 ## 常用命令
 
 ```bash
-npm run dev
-npm run dev:backend
-npm run dev:frontend
-npm run build
-npm run typecheck
-npm test
-npm run test:watch
-npm run test:e2e
+pnpm install
+pnpm run dev
+pnpm run typecheck
+pnpm test
+pnpm run test:e2e
+pnpm run build
+cd packages/RemuxKit && swift test
 ```
 
 ### 构建检查（强制）
@@ -76,7 +74,13 @@ npm run test:e2e
 合并到 `dev` 之前必须通过：
 
 ```bash
-npm run typecheck && npm test && npm run build
+pnpm run typecheck && pnpm test && pnpm run build
+```
+
+涉及浏览器 transport、终端渲染、认证、Inspect、上传或 resize 行为的变更，还必须补跑：
+
+```bash
+pnpm run test:e2e
 ```
 
 ## 开发规范
@@ -87,13 +91,13 @@ npm run typecheck && npm test && npm run build
 
 ### 安全要点
 
-- 两个 WebSocket 端点独立认证，修改 `server-zellij.ts` 或 `auth-service.ts` 时必须保持此特性
-- zellij 与 shell 相关命令使用参数数组，禁止退化为 shell 拼接字符串
-- PTY 路径中的 session 名称必须继续保持安全转义
+- 单一 WebSocket 端点 `/ws` 必须继续先鉴权再附着或执行控制命令
+- shell、PTY daemon、tunnel 与 service 相关命令使用参数数组，禁止退化为 shell 拼接字符串
+- PTY / daemon 恢复、observer 输入丢弃、device trust 等当前安全语义不得被回退
 
 ### 交付流程
 
-1. 在 feature 分支完成开发 + 自测（`npm run typecheck && npm test && npm run build` 全部通过）
+1. 在 feature 分支完成开发 + 自测（`pnpm run typecheck && pnpm test && pnpm run build` 全部通过；必要时补 `pnpm run test:e2e` 和 `cd packages/RemuxKit && swift test`）
 2. 确认功能开发完全后，立即合并到 `dev`
 3. 立刻 push 到远程 `origin/dev`，禁止只做本地合并
 4. 基于远程 `dev` 对应的真实环境执行必要的实机验证

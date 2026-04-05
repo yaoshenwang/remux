@@ -35,7 +35,7 @@ The repository should be read through that baseline first. Historical runtime ex
 - Session runtime truth is managed through PTYs, persistence, and detached daemons in the current codebase.
 - Native iOS and macOS shells exist in-repo; `apps/macos/` and `apps/ios/` consume the same server truth rather than defining it.
 - `labs/` contains non-shipping or historical lines and is not part of the current product contract.
-- The repository merge gate is `npm run typecheck && npm test && npm run build`.
+- The repository merge gate is `pnpm run typecheck && pnpm test && pnpm run build`.
 
 ## Current Source Map
 
@@ -82,7 +82,7 @@ If you are new to the repository, read these in order:
 ## Validation Commands
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```

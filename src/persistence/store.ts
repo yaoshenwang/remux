@@ -1,6 +1,7 @@
 /**
  * SQLite persistence store for Remux.
- * Uses better-sqlite3 with WAL mode at ~/.remux/remux.db.
+ * Uses better-sqlite3 with WAL mode under REMUX_HOME
+ * (default: ~/.remux/remux-<instance>.db).
  * Manages sessions, tabs (scrollback as BLOB), and device trust.
  *
  * Adapted from better-sqlite3 best practices:
@@ -15,7 +16,8 @@ import crypto from "crypto";
 
 // ── Database path ───────────────────────────────────────────────
 
-const REMUX_DIR = path.join(homedir(), ".remux");
+export const REMUX_HOME = process.env.REMUX_HOME || path.join(homedir(), ".remux");
+const REMUX_DIR = REMUX_HOME;
 const PORT = process.env.PORT || 8767;
 const PERSIST_ID = process.env.REMUX_INSTANCE_ID || `port-${PORT}`;
 
