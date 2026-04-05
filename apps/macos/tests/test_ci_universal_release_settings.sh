@@ -3,8 +3,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 
 for file in \
+  "$REPO_ROOT/scripts/build-ghostty-kit.sh" \
   "$ROOT_DIR/.github/workflows/build-ghosttykit.yml" \
   "$ROOT_DIR/scripts/setup.sh" \
   "$ROOT_DIR/scripts/build-sign-upload.sh"

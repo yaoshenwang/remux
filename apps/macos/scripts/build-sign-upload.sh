@@ -61,8 +61,41 @@ REPO_SLUG="yaoshenwang/remux"
 SIGN_HASH="A050CC7E193C8221BDBA204E731B046CDCCC1B30"
 ENTITLEMENTS="remux.entitlements"
 APP_PATH="build/Build/Products/Release/remux.app"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
+MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"
+MONOREPO_GHOSTTYKIT_BUILD_SCRIPT="$REPO_ROOT/scripts/build-ghostty-kit.sh"
 REMOTE_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remux-release-assets.XXXXXX")"
 trap 'rm -rf "$REMOTE_ASSET_DIR" build/ remux-macos.dmg appcast.xml' EXIT
+
+build_local_ghosttykit() {
+  (
+    cd "$APP_DIR/ghostty"
+    zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast
+  )
+
+  rm -rf "$APP_DIR/GhosttyKit.xcframework"
+  cp -R "$APP_DIR/ghostty/macos/GhosttyKit.xcframework" "$APP_DIR/GhosttyKit.xcframework"
+}
+
+build_monorepo_ghosttykit() {
+  if [[ ! -x "$MONOREPO_GHOSTTYKIT_BUILD_SCRIPT" ]]; then
+    echo "Missing monorepo GhosttyKit build helper at $MONOREPO_GHOSTTYKIT_BUILD_SCRIPT" >&2
+    exit 1
+  fi
+
+  "$MONOREPO_GHOSTTYKIT_BUILD_SCRIPT"
+
+  local vendor_xcframework="$MONOREPO_GHOSTTY_DIR/macos/GhosttyKit.xcframework"
+  if [[ ! -d "$vendor_xcframework" ]]; then
+    echo "GhosttyKit.xcframework not found at $vendor_xcframework after monorepo build" >&2
+    exit 1
+  fi
+
+  rm -rf "$APP_DIR/GhosttyKit.xcframework"
+  cp -R "$vendor_xcframework" "$APP_DIR/GhosttyKit.xcframework"
+}
 
 # --- Pre-flight ---
 REQUIRES_LOCAL_RELEASE_ENV="false"
@@ -118,9 +151,16 @@ echo "Pre-flight checks passed"
 # --- Build GhosttyKit (if needed) ---
 if [ ! -d "GhosttyKit.xcframework" ]; then
   echo "Building GhosttyKit..."
-  cd ghostty && zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast && cd ..
-  rm -rf GhosttyKit.xcframework
-  cp -R ghostty/macos/GhosttyKit.xcframework GhosttyKit.xcframework
+  if [[ -f "$APP_DIR/ghostty/src/build/main.zig" ]]; then
+    build_local_ghosttykit
+  elif [[ -f "$MONOREPO_GHOSTTY_DIR/src/build/main.zig" ]]; then
+    echo "Embedded apps/macos/ghostty tree is incomplete; falling back to monorepo vendor/ghostty"
+    build_monorepo_ghosttykit
+  else
+    echo "Unable to locate a complete ghostty source tree for GhosttyKit.xcframework" >&2
+    echo "Checked: $APP_DIR/ghostty/src/build/main.zig and $MONOREPO_GHOSTTY_DIR/src/build/main.zig" >&2
+    exit 1
+  fi
 else
   echo "GhosttyKit.xcframework exists, skipping build"
 fi

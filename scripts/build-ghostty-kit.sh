@@ -27,7 +27,11 @@ fi
 
 echo "Building GhosttyKit.xcframework (optimize=$OPTIMIZE)..."
 cd "$GHOSTTY_DIR"
-zig build -Demit-xcframework=true -Doptimize="$OPTIMIZE"
+zig build \
+    -Demit-xcframework=true \
+    -Demit-macos-app=false \
+    -Dxcframework-target=universal \
+    -Doptimize="$OPTIMIZE"
 
 # Check output — ghostty emits to macos/GhosttyKit.xcframework
 XCFW_PATH="$GHOSTTY_DIR/macos/GhosttyKit.xcframework"

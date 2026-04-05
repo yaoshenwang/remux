@@ -72,4 +72,16 @@ describe("publish workflow guards", () => {
     expect(script).toContain("APP_STORE_CONNECT_API_KEY_PATH");
     expect(script).toContain("Using App Store Connect API key for notarization");
   });
+
+  it("builds GhosttyKit from the monorepo vendor checkout when the embedded macOS tree is incomplete", () => {
+    const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
+    const helper = readRepoFile("scripts/build-ghostty-kit.sh");
+    expect(script).toContain("ghostty/src/build/main.zig");
+    expect(script).toContain('MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"');
+    expect(script).toContain('$MONOREPO_GHOSTTY_DIR/src/build/main.zig');
+    expect(script).toContain("scripts/build-ghostty-kit.sh");
+    expect(script).toContain('local vendor_xcframework="$MONOREPO_GHOSTTY_DIR/macos/GhosttyKit.xcframework"');
+    expect(helper).toContain("-Dxcframework-target=universal");
+    expect(helper).toContain("-Demit-macos-app=false");
+  });
 });
