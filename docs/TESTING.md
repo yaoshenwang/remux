@@ -42,6 +42,27 @@ pnpm run typecheck && pnpm test && pnpm run build
 
 Add `pnpm run test:e2e` when the change affects frontend or transport behavior.
 
+## Release Gate
+
+Passing the merge gate is not enough to call Remux "release-ready".
+
+Remux is only release-ready when every official user-facing surface is both healthy and directly installable or reachable without source builds:
+
+- Web / browser shell
+- npm / CLI
+- macOS client
+- iOS client
+
+That means a release-ready state must include:
+
+- a working public web entrypoint with a verified first-run path
+- a working `npx @wangyaoshen/remux` install and startup path
+- a working official macOS install path such as a signed DMG or supported cask
+- a working official iOS install path such as TestFlight or App Store
+- active documentation links that resolve to the real install or usage paths users need
+
+If any official surface lacks a current download path, public install route, or directly usable first-run experience, the repository may be merge-ready but it is not release-ready.
+
 ## Native Dependency Note
 
 `better-sqlite3` and `node-pty` are native modules. This repository is pinned to Node 24. If local verification fails with an ABI mismatch, rerun the test loop with Node 24 or reinstall native dependencies for your active Node 24 toolchain.
