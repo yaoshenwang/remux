@@ -71,6 +71,36 @@ if ! grep -Fq -- 'Developer ID Application' "$ROOT_DIR/scripts/resolve-signing-i
   exit 1
 fi
 
+if ! grep -Fq -- 'security create-keychain' "$ROOT_DIR/scripts/prepare-signing-keychain.sh"; then
+  echo "FAIL: prepare-signing-keychain.sh must create a temporary signing keychain when CI certificates are provided"
+  exit 1
+fi
+
+if ! grep -Fq -- 'security set-key-partition-list -S apple-tool:,apple:,codesign: -s' "$ROOT_DIR/scripts/prepare-signing-keychain.sh"; then
+  echo "FAIL: prepare-signing-keychain.sh must grant codesign key partition access"
+  exit 1
+fi
+
+if ! grep -Fq -- 'security unlock-keychain -p "$keychain_password" "$login_keychain"' "$ROOT_DIR/scripts/prepare-signing-keychain.sh"; then
+  echo "FAIL: prepare-signing-keychain.sh must unlock the login keychain when using runner-local credentials"
+  exit 1
+fi
+
+if ! grep -Fq -- 'APPLE_CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}' "$REPO_ROOT/.github/workflows/publish.yml"; then
+  echo "FAIL: publish.yml must pass APPLE_CERTIFICATES_P12 into the macOS signing bootstrap"
+  exit 1
+fi
+
+if ! grep -Fq -- 'APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}' "$REPO_ROOT/.github/workflows/publish.yml"; then
+  echo "FAIL: publish.yml must pass APPLE_CERTIFICATES_PASSWORD into the macOS signing bootstrap"
+  exit 1
+fi
+
+if ! grep -Fq -- 'bash apps/macos/scripts/prepare-signing-keychain.sh' "$REPO_ROOT/.github/workflows/publish.yml"; then
+  echo "FAIL: publish.yml must bootstrap the macOS signing keychain before resolving the signing identity"
+  exit 1
+fi
+
 if ! plutil -lint "$ROOT_DIR/remux.entitlements" >/dev/null; then
   echo "FAIL: apps/macos/remux.entitlements must be a valid plist"
   exit 1

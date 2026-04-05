@@ -76,8 +76,13 @@ describe("publish workflow guards", () => {
     const workflow = readRepoFile(".github/workflows/publish.yml");
     const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
     const resolver = readRepoFile("apps/macos/scripts/resolve-signing-identity.sh");
+    const keychainBootstrap = readRepoFile("apps/macos/scripts/prepare-signing-keychain.sh");
     const entitlements = readRepoFile("apps/macos/remux.entitlements");
     expect(workflow).toContain("SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}");
+    expect(workflow).toContain("Prepare macOS signing keychain");
+    expect(workflow).toContain("APPLE_CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}");
+    expect(workflow).toContain("APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}");
+    expect(workflow).toContain("bash apps/macos/scripts/prepare-signing-keychain.sh");
     expect(workflow).toContain("bash apps/macos/scripts/resolve-signing-identity.sh");
     expect(script).toContain("Missing macOS release environment file:");
     expect(script).toContain("APP_STORE_CONNECT_API_KEY_PATH");
@@ -89,6 +94,14 @@ describe("publish workflow guards", () => {
     expect(script).toContain('SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"');
     expect(resolver).toContain('REMUX_MACOS_SIGN_IDENTITY');
     expect(resolver).toContain('No Developer ID Application signing identity is available');
+    expect(keychainBootstrap).toContain('APPLE_CERTIFICATES_P12');
+    expect(keychainBootstrap).toContain('APPLE_CERTIFICATES_PASSWORD');
+    expect(keychainBootstrap).toContain('security create-keychain');
+    expect(keychainBootstrap).toContain('security import "$cert_archive_path"');
+    expect(keychainBootstrap).toContain('security set-key-partition-list -S apple-tool:,apple:,codesign: -s');
+    expect(keychainBootstrap).toContain('security unlock-keychain -p "$keychain_password" "$keychain_path"');
+    expect(keychainBootstrap).toContain('security unlock-keychain -p "$keychain_password" "$login_keychain"');
+    expect(keychainBootstrap).toContain('No Apple signing keychain credentials were provided.');
     expect(entitlements).toContain("<plist version=\"1.0\">");
     expect(entitlements).toContain("com.apple.security.cs.allow-jit");
   });
