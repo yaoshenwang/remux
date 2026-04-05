@@ -76,15 +76,21 @@ describe("publish workflow guards", () => {
     const workflow = readRepoFile(".github/workflows/publish.yml");
     const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
     const resolver = readRepoFile("apps/macos/scripts/resolve-signing-identity.sh");
+    const entitlements = readRepoFile("apps/macos/remux.entitlements");
     expect(workflow).toContain("SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}");
     expect(workflow).toContain("bash apps/macos/scripts/resolve-signing-identity.sh");
     expect(script).toContain("Missing macOS release environment file:");
     expect(script).toContain("APP_STORE_CONNECT_API_KEY_PATH");
     expect(script).toContain("Using App Store Connect API key for notarization");
     expect(script).toContain('SIGN_IDENTITY_RESOLVER="$SCRIPT_DIR/resolve-signing-identity.sh"');
+    expect(script).toContain('ENTITLEMENTS="$APP_DIR/remux.entitlements"');
+    expect(script).toContain('Missing release entitlements file at $ENTITLEMENTS');
+    expect(script).toContain('plutil -lint "$ENTITLEMENTS" >/dev/null');
     expect(script).toContain('SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"');
     expect(resolver).toContain('REMUX_MACOS_SIGN_IDENTITY');
     expect(resolver).toContain('No Developer ID Application signing identity is available');
+    expect(entitlements).toContain("<plist version=\"1.0\">");
+    expect(entitlements).toContain("com.apple.security.cs.allow-jit");
   });
 
   it("builds GhosttyKit from the monorepo vendor checkout when the embedded macOS tree is incomplete", () => {

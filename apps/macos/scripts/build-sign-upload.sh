@@ -58,7 +58,6 @@ fi
 TAG="$1"
 VERSION="${TAG#v}"
 REPO_SLUG="yaoshenwang/remux"
-ENTITLEMENTS="remux.entitlements"
 APP_PATH="build/Build/Products/Release/remux.app"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -66,6 +65,7 @@ REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"
 MONOREPO_GHOSTTYKIT_BUILD_SCRIPT="$REPO_ROOT/scripts/build-ghostty-kit.sh"
 SIGN_IDENTITY_RESOLVER="$SCRIPT_DIR/resolve-signing-identity.sh"
+ENTITLEMENTS="$APP_DIR/remux.entitlements"
 REMOTE_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remux-release-assets.XXXXXX")"
 
 cleanup_release_artifacts() {
@@ -164,6 +164,11 @@ if [[ ! -x "$SIGN_IDENTITY_RESOLVER" ]]; then
   echo "Missing signing identity resolver at $SIGN_IDENTITY_RESOLVER" >&2
   exit 1
 fi
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+  echo "Missing release entitlements file at $ENTITLEMENTS" >&2
+  exit 1
+fi
+plutil -lint "$ENTITLEMENTS" >/dev/null
 SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"
 echo "Using signing identity $SIGN_HASH"
 echo "Pre-flight checks passed"

@@ -56,8 +56,23 @@ if ! grep -Fq -- 'SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"' "$ROOT_DIR/scripts/b
   exit 1
 fi
 
+if ! grep -Fq -- 'ENTITLEMENTS="$APP_DIR/remux.entitlements"' "$ROOT_DIR/scripts/build-sign-upload.sh"; then
+  echo "FAIL: build-sign-upload.sh must sign with apps/macos/remux.entitlements"
+  exit 1
+fi
+
+if ! grep -Fq -- 'plutil -lint "$ENTITLEMENTS" >/dev/null' "$ROOT_DIR/scripts/build-sign-upload.sh"; then
+  echo "FAIL: build-sign-upload.sh must lint the release entitlements before codesign"
+  exit 1
+fi
+
 if ! grep -Fq -- 'Developer ID Application' "$ROOT_DIR/scripts/resolve-signing-identity.sh"; then
   echo "FAIL: resolve-signing-identity.sh must look up a Developer ID Application identity"
+  exit 1
+fi
+
+if ! plutil -lint "$ROOT_DIR/remux.entitlements" >/dev/null; then
+  echo "FAIL: apps/macos/remux.entitlements must be a valid plist"
   exit 1
 fi
 
