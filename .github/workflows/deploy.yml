@@ -29,9 +29,11 @@ jobs:
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           if [ "$BRANCH" = "main" ]; then
             echo "app=remux-main" >> "$GITHUB_OUTPUT"
+            echo "port=3456" >> "$GITHUB_OUTPUT"
             echo "worktree=$HOME/.remux/runtime-worktrees/runtime-main" >> "$GITHUB_OUTPUT"
           else
             echo "app=remux-dev" >> "$GITHUB_OUTPUT"
+            echo "port=3457" >> "$GITHUB_OUTPUT"
             echo "worktree=$HOME/.remux/runtime-worktrees/runtime-dev" >> "$GITHUB_OUTPUT"
           fi
 
@@ -64,3 +66,18 @@ jobs:
           launchctl kickstart -k "gui/$(id -u)/${SERVICE}"
           sleep 2
           launchctl print "gui/$(id -u)/${SERVICE}" 2>&1 | head -5
+
+      - name: Verify runtime health
+        run: |
+          SERVICE="com.remux.${{ steps.target.outputs.branch }}"
+          PORT="${{ steps.target.outputs.port }}"
+          STATUS="$(launchctl print "gui/$(id -u)/${SERVICE}")"
+          echo "$STATUS" | grep -q "/opt/homebrew/opt/node@24/bin/node"
+          HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/")"
+          case "$HTTP_CODE" in
+            200|403) ;;
+            *)
+              echo "unexpected healthcheck status: ${HTTP_CODE}"
+              exit 1
+              ;;
+          esac
