@@ -75,10 +75,16 @@ describe("publish workflow guards", () => {
   it("allows the macOS release script to take Sparkle and notary credentials from the environment", () => {
     const workflow = readRepoFile(".github/workflows/publish.yml");
     const script = readRepoFile("apps/macos/scripts/build-sign-upload.sh");
+    const resolver = readRepoFile("apps/macos/scripts/resolve-signing-identity.sh");
     expect(workflow).toContain("SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}");
+    expect(workflow).toContain("bash apps/macos/scripts/resolve-signing-identity.sh");
     expect(script).toContain("Missing macOS release environment file:");
     expect(script).toContain("APP_STORE_CONNECT_API_KEY_PATH");
     expect(script).toContain("Using App Store Connect API key for notarization");
+    expect(script).toContain('SIGN_IDENTITY_RESOLVER="$SCRIPT_DIR/resolve-signing-identity.sh"');
+    expect(script).toContain('SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"');
+    expect(resolver).toContain('REMUX_MACOS_SIGN_IDENTITY');
+    expect(resolver).toContain('No Developer ID Application signing identity is available');
   });
 
   it("builds GhosttyKit from the monorepo vendor checkout when the embedded macOS tree is incomplete", () => {

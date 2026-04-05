@@ -58,7 +58,6 @@ fi
 TAG="$1"
 VERSION="${TAG#v}"
 REPO_SLUG="yaoshenwang/remux"
-SIGN_HASH="A050CC7E193C8221BDBA204E731B046CDCCC1B30"
 ENTITLEMENTS="remux.entitlements"
 APP_PATH="build/Build/Products/Release/remux.app"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,6 +65,7 @@ APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 MONOREPO_GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"
 MONOREPO_GHOSTTYKIT_BUILD_SCRIPT="$REPO_ROOT/scripts/build-ghostty-kit.sh"
+SIGN_IDENTITY_RESOLVER="$SCRIPT_DIR/resolve-signing-identity.sh"
 REMOTE_ASSET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remux-release-assets.XXXXXX")"
 
 cleanup_release_artifacts() {
@@ -160,6 +160,12 @@ fi
 for tool in zig xcodebuild create-dmg xcrun codesign ditto gh go python3 plutil swift; do
   command -v "$tool" >/dev/null || { echo "MISSING: $tool" >&2; exit 1; }
 done
+if [[ ! -x "$SIGN_IDENTITY_RESOLVER" ]]; then
+  echo "Missing signing identity resolver at $SIGN_IDENTITY_RESOLVER" >&2
+  exit 1
+fi
+SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"
+echo "Using signing identity $SIGN_HASH"
 echo "Pre-flight checks passed"
 
 # --- Build GhosttyKit (if needed) ---

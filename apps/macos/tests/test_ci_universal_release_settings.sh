@@ -46,6 +46,21 @@ if ! grep -Fq -- 'tee "$BUILD_LOG"' "$ROOT_DIR/scripts/build-sign-upload.sh"; th
   exit 1
 fi
 
+if ! grep -Fq -- 'SIGN_IDENTITY_RESOLVER="$SCRIPT_DIR/resolve-signing-identity.sh"' "$ROOT_DIR/scripts/build-sign-upload.sh"; then
+  echo "FAIL: build-sign-upload.sh must delegate signing identity selection to resolve-signing-identity.sh"
+  exit 1
+fi
+
+if ! grep -Fq -- 'SIGN_HASH="$("$SIGN_IDENTITY_RESOLVER")"' "$ROOT_DIR/scripts/build-sign-upload.sh"; then
+  echo "FAIL: build-sign-upload.sh must resolve the signing identity dynamically from the keychain"
+  exit 1
+fi
+
+if ! grep -Fq -- 'Developer ID Application' "$ROOT_DIR/scripts/resolve-signing-identity.sh"; then
+  echo "FAIL: resolve-signing-identity.sh must look up a Developer ID Application identity"
+  exit 1
+fi
+
 if ! grep -Fq -- 'MONOREPO_GHOSTTY_DIR="$MONOREPO_ROOT/vendor/ghostty"' "$ROOT_DIR/scripts/build-ghostty-cli-helper.sh"; then
   echo "FAIL: build-ghostty-cli-helper.sh must define a monorepo vendor/ghostty fallback"
   exit 1
