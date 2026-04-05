@@ -1,5 +1,5 @@
 # E16-006: Docker self-hosted image for Remux
-FROM node:20-slim
+FROM node:24-slim
 
 WORKDIR /app
 

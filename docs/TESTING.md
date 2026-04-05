@@ -43,4 +43,4 @@ Add `npm run test:e2e` when the change affects frontend or transport behavior.
 
 ## Native Dependency Note
 
-`better-sqlite3` and `node-pty` are native modules. If local verification fails with an ABI mismatch, rerun the test loop with the Node LTS toolchain used to build local dependencies or reinstall them for your active Node version.
+`better-sqlite3` and `node-pty` are native modules. This repository is pinned to Node 24. If local verification fails with an ABI mismatch, rerun the test loop with Node 24 or reinstall native dependencies for your active Node 24 toolchain.

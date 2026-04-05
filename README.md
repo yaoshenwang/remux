@@ -24,7 +24,7 @@ This repository is now the Remux monorepo: the Node.js gateway and browser shell
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 24.x
 
 ### Run from npm
 
@@ -114,7 +114,7 @@ Browser / Native Surface
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+
+- **Runtime**: Node.js 24.x
 - **Terminal rendering**: [ghostty-web](https://github.com/coder/ghostty-web) (Ghostty VT engine, WASM + Canvas)
 - **PTY management**: [node-pty](https://github.com/niclas-niclas-niclas/node-pty)
 - **WebSocket**: [ws](https://github.com/websockets/ws)

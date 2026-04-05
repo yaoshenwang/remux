@@ -1,6 +1,6 @@
 {
   "name": "@wangyaoshen/remux",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "Remote terminal workspace — powered by ghostty-web",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -22,7 +22,7 @@
   },
   "packageManager": "pnpm@10.26.2",
   "engines": {
-    "node": ">=20"
+    "node": ">=24 <25"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
@@ -42,7 +42,7 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.5.0",
+    "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.27.4",
     "tsx": "^4.21.0",
