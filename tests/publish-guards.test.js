@@ -15,6 +15,8 @@ describe("publish workflow guards", () => {
     const guardScript = readRepoFile("scripts/release-asset-guard.cjs");
     expect(workflow).toContain("Guard immutable release assets");
     expect(workflow).toContain("actions/github-script@v7");
+    expect(workflow).toContain("CREATE_DMG_VERSION: 8.0.0");
+    expect(workflow).toContain('npm install --global "create-dmg@${CREATE_DMG_VERSION}"');
     expect(workflow).toContain("release-asset-guard.cjs");
     expect(workflow).toContain("partial immutable asset state");
     expect(guardScript).toContain("IMMUTABLE_RELEASE_ASSETS");

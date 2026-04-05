@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   docker:
     runs-on: ubuntu-latest
