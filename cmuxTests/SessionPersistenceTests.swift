@@ -871,3 +871,83 @@ final class SocketListenerAcceptPolicyTests: XCTestCase {
         )
     }
 }
+
+final class RemuxAgentCommandTests: XCTestCase {
+    func testAttachCommandShellQuotesTaggedAppPath() {
+        let command = RemuxAgent.attachCommand(
+            agentPath: "/Applications/cmux DEV smoke-test.app/Contents/Resources/bin/remux-agent",
+            sessionId: "00000000-0000-0000-0000-000000000000",
+            socketPath: "/tmp/remux smoke-test.sock"
+        )
+
+        XCTAssertEqual(
+            command,
+            "REMUX_AGENT_SOCKET='/tmp/remux smoke-test.sock' '/Applications/cmux DEV smoke-test.app/Contents/Resources/bin/remux-agent' attach '00000000-0000-0000-0000-000000000000'"
+        )
+    }
+
+    func testDeploymentBinaryNameMapsSupportedLinuxTargets() {
+        XCTAssertEqual(
+            RemuxAgent.deploymentBinaryName(
+                for: SSHHostManager.RemotePlatform(os: "Linux", arch: "x86_64")
+            ),
+            "remux-agent-linux-x86_64"
+        )
+        XCTAssertEqual(
+            RemuxAgent.deploymentBinaryName(
+                for: SSHHostManager.RemotePlatform(os: "Linux", arch: "aarch64")
+            ),
+            "remux-agent-linux-aarch64"
+        )
+        XCTAssertNil(
+            RemuxAgent.deploymentBinaryName(
+                for: SSHHostManager.RemotePlatform(os: "Darwin", arch: "arm64")
+            )
+        )
+    }
+}
+
+final class SSHHostManagerTests: XCTestCase {
+    func testParseConfigFiltersUnsafeAliasesAndRetainsConfiguredFields() {
+        let content = """
+        Host safe-prod
+            HostName prod.example.com
+            User deploy
+            Port 2222
+
+        Host bad;rm
+            HostName evil.example.com
+
+        Host *
+            ForwardAgent yes
+        """
+
+        let hosts = SSHHostManager.parseConfig(content)
+
+        XCTAssertEqual(
+            hosts,
+            [
+                SSHHost(
+                    id: "safe-prod",
+                    hostname: "prod.example.com",
+                    user: "deploy",
+                    port: 2222,
+                    identityFile: nil
+                ),
+            ]
+        )
+    }
+
+    func testConfiguredHostRequiresSafeKnownAlias() {
+        let hosts = [
+            SSHHost(id: "safe-prod", hostname: "prod.example.com", user: "deploy", port: nil, identityFile: nil),
+        ]
+
+        XCTAssertEqual(
+            SSHHostManager.configuredHost(named: "safe-prod", hosts: hosts)?.id,
+            "safe-prod"
+        )
+        XCTAssertNil(SSHHostManager.configuredHost(named: "prod.example.com", hosts: hosts))
+        XCTAssertNil(SSHHostManager.configuredHost(named: "safe-prod; touch /tmp/pwned", hosts: hosts))
+    }
+}
