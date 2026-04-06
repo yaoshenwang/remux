@@ -24,9 +24,9 @@ pub fn writeFrame(fd: posix.fd_t, tag: Tag, payload: []const u8) !void {
     var header: [header_size]u8 = undefined;
     header[0] = @intFromEnum(tag);
     std.mem.writeInt(u32, header[1..5], @intCast(payload.len), .little);
-    _ = try posix.write(fd, &header);
+    try writeAll(fd, &header);
     if (payload.len > 0) {
-        _ = try posix.write(fd, payload);
+        try writeAll(fd, payload);
     }
 }
 
@@ -107,4 +107,13 @@ fn readExact(fd: posix.fd_t, buf: []u8) !usize {
         total += n;
     }
     return total;
+}
+
+pub fn writeAll(fd: posix.fd_t, bytes: []const u8) !void {
+    var total: usize = 0;
+    while (total < bytes.len) {
+        const n = try posix.write(fd, bytes[total..]);
+        if (n == 0) return error.WriteZero;
+        total += n;
+    }
 }

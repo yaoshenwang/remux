@@ -15,6 +15,7 @@ if [[ -z "${APP_PATH}" ]]; then
   echo "cmux.app not found in DerivedData" >&2
   exit 1
 fi
+"$PWD/scripts/bundle-runtime-binaries.sh" "$APP_PATH"
 # Dev shells (including CI/Codex) often force-disable paging by exporting these.
 # Don't leak that into cmux, otherwise `git diff` won't page even with PAGER=less.
 env -u GIT_PAGER -u GH_PAGER open -g "$APP_PATH"

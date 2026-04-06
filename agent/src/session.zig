@@ -1,10 +1,16 @@
 // Adapted from manaflow-ai/cmux cmuxd/src/session.zig
+const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
+const proto = @import("protocol.zig");
 
 const c = @cImport({
-    @cInclude("util.h");
+    if (builtin.os.tag == .linux) {
+        @cInclude("pty.h");
+    } else {
+        @cInclude("util.h");
+    }
     @cInclude("sys/ioctl.h");
     @cInclude("signal.h");
     @cInclude("sys/wait.h");
@@ -47,7 +53,7 @@ pub const Session = struct {
 
         if (pid == 0) {
             // Child: exec shell
-            _ = c.setenv("TERM", "xterm-256color", 1);
+            _ = c.setenv("TERM", "xterm-ghostty", 1);
             _ = c.setenv("REMUX_SESSION", "1", 1);
             const shell: [*c]const u8 = if (c.getenv("SHELL")) |s| s else "/bin/zsh";
             var argv_arr = [_:null]?[*:0]const u8{shell};
@@ -113,7 +119,7 @@ pub const Session = struct {
     }
 
     pub fn writeInput(self: *Session, data: []const u8) !void {
-        _ = try posix.write(@intCast(self.pty_fd), data);
+        try proto.writeAll(@intCast(self.pty_fd), data);
     }
 
     pub fn isAlive(self: *Session) bool {
@@ -154,9 +160,13 @@ pub const SessionManager = struct {
 
     pub fn getOrCreate(self: *SessionManager, id: [36]u8, cols: u16, rows: u16) !*Session {
         if (self.sessions.get(&id)) |s| {
-            // Existing session — resize to new client size
-            s.resize(cols, rows);
-            return s;
+            if (!s.isAlive()) {
+                self.remove(&id);
+            } else {
+                // Existing session — resize to new client size
+                s.resize(cols, rows);
+                return s;
+            }
         }
         // Create new session
         const sess = try Session.spawn(self.alloc, id, cols, rows);
@@ -200,12 +210,12 @@ pub const SessionManager = struct {
 
     /// Remove dead sessions.
     pub fn reapDead(self: *SessionManager) void {
-        var to_remove = std.ArrayList([]const u8).init(self.alloc);
-        defer to_remove.deinit();
+        var to_remove: std.ArrayList([]const u8) = .empty;
+        defer to_remove.deinit(self.alloc);
         var it = self.sessions.iterator();
         while (it.next()) |entry| {
             if (!entry.value_ptr.*.isAlive()) {
-                to_remove.append(entry.key_ptr.*) catch continue;
+                to_remove.append(self.alloc, entry.key_ptr.*) catch continue;
             }
         }
         for (to_remove.items) |key| self.remove(key);

@@ -2132,7 +2132,10 @@ final class Workspace: Identifiable, ObservableObject {
         if resolvedCommand == nil, sessionTarget == .local {
             resolvedCommand = RemuxAgent.attachCommand(sessionId: resolvedSessionId)
         } else if resolvedCommand == nil, sessionTarget == .ssh, let host = remoteHost {
-            resolvedCommand = RemuxAgent.sshAttachCommand(host: host, sessionId: resolvedSessionId)
+            guard let command = RemuxAgent.sshAttachCommand(host: host, sessionId: resolvedSessionId) else {
+                return nil
+            }
+            resolvedCommand = command
         }
 
         // Create new terminal panel

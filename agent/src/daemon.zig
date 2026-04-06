@@ -74,10 +74,11 @@ pub fn run(socket_path: []const u8) !void {
         const client = posix.accept(server_fd, null, null, 0) catch continue;
 
         // Handle client in a new thread
-        _ = std.Thread.spawn(.{}, handleClient, .{ client, &manager, &manager_mutex, alloc }) catch {
+        const thread = std.Thread.spawn(.{}, handleClient, .{ client, &manager, &manager_mutex, alloc }) catch {
             posix.close(client);
             continue;
         };
+        thread.detach();
     }
 }
 
@@ -98,6 +99,7 @@ fn handleClient(
         .list_req => {
             // Return session list
             mutex.lock();
+            manager.reapDead();
             const json = manager.listJson() catch {
                 mutex.unlock();
                 return;
@@ -133,6 +135,7 @@ fn handleSession(
 ) void {
     // Get or create session
     mutex.lock();
+    manager.reapDead();
     const sess = manager.getOrCreate(init.session_id, init.cols, init.rows) catch {
         mutex.unlock();
         return;
@@ -203,6 +206,13 @@ fn ptyReaderThread(sess: *Session) void {
         }
     }
     sess.alive.store(false, .release);
+
+    const cfd = sess.client_fd.load(.acquire);
+    if (cfd >= 0) {
+        proto.writeFrame(cfd, .exit, &.{}) catch {
+            _ = sess.client_fd.cmpxchgStrong(cfd, -1, .acq_rel, .acquire);
+        };
+    }
 }
 
 fn sigchldHandler(_: c_int) callconv(.c) void {

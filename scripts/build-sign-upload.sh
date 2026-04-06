@@ -72,6 +72,7 @@ fi
 echo "Building app..."
 rm -rf build/
 xcodebuild -scheme cmux -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -5
+"$PWD/scripts/bundle-runtime-binaries.sh" "$APP_PATH"
 echo "Build succeeded"
 
 # --- Inject Sparkle keys ---
@@ -86,10 +87,12 @@ echo "Sparkle keys injected"
 
 # --- Codesign ---
 echo "Codesigning..."
-CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
-if [ -f "$CLI_PATH" ]; then
-  /usr/bin/codesign --force --options runtime --timestamp --sign "$SIGN_HASH" --entitlements "$ENTITLEMENTS" "$CLI_PATH"
-fi
+for BIN_PATH in "$APP_PATH/Contents/Resources/bin/"*; do
+  [ -f "$BIN_PATH" ] || continue
+  if file -b "$BIN_PATH" | grep -q "Mach-O"; then
+    /usr/bin/codesign --force --options runtime --timestamp --sign "$SIGN_HASH" --entitlements "$ENTITLEMENTS" "$BIN_PATH"
+  fi
+done
 /usr/bin/codesign --force --options runtime --timestamp --sign "$SIGN_HASH" --entitlements "$ENTITLEMENTS" --deep "$APP_PATH"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 echo "Codesign verified"

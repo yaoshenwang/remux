@@ -13907,16 +13907,29 @@ class TerminalController {
 
     private func sshListHosts() -> String {
         let hosts = SSHHostManager.availableHosts()
-        if hosts.isEmpty { return "[]" }
-        let entries = hosts.map { host in
-            "{\"id\":\"\(host.id)\",\"display\":\"\(host.displayName)\"}"
+        guard !hosts.isEmpty else { return "[]" }
+        let payload = hosts.map { host in
+            [
+                "id": host.id,
+                "display": host.displayName,
+            ]
         }
-        return "[\(entries.joined(separator: ","))]"
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
     }
 
     private func sshConnect(_ args: String) -> String {
-        let host = args.trimmingCharacters(in: .whitespaces)
-        guard !host.isEmpty else { return "ERROR: Usage: ssh.connect <host>" }
+        let candidate = args.trimmingCharacters(in: .whitespaces)
+        guard !candidate.isEmpty else { return "ERROR: Usage: ssh.connect <host-alias>" }
+
+        let preparation = SSHHostManager.prepareForAgentConnection(to: candidate)
+        guard let host = preparation.host else {
+            return "ERROR: \(preparation.message ?? "SSH host is unavailable")"
+        }
 
         guard let tabManager = tabManager else { return "ERROR: TabManager not available" }
         var result = ""
@@ -13925,10 +13938,10 @@ class TerminalController {
                 result = "ERROR: No active workspace"
                 return
             }
-            if let panel = workspace.newRemoteTerminalSurface(host: host, focus: true) {
-                result = "OK: Connected to \(host) (panel=\(panel.id.uuidString))"
+            if let panel = workspace.newRemoteTerminalSurface(host: host.id, focus: true) {
+                result = "OK: Connected to \(host.id) (panel=\(panel.id.uuidString))"
             } else {
-                result = "ERROR: Failed to create remote terminal for \(host)"
+                result = "ERROR: Failed to create remote terminal for \(host.id)"
             }
         }
         return result

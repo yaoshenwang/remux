@@ -1615,6 +1615,11 @@ class TabManager: ObservableObject {
             let target = termPanel.sessionTarget
             let host = termPanel.remoteHost
             let workDir = termPanel.directory.isEmpty ? nil : termPanel.directory
+            guard target == .local else {
+                _ = tab.closePanel(surfaceId, force: true)
+                AppDelegate.shared?.notificationStore?.clearNotifications(forTabId: tab.id, surfaceId: surfaceId)
+                return
+            }
 #if DEBUG
             dlog("surface.close.reconnect tab=\(tabId.uuidString.prefix(5)) surface=\(surfaceId.uuidString.prefix(5)) session=\(sessionId.prefix(8)) target=\(target)")
 #endif

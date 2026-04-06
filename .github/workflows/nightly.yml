@@ -171,6 +171,9 @@ jobs:
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon-Nightly build
+          ./scripts/bundle-runtime-binaries.sh \
+            "build-arm/Build/Products/Release/cmux.app" \
+            "build-universal/Build/Products/Release/cmux.app"
 
       - name: Verify nightly binary architectures
         run: |
@@ -315,10 +318,12 @@ jobs:
             "build-arm/Build/Products/Release/cmux NIGHTLY.app" \
             "build-universal/Build/Products/Release/cmux NIGHTLY.app"
           do
-            CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
-            if [ -f "$CLI_PATH" ]; then
-              /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" "$CLI_PATH"
-            fi
+            for BIN_PATH in "$APP_PATH/Contents/Resources/bin/"*; do
+              [ -f "$BIN_PATH" ] || continue
+              if file -b "$BIN_PATH" | grep -q "Mach-O"; then
+                /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" "$BIN_PATH"
+              fi
+            done
             /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" --deep "$APP_PATH"
             /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           done

@@ -5,6 +5,7 @@ const posix = std.posix;
 const proto = @import("protocol.zig");
 
 const c = @cImport({
+    @cInclude("poll.h");
     @cInclude("signal.h");
     @cInclude("sys/ioctl.h");
     @cInclude("unistd.h");
@@ -64,9 +65,22 @@ pub fn attach(socket_path: []const u8, session_id: []const u8) !void {
     const has_termios = c.tcgetattr(stdin_fd, &orig_termios) == 0;
     if (has_termios) {
         var raw = orig_termios;
-        raw.c_lflag &= ~@as(c_ulong, @intCast(c.ECHO | c.ICANON | c.ISIG | c.IEXTEN));
-        raw.c_iflag &= ~@as(c_ulong, @intCast(c.IXON | c.ICRNL | c.BRKINT | c.INPCK | c.ISTRIP));
-        raw.c_oflag &= ~@as(c_ulong, @intCast(c.OPOST));
+        const lflag_mask: @TypeOf(raw.c_lflag) =
+            @as(@TypeOf(raw.c_lflag), @intCast(c.ECHO)) |
+            @as(@TypeOf(raw.c_lflag), @intCast(c.ICANON)) |
+            @as(@TypeOf(raw.c_lflag), @intCast(c.ISIG)) |
+            @as(@TypeOf(raw.c_lflag), @intCast(c.IEXTEN));
+        const iflag_mask: @TypeOf(raw.c_iflag) =
+            @as(@TypeOf(raw.c_iflag), @intCast(c.IXON)) |
+            @as(@TypeOf(raw.c_iflag), @intCast(c.ICRNL)) |
+            @as(@TypeOf(raw.c_iflag), @intCast(c.BRKINT)) |
+            @as(@TypeOf(raw.c_iflag), @intCast(c.INPCK)) |
+            @as(@TypeOf(raw.c_iflag), @intCast(c.ISTRIP));
+        const oflag_mask: @TypeOf(raw.c_oflag) =
+            @as(@TypeOf(raw.c_oflag), @intCast(c.OPOST));
+        raw.c_lflag &= ~lflag_mask;
+        raw.c_iflag &= ~iflag_mask;
+        raw.c_oflag &= ~oflag_mask;
         raw.c_cc[c.VMIN] = 1;
         raw.c_cc[c.VTIME] = 0;
         _ = c.tcsetattr(stdin_fd, c.TCSAFLUSH, &raw);
@@ -76,15 +90,17 @@ pub fn attach(socket_path: []const u8, session_id: []const u8) !void {
     }
 
     // Spawn reader thread: daemon → stdout
-    const reader = std.Thread.spawn(.{}, readerThread, .{sock_fd}) catch {
+    var should_exit = std.atomic.Value(bool).init(false);
+    const reader = std.Thread.spawn(.{}, readerThread, .{ sock_fd, &should_exit }) catch {
         std.debug.print("remux-agent: failed to spawn reader\n", .{});
         return error.ThreadSpawn;
     };
-    _ = reader;
 
     // Main loop: stdin → daemon
     var buf: [4096]u8 = undefined;
     while (true) {
+        if (should_exit.load(.acquire)) break;
+
         // Check SIGWINCH
         if (g_winch.swap(false, .acq_rel)) {
             var new_ws: c.winsize = undefined;
@@ -95,6 +111,20 @@ pub fn attach(socket_path: []const u8, session_id: []const u8) !void {
             }
         }
 
+        var poll_fd = [1]c.pollfd{.{
+            .fd = stdin_fd,
+            .events = c.POLLIN,
+            .revents = 0,
+        }};
+        const ready = c.poll(&poll_fd, 1, 100);
+        if (ready < 0) {
+            if (std.posix.errno(-1) == .INTR) continue;
+            break;
+        }
+        if (ready == 0) continue;
+        if ((poll_fd[0].revents & (c.POLLERR | c.POLLHUP | c.POLLNVAL)) != 0) break;
+        if ((poll_fd[0].revents & c.POLLIN) == 0) continue;
+
         const n = posix.read(stdin_fd, &buf) catch break;
         if (n == 0) break;
         proto.writeFrame(sock_fd, .data, buf[0..n]) catch break;
@@ -102,24 +132,27 @@ pub fn attach(socket_path: []const u8, session_id: []const u8) !void {
 
     // Send detach
     proto.writeFrame(sock_fd, .detach, &.{}) catch {};
+    reader.join();
 }
 
-fn readerThread(sock_fd: posix.fd_t) void {
+fn readerThread(sock_fd: posix.fd_t, should_exit: *std.atomic.Value(bool)) void {
     var buf: [proto.max_payload]u8 = undefined;
     while (true) {
         const frame = proto.readFrame(sock_fd, &buf) orelse break;
         switch (frame.tag) {
             .data, .snapshot => {
                 if (frame.payload.len > 0) {
-                    _ = posix.write(c.STDOUT_FILENO, frame.payload) catch break;
+                    proto.writeAll(c.STDOUT_FILENO, frame.payload) catch break;
                 }
             },
-            .exit => break,
+            .exit => {
+                should_exit.store(true, .release);
+                return;
+            },
             else => {},
         }
     }
-    // Session ended — exit process
-    std.process.exit(0);
+    should_exit.store(true, .release);
 }
 
 fn sigwinchHandler(_: c_int) callconv(.c) void {

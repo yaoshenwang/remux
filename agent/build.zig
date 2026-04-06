@@ -13,6 +13,9 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+    if (target.result.os.tag == .linux) {
+        exe.root_module.linkSystemLibrary("util", .{});
+    }
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
