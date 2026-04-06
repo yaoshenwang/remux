@@ -323,9 +323,13 @@ extension Workspace {
                 capturedScrollback: capturedScrollback,
                 includeScrollback: includeScrollback
             )
+            let termPanel = panel as? TerminalPanel
             terminalSnapshot = SessionTerminalPanelSnapshot(
                 workingDirectory: panelDirectories[panelId],
-                scrollback: resolvedScrollback
+                scrollback: resolvedScrollback,
+                agentSessionId: termPanel?.agentSessionId,
+                sessionTarget: termPanel?.sessionTarget,
+                remoteHost: termPanel?.remoteHost
             )
             browserSnapshot = nil
             markdownSnapshot = nil
@@ -492,13 +496,28 @@ extension Workspace {
         switch snapshot.type {
         case .terminal:
             let workingDirectory = snapshot.terminal?.workingDirectory ?? snapshot.directory ?? currentDirectory
-            let replayEnvironment = SessionScrollbackReplayStore.replayEnvironment(
-                for: snapshot.terminal?.scrollback
-            )
+            let savedSessionId = snapshot.terminal?.agentSessionId
+            let savedTarget = snapshot.terminal?.sessionTarget ?? .local
+            let savedHost = snapshot.terminal?.remoteHost
+
+            // If we have a saved agent session, try to reattach
+            let replayEnvironment: [String: String]
+            if savedSessionId != nil {
+                // Agent session — no scrollback replay needed, agent holds the state
+                replayEnvironment = [:]
+            } else {
+                replayEnvironment = SessionScrollbackReplayStore.replayEnvironment(
+                    for: snapshot.terminal?.scrollback
+                )
+            }
+
             guard let terminalPanel = newTerminalSurface(
                 inPane: paneId,
                 focus: false,
                 workingDirectory: workingDirectory,
+                agentSessionId: savedSessionId,
+                sessionTarget: savedTarget,
+                remoteHost: savedHost,
                 startupEnvironment: replayEnvironment
             ) else {
                 return nil
@@ -2019,14 +2038,20 @@ final class Workspace: Identifiable, ObservableObject {
         dlog("split.cwd panelId=\(panelId.uuidString.prefix(5)) panelDir=\(panelDirectories[panelId] ?? "nil") currentDir=\(currentDirectory) resolved=\(splitWorkingDirectory ?? "nil")")
 #endif
 
-        // Create the new terminal panel.
+        // Create the new terminal panel with agent session persistence.
+        let splitSessionId = RemuxAgent.newSessionId()
+        let splitCommand = RemuxAgent.attachCommand(sessionId: splitSessionId)
         let newPanel = TerminalPanel(
             workspaceId: id,
             context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
             configTemplate: inheritedConfig,
             workingDirectory: splitWorkingDirectory,
+            command: splitCommand,
             portOrdinal: portOrdinal
         )
+        if splitCommand != nil {
+            newPanel.agentSessionId = splitSessionId
+        }
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
         seedTerminalInheritanceFontPoints(panelId: newPanel.id, configTemplate: inheritedConfig)
@@ -2091,11 +2116,24 @@ final class Workspace: Identifiable, ObservableObject {
         inPane paneId: PaneID,
         focus: Bool? = nil,
         workingDirectory: String? = nil,
+        command: String? = nil,
+        agentSessionId: String? = nil,
+        sessionTarget: SessionTarget = .local,
+        remoteHost: String? = nil,
         startupEnvironment: [String: String] = [:]
     ) -> TerminalPanel? {
         let shouldFocusNewTab = focus ?? (bonsplitController.focusedPaneId == paneId)
 
         let inheritedConfig = inheritedTerminalConfig(inPane: paneId)
+
+        // Resolve command: use agent if available, otherwise fall back to default shell
+        let resolvedSessionId = agentSessionId ?? RemuxAgent.newSessionId()
+        var resolvedCommand = command
+        if resolvedCommand == nil, sessionTarget == .local {
+            resolvedCommand = RemuxAgent.attachCommand(sessionId: resolvedSessionId)
+        } else if resolvedCommand == nil, sessionTarget == .ssh, let host = remoteHost {
+            resolvedCommand = RemuxAgent.sshAttachCommand(host: host, sessionId: resolvedSessionId)
+        }
 
         // Create new terminal panel
         let newPanel = TerminalPanel(
@@ -2103,9 +2141,16 @@ final class Workspace: Identifiable, ObservableObject {
             context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
             configTemplate: inheritedConfig,
             workingDirectory: workingDirectory,
+            command: resolvedCommand,
             additionalEnvironment: startupEnvironment,
             portOrdinal: portOrdinal
         )
+        // Track agent session metadata
+        if resolvedCommand != nil {
+            newPanel.agentSessionId = resolvedSessionId
+            newPanel.sessionTarget = sessionTarget
+            newPanel.remoteHost = remoteHost
+        }
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
         seedTerminalInheritanceFontPoints(panelId: newPanel.id, configTemplate: inheritedConfig)
@@ -3283,6 +3328,18 @@ final class Workspace: Identifiable, ObservableObject {
     func newTerminalSurfaceInFocusedPane(focus: Bool? = nil) -> TerminalPanel? {
         guard let focusedPaneId = bonsplitController.focusedPaneId else { return nil }
         return newTerminalSurface(inPane: focusedPaneId, focus: focus)
+    }
+
+    /// Create a remote terminal connected to an SSH host.
+    @discardableResult
+    func newRemoteTerminalSurface(host: String, focus: Bool? = nil) -> TerminalPanel? {
+        guard let focusedPaneId = bonsplitController.focusedPaneId else { return nil }
+        return newTerminalSurface(
+            inPane: focusedPaneId,
+            focus: focus,
+            sessionTarget: .ssh,
+            remoteHost: host
+        )
     }
 
     @discardableResult

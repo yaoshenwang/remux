@@ -221,9 +221,17 @@ struct SessionGitBranchSnapshot: Codable, Sendable {
     var isDirty: Bool
 }
 
+enum SessionTarget: String, Codable, Sendable {
+    case local
+    case ssh
+}
+
 struct SessionTerminalPanelSnapshot: Codable, Sendable {
     var workingDirectory: String?
     var scrollback: String?
+    var agentSessionId: String?
+    var sessionTarget: SessionTarget?
+    var remoteHost: String?
 }
 
 struct SessionBrowserPanelSnapshot: Codable, Sendable {

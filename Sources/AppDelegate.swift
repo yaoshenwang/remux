@@ -2156,6 +2156,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             PostHogAnalytics.shared.startIfNeeded()
         }
 
+        // Start remux-agent daemon for persistent terminal sessions
+        if !isRunningUnderXCTest {
+            DispatchQueue.global(qos: .utility).async {
+                RemuxAgent.ensureDaemonRunning()
+            }
+        }
+
         let forceDuplicateLaunchObserver = env["CMUX_UI_TEST_ENABLE_DUPLICATE_LAUNCH_OBSERVER"] == "1"
 
         // UI tests frequently time out waiting for the main window if we do heavyweight

@@ -1,0 +1,7 @@
+.{
+    .name = .remux_agent,
+    .version = "0.1.0",
+    .fingerprint = 0x716d230357646491,
+    .minimum_zig_version = "0.15.2",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}
