@@ -16,6 +16,15 @@ final class TerminalPanel: Panel, ObservableObject {
     /// The workspace ID this panel belongs to
     private(set) var workspaceId: UUID
 
+    /// Agent session ID for persistent sessions (nil = legacy direct shell)
+    var agentSessionId: String?
+
+    /// Session target: local or remote SSH
+    var sessionTarget: SessionTarget = .local
+
+    /// Remote host name (for SSH sessions)
+    var remoteHost: String?
+
     /// Published title from the terminal process
     @Published private(set) var title: String = "Terminal"
 
@@ -84,6 +93,7 @@ final class TerminalPanel: Panel, ObservableObject {
         context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_SPLIT,
         configTemplate: ghostty_surface_config_s? = nil,
         workingDirectory: String? = nil,
+        command: String? = nil,
         additionalEnvironment: [String: String] = [:],
         portOrdinal: Int = 0
     ) {
@@ -92,6 +102,7 @@ final class TerminalPanel: Panel, ObservableObject {
             context: context,
             configTemplate: configTemplate,
             workingDirectory: workingDirectory,
+            command: command,
             additionalEnvironment: additionalEnvironment
         )
         surface.portOrdinal = portOrdinal

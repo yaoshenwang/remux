@@ -1625,6 +1625,12 @@ class TerminalController {
         case "surface_health":
             return surfaceHealth(args)
 
+        case "ssh.list":
+            return sshListHosts()
+
+        case "ssh.connect":
+            return sshConnect(args)
+
         default:
             return "ERROR: Unknown command '\(cmd)'. Use 'help' for available commands."
         }
@@ -13893,6 +13899,37 @@ class TerminalController {
                 }
             }
             result = lines.isEmpty ? "No surfaces" : lines.joined(separator: "\n")
+        }
+        return result
+    }
+
+    // MARK: - SSH Commands
+
+    private func sshListHosts() -> String {
+        let hosts = SSHHostManager.availableHosts()
+        if hosts.isEmpty { return "[]" }
+        let entries = hosts.map { host in
+            "{\"id\":\"\(host.id)\",\"display\":\"\(host.displayName)\"}"
+        }
+        return "[\(entries.joined(separator: ","))]"
+    }
+
+    private func sshConnect(_ args: String) -> String {
+        let host = args.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else { return "ERROR: Usage: ssh.connect <host>" }
+
+        guard let tabManager = tabManager else { return "ERROR: TabManager not available" }
+        var result = ""
+        DispatchQueue.main.sync {
+            guard let workspace = tabManager.selectedWorkspace else {
+                result = "ERROR: No active workspace"
+                return
+            }
+            if let panel = workspace.newRemoteTerminalSurface(host: host, focus: true) {
+                result = "OK: Connected to \(host) (panel=\(panel.id.uuidString))"
+            } else {
+                result = "ERROR: Failed to create remote terminal for \(host)"
+            }
         }
         return result
     }

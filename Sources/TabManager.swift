@@ -1606,7 +1606,33 @@ class TabManager: ObservableObject {
     /// This path must only close the addressed surface and must never close the workspace window.
     func closeRuntimeSurface(tabId: UUID, surfaceId: UUID) {
         guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
-        guard tab.panels[surfaceId] != nil else { return }
+        guard let panel = tab.panels[surfaceId] else { return }
+
+        // Agent session reconnection: if this is a persistent agent session,
+        // replace the panel with a new one instead of closing.
+        if let termPanel = panel as? TerminalPanel,
+           let sessionId = termPanel.agentSessionId {
+            let target = termPanel.sessionTarget
+            let host = termPanel.remoteHost
+            let workDir = termPanel.directory.isEmpty ? nil : termPanel.directory
+#if DEBUG
+            dlog("surface.close.reconnect tab=\(tabId.uuidString.prefix(5)) surface=\(surfaceId.uuidString.prefix(5)) session=\(sessionId.prefix(8)) target=\(target)")
+#endif
+            // Close the dead panel and create a replacement with same agent session
+            reconcileFocusedPanelFromFirstResponderForKeyboard()
+            _ = tab.closePanel(surfaceId, force: true)
+            if let paneId = tab.bonsplitController.focusedPaneId ?? tab.bonsplitController.allPaneIds.first {
+                _ = tab.newTerminalSurface(
+                    inPane: paneId,
+                    focus: true,
+                    workingDirectory: workDir,
+                    agentSessionId: sessionId,
+                    sessionTarget: target,
+                    remoteHost: host
+                )
+            }
+            return
+        }
 
 #if DEBUG
         dlog(

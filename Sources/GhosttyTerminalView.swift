@@ -2333,6 +2333,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
     private let surfaceContext: ghostty_surface_context_e
     private let configTemplate: ghostty_surface_config_s?
     private let workingDirectory: String?
+    private let command: String?
     private let additionalEnvironment: [String: String]
     let hostedView: GhosttySurfaceScrollView
     private let surfaceView: GhosttyNSView
@@ -2401,6 +2402,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         context: ghostty_surface_context_e,
         configTemplate: ghostty_surface_config_s?,
         workingDirectory: String? = nil,
+        command: String? = nil,
         additionalEnvironment: [String: String] = [:]
     ) {
         self.id = UUID()
@@ -2408,6 +2410,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         self.surfaceContext = context
         self.configTemplate = configTemplate
         self.workingDirectory = workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.command = command?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.additionalEnvironment = additionalEnvironment
         // Match Ghostty's own SurfaceView: ensure a non-zero initial frame so the backing layer
         // has non-zero bounds and the renderer can initialize without presenting a blank/stretched
@@ -2875,6 +2878,14 @@ final class TerminalSurface: Identifiable, ObservableObject {
                 self.surface = ghostty_surface_new(app, &surfaceConfig)
             }
         }
+
+        // Set command override for this surface (e.g., remux-agent attach <id>)
+        var commandCStr: UnsafeMutablePointer<CChar>? = nil
+        if let command, !command.isEmpty {
+            commandCStr = strdup(command)
+            surfaceConfig.command = UnsafePointer(commandCStr)
+        }
+        defer { free(commandCStr) }
 
         if let workingDirectory, !workingDirectory.isEmpty {
             workingDirectory.withCString { cWorkingDir in
