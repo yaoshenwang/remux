@@ -13,10 +13,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s=4.0, interval_s=0.05, message="timeout"):
@@ -25,15 +25,15 @@ def _wait_until(predicate, timeout_s=4.0, interval_s=0.05, message="timeout"):
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
-def _palette_visible(client: cmux, window_id: str) -> bool:
+def _palette_visible(client: remux, window_id: str) -> bool:
     payload = client._call("debug.command_palette.visible", {"window_id": window_id}) or {}
     return bool(payload.get("visible"))
 
 
-def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
+def _set_palette_visible(client: remux, window_id: str, visible: bool) -> None:
     if _palette_visible(client, window_id) == visible:
         return
     client._call("debug.command_palette.toggle", {"window_id": window_id})
@@ -43,33 +43,33 @@ def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
     )
 
 
-def _palette_results(client: cmux, window_id: str, limit=12) -> dict:
+def _palette_results(client: remux, window_id: str, limit=12) -> dict:
     return client.command_palette_results(window_id=window_id, limit=limit)
 
 
-def _open_palette_and_rows(client: cmux, window_id: str, limit: int = 80) -> list:
+def _open_palette_and_rows(client: remux, window_id: str, limit: int = 80) -> list:
     _set_palette_visible(client, window_id, False)
     _set_palette_visible(client, window_id, True)
     payload = _palette_results(client, window_id, limit=limit)
     rows = payload.get("results") or []
     if not rows:
-        raise cmuxError(f"command palette returned no rows: {payload}")
+        raise remuxError(f"command palette returned no rows: {payload}")
     return rows
 
 
 def _assert_shortcut_hint(rows: list, command_id: str, expected_hint: str) -> None:
     row = next((row for row in rows if str((row or {}).get("command_id") or "") == command_id), None)
     if row is None:
-        raise cmuxError(f"missing command palette row for {command_id!r}; rows={rows}")
+        raise remuxError(f"missing command palette row for {command_id!r}; rows={rows}")
     shortcut_hint = str((row or {}).get("shortcut_hint") or "")
     if shortcut_hint != expected_hint:
-        raise cmuxError(
+        raise remuxError(
             f"unexpected shortcut hint for {command_id}: expected {expected_hint!r}, got {shortcut_hint!r} row={row}"
         )
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 
@@ -107,7 +107,7 @@ def main() -> int:
             for name in shortcut_names:
                 try:
                     client.set_shortcut(name, "clear")
-                except cmuxError:
+                except remuxError:
                     pass
             _set_palette_visible(client, window_id, False)
 

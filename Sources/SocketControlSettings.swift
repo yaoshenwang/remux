@@ -5,7 +5,7 @@ import Security
 
 enum SocketControlMode: String, CaseIterable, Identifiable {
     case off
-    case cmuxOnly
+    case remuxOnly
     case automation
     case password
     /// Full open access (all local users/processes) with no ancestry or password gate.
@@ -13,14 +13,14 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static var uiCases: [SocketControlMode] { [.off, .cmuxOnly, .automation, .password, .allowAll] }
+    static var uiCases: [SocketControlMode] { [.off, .remuxOnly, .automation, .password, .allowAll] }
 
     var displayName: String {
         switch self {
         case .off:
             return String(localized: "socketControl.off.name", defaultValue: "Off")
-        case .cmuxOnly:
-            return String(localized: "socketControl.cmuxOnly.name", defaultValue: "cmux processes only")
+        case .remuxOnly:
+            return String(localized: "socketControl.remuxOnly.name", defaultValue: "remux processes only")
         case .automation:
             return String(localized: "socketControl.automation.name", defaultValue: "Automation mode")
         case .password:
@@ -34,8 +34,8 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
         switch self {
         case .off:
             return String(localized: "socketControl.off.description", defaultValue: "Disable the local control socket.")
-        case .cmuxOnly:
-            return String(localized: "socketControl.cmuxOnly.description", defaultValue: "Only processes started inside cmux terminals can send commands.")
+        case .remuxOnly:
+            return String(localized: "socketControl.remuxOnly.description", defaultValue: "Only processes started inside remux terminals can send commands.")
         case .automation:
             return String(localized: "socketControl.automation.description", defaultValue: "Allow external local automation clients from this macOS user (no ancestry check).")
         case .password:
@@ -49,7 +49,7 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
         switch self {
         case .allowAll:
             return 0o666
-        case .off, .cmuxOnly, .automation, .password:
+        case .off, .remuxOnly, .automation, .password:
             return 0o600
         }
     }
@@ -60,11 +60,11 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
 }
 
 enum SocketControlPasswordStore {
-    static let directoryName = "cmux"
+    static let directoryName = "remux"
     static let fileName = "socket-control-password"
     private static let keychainMigrationDefaultsKey = "socketControlPasswordMigrationVersion"
     private static let keychainMigrationVersion = 1
-    private static let legacyKeychainService = "com.cmuxterm.app.socket-control"
+    private static let legacyKeychainService = "com.remuxterm.app.socket-control"
     private static let legacyKeychainAccount = "local-socket-password"
     private struct LazyKeychainFallbackCache {
         var hasLoaded = false
@@ -288,10 +288,10 @@ enum SocketControlPasswordStore {
 struct SocketControlSettings {
     static let appStorageKey = "socketControlMode"
     static let legacyEnabledKey = "socketControlEnabled"
-    static let allowSocketPathOverrideKey = "CMUX_ALLOW_SOCKET_OVERRIDE"
-    static let socketPasswordEnvKey = "CMUX_SOCKET_PASSWORD"
-    static let launchTagEnvKey = "CMUX_TAG"
-    static let baseDebugBundleIdentifier = "com.cmuxterm.app.debug"
+    static let allowSocketPathOverrideKey = "REMUX_ALLOW_SOCKET_OVERRIDE"
+    static let socketPasswordEnvKey = "REMUX_SOCKET_PASSWORD"
+    static let launchTagEnvKey = "REMUX_TAG"
+    static let baseDebugBundleIdentifier = "com.remuxterm.app.debug"
 
     private static func normalizeMode(_ raw: String) -> String {
         raw
@@ -305,8 +305,8 @@ struct SocketControlSettings {
         switch normalizeMode(raw) {
         case "off":
             return .off
-        case "cmuxonly":
-            return .cmuxOnly
+        case "remuxonly":
+            return .remuxOnly
         case "automation":
             return .automation
         case "password":
@@ -329,7 +329,7 @@ struct SocketControlSettings {
     }
 
     static var defaultMode: SocketControlMode {
-        return .cmuxOnly
+        return .remuxOnly
     }
 
     private static var isDebugBuild: Bool {
@@ -358,8 +358,8 @@ struct SocketControlSettings {
             return false
         }
         // XCUITest launches the app as a separate process without XCTest env vars,
-        // so isRunningUnderXCTest() misses it. Check for any CMUX_UI_TEST_ env var.
-        if environment.keys.contains(where: { $0.hasPrefix("CMUX_UI_TEST_") }) {
+        // so isRunningUnderXCTest() misses it. Check for any REMUX_UI_TEST_ env var.
+        if environment.keys.contains(where: { $0.hasPrefix("REMUX_UI_TEST_") }) {
             return false
         }
 
@@ -406,7 +406,7 @@ struct SocketControlSettings {
     ) -> String {
         let fallback = defaultSocketPath(bundleIdentifier: bundleIdentifier, isDebugBuild: isDebugBuild)
 
-        guard let override = environment["CMUX_SOCKET_PATH"], !override.isEmpty else {
+        guard let override = environment["REMUX_SOCKET_PATH"], !override.isEmpty else {
             return fallback
         }
 
@@ -422,16 +422,16 @@ struct SocketControlSettings {
     }
 
     static func defaultSocketPath(bundleIdentifier: String?, isDebugBuild: Bool) -> String {
-        if bundleIdentifier == "com.cmuxterm.app.nightly" {
-            return "/tmp/cmux-nightly.sock"
+        if bundleIdentifier == "com.remuxterm.app.nightly" {
+            return "/tmp/remux-nightly.sock"
         }
         if isDebugLikeBundleIdentifier(bundleIdentifier) || isDebugBuild {
-            return "/tmp/cmux-debug.sock"
+            return "/tmp/remux-debug.sock"
         }
         if isStagingBundleIdentifier(bundleIdentifier) {
-            return "/tmp/cmux-staging.sock"
+            return "/tmp/remux-staging.sock"
         }
-        return "/tmp/cmux.sock"
+        return "/tmp/remux.sock"
     }
 
     static func shouldHonorSocketPathOverride(
@@ -450,14 +450,14 @@ struct SocketControlSettings {
 
     static func isDebugLikeBundleIdentifier(_ bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
-        return bundleIdentifier == "com.cmuxterm.app.debug"
-            || bundleIdentifier.hasPrefix("com.cmuxterm.app.debug.")
+        return bundleIdentifier == "com.remuxterm.app.debug"
+            || bundleIdentifier.hasPrefix("com.remuxterm.app.debug.")
     }
 
     static func isStagingBundleIdentifier(_ bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
-        return bundleIdentifier == "com.cmuxterm.app.staging"
-            || bundleIdentifier.hasPrefix("com.cmuxterm.app.staging.")
+        return bundleIdentifier == "com.remuxterm.app.staging"
+            || bundleIdentifier.hasPrefix("com.remuxterm.app.staging.")
     }
 
     static func isTruthy(_ raw: String?) -> Bool {
@@ -473,7 +473,7 @@ struct SocketControlSettings {
     static func envOverrideEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool? {
-        guard let raw = environment["CMUX_SOCKET_ENABLE"], !raw.isEmpty else {
+        guard let raw = environment["REMUX_SOCKET_ENABLE"], !raw.isEmpty else {
             return nil
         }
 
@@ -490,7 +490,7 @@ struct SocketControlSettings {
     static func envOverrideMode(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> SocketControlMode? {
-        guard let raw = environment["CMUX_SOCKET_MODE"], !raw.isEmpty else {
+        guard let raw = environment["REMUX_SOCKET_MODE"], !raw.isEmpty else {
             return nil
         }
         return parseMode(raw)
@@ -507,7 +507,7 @@ struct SocketControlSettings {
             if let overrideMode = envOverrideMode(environment: environment) {
                 return overrideMode
             }
-            return userMode == .off ? .cmuxOnly : userMode
+            return userMode == .off ? .remuxOnly : userMode
         }
 
         if let overrideMode = envOverrideMode(environment: environment) {

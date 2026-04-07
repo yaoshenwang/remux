@@ -14,21 +14,21 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
-FUZZ_SEED = int(os.environ.get("CMUX_SPLIT_FUZZ_SEED", "424242"))
-FUZZ_STEPS = int(os.environ.get("CMUX_SPLIT_FUZZ_STEPS", "1400"))
-SAMPLES_PER_STEP = int(os.environ.get("CMUX_SPLIT_FUZZ_SAMPLES", "4"))
-SAMPLE_INTERVAL_S = float(os.environ.get("CMUX_SPLIT_FUZZ_SAMPLE_INTERVAL_S", "0.0015"))
-ACTION_JITTER_MAX_S = float(os.environ.get("CMUX_SPLIT_FUZZ_ACTION_JITTER_MAX_S", "0.0035"))
-BURST_MAX = int(os.environ.get("CMUX_SPLIT_FUZZ_BURST_MAX", "3"))
-MAX_PANES = int(os.environ.get("CMUX_SPLIT_FUZZ_MAX_PANES", "10"))
-EPSILON = float(os.environ.get("CMUX_SPLIT_FUZZ_EPSILON", "0.0"))
-TRACE_TAIL = int(os.environ.get("CMUX_SPLIT_FUZZ_TRACE_TAIL", "40"))
-ASSERT_NO_UNDERFLOW = os.environ.get("CMUX_SPLIT_FUZZ_ASSERT_NO_UNDERFLOW", "0") == "1"
-ASSERT_NO_EMPTY_PANEL = os.environ.get("CMUX_SPLIT_FUZZ_ASSERT_NO_EMPTY_PANEL", "0") == "1"
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
+FUZZ_SEED = int(os.environ.get("REMUX_SPLIT_FUZZ_SEED", "424242"))
+FUZZ_STEPS = int(os.environ.get("REMUX_SPLIT_FUZZ_STEPS", "1400"))
+SAMPLES_PER_STEP = int(os.environ.get("REMUX_SPLIT_FUZZ_SAMPLES", "4"))
+SAMPLE_INTERVAL_S = float(os.environ.get("REMUX_SPLIT_FUZZ_SAMPLE_INTERVAL_S", "0.0015"))
+ACTION_JITTER_MAX_S = float(os.environ.get("REMUX_SPLIT_FUZZ_ACTION_JITTER_MAX_S", "0.0035"))
+BURST_MAX = int(os.environ.get("REMUX_SPLIT_FUZZ_BURST_MAX", "3"))
+MAX_PANES = int(os.environ.get("REMUX_SPLIT_FUZZ_MAX_PANES", "10"))
+EPSILON = float(os.environ.get("REMUX_SPLIT_FUZZ_EPSILON", "0.0"))
+TRACE_TAIL = int(os.environ.get("REMUX_SPLIT_FUZZ_TRACE_TAIL", "40"))
+ASSERT_NO_UNDERFLOW = os.environ.get("REMUX_SPLIT_FUZZ_ASSERT_NO_UNDERFLOW", "0") == "1"
+ASSERT_NO_EMPTY_PANEL = os.environ.get("REMUX_SPLIT_FUZZ_ASSERT_NO_EMPTY_PANEL", "0") == "1"
 
 
 def _pane_count(layout_payload: dict) -> int:
@@ -65,7 +65,7 @@ def _largest_split_frame(layout_payload: dict) -> dict:
                 best = {"x": x, "y": y, "width": width, "height": height}
 
     if best is None:
-        raise cmuxError(f"layout_debug contains no usable split-view frame: {layout_payload}")
+        raise remuxError(f"layout_debug contains no usable split-view frame: {layout_payload}")
     return best
 
 
@@ -103,7 +103,7 @@ def _assert_same_frame(
     }
     shifted = {k: v for k, v in deltas.items() if v > EPSILON}
     if shifted:
-        raise cmuxError(
+        raise remuxError(
             "Outer split container shifted during fuzz churn "
             f"(step={step}, sample={sample}, action={action}, action_index={action_index}, seed={seed}, "
             f"baseline={baseline}, current={current}, deltas={deltas}, epsilon={EPSILON})"
@@ -111,7 +111,7 @@ def _assert_same_frame(
         )
 
 
-def _warm_start_split(c: cmux) -> dict:
+def _warm_start_split(c: remux) -> dict:
     # Ensure we have at least one split so the container frame exists in layout_debug.
     c.simulate_shortcut("cmd+d")
     deadline = time.time() + 2.0
@@ -122,7 +122,7 @@ def _warm_start_split(c: cmux) -> dict:
         if _pane_count(payload) >= 2:
             return payload
         time.sleep(0.02)
-    raise cmuxError(f"Timed out waiting for first split to appear: {last}")
+    raise remuxError(f"Timed out waiting for first split to appear: {last}")
 
 
 def main() -> int:
@@ -130,7 +130,7 @@ def main() -> int:
     recent_actions: deque[str] = deque(maxlen=max(8, TRACE_TAIL))
     total_actions = 0
 
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         ws = c.new_workspace()
         c.select_workspace(ws)
         c.activate_app()
@@ -142,7 +142,7 @@ def main() -> int:
         initial = _warm_start_split(c)
         baseline = _container_frame(initial)
         if _pane_count(initial) < 2:
-            raise cmuxError("Expected at least 2 panes after warm start split")
+            raise remuxError("Expected at least 2 panes after warm start split")
 
         for step in range(1, FUZZ_STEPS + 1):
             burst = rng.randint(1, max(1, BURST_MAX))
@@ -193,11 +193,11 @@ def main() -> int:
 
         underflows = c.bonsplit_underflow_count()
         if ASSERT_NO_UNDERFLOW and underflows != 0:
-            raise cmuxError(f"bonsplit arranged-subview underflow observed during fuzz run: {underflows}")
+            raise remuxError(f"bonsplit arranged-subview underflow observed during fuzz run: {underflows}")
 
         flashes = c.empty_panel_count()
         if ASSERT_NO_EMPTY_PANEL and flashes != 0:
-            raise cmuxError(f"EmptyPanelView appeared during fuzz run (count={flashes})")
+            raise remuxError(f"EmptyPanelView appeared during fuzz run (count={flashes})")
 
     print(
         "PASS: cmd+d/ctrl+d fuzz geometry invariant "

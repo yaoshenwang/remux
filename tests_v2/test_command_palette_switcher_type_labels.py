@@ -13,10 +13,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s: float = 6.0, interval_s: float = 0.05, message: str = "timeout") -> None:
@@ -25,19 +25,19 @@ def _wait_until(predicate, timeout_s: float = 6.0, interval_s: float = 0.05, mes
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
-def _palette_visible(client: cmux, window_id: str) -> bool:
+def _palette_visible(client: remux, window_id: str) -> bool:
     payload = client._call("debug.command_palette.visible", {"window_id": window_id}) or {}
     return bool(payload.get("visible"))
 
 
-def _palette_results(client: cmux, window_id: str, limit: int = 20) -> dict:
+def _palette_results(client: remux, window_id: str, limit: int = 20) -> dict:
     return client.command_palette_results(window_id=window_id, limit=limit)
 
 
-def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
+def _set_palette_visible(client: remux, window_id: str, visible: bool) -> None:
     if _palette_visible(client, window_id) == visible:
         return
     client._call("debug.command_palette.toggle", {"window_id": window_id})
@@ -47,7 +47,7 @@ def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
     )
 
 
-def _open_switcher(client: cmux, window_id: str) -> None:
+def _open_switcher(client: remux, window_id: str) -> None:
     _set_palette_visible(client, window_id, False)
     client.simulate_shortcut("cmd+p")
     _wait_until(
@@ -61,7 +61,7 @@ def _open_switcher(client: cmux, window_id: str) -> None:
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 
@@ -92,7 +92,7 @@ def main() -> int:
 
         rows = (_palette_results(client, window_id, limit=60).get("results") or [])
         if not rows:
-            raise cmuxError("switcher returned no rows for token query")
+            raise remuxError("switcher returned no rows for token query")
 
         workspace_rows = [
             row for row in rows
@@ -104,17 +104,17 @@ def main() -> int:
         ]
 
         if not workspace_rows:
-            raise cmuxError(f"expected workspace rows for switcher query: rows={rows}")
+            raise remuxError(f"expected workspace rows for switcher query: rows={rows}")
         if not surface_rows:
-            raise cmuxError(f"expected surface rows for switcher query: rows={rows}")
+            raise remuxError(f"expected surface rows for switcher query: rows={rows}")
 
         bad_workspace = [row for row in workspace_rows if str((row or {}).get("trailing_label") or "") != "Workspace"]
         if bad_workspace:
-            raise cmuxError(f"workspace rows missing 'Workspace' trailing label: {bad_workspace}")
+            raise remuxError(f"workspace rows missing 'Workspace' trailing label: {bad_workspace}")
 
         bad_surface = [row for row in surface_rows if str((row or {}).get("trailing_label") or "") != "Surface"]
         if bad_surface:
-            raise cmuxError(f"surface rows missing 'Surface' trailing label: {bad_surface}")
+            raise remuxError(f"surface rows missing 'Surface' trailing label: {bad_surface}")
 
         _set_palette_visible(client, window_id, False)
         client.close_workspace(workspace_id)

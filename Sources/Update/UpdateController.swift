@@ -3,7 +3,7 @@ import Cocoa
 import Combine
 import SwiftUI
 
-/// Controller for managing Sparkle updates in cmux.
+/// Controller for managing Sparkle updates in remux.
 class UpdateController {
     private(set) var updater: SPUUpdater
     private let userDriver: UpdateDriver
@@ -61,7 +61,7 @@ class UpdateController {
 #if DEBUG
         // UI tests need to exercise Sparkle's permission request deterministically.
         // Clearing these defaults causes Sparkle to re-request permission on next start.
-        if ProcessInfo.processInfo.environment["CMUX_UI_TEST_RESET_SPARKLE_PERMISSION"] == "1" {
+        if ProcessInfo.processInfo.environment["REMUX_UI_TEST_RESET_SPARKLE_PERMISSION"] == "1" {
             let defaults = UserDefaults.standard
             defaults.removeObject(forKey: "SUEnableAutomaticChecks")
             defaults.removeObject(forKey: "SUSendProfileInfo")
@@ -71,7 +71,7 @@ class UpdateController {
         }
 #endif
         do {
-            // cmux never enables automatic update checks; we rely on the in-app update pill.
+            // remux never enables automatic update checks; we rely on the in-app update pill.
             // Sparkle reads these from defaults, but set them explicitly before starting.
             let defaults = UserDefaults.standard
             defaults.set(false, forKey: "SUEnableAutomaticChecks")
@@ -181,7 +181,7 @@ class UpdateController {
             if case .checking = viewModel.state {
                 viewModel.state = .error(.init(
                     error: NSError(
-                        domain: "cmux.update",
+                        domain: "remux.update",
                         code: 1,
                         userInfo: [NSLocalizedDescriptionKey: "Updater is still starting. Try again in a moment."]
                     ),
@@ -250,8 +250,8 @@ class UpdateController {
     private func recordUITestTimestamp(key: String) {
 #if DEBUG
         let env = ProcessInfo.processInfo.environment
-        guard env["CMUX_UI_TEST_MODE"] == "1" else { return }
-        guard let path = env["CMUX_UI_TEST_TIMING_PATH"] else { return }
+        guard env["REMUX_UI_TEST_MODE"] == "1" else { return }
+        guard let path = env["REMUX_UI_TEST_TIMING_PATH"] else { return }
 
         let url = URL(fileURLWithPath: path)
         var payload: [String: Double] = [:]

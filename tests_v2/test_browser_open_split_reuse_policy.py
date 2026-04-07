@@ -6,15 +6,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _surface_id(payload: dict) -> str:
@@ -25,24 +25,24 @@ def _pane_id(payload: dict) -> str:
     return str((payload or {}).get("pane_id") or "")
 
 
-def _pane_count(c: cmux, workspace_id: str) -> int:
+def _pane_count(c: remux, workspace_id: str) -> int:
     panes_payload = c._call("pane.list", {"workspace_id": workspace_id}) or {}
     panes = panes_payload.get("panes") or []
     return len(panes)
 
 
-def _pane_for_surface(c: cmux, workspace_id: str, surface_id: str) -> str:
+def _pane_for_surface(c: remux, workspace_id: str, surface_id: str) -> str:
     payload = c._call("surface.list", {"workspace_id": workspace_id}) or {}
     for row in payload.get("surfaces") or []:
         if str(row.get("id") or "") == surface_id:
             pane = str(row.get("pane_id") or "")
             if pane:
                 return pane
-    raise cmuxError(f"Surface {surface_id} not found in workspace {workspace_id}: {payload}")
+    raise remuxError(f"Surface {surface_id} not found in workspace {workspace_id}: {payload}")
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         created = c._call("workspace.create", {}) or {}
         workspace_id = str(created.get("workspace_id") or "")
         _must(bool(workspace_id), f"workspace.create returned no workspace_id: {created}")

@@ -39,7 +39,7 @@ func sidebarActiveForegroundNSColor(
     return baseColor.withAlphaComponent(clampedOpacity)
 }
 
-func cmuxAccentNSColor(for colorScheme: ColorScheme) -> NSColor {
+func remuxAccentNSColor(for colorScheme: ColorScheme) -> NSColor {
     switch colorScheme {
     case .dark:
         return NSColor(
@@ -58,24 +58,24 @@ func cmuxAccentNSColor(for colorScheme: ColorScheme) -> NSColor {
     }
 }
 
-func cmuxAccentNSColor(for appAppearance: NSAppearance?) -> NSColor {
+func remuxAccentNSColor(for appAppearance: NSAppearance?) -> NSColor {
     let bestMatch = appAppearance?.bestMatch(from: [.darkAqua, .aqua])
     let scheme: ColorScheme = (bestMatch == .darkAqua) ? .dark : .light
-    return cmuxAccentNSColor(for: scheme)
+    return remuxAccentNSColor(for: scheme)
 }
 
-func cmuxAccentNSColor() -> NSColor {
+func remuxAccentNSColor() -> NSColor {
     NSColor(name: nil) { appearance in
-        cmuxAccentNSColor(for: appearance)
+        remuxAccentNSColor(for: appearance)
     }
 }
 
-func cmuxAccentColor() -> Color {
-    Color(nsColor: cmuxAccentNSColor())
+func remuxAccentColor() -> Color {
+    Color(nsColor: remuxAccentNSColor())
 }
 
 func sidebarSelectedWorkspaceBackgroundNSColor(for colorScheme: ColorScheme) -> NSColor {
-    cmuxAccentNSColor(for: colorScheme)
+    remuxAccentNSColor(for: colorScheme)
 }
 
 func sidebarSelectedWorkspaceForegroundNSColor(opacity: CGFloat) -> NSColor {
@@ -86,7 +86,7 @@ func sidebarSelectedWorkspaceForegroundNSColor(opacity: CGFloat) -> NSColor {
 #if compiler(>=6.2)
 @available(macOS 26.0, *)
 enum InternalTabDragConfigurationProvider {
-    // These drags only make sense inside cmux. Outside the app, Finder should
+    // These drags only make sense inside remux. Outside the app, Finder should
     // reject them instead of materializing placeholder files from the payload.
     static let value = DragConfiguration(
         operationsWithinApp: .init(allowCopy: false, allowMove: true, allowDelete: false),
@@ -838,7 +838,7 @@ final class FileDropOverlayView: NSView {
 
 var fileDropOverlayKey: UInt8 = 0
 private var commandPaletteWindowOverlayKey: UInt8 = 0
-let commandPaletteOverlayContainerIdentifier = NSUserInterfaceItemIdentifier("cmux.commandPalette.overlay.container")
+let commandPaletteOverlayContainerIdentifier = NSUserInterfaceItemIdentifier("remux.commandPalette.overlay.container")
 
 enum CommandPaletteOverlayPromotionPolicy {
     static func shouldPromote(previouslyVisible: Bool, isVisible: Bool) -> Bool {
@@ -1369,8 +1369,8 @@ struct ContentView: View {
     @State private var isFeedbackComposerPresented = false
     @AppStorage(CommandPaletteRenameSelectionSettings.selectAllOnFocusKey)
     private var commandPaletteRenameSelectAllOnFocus = CommandPaletteRenameSelectionSettings.defaultSelectAllOnFocus
-    @AppStorage(BrowserLinkOpenSettings.openSidebarPullRequestLinksInCmuxBrowserKey)
-    private var openSidebarPullRequestLinksInCmuxBrowser = BrowserLinkOpenSettings.defaultOpenSidebarPullRequestLinksInCmuxBrowser
+    @AppStorage(BrowserLinkOpenSettings.openSidebarPullRequestLinksInRemuxBrowserKey)
+    private var openSidebarPullRequestLinksInRemuxBrowser = BrowserLinkOpenSettings.defaultOpenSidebarPullRequestLinksInRemuxBrowser
     @FocusState private var isCommandPaletteSearchFocused: Bool
     @FocusState private var isCommandPaletteRenameFocused: Bool
 
@@ -2010,7 +2010,7 @@ struct ContentView: View {
     @AppStorage("debugTitlebarLeadingExtra") private var debugTitlebarLeadingExtra: Double = 0
 
     @State private var titlebarLeadingInset: CGFloat = 12
-    private var windowIdentifier: String { "cmux.main.\(windowId.uuidString)" }
+    private var windowIdentifier: String { "remux.main.\(windowId.uuidString)" }
     private var fakeTitlebarTextColor: Color {
         _ = titlebarThemeGeneration
         let ghosttyBackground = GhosttyApp.shared.defaultBackgroundColor
@@ -2652,7 +2652,7 @@ struct ContentView: View {
                 }
             }
 #if DEBUG
-            if ProcessInfo.processInfo.environment["CMUX_UI_TEST_MODE"] == "1" {
+            if ProcessInfo.processInfo.environment["REMUX_UI_TEST_MODE"] == "1" {
                 UpdateLogStore.shared.append("ui test window accessor: id=\(windowIdentifier) visible=\(window.isVisible)")
             }
 #endif
@@ -2847,7 +2847,7 @@ struct ContentView: View {
     }
 
     private func setTitlebarControlsHidden(_ hidden: Bool, in window: NSWindow) {
-        let controlsId = NSUserInterfaceItemIdentifier("cmux.titlebarControls")
+        let controlsId = NSUserInterfaceItemIdentifier("remux.titlebarControls")
         for accessory in window.titlebarAccessoryViewControllers {
             if accessory.view.identifier == controlsId {
                 accessory.isHidden = hidden
@@ -3054,7 +3054,7 @@ struct ContentView: View {
                             let isSelected = index == selectedIndex
                             let isHovered = commandPaletteHoveredResultIndex == index
                             let rowBackground: Color = isSelected
-                                ? cmuxAccentColor().opacity(0.12)
+                                ? remuxAccentColor().opacity(0.12)
                                 : (isHovered ? Color.primary.opacity(0.08) : .clear)
 
                             Button {
@@ -3654,7 +3654,7 @@ struct ContentView: View {
     private func commandPaletteCommandsFingerprint() -> Int {
         var hasher = Hasher()
         hasher.combine(commandPaletteContextSnapshot().fingerprint())
-        hasher.combine(AppDelegate.shared?.isCmuxCLIInstalledInPATH() ?? false)
+        hasher.combine(AppDelegate.shared?.isRemuxCLIInstalledInPATH() ?? false)
         return hasher.finalize()
     }
 
@@ -4136,19 +4136,19 @@ struct ContentView: View {
         contributions.append(
             CommandPaletteCommandContribution(
                 commandId: "palette.installCLI",
-                title: constant(String(localized: "command.installCLI.title", defaultValue: "Shell Command: Install 'cmux' in PATH")),
+                title: constant(String(localized: "command.installCLI.title", defaultValue: "Shell Command: Install 'remux' in PATH")),
                 subtitle: constant(String(localized: "command.installCLI.subtitle", defaultValue: "CLI")),
                 keywords: ["install", "cli", "path", "shell", "command", "symlink"],
-                when: { _ in !(AppDelegate.shared?.isCmuxCLIInstalledInPATH() ?? false) }
+                when: { _ in !(AppDelegate.shared?.isRemuxCLIInstalledInPATH() ?? false) }
             )
         )
         contributions.append(
             CommandPaletteCommandContribution(
                 commandId: "palette.uninstallCLI",
-                title: constant(String(localized: "command.uninstallCLI.title", defaultValue: "Shell Command: Uninstall 'cmux' from PATH")),
+                title: constant(String(localized: "command.uninstallCLI.title", defaultValue: "Shell Command: Uninstall 'remux' from PATH")),
                 subtitle: constant(String(localized: "command.uninstallCLI.subtitle", defaultValue: "CLI")),
                 keywords: ["uninstall", "remove", "cli", "path", "shell", "command", "symlink"],
-                when: { _ in AppDelegate.shared?.isCmuxCLIInstalledInPATH() ?? false }
+                when: { _ in AppDelegate.shared?.isRemuxCLIInstalledInPATH() ?? false }
             )
         )
         contributions.append(
@@ -4291,7 +4291,7 @@ struct ContentView: View {
                 commandId: "palette.restartSocketListener",
                 title: constant(String(localized: "command.restartSocketListener.title", defaultValue: "Restart CLI Listener")),
                 subtitle: constant(String(localized: "command.restartSocketListener.subtitle", defaultValue: "Global")),
-                keywords: ["restart", "socket", "listener", "cli", "cmux", "control"]
+                keywords: ["restart", "socket", "listener", "cli", "remux", "control"]
             )
         )
 
@@ -4803,10 +4803,10 @@ struct ContentView: View {
             AppDelegate.shared?.openNewMainWindow(nil)
         }
         registry.register(commandId: "palette.installCLI") {
-            AppDelegate.shared?.installCmuxCLIInPath(nil)
+            AppDelegate.shared?.installRemuxCLIInPath(nil)
         }
         registry.register(commandId: "palette.uninstallCLI") {
-            AppDelegate.shared?.uninstallCmuxCLIInPath(nil)
+            AppDelegate.shared?.uninstallRemuxCLIInPath(nil)
         }
         registry.register(commandId: "palette.newTerminalTab") {
             tabManager.newSurface()
@@ -5686,7 +5686,7 @@ struct ContentView: View {
     }
 
     private func commandPaletteBackdropFocusTarget(for responder: NSResponder) -> CommandPaletteRestoreFocusTarget? {
-        if let terminalView = cmuxOwningGhosttyView(for: responder),
+        if let terminalView = remuxOwningGhosttyView(for: responder),
            let workspaceId = terminalView.tabId,
            let panelId = terminalView.terminalSurface?.id,
            tabManager.tabs.contains(where: { $0.id == workspaceId }) {
@@ -6065,7 +6065,7 @@ struct ContentView: View {
         guard !pullRequests.isEmpty else { return false }
 
         var openedCount = 0
-        if openSidebarPullRequestLinksInCmuxBrowser {
+        if openSidebarPullRequestLinksInRemuxBrowser {
             for pullRequest in pullRequests {
                 if tabManager.openBrowser(url: pullRequest.url, insertAtEnd: true) != nil {
                     openedCount += 1
@@ -7393,8 +7393,8 @@ enum DevBuildBannerDebugSettings {
 
 private enum FeedbackComposerSettings {
     static let storedEmailKey = "sidebarHelpFeedbackEmail"
-    static let endpointEnvironmentKey = "CMUX_FEEDBACK_API_URL"
-    static let defaultEndpoint = "https://www.cmux.dev/api/feedback"
+    static let endpointEnvironmentKey = "REMUX_FEEDBACK_API_URL"
+    static let defaultEndpoint = ""
     static let foundersEmail = "founders@manaflow.com"
     static let maxMessageLength = 4_000
     static let maxAttachmentCount = 10
@@ -7462,9 +7462,9 @@ private struct FeedbackComposerAppMetadata {
     static var current: FeedbackComposerAppMetadata {
         let infoDictionary = Bundle.main.infoDictionary ?? [:]
         let env = ProcessInfo.processInfo.environment
-        let commit = (infoDictionary["CMUXCommit"] as? String).flatMap { value in
+        let commit = (infoDictionary["REMUXCommit"] as? String).flatMap { value in
             value.isEmpty ? nil : value
-        } ?? env["CMUX_COMMIT"]
+        } ?? env["REMUX_COMMIT"]
 
         return FeedbackComposerAppMetadata(
             appVersion: infoDictionary["CFBundleShortVersionString"] as? String ?? "",
@@ -7717,8 +7717,8 @@ private enum FeedbackComposerClient {
 }
 
 enum SidebarDragLifecycleNotification {
-    static let stateDidChange = Notification.Name("cmux.sidebarDragStateDidChange")
-    static let requestClear = Notification.Name("cmux.sidebarDragRequestClear")
+    static let stateDidChange = Notification.Name("remux.sidebarDragStateDidChange")
+    static let requestClear = Notification.Name("remux.sidebarDragRequestClear")
     static let tabIdKey = "tabId"
     static let reasonKey = "reason"
 
@@ -8816,10 +8816,10 @@ enum FeedbackComposerBridge {
 }
 
 private struct SidebarHelpMenuButton: View {
-    private let docsURL = URL(string: "https://cmux.dev/docs")
-    private let changelogURL = URL(string: "https://cmux.dev/docs/changelog")
-    private let githubURL = URL(string: "https://github.com/manaflow-ai/cmux")
-    private let githubIssuesURL = URL(string: "https://github.com/manaflow-ai/cmux/issues")
+    private let docsURL = URL(string: "https://github.com/yaoshenwang/remux/tree/dev/web/app/docs")
+    private let changelogURL = URL(string: "https://github.com/yaoshenwang/remux/blob/dev/CHANGELOG.md")
+    private let githubURL = URL(string: "https://github.com/yaoshenwang/remux")
+    private let githubIssuesURL = URL(string: "https://github.com/yaoshenwang/remux/issues")
     private let helpTitle = String(localized: "sidebar.help.button", defaultValue: "Help")
     private let buttonSize: CGFloat = 22
     private let iconSize: CGFloat = 11
@@ -9339,7 +9339,7 @@ private struct SidebarEmptyArea: View {
             .overlay(alignment: .top) {
                 if shouldShowTopDropIndicator {
                     Rectangle()
-                        .fill(cmuxAccentColor())
+                        .fill(remuxAccentColor())
                         .frame(height: 2)
                         .padding(.horizontal, 8)
                         .offset(y: -(rowSpacing / 2))
@@ -9479,8 +9479,8 @@ private struct TabItemView: View, Equatable {
     @AppStorage("sidebarShowBranchDirectory") private var sidebarShowBranchDirectory = true
     @AppStorage("sidebarShowGitBranchIcon") private var sidebarShowGitBranchIcon = false
     @AppStorage("sidebarShowPullRequest") private var sidebarShowPullRequest = true
-    @AppStorage(BrowserLinkOpenSettings.openSidebarPullRequestLinksInCmuxBrowserKey)
-    private var openSidebarPullRequestLinksInCmuxBrowser = BrowserLinkOpenSettings.defaultOpenSidebarPullRequestLinksInCmuxBrowser
+    @AppStorage(BrowserLinkOpenSettings.openSidebarPullRequestLinksInRemuxBrowserKey)
+    private var openSidebarPullRequestLinksInRemuxBrowser = BrowserLinkOpenSettings.defaultOpenSidebarPullRequestLinksInRemuxBrowser
     @AppStorage("sidebarShowPorts") private var sidebarShowPorts = true
     @AppStorage("sidebarShowLog") private var sidebarShowLog = true
     @AppStorage("sidebarShowProgress") private var sidebarShowProgress = true
@@ -9544,7 +9544,7 @@ private struct TabItemView: View, Equatable {
     }
 
     private var activeUnreadBadgeFillColor: Color {
-        usesInvertedActiveForeground ? Color.white.opacity(0.25) : cmuxAccentColor()
+        usesInvertedActiveForeground ? Color.white.opacity(0.25) : remuxAccentColor()
     }
 
     private var activeProgressTrackColor: Color {
@@ -9552,7 +9552,7 @@ private struct TabItemView: View, Equatable {
     }
 
     private var activeProgressFillColor: Color {
-        usesInvertedActiveForeground ? Color.white.opacity(0.8) : cmuxAccentColor()
+        usesInvertedActiveForeground ? Color.white.opacity(0.8) : remuxAccentColor()
     }
 
     private var shortcutHintEmphasis: Double {
@@ -9901,7 +9901,7 @@ private struct TabItemView: View, Equatable {
         .overlay(alignment: .top) {
             if showsCenteredTopDropIndicator {
                 Rectangle()
-                    .fill(cmuxAccentColor())
+                    .fill(remuxAccentColor())
                     .frame(height: 2)
                     .padding(.horizontal, 8)
                     .offset(y: index == 0 ? 0 : -(rowSpacing / 2))
@@ -10130,7 +10130,7 @@ private struct TabItemView: View, Equatable {
         switch activeTabIndicatorStyle {
         case .leftRail:
             if isActive        { return Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme)) }
-            if isMultiSelected { return cmuxAccentColor().opacity(0.25) }
+            if isMultiSelected { return remuxAccentColor().opacity(0.25) }
             return Color.clear
         case .solidFill:
             if isActive { return Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme)) }
@@ -10138,7 +10138,7 @@ private struct TabItemView: View, Equatable {
                 if isMultiSelected { return custom.opacity(0.35) }
                 return custom.opacity(0.7)
             }
-            if isMultiSelected { return cmuxAccentColor().opacity(0.25) }
+            if isMultiSelected { return remuxAccentColor().opacity(0.25) }
             return Color.clear
         }
     }
@@ -10461,7 +10461,7 @@ private struct TabItemView: View, Equatable {
 
     private func openPullRequestLink(_ url: URL) {
         updateSelection()
-        if openSidebarPullRequestLinksInCmuxBrowser {
+        if openSidebarPullRequestLinksInRemuxBrowser {
             if tabManager.openBrowser(
                 inWorkspace: tab.id,
                 url: url,
@@ -11185,10 +11185,10 @@ private final class SidebarDragAutoScrollController: ObservableObject {
 }
 
 private enum SidebarTabDragPayload {
-    static let typeIdentifier = "com.cmux.sidebar-tab-reorder"
+    static let typeIdentifier = "com.remux.sidebar-tab-reorder"
     static let dropContentType = UTType(exportedAs: typeIdentifier)
     static let dropContentTypes: [UTType] = [dropContentType]
-    private static let prefix = "cmux.sidebar-tab."
+    private static let prefix = "remux.sidebar-tab."
 
     static func provider(for tabId: UUID) -> NSItemProvider {
         let provider = NSItemProvider()

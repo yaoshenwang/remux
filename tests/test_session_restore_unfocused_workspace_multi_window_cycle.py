@@ -13,7 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from cmux import cmux
+from remux import remux
 
 
 def _bundle_id(app_path: Path) -> str:
@@ -30,7 +30,7 @@ def _bundle_id(app_path: Path) -> str:
 
 def _snapshot_path(bundle_id: str) -> Path:
     safe_bundle = re.sub(r"[^A-Za-z0-9._-]", "_", bundle_id)
-    return Path.home() / "Library/Application Support/cmux" / f"session-{safe_bundle}.json"
+    return Path.home() / "Library/Application Support/remux" / f"session-{safe_bundle}.json"
 
 
 def _sanitize_tag_slug(raw: str) -> str:
@@ -42,11 +42,11 @@ def _sanitize_tag_slug(raw: str) -> str:
 def _socket_candidates(app_path: Path, preferred: Path) -> list[Path]:
     candidates = [preferred]
     app_name = app_path.stem
-    prefix = "cmux DEV "
+    prefix = "remux DEV "
     if app_name.startswith(prefix):
         tag = app_name[len(prefix):]
         slug = _sanitize_tag_slug(tag)
-        candidates.append(Path(f"/tmp/cmux-debug-{slug}.sock"))
+        candidates.append(Path(f"/tmp/remux-debug-{slug}.sock"))
     deduped: list[Path] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -95,7 +95,7 @@ def _wait_for_socket_closed(socket_path: Path, timeout: float = 20.0) -> None:
 
 
 def _kill_existing(app_path: Path) -> None:
-    exe = app_path / "Contents" / "MacOS" / "cmux DEV"
+    exe = app_path / "Contents" / "MacOS" / "remux DEV"
     subprocess.run(["pkill", "-f", str(exe)], capture_output=True, text=True)
     time.sleep(1.0)
 
@@ -111,9 +111,9 @@ def _launch(app_path: Path, preferred_socket_path: Path) -> Path:
             "-na",
             str(app_path),
             "--env",
-            f"CMUX_SOCKET_PATH={preferred_socket_path}",
+            f"REMUX_SOCKET_PATH={preferred_socket_path}",
             "--env",
-            "CMUX_ALLOW_SOCKET_OVERRIDE=1",
+            "REMUX_ALLOW_SOCKET_OVERRIDE=1",
         ],
         check=True,
     )
@@ -137,19 +137,19 @@ def _quit(bundle_id: str, socket_path: Path) -> None:
     time.sleep(0.8)
 
 
-def _connect(socket_path: Path) -> cmux:
-    client = cmux(socket_path=str(socket_path))
+def _connect(socket_path: Path) -> remux:
+    client = remux(socket_path=str(socket_path))
     client.connect()
     if not client.ping():
         raise RuntimeError("ping failed")
     return client
 
 
-def _read_scrollback(client: cmux) -> str:
+def _read_scrollback(client: remux) -> str:
     return client._send_command("read_screen --scrollback")
 
 
-def _wait_for_marker(client: cmux, marker: str, timeout: float = 8.0) -> bool:
+def _wait_for_marker(client: remux, marker: str, timeout: float = 8.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if marker in _read_scrollback(client):
@@ -158,7 +158,7 @@ def _wait_for_marker(client: cmux, marker: str, timeout: float = 8.0) -> bool:
     return False
 
 
-def _consume_visible_markers(client: cmux, remaining: set[str], timeout: float = 4.0) -> None:
+def _consume_visible_markers(client: remux, remaining: set[str], timeout: float = 4.0) -> None:
     if not remaining:
         return
     deadline = time.time() + timeout
@@ -173,13 +173,13 @@ def _consume_visible_markers(client: cmux, remaining: set[str], timeout: float =
         time.sleep(0.25)
 
 
-def _ensure_workspaces(client: cmux, count: int) -> None:
+def _ensure_workspaces(client: remux, count: int) -> None:
     while len(client.list_workspaces()) < count:
         client.new_workspace()
         time.sleep(0.3)
 
 
-def _list_windows(client: cmux) -> list[str]:
+def _list_windows(client: remux) -> list[str]:
     response = client._send_command("list_windows")
     if response == "No windows":
         return []
@@ -194,40 +194,40 @@ def _list_windows(client: cmux) -> list[str]:
     return window_ids
 
 
-def _new_window(client: cmux) -> str:
+def _new_window(client: remux) -> str:
     response = client._send_command("new_window")
     if not response.startswith("OK "):
         raise RuntimeError(f"new_window failed: {response}")
     return response.split(" ", 1)[1].strip()
 
 
-def _focus_window(client: cmux, window_id: str) -> None:
+def _focus_window(client: remux, window_id: str) -> None:
     response = client._send_command(f"focus_window {window_id}")
     if response != "OK":
         raise RuntimeError(f"focus_window failed for {window_id}: {response}")
 
 
 def main() -> int:
-    app_path_str = os.environ.get("CMUX_APP_PATH", "").strip()
+    app_path_str = os.environ.get("REMUX_APP_PATH", "").strip()
     if not app_path_str:
-        print("SKIP: set CMUX_APP_PATH to a built cmux DEV .app path")
+        print("SKIP: set REMUX_APP_PATH to a built remux DEV .app path")
         return 0
     app_path = Path(app_path_str)
     if not app_path.exists():
-        print(f"SKIP: CMUX_APP_PATH does not exist: {app_path}")
+        print(f"SKIP: REMUX_APP_PATH does not exist: {app_path}")
         return 0
 
     bundle_id = _bundle_id(app_path)
     snapshot = _snapshot_path(bundle_id)
     # Keep the override path short enough for Darwin's Unix socket path limit.
     bundle_suffix = re.sub(r"[^A-Za-z0-9]", "", bundle_id)[-16:] or "bundle"
-    socket_path = Path(f"/tmp/cmux-mw-restore-{bundle_suffix}.sock")
+    socket_path = Path(f"/tmp/remux-mw-restore-{bundle_suffix}.sock")
 
     markers = {
-        "w1_ws0": "CMUX_MW_RESTORE_W1_WS0",
-        "w1_ws1": "CMUX_MW_RESTORE_W1_WS1",
-        "w2_ws0": "CMUX_MW_RESTORE_W2_WS0",
-        "w2_ws1": "CMUX_MW_RESTORE_W2_WS1",
+        "w1_ws0": "REMUX_MW_RESTORE_W1_WS0",
+        "w1_ws1": "REMUX_MW_RESTORE_W1_WS1",
+        "w2_ws0": "REMUX_MW_RESTORE_W2_WS0",
+        "w2_ws1": "REMUX_MW_RESTORE_W2_WS1",
     }
     failures: list[str] = []
 

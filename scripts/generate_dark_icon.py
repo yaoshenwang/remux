@@ -5,7 +5,7 @@ Composites the Figma chevron layer (on transparent background) over a dark
 squircle background derived from the light icon's alpha channel. This
 preserves the exact chevron colors and glow without any halo artifacts.
 
-Requires the Figma export at: design/cmux-icon-chevron.png
+Requires the Figma export at: design/remux-icon-chevron.png
 Falls back to mathematical recomposition if the Figma layer is missing.
 """
 import json
@@ -20,7 +20,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DARK_BG = (28, 28, 30)
 
 # Figma chevron layer (exported from Figma at native resolution)
-FIGMA_CHEVRON = os.path.join(REPO, "design", "cmux-icon-chevron.png")
+FIGMA_CHEVRON = os.path.join(REPO, "design", "remux-icon-chevron.png")
 
 # The Figma export is ~25% larger than the repo icon. Scale and offset
 # computed by matching the solid chevron (sat>0.5) bounding box center

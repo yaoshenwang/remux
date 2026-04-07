@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux
+from remux import remux
 
 
 SHELL_ESCAPE_CHARS = "\\ ()[]{}<>\"'`!#$&;|*?\t"
@@ -24,7 +24,7 @@ def escape_for_shell(value: str) -> str:
     return out
 
 
-def wait_for_text(client: cmux, surface_id: str, needle: str, timeout: float = 3.0) -> bool:
+def wait_for_text(client: remux, surface_id: str, needle: str, timeout: float = 3.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         text = client.read_terminal_text(surface_id)
@@ -36,13 +36,13 @@ def wait_for_text(client: cmux, surface_id: str, needle: str, timeout: float = 3
 
 def main() -> int:
     tmp = Path(tempfile.gettempdir())
-    p1 = (tmp / "cmux drop [image] #1 (a).png").resolve()
-    p2 = (tmp / "cmux drop second & file!.jpg").resolve()
+    p1 = (tmp / "remux drop [image] #1 (a).png").resolve()
+    p2 = (tmp / "remux drop second & file!.jpg").resolve()
     p1.write_text("x", encoding="utf-8")
     p2.write_text("y", encoding="utf-8")
 
     try:
-        with cmux() as client:
+        with remux() as client:
             try:
                 client.activate_app()
             except Exception:

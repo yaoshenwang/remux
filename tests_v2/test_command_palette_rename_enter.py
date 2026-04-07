@@ -12,10 +12,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s=4.0, interval_s=0.05, message="timeout"):
@@ -24,7 +24,7 @@ def _wait_until(predicate, timeout_s=4.0, interval_s=0.05, message="timeout"):
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
 def _palette_visible(client, window_id):
@@ -40,7 +40,7 @@ def _focused_pane_id(client):
     panes = client.list_panes()
     focused = [row for row in panes if bool(row[3])]
     if not focused:
-        raise cmuxError(f"no focused pane: {panes}")
+        raise remuxError(f"no focused pane: {panes}")
     return str(focused[0][1])
 
 
@@ -48,12 +48,12 @@ def _selected_surface_title(client, pane_id):
     rows = client.list_pane_surfaces(pane_id)
     selected = [row for row in rows if bool(row[3])]
     if not selected:
-        raise cmuxError(f"no selected surface in pane {pane_id}: {rows}")
+        raise remuxError(f"no selected surface in pane {pane_id}: {rows}")
     return str(selected[0][2])
 
 
 def main():
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 
@@ -96,7 +96,7 @@ def main():
 
         new_title = _selected_surface_title(client, pane_id)
         if new_title != rename_to:
-            raise cmuxError(f"rename not applied: expected '{rename_to}', got '{new_title}'")
+            raise remuxError(f"rename not applied: expected '{rename_to}', got '{new_title}'")
 
     print("PASS: command-palette rename flow accepts Enter in input")
     return 0

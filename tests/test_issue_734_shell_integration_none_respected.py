@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Regression for issue #734:
-cmux wrapper .zshenv should only source Ghostty zsh integration when Ghostty
+remux wrapper .zshenv should only source Ghostty zsh integration when Ghostty
 actually enabled shell integration (signaled by GHOSTTY_ZSH_ZDOTDIR being set).
 """
 
@@ -26,14 +26,14 @@ def _run_case(
     env["HOME"] = str(home)
     env["ZDOTDIR"] = str(wrapper_dir)
     env["GHOSTTY_RESOURCES_DIR"] = str(ghostty_resources)
-    env["CMUX_SHELL_INTEGRATION"] = "0"
-    env["CMUX_TEST_OUT"] = str(out_path)
+    env["REMUX_SHELL_INTEGRATION"] = "0"
+    env["REMUX_TEST_OUT"] = str(out_path)
 
     # Keep input deterministic and local to this test.
     for key in (
         "GHOSTTY_ZSH_ZDOTDIR",
-        "CMUX_ZSH_ZDOTDIR",
-        "CMUX_ORIGINAL_ZDOTDIR",
+        "REMUX_ZSH_ZDOTDIR",
+        "REMUX_ORIGINAL_ZDOTDIR",
         "GHOSTTY_SHELL_FEATURES",
         "GHOSTTY_BIN_DIR",
     ):
@@ -42,7 +42,7 @@ def _run_case(
     if ghostty_enabled:
         env["GHOSTTY_ZSH_ZDOTDIR"] = str(orig_zdotdir)
     else:
-        env["CMUX_ZSH_ZDOTDIR"] = str(orig_zdotdir)
+        env["REMUX_ZSH_ZDOTDIR"] = str(orig_zdotdir)
 
     result = subprocess.run(
         ["zsh", "-d", "-i", "-c", "true"],
@@ -61,7 +61,7 @@ def main() -> int:
         print(f"SKIP: missing wrapper .zshenv at {wrapper_dir}")
         return 0
 
-    base = Path("/tmp") / f"cmux_issue_734_{os.getpid()}"
+    base = Path("/tmp") / f"remux_issue_734_{os.getpid()}"
     try:
         shutil.rmtree(base, ignore_errors=True)
         base.mkdir(parents=True, exist_ok=True)
@@ -79,7 +79,7 @@ def main() -> int:
 
         marker = base / "ghostty-sourced.txt"
         (resources / "shell-integration" / "zsh" / "ghostty-integration").write_text(
-            'echo "sourced" >> "$CMUX_TEST_OUT"\n',
+            'echo "sourced" >> "$REMUX_TEST_OUT"\n',
             encoding="utf-8",
         )
 

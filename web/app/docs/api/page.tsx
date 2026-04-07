@@ -5,7 +5,7 @@ import { Callout } from "../../components/callout";
 export const metadata: Metadata = {
   title: "API Reference",
   description:
-    "cmux CLI and Unix socket API reference. Workspace management, split panes, input control, notifications, sidebar metadata (status, progress, logs), environment variables, and detection methods.",
+    "remux CLI and Unix socket API reference. Workspace management, split panes, input control, notifications, sidebar metadata (status, progress, logs), environment variables, and detection methods.",
 };
 
 function Cmd({
@@ -36,7 +36,7 @@ export default function ApiPage() {
     <>
       <h1>API Reference</h1>
       <p>
-        cmux provides both a CLI tool and a Unix socket for programmatic
+        remux provides both a CLI tool and a Unix socket for programmatic
         control. Every command is available through both interfaces.
       </p>
 
@@ -52,25 +52,25 @@ export default function ApiPage() {
           <tr>
             <td>Release</td>
             <td>
-              <code>/tmp/cmux.sock</code>
+              <code>/tmp/remux.sock</code>
             </td>
           </tr>
           <tr>
             <td>Debug</td>
             <td>
-              <code>/tmp/cmux-debug.sock</code>
+              <code>/tmp/remux-debug.sock</code>
             </td>
           </tr>
           <tr>
             <td>Tagged debug build</td>
             <td>
-              <code>/tmp/cmux-debug-&lt;tag&gt;.sock</code>
+              <code>/tmp/remux-debug-&lt;tag&gt;.sock</code>
             </td>
           </tr>
         </tbody>
       </table>
       <p>
-        Override with the <code>CMUX_SOCKET_PATH</code> environment variable.
+        Override with the <code>REMUX_SOCKET_PATH</code> environment variable.
         Send one newline-terminated JSON request per call:
       </p>
       <CodeBlock lang="json">{`{"id":"req-1","method":"workspace.list","params":{}}
@@ -97,14 +97,14 @@ export default function ApiPage() {
               <strong>Off</strong>
             </td>
             <td>Socket disabled</td>
-            <td>Settings UI or <code>CMUX_SOCKET_MODE=off</code></td>
+            <td>Settings UI or <code>REMUX_SOCKET_MODE=off</code></td>
           </tr>
           <tr>
             <td>
-              <strong>cmux processes only</strong>
+              <strong>remux processes only</strong>
             </td>
             <td>
-              Only processes spawned inside cmux terminals can connect.
+              Only processes spawned inside remux terminals can connect.
             </td>
             <td>Default mode in Settings UI</td>
           </tr>
@@ -114,14 +114,14 @@ export default function ApiPage() {
             </td>
             <td>Allow any local process to connect (no ancestry check).</td>
             <td>
-              Environment override only: <code>CMUX_SOCKET_MODE=allowAll</code>
+              Environment override only: <code>REMUX_SOCKET_MODE=allowAll</code>
             </td>
           </tr>
         </tbody>
       </table>
       <Callout type="warn">
         On shared machines, use <strong>Off</strong> or{" "}
-        <strong>cmux processes only</strong>.
+        <strong>remux processes only</strong>.
       </Callout>
 
       <h2>CLI options</h2>
@@ -177,33 +177,33 @@ export default function ApiPage() {
       <Cmd
         name="list-workspaces"
         desc="List all open workspaces."
-        cli={`cmux list-workspaces
-cmux list-workspaces --json`}
+        cli={`remux list-workspaces
+remux list-workspaces --json`}
         socket={`{"id":"ws-list","method":"workspace.list","params":{}}`}
       />
       <Cmd
         name="new-workspace"
         desc="Create a new workspace."
-        cli={`cmux new-workspace`}
+        cli={`remux new-workspace`}
         socket={`{"id":"ws-new","method":"workspace.create","params":{}}`}
       />
       <Cmd
         name="select-workspace"
         desc="Switch to a specific workspace."
-        cli={`cmux select-workspace --workspace <id>`}
+        cli={`remux select-workspace --workspace <id>`}
         socket={`{"id":"ws-select","method":"workspace.select","params":{"workspace_id":"<id>"}}`}
       />
       <Cmd
         name="current-workspace"
         desc="Get the currently active workspace."
-        cli={`cmux current-workspace
-cmux current-workspace --json`}
+        cli={`remux current-workspace
+remux current-workspace --json`}
         socket={`{"id":"ws-current","method":"workspace.current","params":{}}`}
       />
       <Cmd
         name="close-workspace"
         desc="Close a workspace."
-        cli={`cmux close-workspace --workspace <id>`}
+        cli={`remux close-workspace --workspace <id>`}
         socket={`{"id":"ws-close","method":"workspace.close","params":{"workspace_id":"<id>"}}`}
       />
 
@@ -212,21 +212,21 @@ cmux current-workspace --json`}
       <Cmd
         name="new-split"
         desc="Create a new split pane. Directions: left, right, up, down."
-        cli={`cmux new-split right
-cmux new-split down`}
+        cli={`remux new-split right
+remux new-split down`}
         socket={`{"id":"split-new","method":"surface.split","params":{"direction":"right"}}`}
       />
       <Cmd
         name="list-surfaces"
         desc="List all surfaces in the current workspace."
-        cli={`cmux list-surfaces
-cmux list-surfaces --json`}
+        cli={`remux list-surfaces
+remux list-surfaces --json`}
         socket={`{"id":"surface-list","method":"surface.list","params":{}}`}
       />
       <Cmd
         name="focus-surface"
         desc="Focus a specific surface."
-        cli={`cmux focus-surface --surface <id>`}
+        cli={`remux focus-surface --surface <id>`}
         socket={`{"id":"surface-focus","method":"surface.focus","params":{"surface_id":"<id>"}}`}
       />
 
@@ -235,26 +235,26 @@ cmux list-surfaces --json`}
       <Cmd
         name="send"
         desc="Send text input to the focused terminal."
-        cli={`cmux send "echo hello"
-cmux send "ls -la\\n"`}
+        cli={`remux send "echo hello"
+remux send "ls -la\\n"`}
         socket={`{"id":"send-text","method":"surface.send_text","params":{"text":"echo hello\\n"}}`}
       />
       <Cmd
         name="send-key"
         desc="Send a key press. Keys: enter, tab, escape, backspace, delete, up, down, left, right."
-        cli={`cmux send-key enter`}
+        cli={`remux send-key enter`}
         socket={`{"id":"send-key","method":"surface.send_key","params":{"key":"enter"}}`}
       />
       <Cmd
         name="send-surface"
         desc="Send text to a specific surface."
-        cli={`cmux send-surface --surface <id> "command"`}
+        cli={`remux send-surface --surface <id> "command"`}
         socket={`{"id":"send-surface","method":"surface.send_text","params":{"surface_id":"<id>","text":"command"}}`}
       />
       <Cmd
         name="send-key-surface"
         desc="Send a key press to a specific surface."
-        cli={`cmux send-key-surface --surface <id> enter`}
+        cli={`remux send-key-surface --surface <id> enter`}
         socket={`{"id":"send-key-surface","method":"surface.send_key","params":{"surface_id":"<id>","key":"enter"}}`}
       />
 
@@ -263,21 +263,21 @@ cmux send "ls -la\\n"`}
       <Cmd
         name="notify"
         desc="Send a notification."
-        cli={`cmux notify --title "Title" --body "Body"
-cmux notify --title "T" --subtitle "S" --body "B"`}
+        cli={`remux notify --title "Title" --body "Body"
+remux notify --title "T" --subtitle "S" --body "B"`}
         socket={`{"id":"notify","method":"notification.create","params":{"title":"Title","subtitle":"S","body":"Body"}}`}
       />
       <Cmd
         name="list-notifications"
         desc="List all notifications."
-        cli={`cmux list-notifications
-cmux list-notifications --json`}
+        cli={`remux list-notifications
+remux list-notifications --json`}
         socket={`{"id":"notif-list","method":"notification.list","params":{}}`}
       />
       <Cmd
         name="clear-notifications"
         desc="Clear all notifications."
-        cli={`cmux clear-notifications`}
+        cli={`remux clear-notifications`}
         socket={`{"id":"notif-clear","method":"notification.clear","params":{}}`}
       />
 
@@ -291,61 +291,61 @@ cmux list-notifications --json`}
       <Cmd
         name="set-status"
         desc="Set a sidebar status pill. Use a unique key so different tools can manage their own entries."
-        cli={`cmux set-status build "compiling" --icon hammer --color "#ff9500"
-cmux set-status deploy "v1.2.3" --workspace workspace:2`}
+        cli={`remux set-status build "compiling" --icon hammer --color "#ff9500"
+remux set-status deploy "v1.2.3" --workspace workspace:2`}
         socket={`set_status build compiling --icon=hammer --color=#ff9500 --tab=<workspace-uuid>`}
       />
       <Cmd
         name="clear-status"
         desc="Remove a sidebar status entry by key."
-        cli={`cmux clear-status build`}
+        cli={`remux clear-status build`}
         socket={`clear_status build --tab=<workspace-uuid>`}
       />
       <Cmd
         name="list-status"
         desc="List all sidebar status entries for a workspace."
-        cli={`cmux list-status`}
+        cli={`remux list-status`}
         socket={`list_status --tab=<workspace-uuid>`}
       />
       <Cmd
         name="set-progress"
         desc="Set a progress bar in the sidebar (0.0 to 1.0)."
-        cli={`cmux set-progress 0.5 --label "Building..."
-cmux set-progress 1.0 --label "Done"`}
+        cli={`remux set-progress 0.5 --label "Building..."
+remux set-progress 1.0 --label "Done"`}
         socket={`set_progress 0.5 --label=Building... --tab=<workspace-uuid>`}
       />
       <Cmd
         name="clear-progress"
         desc="Clear the sidebar progress bar."
-        cli={`cmux clear-progress`}
+        cli={`remux clear-progress`}
         socket={`clear_progress --tab=<workspace-uuid>`}
       />
       <Cmd
         name="log"
         desc="Append a log entry to the sidebar. Levels: info, progress, success, warning, error."
-        cli={`cmux log "Build started"
-cmux log --level error --source build "Compilation failed"
-cmux log --level success -- "All 42 tests passed"`}
+        cli={`remux log "Build started"
+remux log --level error --source build "Compilation failed"
+remux log --level success -- "All 42 tests passed"`}
         socket={`log --level=error --source=build --tab=<workspace-uuid> -- Compilation failed`}
       />
       <Cmd
         name="clear-log"
         desc="Clear all sidebar log entries."
-        cli={`cmux clear-log`}
+        cli={`remux clear-log`}
         socket={`clear_log --tab=<workspace-uuid>`}
       />
       <Cmd
         name="list-log"
         desc="List sidebar log entries."
-        cli={`cmux list-log
-cmux list-log --limit 5`}
+        cli={`remux list-log
+remux list-log --limit 5`}
         socket={`list_log --limit=5 --tab=<workspace-uuid>`}
       />
       <Cmd
         name="sidebar-state"
         desc="Dump all sidebar metadata (cwd, git branch, ports, status, progress, logs)."
-        cli={`cmux sidebar-state
-cmux sidebar-state --workspace workspace:2`}
+        cli={`remux sidebar-state
+remux sidebar-state --workspace workspace:2`}
         socket={`sidebar_state --tab=<workspace-uuid>`}
       />
 
@@ -353,23 +353,23 @@ cmux sidebar-state --workspace workspace:2`}
 
       <Cmd
         name="ping"
-        desc="Check if cmux is running and responsive."
-        cli={`cmux ping`}
+        desc="Check if remux is running and responsive."
+        cli={`remux ping`}
         socket={`{"id":"ping","method":"system.ping","params":{}}
 // Response: {"id":"ping","ok":true,"result":{"pong":true}}`}
       />
       <Cmd
         name="capabilities"
         desc="List available socket methods and current access mode."
-        cli={`cmux capabilities
-cmux capabilities --json`}
+        cli={`remux capabilities
+remux capabilities --json`}
         socket={`{"id":"caps","method":"system.capabilities","params":{}}`}
       />
       <Cmd
         name="identify"
         desc="Show focused window/workspace/pane/surface context."
-        cli={`cmux identify
-cmux identify --json`}
+        cli={`remux identify
+remux identify --json`}
         socket={`{"id":"identify","method":"system.identify","params":{}}`}
       />
 
@@ -384,13 +384,13 @@ cmux identify --json`}
         <tbody>
           <tr>
             <td>
-              <code>CMUX_SOCKET_PATH</code>
+              <code>REMUX_SOCKET_PATH</code>
             </td>
             <td>Override the socket path used by CLI and integrations</td>
           </tr>
           <tr>
             <td>
-              <code>CMUX_SOCKET_ENABLE</code>
+              <code>REMUX_SOCKET_ENABLE</code>
             </td>
             <td>
               Force-enable/disable socket (<code>1</code>/<code>0</code>,{" "}
@@ -400,24 +400,24 @@ cmux identify --json`}
           </tr>
           <tr>
             <td>
-              <code>CMUX_SOCKET_MODE</code>
+              <code>REMUX_SOCKET_MODE</code>
             </td>
             <td>
-              Override access mode (<code>cmuxOnly</code>,{" "}
+              Override access mode (<code>remuxOnly</code>,{" "}
               <code>allowAll</code>, <code>off</code>). Also accepts{" "}
-              <code>cmux-only</code>/<code>cmux_only</code> and{" "}
+              <code>remux-only</code>/<code>remux_only</code> and{" "}
               <code>allow-all</code>/<code>allow_all</code>
             </td>
           </tr>
           <tr>
             <td>
-              <code>CMUX_WORKSPACE_ID</code>
+              <code>REMUX_WORKSPACE_ID</code>
             </td>
             <td>Auto-set: current workspace ID</td>
           </tr>
           <tr>
             <td>
-              <code>CMUX_SURFACE_ID</code>
+              <code>REMUX_SURFACE_ID</code>
             </td>
             <td>Auto-set: current surface ID</td>
           </tr>
@@ -440,23 +440,23 @@ cmux identify --json`}
         </tbody>
       </table>
       <Callout>
-        Legacy <code>CMUX_SOCKET_MODE</code> values <code>full</code> and{" "}
+        Legacy <code>REMUX_SOCKET_MODE</code> values <code>full</code> and{" "}
         <code>notifications</code> are still accepted for compatibility.
       </Callout>
 
-      <h2>Detecting cmux</h2>
+      <h2>Detecting remux</h2>
       <CodeBlock title="bash" lang="bash">{`# Prefer explicit socket path if set
-SOCK="\${CMUX_SOCKET_PATH:-/tmp/cmux.sock}"
+SOCK="\${REMUX_SOCKET_PATH:-/tmp/remux.sock}"
 [ -S "$SOCK" ] && echo "Socket available"
 
 # Check for the CLI
-command -v cmux &>/dev/null && echo "cmux available"
+command -v remux &>/dev/null && echo "remux available"
 
-# In cmux-managed terminals these are auto-set
-[ -n "\${CMUX_WORKSPACE_ID:-}" ] && [ -n "\${CMUX_SURFACE_ID:-}" ] && echo "Inside cmux surface"
+# In remux-managed terminals these are auto-set
+[ -n "\${REMUX_WORKSPACE_ID:-}" ] && [ -n "\${REMUX_SURFACE_ID:-}" ] && echo "Inside remux surface"
 
 # Distinguish from regular Ghostty
-[ "$TERM_PROGRAM" = "ghostty" ] && [ -n "\${CMUX_WORKSPACE_ID:-}" ] && echo "In cmux"`}</CodeBlock>
+[ "$TERM_PROGRAM" = "ghostty" ] && [ -n "\${REMUX_WORKSPACE_ID:-}" ] && echo "In remux"`}</CodeBlock>
 
       <h2>Examples</h2>
 
@@ -465,7 +465,7 @@ command -v cmux &>/dev/null && echo "cmux available"
 import os
 import socket
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET_PATH", "/tmp/cmux.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET_PATH", "/tmp/remux.sock")
 
 def rpc(method, params=None, req_id=1):
     payload = {"id": req_id, "method": method, "params": params or {}}
@@ -486,22 +486,22 @@ print(rpc(
 
       <h3>Shell script</h3>
       <CodeBlock title="bash" lang="bash">{`#!/bin/bash
-SOCK="\${CMUX_SOCKET_PATH:-/tmp/cmux.sock}"
+SOCK="\${REMUX_SOCKET_PATH:-/tmp/remux.sock}"
 
-cmux_cmd() {
+remux_cmd() {
     printf "%s\\n" "$1" | nc -U "$SOCK"
 }
 
-cmux_cmd '{"id":"ws","method":"workspace.list","params":{}}'
-cmux_cmd '{"id":"notify","method":"notification.create","params":{"title":"Done","body":"Task complete"}}'`}</CodeBlock>
+remux_cmd '{"id":"ws","method":"workspace.list","params":{}}'
+remux_cmd '{"id":"notify","method":"notification.create","params":{"title":"Done","body":"Task complete"}}'`}</CodeBlock>
 
       <h3>Build script with notification</h3>
       <CodeBlock title="bash" lang="bash">{`#!/bin/bash
 npm run build
 if [ $? -eq 0 ]; then
-    cmux notify --title "✓ Build Success" --body "Ready to deploy"
+    remux notify --title "✓ Build Success" --body "Ready to deploy"
 else
-    cmux notify --title "✗ Build Failed" --body "Check the logs"
+    remux notify --title "✗ Build Failed" --body "Check the logs"
 fi`}</CodeBlock>
     </>
   );

@@ -1,4 +1,4 @@
-# Contributing to cmux
+# Contributing to remux
 
 ## Prerequisites
 
@@ -10,8 +10,8 @@
 
 1. Clone the repository with submodules:
    ```bash
-   git clone --recursive https://github.com/manaflow-ai/cmux.git
-   cd cmux
+   git clone --recursive https://github.com/yaoshenwang/remux.git
+   cd remux
    ```
 
 2. Run the setup script:
@@ -20,7 +20,7 @@
    ```
 
    This will:
-   - Initialize git submodules (ghostty, homebrew-cmux)
+   - Initialize git submodules (ghostty, homebrew-tap)
    - Build the GhosttyKit.xcframework from source
    - Create the necessary symlinks
 
@@ -53,18 +53,18 @@ zig build -Demit-xcframework=true -Doptimize=ReleaseFast
 ### Basic tests (run on VM)
 
 ```bash
-ssh cmux-vm 'cd /Users/cmux/GhosttyTabs && xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug -destination "platform=macOS" build && pkill -x "cmux DEV" || true && APP=$(find /Users/cmux/Library/Developer/Xcode/DerivedData -path "*/Build/Products/Debug/cmux DEV.app" -print -quit) && open "$APP" && for i in {1..20}; do [ -S /tmp/cmux.sock ] && break; sleep 0.5; done && python3 tests/test_update_timing.py && python3 tests/test_signals_auto.py && python3 tests/test_ctrl_socket.py && python3 tests/test_notifications.py'
+ssh remux-vm 'cd /Users/remux/GhosttyTabs && xcodebuild -project GhosttyTabs.xcodeproj -scheme remux -configuration Debug -destination "platform=macOS" build && pkill -x "remux DEV" || true && APP=$(find /Users/remux/Library/Developer/Xcode/DerivedData -path "*/Build/Products/Debug/remux DEV.app" -print -quit) && open "$APP" && for i in {1..20}; do [ -S /tmp/remux.sock ] && break; sleep 0.5; done && python3 tests/test_update_timing.py && python3 tests/test_signals_auto.py && python3 tests/test_ctrl_socket.py && python3 tests/test_notifications.py'
 ```
 
 ### UI tests (run on VM)
 
 ```bash
-ssh cmux-vm 'cd /Users/cmux/GhosttyTabs && xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug -destination "platform=macOS" -only-testing:cmuxUITests test'
+ssh remux-vm 'cd /Users/remux/GhosttyTabs && xcodebuild -project GhosttyTabs.xcodeproj -scheme remux -configuration Debug -destination "platform=macOS" -only-testing:remuxUITests test'
 ```
 
 ## Ghostty Submodule
 
-The `ghostty` submodule points to [manaflow-ai/ghostty](https://github.com/manaflow-ai/ghostty), a fork of the upstream Ghostty project.
+The `ghostty` submodule points to [yaoshenwang/ghostty](https://github.com/yaoshenwang/ghostty), a fork of the upstream Ghostty project.
 
 ### Making changes to ghostty
 

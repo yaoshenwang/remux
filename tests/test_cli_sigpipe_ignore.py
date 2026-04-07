@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test: cmux CLI should not exit with SIGPIPE on broken stdout pipes."""
+"""Regression test: remux CLI should not exit with SIGPIPE on broken stdout pipes."""
 
 from __future__ import annotations
 
@@ -9,24 +9,24 @@ import shutil
 import subprocess
 
 
-def resolve_cmux_cli() -> str:
-    explicit = os.environ.get("CMUX_CLI_BIN") or os.environ.get("CMUX_CLI")
+def resolve_remux_cli() -> str:
+    explicit = os.environ.get("REMUX_CLI_BIN") or os.environ.get("REMUX_CLI")
     if explicit and os.path.exists(explicit) and os.access(explicit, os.X_OK):
         return explicit
 
     candidates: list[str] = []
-    candidates.extend(glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/cmux")))
-    candidates.extend(glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux"))
+    candidates.extend(glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/remux")))
+    candidates.extend(glob.glob("/tmp/remux-*/Build/Products/Debug/remux"))
     candidates = [p for p in candidates if os.path.exists(p) and os.access(p, os.X_OK)]
     if candidates:
         candidates.sort(key=os.path.getmtime, reverse=True)
         return candidates[0]
 
-    in_path = shutil.which("cmux")
+    in_path = shutil.which("remux")
     if in_path:
         return in_path
 
-    raise RuntimeError("Unable to find cmux CLI binary. Set CMUX_CLI_BIN.")
+    raise RuntimeError("Unable to find remux CLI binary. Set REMUX_CLI_BIN.")
 
 
 def run_with_closed_stdout(cli_path: str, *args: str) -> tuple[int, str]:
@@ -48,13 +48,13 @@ def require_zero_exit(cli_path: str, *args: str) -> tuple[bool, str]:
     code, err = run_with_closed_stdout(cli_path, *args)
     if code != 0:
         cmd = " ".join(args)
-        return False, f"`cmux {cmd}` exited {code} with closed stdout pipe (stderr={err!r})"
+        return False, f"`remux {cmd}` exited {code} with closed stdout pipe (stderr={err!r})"
     return True, ""
 
 
 def main() -> int:
     try:
-        cli_path = resolve_cmux_cli()
+        cli_path = resolve_remux_cli()
     except Exception as exc:
         print(f"FAIL: {exc}")
         return 1

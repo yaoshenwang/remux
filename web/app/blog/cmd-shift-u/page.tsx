@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { absoluteUrl } from "../../site";
 
 export const metadata: Metadata = {
   title: "Cmd+Shift+U",
   description:
-    "How Cmd+Shift+U navigates between finished agents across workspaces in cmux.",
+    "How Cmd+Shift+U navigates between finished agents across workspaces in remux.",
   keywords: [
-    "cmux",
+    "remux",
     "terminal",
     "macOS",
     "notifications",
@@ -18,19 +19,19 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Cmd+Shift+U",
     description:
-      "How Cmd+Shift+U navigates between finished agents across workspaces in cmux.",
+      "How Cmd+Shift+U navigates between finished agents across workspaces in remux.",
     type: "article",
     publishedTime: "2026-03-04T00:00:00Z",
-    url: "https://cmux.dev/blog/cmd-shift-u",
+    url: absoluteUrl("/blog/cmd-shift-u"),
   },
   twitter: {
     card: "summary",
     title: "Cmd+Shift+U",
     description:
-      "How Cmd+Shift+U navigates between finished agents across workspaces in cmux.",
+      "How Cmd+Shift+U navigates between finished agents across workspaces in remux.",
   },
   alternates: {
-    canonical: "https://cmux.dev/blog/cmd-shift-u",
+    canonical: absoluteUrl("/blog/cmd-shift-u"),
   },
 };
 
@@ -52,7 +53,7 @@ export default function CmdShiftUPage() {
       </time>
 
       <p className="mt-6">
-        My favorite cmux feature is <kbd>Cmd+Shift+U</kbd>. I have 17
+        My favorite remux feature is <kbd>Cmd+Shift+U</kbd>. I have 17
         workspaces open right now, each running an agent. I used to click
         through tabs and the notification panel to figure out what completed.
         Typing is faster.

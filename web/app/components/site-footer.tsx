@@ -26,7 +26,7 @@ const columns = [
   {
     heading: "Social",
     links: [
-      { label: "GitHub", href: "https://github.com/manaflow-ai/cmux" },
+      { label: "GitHub", href: "https://github.com/yaoshenwang/remux" },
       { label: "X / Twitter", href: "https://twitter.com/manaflowai" },
       { label: "Discord", href: "https://discord.gg/xsgFEVrWCZ" },
       { label: "Contact", href: "mailto:founders@manaflow.com" },

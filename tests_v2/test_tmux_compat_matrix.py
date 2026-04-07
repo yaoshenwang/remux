@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Callable, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _wait_for(pred: Callable[[], bool], timeout_s: float = 5.0, step_s: float = 0.05) -> None:
@@ -29,67 +29,67 @@ def _wait_for(pred: Callable[[], bool], timeout_s: float = 5.0, step_s: float = 
         if pred():
             return
         time.sleep(step_s)
-    raise cmuxError("Timed out waiting for condition")
+    raise remuxError("Timed out waiting for condition")
 
 
 def _find_cli_binary() -> str:
-    env_cli = os.environ.get("CMUXTERM_CLI")
+    env_cli = os.environ.get("REMUXTERM_CLI")
     if env_cli and os.path.isfile(env_cli) and os.access(env_cli, os.X_OK):
         return env_cli
 
-    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/cmux-tests-v2/Build/Products/Debug/cmux")
+    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/remux-tests-v2/Build/Products/Debug/remux")
     if os.path.isfile(fixed) and os.access(fixed, os.X_OK):
         return fixed
 
-    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/cmux"), recursive=True)
-    candidates += glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux")
+    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/remux"), recursive=True)
+    candidates += glob.glob("/tmp/remux-*/Build/Products/Debug/remux")
     candidates = [p for p in candidates if os.path.isfile(p) and os.access(p, os.X_OK)]
     if not candidates:
-        raise cmuxError("Could not locate cmux CLI binary; set CMUXTERM_CLI")
+        raise remuxError("Could not locate remux CLI binary; set REMUXTERM_CLI")
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
 
 
 def _run_cli(cli: str, args: List[str], *, expect_ok: bool = True) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
-    env.pop("CMUX_WORKSPACE_ID", None)
-    env.pop("CMUX_SURFACE_ID", None)
+    env.pop("REMUX_WORKSPACE_ID", None)
+    env.pop("REMUX_SURFACE_ID", None)
     cmd = [cli, "--socket", SOCKET_PATH] + args
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if expect_ok and proc.returncode != 0:
         merged = f"{proc.stdout}\n{proc.stderr}".strip()
-        raise cmuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
     return proc
 
 
-def _pane_selected_surface(c: cmux, pane_id: str) -> str:
+def _pane_selected_surface(c: remux, pane_id: str) -> str:
     rows = c.list_pane_surfaces(pane_id)
     for _idx, sid, _title, selected in rows:
         if selected:
             return sid
     if rows:
         return rows[0][1]
-    raise cmuxError(f"pane {pane_id} has no surfaces")
+    raise remuxError(f"pane {pane_id} has no surfaces")
 
 
-def _pane_surface_ids(c: cmux, pane_id: str) -> List[str]:
+def _pane_surface_ids(c: remux, pane_id: str) -> List[str]:
     rows = c.list_pane_surfaces(pane_id)
     return [sid for _idx, sid, _title, _selected in rows]
 
 
-def _surface_has(c: cmux, workspace_id: str, surface_id: str, token: str) -> bool:
+def _surface_has(c: remux, workspace_id: str, surface_id: str, token: str) -> bool:
     payload = c._call("surface.read_text", {"workspace_id": workspace_id, "surface_id": surface_id, "scrollback": True}) or {}
     return token in str(payload.get("text") or "")
 
 
-def _layout_panes(c: cmux) -> List[dict]:
+def _layout_panes(c: remux) -> List[dict]:
     layout_payload = c.layout_debug() or {}
     layout = layout_payload.get("layout") or {}
     panes = layout.get("panes") or []
     return list(panes)
 
 
-def _pane_extent(c: cmux, pane_id: str, axis: str) -> float:
+def _pane_extent(c: remux, pane_id: str, axis: str) -> float:
     panes = _layout_panes(c)
     for pane in panes:
         pid = str(pane.get("paneId") or pane.get("pane_id") or "")
@@ -97,13 +97,13 @@ def _pane_extent(c: cmux, pane_id: str, axis: str) -> float:
             continue
         frame = pane.get("frame") or {}
         return float(frame.get(axis) or 0.0)
-    raise cmuxError(f"Pane {pane_id} missing from debug layout panes: {panes}")
+    raise remuxError(f"Pane {pane_id} missing from debug layout panes: {panes}")
 
 
-def _pick_resize_target(c: cmux, pane_ids: List[str]) -> Tuple[str, str, str]:
+def _pick_resize_target(c: remux, pane_ids: List[str]) -> Tuple[str, str, str]:
     panes = [p for p in _layout_panes(c) if str(p.get("paneId") or p.get("pane_id") or "") in pane_ids]
     if len(panes) < 2:
-        raise cmuxError(f"Need >=2 panes for resize test, got {panes}")
+        raise remuxError(f"Need >=2 panes for resize test, got {panes}")
 
     def x_of(p: dict) -> float:
         return float((p.get("frame") or {}).get("x") or 0.0)
@@ -126,7 +126,7 @@ def main() -> int:
     cli = _find_cli_binary()
     stamp = int(time.time() * 1000)
 
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         caps = c.capabilities() or {}
         methods = set(caps.get("methods") or [])
         for method in [
@@ -160,7 +160,7 @@ def main() -> int:
         cap = _run_cli(cli, ["capture-pane", "--workspace", ws, "--surface", s1, "--scrollback"])
         _must(capture_token in cap.stdout, f"capture-pane missing token: {cap.stdout!r}")
 
-        pipe_file = Path(tempfile.gettempdir()) / f"cmux_pipe_pane_{stamp}.log"
+        pipe_file = Path(tempfile.gettempdir()) / f"remux_pipe_pane_{stamp}.log"
         _run_cli(cli, ["pipe-pane", "--workspace", ws, "--surface", s1, "--command", f"cat > {pipe_file}"])
         piped = pipe_file.read_text() if pipe_file.exists() else ""
         _must(capture_token in piped, f"pipe-pane output missing token: {piped!r}")
@@ -173,7 +173,7 @@ def main() -> int:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={k: v for k, v in os.environ.items() if k not in {"CMUX_WORKSPACE_ID", "CMUX_SURFACE_ID"}},
+            env={k: v for k, v in os.environ.items() if k not in {"REMUX_WORKSPACE_ID", "REMUX_SURFACE_ID"}},
         )
         time.sleep(0.2)
         _run_cli(cli, ["wait-for", "-S", wait_name])

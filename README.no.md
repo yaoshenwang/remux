@@ -1,11 +1,11 @@
 > Denne oversettelsen ble generert av Claude. Hvis du har forslag til forbedringer, send gjerne en PR.
 
-<h1 align="center">cmux</h1>
+<h1 align="center">remux</h1>
 <p align="center">En Ghostty-basert macOS-terminal med vertikale faner og varsler for AI-kodeagenter</p>
 
 <p align="center">
-  <a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-    <img src="./docs/assets/macos-badge.png" alt="Last ned cmux for macOS" width="180" />
+  <a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
+    <img src="./docs/assets/macos-badge.png" alt="Last ned remux for macOS" width="180" />
   </a>
 </p>
 
@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/main-first-image.png" alt="cmux skjermbilde" width="900" />
+  <img src="./docs/assets/main-first-image.png" alt="remux skjermbilde" width="900" />
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Demovideo</a> · <a href="https://cmux.dev/blog/zen-of-cmux">The Zen of cmux</a>
+  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Demovideo</a> · <a href="https://remux.dev/blog/zen-of-remux">The Zen of remux</a>
 </p>
 
 ## Funksjoner
@@ -76,44 +76,44 @@ Sidefeltet viser git-gren, tilknyttet PR-status/nummer, arbeidsmappe, lyttende p
 
 ### DMG (anbefalt)
 
-<a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-  <img src="./docs/assets/macos-badge.png" alt="Last ned cmux for macOS" width="180" />
+<a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
+  <img src="./docs/assets/macos-badge.png" alt="Last ned remux for macOS" width="180" />
 </a>
 
-Åpne `.dmg`-filen og dra cmux til Programmer-mappen. cmux oppdaterer seg selv automatisk via Sparkle, så du trenger bare å laste ned én gang.
+Åpne `.dmg`-filen og dra remux til Programmer-mappen. remux oppdaterer seg selv automatisk via Sparkle, så du trenger bare å laste ned én gang.
 
 ### Homebrew
 
 ```bash
-brew tap manaflow-ai/cmux
-brew install --cask cmux
+brew tap yaoshenwang/homebrew-tap
+brew install --cask remux
 ```
 
 For å oppdatere senere:
 
 ```bash
-brew upgrade --cask cmux
+brew upgrade --cask remux
 ```
 
 Ved første oppstart kan macOS be deg bekrefte åpning av en app fra en identifisert utvikler. Klikk **Åpne** for å fortsette.
 
-## Hvorfor cmux?
+## Hvorfor remux?
 
 Jeg kjører mange Claude Code- og Codex-sesjoner parallelt. Jeg brukte Ghostty med en haug delte paneler, og stolte på native macOS-varsler for å vite når en agent trengte meg. Men Claude Codes varselstekst er alltid bare "Claude is waiting for your input" uten kontekst, og med nok faner åpne kunne jeg ikke engang lese titlene lenger.
 
-Jeg prøvde noen kodeorkestratorer, men de fleste var Electron/Tauri-apper og ytelsen irriterte meg. Jeg foretrekker også terminalen siden GUI-orkestratorer låser deg inn i arbeidsflyten deres. Så jeg bygde cmux som en nativ macOS-app i Swift/AppKit. Den bruker libghostty for terminalgjengivelse og leser din eksisterende Ghostty-konfigurasjon for temaer, skrifttyper og farger.
+Jeg prøvde noen kodeorkestratorer, men de fleste var Electron/Tauri-apper og ytelsen irriterte meg. Jeg foretrekker også terminalen siden GUI-orkestratorer låser deg inn i arbeidsflyten deres. Så jeg bygde remux som en nativ macOS-app i Swift/AppKit. Den bruker libghostty for terminalgjengivelse og leser din eksisterende Ghostty-konfigurasjon for temaer, skrifttyper og farger.
 
-Hovedtilleggene er sidefeltet og varselsystemet. Sidefeltet har vertikale faner som viser git-gren, tilknyttet PR-status/nummer, arbeidsmappe, lyttende porter og siste varselstekst for hvert arbeidsområde. Varselsystemet fanger opp terminalsekvenser (OSC 9/99/777) og har en CLI (`cmux notify`) du kan koble til agentkroker for Claude Code, OpenCode osv. Når en agent venter, får panelet en blå ring og fanen lyser opp i sidefeltet, så jeg kan se hvilken som trenger meg på tvers av delinger og faner. Cmd+Shift+U hopper til det nyeste uleste.
+Hovedtilleggene er sidefeltet og varselsystemet. Sidefeltet har vertikale faner som viser git-gren, tilknyttet PR-status/nummer, arbeidsmappe, lyttende porter og siste varselstekst for hvert arbeidsområde. Varselsystemet fanger opp terminalsekvenser (OSC 9/99/777) og har en CLI (`remux notify`) du kan koble til agentkroker for Claude Code, OpenCode osv. Når en agent venter, får panelet en blå ring og fanen lyser opp i sidefeltet, så jeg kan se hvilken som trenger meg på tvers av delinger og faner. Cmd+Shift+U hopper til det nyeste uleste.
 
 Den innebygde nettleseren har et skriptbart API portet fra [agent-browser](https://github.com/vercel-labs/agent-browser). Agenter kan ta overblikk over tilgjengelighetstreet, hente elementreferanser, klikke, fylle ut skjemaer og kjøre JS. Du kan dele et nettleserpanel ved siden av terminalen og la Claude Code samhandle med utviklingsserveren din direkte.
 
 Alt er skriptbart gjennom CLI og socket API — opprett arbeidsområder/faner, del paneler, send tastetrykk, åpne URLer i nettleseren.
 
-## The Zen of cmux
+## The Zen of remux
 
-cmux er ikke foreskrivende om hvordan utviklere bruker verktøyene sine. Det er en terminal og nettleser med en CLI, og resten er opp til deg.
+remux er ikke foreskrivende om hvordan utviklere bruker verktøyene sine. Det er en terminal og nettleser med en CLI, og resten er opp til deg.
 
-cmux er en primitiv, ikke en løsning. Det gir deg en terminal, en nettleser, varsler, arbeidsområder, delinger, faner og en CLI for å kontrollere alt sammen. cmux tvinger deg ikke inn i en bestemt måte å bruke kodeagenter på. Hva du bygger med primitivene er ditt.
+remux er en primitiv, ikke en løsning. Det gir deg en terminal, en nettleser, varsler, arbeidsområder, delinger, faner og en CLI for å kontrollere alt sammen. remux tvinger deg ikke inn i en bestemt måte å bruke kodeagenter på. Hva du bygger med primitivene er ditt.
 
 De beste utviklerne har alltid bygget sine egne verktøy. Ingen har funnet ut den beste måten å jobbe med agenter på ennå, og teamene som bygger lukkede produkter har definitivt ikke gjort det heller. Utviklerne som er nærmest sine egne kodebaser vil finne det ut først.
 
@@ -121,7 +121,7 @@ Gi en million utviklere komponerbare primitiver og de vil kollektivt finne de me
 
 ## Dokumentasjon
 
-For mer informasjon om hvordan du konfigurerer cmux, [gå til dokumentasjonen vår](https://cmux.dev/docs/getting-started?utm_source=readme).
+For mer informasjon om hvordan du konfigurerer remux, [gå til dokumentasjonen vår](https://remux.dev/docs/getting-started?utm_source=readme).
 
 ## Tastatursnarveier
 
@@ -211,27 +211,27 @@ Nettleserens utviklerverktøysnarveier følger Safari-standarder og kan tilpasse
 
 ## Nattlige bygg
 
-[Last ned cmux NIGHTLY](https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-macos.dmg)
+[Last ned remux NIGHTLY](https://github.com/yaoshenwang/remux/releases/download/nightly/remux-nightly-macos.dmg)
 
-cmux NIGHTLY er en separat app med sin egen bundle-ID, så den kjører ved siden av den stabile versjonen. Bygges automatisk fra den siste `main`-commiten og oppdateres automatisk via sin egen Sparkle-feed.
+remux NIGHTLY er en separat app med sin egen bundle-ID, så den kjører ved siden av den stabile versjonen. Bygges automatisk fra den siste `main`-commiten og oppdateres automatisk via sin egen Sparkle-feed.
 
 ## Sesjonssgjenoppretting (nåværende oppførsel)
 
-Ved omstart gjenoppretter cmux for øyeblikket kun applayouten og metadata:
+Ved omstart gjenoppretter remux for øyeblikket kun applayouten og metadata:
 - Vindu-/arbeidsområde-/panellayout
 - Arbeidsmapper
 - Terminal-rullingshistorikk (best effort)
 - Nettleser-URL og navigasjonshistorikk
 
-cmux gjenoppretter **ikke** aktive prosesstilstander inne i terminalapper. For eksempel blir aktive Claude Code/tmux/vim-sesjoner ikke gjenopptatt etter omstart ennå.
+remux gjenoppretter **ikke** aktive prosesstilstander inne i terminalapper. For eksempel blir aktive Claude Code/tmux/vim-sesjoner ikke gjenopptatt etter omstart ennå.
 
 ## Stjernehistorikk
 
-<a href="https://star-history.com/#manaflow-ai/cmux&Date">
+<a href="https://star-history.com/#yaoshenwang/remux&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" width="600" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" width="600" />
  </picture>
 </a>
 
@@ -241,26 +241,26 @@ Måter å engasjere seg:
 
 - Følg oss på X for oppdateringer [@manaflowai](https://x.com/manaflowai), [@lawrencecchen](https://x.com/lawrencecchen), og [@austinywang](https://x.com/austinywang)
 - Bli med i samtalen på [Discord](https://discord.gg/xsgFEVrWCZ)
-- Opprett og delta i [GitHub-issues](https://github.com/manaflow-ai/cmux/issues) og [diskusjoner](https://github.com/manaflow-ai/cmux/discussions)
-- Fortell oss hva du bygger med cmux
+- Opprett og delta i [GitHub-issues](https://github.com/yaoshenwang/remux/issues) og [diskusjoner](https://github.com/yaoshenwang/remux/discussions)
+- Fortell oss hva du bygger med remux
 
 ## Fellesskap
 
 - [Discord](https://discord.gg/xsgFEVrWCZ)
-- [GitHub](https://github.com/manaflow-ai/cmux)
+- [GitHub](https://github.com/yaoshenwang/remux)
 - [X / Twitter](https://twitter.com/manaflowai)
 - [YouTube](https://www.youtube.com/channel/UCAa89_j-TWkrXfk9A3CbASw)
 - [LinkedIn](https://www.linkedin.com/company/manaflow-ai/)
-- [Reddit](https://www.reddit.com/r/cmux/)
+- [Reddit](https://www.reddit.com/r/remux/)
 
 ## Grunnleggerutgaven
 
-cmux er gratis, åpen kildekode, og vil alltid være det. Hvis du vil støtte utviklingen og få tidlig tilgang til det som kommer:
+remux er gratis, åpen kildekode, og vil alltid være det. Hvis du vil støtte utviklingen og få tidlig tilgang til det som kommer:
 
 **[Få Grunnleggerutgaven](https://buy.stripe.com/3cI00j2Ld0it5OU33r5EY0q)**
 
 - **Prioriterte funksjonsforespørsler/feilrettinger**
-- **Tidlig tilgang: cmux AI som gir deg kontekst om hvert arbeidsområde, fane og panel**
+- **Tidlig tilgang: remux AI som gir deg kontekst om hvert arbeidsområde, fane og panel**
 - **Tidlig tilgang: iOS-app med terminaler synkronisert mellom desktop og telefon**
 - **Tidlig tilgang: Sky-VMer**
 - **Tidlig tilgang: Stemmemodus**

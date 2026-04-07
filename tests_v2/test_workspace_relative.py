@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Regression: CLI commands are workspace-relative via CMUX_WORKSPACE_ID.
+"""Regression: CLI commands are workspace-relative via REMUX_WORKSPACE_ID.
 
-Tests that when CMUX_WORKSPACE_ID is set, CLI commands target that workspace
+Tests that when REMUX_WORKSPACE_ID is set, CLI commands target that workspace
 (not the focused workspace). This is the core P0 #2 behavior: agents in
 background workspaces should not affect the user's active workspace.
 """
@@ -16,31 +16,31 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _find_cli_binary() -> str:
-    env_cli = os.environ.get("CMUXTERM_CLI")
+    env_cli = os.environ.get("REMUXTERM_CLI")
     if env_cli and os.path.isfile(env_cli) and os.access(env_cli, os.X_OK):
         return env_cli
 
-    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/cmux-tests-v2/Build/Products/Debug/cmux")
+    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/remux-tests-v2/Build/Products/Debug/remux")
     if os.path.isfile(fixed) and os.access(fixed, os.X_OK):
         return fixed
 
-    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/cmux"), recursive=True)
-    candidates += glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux")
+    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/remux"), recursive=True)
+    candidates += glob.glob("/tmp/remux-*/Build/Products/Debug/remux")
     candidates = [p for p in candidates if os.path.isfile(p) and os.access(p, os.X_OK)]
     if not candidates:
-        raise cmuxError("Could not locate cmux CLI binary; set CMUXTERM_CLI")
+        raise remuxError("Could not locate remux CLI binary; set REMUXTERM_CLI")
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
 
@@ -54,7 +54,7 @@ def _run_cli(cli: str, args: List[str], env_overrides: Optional[Dict[str, str]] 
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if proc.returncode != 0:
         merged = f"{proc.stdout}\n{proc.stderr}".strip()
-        raise cmuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
     return proc.stdout.strip()
 
 
@@ -64,10 +64,10 @@ def _run_cli_json(cli: str, args: List[str], env_overrides: Optional[Dict[str, s
     try:
         return json.loads(output or "{}")
     except Exception as exc:
-        raise cmuxError(f"Invalid JSON output: {output!r} ({exc})")
+        raise remuxError(f"Invalid JSON output: {output!r} ({exc})")
 
 
-def test_list_panels_workspace_relative(c: cmux, cli: str) -> None:
+def test_list_panels_workspace_relative(c: remux, cli: str) -> None:
     """list-panels with --workspace targets the specified workspace."""
     # Get current workspaces
     ws_result = c._call("workspace.list")
@@ -85,7 +85,7 @@ def test_list_panels_workspace_relative(c: cmux, cli: str) -> None:
     # Also test via env var
     payload_env = _run_cli_json(
         cli, ["list-panels"],
-        env_overrides={"CMUX_WORKSPACE_ID": ws_a["id"]}
+        env_overrides={"REMUX_WORKSPACE_ID": ws_a["id"]}
     )
     surfaces_env = payload_env.get("surfaces", [])
     _must(isinstance(surfaces_env, list), f"Expected surfaces array from env, got: {payload_env}")
@@ -99,7 +99,7 @@ def test_list_panels_workspace_relative(c: cmux, cli: str) -> None:
     print("  PASS: list-panels workspace-relative (flag and env)")
 
 
-def test_list_panes_workspace_relative(c: cmux, cli: str) -> None:
+def test_list_panes_workspace_relative(c: remux, cli: str) -> None:
     """list-panes with --workspace targets the specified workspace."""
     ws_result = c._call("workspace.list")
     workspaces = ws_result.get("workspaces", [])
@@ -115,8 +115,8 @@ def test_list_panes_workspace_relative(c: cmux, cli: str) -> None:
     print("  PASS: list-panes workspace-relative")
 
 
-def test_send_workspace_relative(c: cmux, cli: str) -> None:
-    """send with CMUX_WORKSPACE_ID env var targets that workspace's surface."""
+def test_send_workspace_relative(c: remux, cli: str) -> None:
+    """send with REMUX_WORKSPACE_ID env var targets that workspace's surface."""
     ws_result = c._call("workspace.list")
     workspaces = ws_result.get("workspaces", [])
     _must(len(workspaces) >= 1, "Need at least 1 workspace")
@@ -131,14 +131,14 @@ def test_send_workspace_relative(c: cmux, cli: str) -> None:
     # Send a harmless empty echo via env var to verify workspace routing
     output = _run_cli(
         cli, ["send", " "],
-        env_overrides={"CMUX_WORKSPACE_ID": ws["id"]}
+        env_overrides={"REMUX_WORKSPACE_ID": ws["id"]}
     )
     _must("OK" in output or "surface" in output.lower(),
           f"Expected OK from send, got: {output}")
     print("  PASS: send workspace-relative (env var accepted)")
 
 
-def test_send_with_explicit_workspace(c: cmux, cli: str) -> None:
+def test_send_with_explicit_workspace(c: remux, cli: str) -> None:
     """send with --workspace flag targets the specified workspace's surface."""
     ws_result = c._call("workspace.list")
     workspaces = ws_result.get("workspaces", [])
@@ -154,7 +154,7 @@ def test_send_with_explicit_workspace(c: cmux, cli: str) -> None:
     print("  PASS: send with explicit --workspace")
 
 
-def test_v2_migrated_commands_output_refs(c: cmux, cli: str) -> None:
+def test_v2_migrated_commands_output_refs(c: remux, cli: str) -> None:
     """Verify migrated commands output refs in JSON by default."""
     # list-panels should output refs
     payload = _run_cli_json(cli, ["list-panels"])
@@ -190,7 +190,7 @@ def test_v2_migrated_commands_output_refs(c: cmux, cli: str) -> None:
     print("  PASS: migrated commands output refs by default")
 
 
-def test_surface_health_workspace_relative(c: cmux, cli: str) -> None:
+def test_surface_health_workspace_relative(c: remux, cli: str) -> None:
     """surface-health with --workspace targets the specified workspace."""
     ws_result = c._call("workspace.list")
     workspaces = ws_result.get("workspaces", [])
@@ -205,7 +205,7 @@ def test_surface_health_workspace_relative(c: cmux, cli: str) -> None:
     print("  PASS: surface-health workspace-relative")
 
 
-def test_non_json_output_uses_refs(c: cmux, cli: str) -> None:
+def test_non_json_output_uses_refs(c: remux, cli: str) -> None:
     """Non-JSON output from migrated commands uses ref format."""
     # list-panels non-JSON
     output = _run_cli(cli, ["list-panels"])
@@ -229,7 +229,7 @@ def main() -> int:
     cli = _find_cli_binary()
     print(f"Using CLI: {cli}")
 
-    c = cmux(SOCKET_PATH)
+    c = remux(SOCKET_PATH)
     c.connect()
     try:
         test_list_panels_workspace_relative(c, cli)

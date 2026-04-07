@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { siteLabel, siteUrl } from "../../site";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — cmux",
-  description: "Privacy policy for cmux",
+  title: "Privacy Policy — remux",
+  description: "Privacy policy for remux",
 };
 
 export default function PrivacyPolicyPage() {
@@ -20,8 +21,8 @@ export default function PrivacyPolicyPage() {
       <p>
         For purposes of this policy, &ldquo;Site&rdquo; refers to the
         Company&rsquo;s website at{" "}
-        <a href="https://cmux.dev">cmux.dev</a>.
-        &ldquo;Application&rdquo; refers to the cmux desktop application for
+        <a href={siteUrl}>{siteLabel}</a>.
+        &ldquo;Application&rdquo; refers to the remux desktop application for
         macOS. &ldquo;Service&rdquo; refers to the Site and Application
         collectively. The terms &ldquo;we,&rdquo; &ldquo;us,&rdquo; and
         &ldquo;our&rdquo; refer to the Company. &ldquo;You&rdquo; refers to

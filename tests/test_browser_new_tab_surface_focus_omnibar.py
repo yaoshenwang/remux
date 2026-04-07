@@ -16,10 +16,10 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-def v2_call(client: cmux, method: str, params: dict[str, Any] | None = None, request_id: str = "1") -> dict[str, Any]:
+def v2_call(client: remux, method: str, params: dict[str, Any] | None = None, request_id: str = "1") -> dict[str, Any]:
     payload = {
         "id": request_id,
         "method": method,
@@ -29,10 +29,10 @@ def v2_call(client: cmux, method: str, params: dict[str, Any] | None = None, req
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise cmuxError(f"Invalid v2 JSON response for {method}: {raw}") from exc
+        raise remuxError(f"Invalid v2 JSON response for {method}: {raw}") from exc
 
     if not parsed.get("ok"):
-        raise cmuxError(f"v2 {method} failed: {parsed.get('error')}")
+        raise remuxError(f"v2 {method} failed: {parsed.get('error')}")
 
     result = parsed.get("result")
     return result if isinstance(result, dict) else {}
@@ -47,14 +47,14 @@ def wait_for(predicate, timeout_s: float, interval_s: float = 0.1) -> bool:
     return False
 
 
-def browser_address_bar_focus_state(client: cmux, surface_id: str | None = None, request_id: str = "browser-focus") -> dict[str, Any]:
+def browser_address_bar_focus_state(client: remux, surface_id: str | None = None, request_id: str = "browser-focus") -> dict[str, Any]:
     params: dict[str, Any] = {}
     if surface_id:
         params["surface_id"] = surface_id
     return v2_call(client, "debug.browser.address_bar_focused", params, request_id=request_id)
 
 
-def set_command_palette_visible(client: cmux, window_id: str, target_visible: bool) -> bool:
+def set_command_palette_visible(client: remux, window_id: str, target_visible: bool) -> bool:
     for idx in range(5):
         state = v2_call(
             client,
@@ -75,7 +75,7 @@ def set_command_palette_visible(client: cmux, window_id: str, target_visible: bo
     return False
 
 
-def command_palette_results(client: cmux, window_id: str, limit: int = 20) -> list[dict[str, Any]]:
+def command_palette_results(client: remux, window_id: str, limit: int = 20) -> list[dict[str, Any]]:
     payload = v2_call(
         client,
         "debug.command_palette.results",
@@ -88,7 +88,7 @@ def command_palette_results(client: cmux, window_id: str, limit: int = 20) -> li
     return []
 
 
-def command_palette_selected_index(client: cmux, window_id: str) -> int:
+def command_palette_selected_index(client: remux, window_id: str) -> int:
     payload = v2_call(
         client,
         "debug.command_palette.selection",
@@ -101,7 +101,7 @@ def command_palette_selected_index(client: cmux, window_id: str) -> int:
     return 0
 
 
-def move_command_palette_selection_to_index(client: cmux, window_id: str, target_index: int) -> bool:
+def move_command_palette_selection_to_index(client: remux, window_id: str, target_index: int) -> bool:
     target = max(0, target_index)
     for _ in range(40):
         current = command_palette_selected_index(client, window_id)
@@ -115,16 +115,16 @@ def move_command_palette_selection_to_index(client: cmux, window_id: str, target
     return False
 
 
-def current_window_id(client: cmux) -> str:
+def current_window_id(client: remux) -> str:
     window_current = v2_call(client, "window.current", request_id="window-current")
     window_id = window_current.get("window_id")
     if not isinstance(window_id, str) or not window_id:
-        raise cmuxError(f"Invalid window.current payload: {window_current}")
+        raise remuxError(f"Invalid window.current payload: {window_current}")
     return window_id
 
 
 def main() -> int:
-    client = cmux()
+    client = remux()
     workspace_ids: list[str] = []
     window_id: str | None = None
 
@@ -139,7 +139,7 @@ def main() -> int:
         time.sleep(0.4)
         window_id = current_window_id(client)
         if not set_command_palette_visible(client, window_id, False):
-            raise cmuxError("Failed to ensure command palette is hidden for scenario 1")
+            raise remuxError("Failed to ensure command palette is hidden for scenario 1")
 
         browser_id = client.new_surface(panel_type="browser")
         time.sleep(0.3)
@@ -147,7 +147,7 @@ def main() -> int:
         surfaces = client.list_surfaces()
         terminal_id = next((surface_id for _, surface_id, _ in surfaces if surface_id != browser_id), None)
         if not terminal_id:
-            raise cmuxError("Missing terminal surface for focus setup")
+            raise remuxError("Missing terminal surface for focus setup")
 
         client.focus_surface_by_panel(terminal_id)
         time.sleep(0.2)
@@ -166,7 +166,7 @@ def main() -> int:
             interval_s=0.1
         )
         if not did_focus_address_bar:
-            raise cmuxError("Blank browser surface did not focus omnibar after focus_surface")
+            raise remuxError("Blank browser surface did not focus omnibar after focus_surface")
 
         client.close_workspace(workspace_id)
         workspace_ids.remove(workspace_id)
@@ -179,12 +179,12 @@ def main() -> int:
         time.sleep(0.4)
         window_id = current_window_id(client)
         if not set_command_palette_visible(client, window_id, False):
-            raise cmuxError("Failed to ensure command palette is hidden for scenario 2")
+            raise remuxError("Failed to ensure command palette is hidden for scenario 2")
 
         initial_surfaces = client.list_surfaces()
         left_terminal_id = next((surface_id for _, surface_id, _ in initial_surfaces), None)
         if not left_terminal_id:
-            raise cmuxError("Missing initial terminal surface for split setup")
+            raise remuxError("Missing initial terminal surface for split setup")
 
         split_browser_id = client.new_pane(direction="right", panel_type="browser")
         time.sleep(0.3)
@@ -200,7 +200,7 @@ def main() -> int:
                 browser_pane = pane_id
 
         if not left_pane or not browser_pane:
-            raise cmuxError("Failed to locate split panes for pane-focus scenario")
+            raise remuxError("Failed to locate split panes for pane-focus scenario")
 
         client.focus_pane(left_pane)
         time.sleep(0.2)
@@ -218,7 +218,7 @@ def main() -> int:
             interval_s=0.1
         )
         if not did_focus_split_browser:
-            raise cmuxError("Blank browser pane did not focus omnibar after focus_pane")
+            raise remuxError("Blank browser pane did not focus omnibar after focus_pane")
 
         client.close_workspace(workspace_id)
         workspace_ids.remove(workspace_id)
@@ -231,7 +231,7 @@ def main() -> int:
         time.sleep(0.4)
         window_id = current_window_id(client)
         if not set_command_palette_visible(client, window_id, False):
-            raise cmuxError("Failed to reset command palette before scenario 3")
+            raise remuxError("Failed to reset command palette before scenario 3")
 
         blank_browser_id = client.new_surface(panel_type="browser")
         time.sleep(0.3)
@@ -239,7 +239,7 @@ def main() -> int:
         surfaces = client.list_surfaces()
         terminal_id = next((surface_id for _, surface_id, _ in surfaces if surface_id != blank_browser_id), None)
         if not terminal_id:
-            raise cmuxError("Missing terminal surface for command palette scenario")
+            raise remuxError("Missing terminal surface for command palette scenario")
 
         client.focus_surface_by_panel(terminal_id)
         wait_for(
@@ -254,7 +254,7 @@ def main() -> int:
         )
 
         if not set_command_palette_visible(client, window_id, True):
-            raise cmuxError("Failed to open command palette")
+            raise remuxError("Failed to open command palette")
 
         client.focus_surface_by_panel(blank_browser_id)
         time.sleep(0.2)
@@ -268,7 +268,7 @@ def main() -> int:
             ).get("visible")
         )
         if not palette_visible_after_focus:
-            raise cmuxError("Command palette closed unexpectedly after focus_surface")
+            raise remuxError("Command palette closed unexpectedly after focus_surface")
 
         blank_focus_state = browser_address_bar_focus_state(
             client,
@@ -276,7 +276,7 @@ def main() -> int:
             request_id="browser-focus-palette"
         )
         if bool(blank_focus_state.get("focused")):
-            raise cmuxError("Blank browser tab stole omnibar focus while command palette was visible")
+            raise remuxError("Blank browser tab stole omnibar focus while command palette was visible")
 
         client.close_workspace(workspace_id)
         workspace_ids.remove(workspace_id)
@@ -290,7 +290,7 @@ def main() -> int:
         time.sleep(0.4)
         window_id = current_window_id(client)
         if not set_command_palette_visible(client, window_id, False):
-            raise cmuxError("Failed to reset command palette before scenario 4 (target setup)")
+            raise remuxError("Failed to reset command palette before scenario 4 (target setup)")
 
         switcher_browser_id = client.new_surface(panel_type="browser")
         time.sleep(0.3)
@@ -308,7 +308,7 @@ def main() -> int:
             interval_s=0.1
         )
         if not did_focus_target_browser:
-            raise cmuxError("Failed to focus omnibar on target workspace browser before Cmd+P switch")
+            raise remuxError("Failed to focus omnibar on target workspace browser before Cmd+P switch")
 
         source_workspace_id = client.new_workspace()
         workspace_ids.append(source_workspace_id)
@@ -316,12 +316,12 @@ def main() -> int:
         time.sleep(0.4)
         window_id = current_window_id(client)
         if not set_command_palette_visible(client, window_id, False):
-            raise cmuxError("Failed to reset command palette before scenario 4 (source setup)")
+            raise remuxError("Failed to reset command palette before scenario 4 (source setup)")
 
         source_surfaces = client.list_surfaces()
         source_terminal_id = next((surface_id for _, surface_id, _ in source_surfaces), None)
         if not source_terminal_id:
-            raise cmuxError("Missing terminal surface for Cmd+P workspace switcher scenario")
+            raise remuxError("Missing terminal surface for Cmd+P workspace switcher scenario")
         client.focus_surface_by_panel(source_terminal_id)
         time.sleep(0.2)
 
@@ -338,13 +338,13 @@ def main() -> int:
             timeout_s=2.0,
             interval_s=0.1
         ):
-            raise cmuxError("Cmd+P did not open command palette switcher")
+            raise remuxError("Cmd+P did not open command palette switcher")
 
         switcher_results = command_palette_results(client, window_id, limit=100)
         switcher_ids = [row.get("command_id") for row in switcher_results if isinstance(row.get("command_id"), str)]
         has_surface_rows = any(command_id.startswith("switcher.surface.") for command_id in switcher_ids)
         if has_surface_rows:
-            raise cmuxError("Cmd+P switcher listed unexpected surface rows; expected workspace-only results")
+            raise remuxError("Cmd+P switcher listed unexpected surface rows; expected workspace-only results")
 
         target_command_id = f"switcher.workspace.{target_workspace_id.lower()}"
         target_index = next(
@@ -355,10 +355,10 @@ def main() -> int:
             None
         )
         if target_index is None:
-            raise cmuxError(f"Cmd+P switcher did not list target workspace command {target_command_id}")
+            raise remuxError(f"Cmd+P switcher did not list target workspace command {target_command_id}")
 
         if not move_command_palette_selection_to_index(client, window_id, target_index):
-            raise cmuxError(f"Failed to move Cmd+P selection to result index {target_index}")
+            raise remuxError(f"Failed to move Cmd+P selection to result index {target_index}")
 
         client.simulate_shortcut("enter")
 
@@ -384,14 +384,14 @@ def main() -> int:
             interval_s=0.1
         )
         if not did_focus_switcher_target:
-            raise cmuxError("Cmd+P workspace switch did not restore blank browser omnibar focus")
+            raise remuxError("Cmd+P workspace switch did not restore blank browser omnibar focus")
 
         # Scenario 5: Cmd+P switcher should dismiss on Escape reliably.
         client.select_workspace(source_workspace_id)
         time.sleep(0.4)
         window_id = current_window_id(client)
         if not set_command_palette_visible(client, window_id, False):
-            raise cmuxError("Failed to reset command palette before scenario 5")
+            raise remuxError("Failed to reset command palette before scenario 5")
 
         client.focus_surface_by_panel(source_terminal_id)
         time.sleep(0.2)
@@ -409,7 +409,7 @@ def main() -> int:
             timeout_s=2.0,
             interval_s=0.1
         ):
-            raise cmuxError("Cmd+P did not open command palette switcher before Escape scenario")
+            raise remuxError("Cmd+P did not open command palette switcher before Escape scenario")
 
         client.simulate_shortcut("escape")
         did_dismiss_switcher_on_escape = wait_for(
@@ -425,12 +425,12 @@ def main() -> int:
             interval_s=0.1
         )
         if not did_dismiss_switcher_on_escape:
-            raise cmuxError("Cmd+P Escape did not dismiss command palette switcher")
+            raise remuxError("Cmd+P Escape did not dismiss command palette switcher")
 
         print("PASS: blank-browser focus paths (surface, pane, Cmd+P Enter switcher, and Cmd+P Escape dismiss) drive omnibar, while command palette visibility blocks focus stealing")
         return 0
 
-    except cmuxError as exc:
+    except remuxError as exc:
         print(f"FAIL: {exc}")
         return 1
 

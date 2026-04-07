@@ -2,7 +2,7 @@
 """
 Regression: scrollback replay must not depend on PATH containing coreutils.
 
-cmux can launch shells with PATH initially pointing at app resources. If replay
+remux can launch shells with PATH initially pointing at app resources. If replay
 relies on bare `cat`/`rm`, startup replay silently fails before user rc files
 restore PATH.
 """
@@ -17,12 +17,12 @@ from pathlib import Path
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    integration_script = root / "Resources" / "shell-integration" / "cmux-zsh-integration.zsh"
+    integration_script = root / "Resources" / "shell-integration" / "remux-zsh-integration.zsh"
     if not integration_script.exists():
         print(f"SKIP: missing zsh integration script at {integration_script}")
         return 0
 
-    base = Path("/tmp") / f"cmux_scrollback_restore_{os.getpid()}"
+    base = Path("/tmp") / f"remux_scrollback_restore_{os.getpid()}"
     try:
         shutil.rmtree(base, ignore_errors=True)
         base.mkdir(parents=True, exist_ok=True)
@@ -32,11 +32,11 @@ def main() -> int:
 
         env = dict(os.environ)
         env["PATH"] = str(base / "empty-bin")
-        env["CMUX_RESTORE_SCROLLBACK_FILE"] = str(replay_file)
-        env["CMUX_TEST_INTEGRATION_SCRIPT"] = str(integration_script)
+        env["REMUX_RESTORE_SCROLLBACK_FILE"] = str(replay_file)
+        env["REMUX_TEST_INTEGRATION_SCRIPT"] = str(integration_script)
 
         result = subprocess.run(
-            ["/bin/zsh", "-f", "-c", 'source "$CMUX_TEST_INTEGRATION_SCRIPT"'],
+            ["/bin/zsh", "-f", "-c", 'source "$REMUX_TEST_INTEGRATION_SCRIPT"'],
             env=env,
             capture_output=True,
             text=True,

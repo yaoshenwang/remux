@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression test: `cmux claude-teams` skips cmux wrapper scripts on PATH.
+Regression test: `remux claude-teams` skips remux wrapper scripts on PATH.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from claude_teams_test_utils import resolve_cmux_cli
+from claude_teams_test_utils import resolve_remux_cli
 
 
 def make_executable(path: Path, content: str) -> None:
@@ -20,12 +20,12 @@ def make_executable(path: Path, content: str) -> None:
 
 def main() -> int:
     try:
-        cli_path = resolve_cmux_cli()
+        cli_path = resolve_remux_cli()
     except Exception as exc:
         print(f"FAIL: {exc}")
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="cmux-claude-teams-wrapper-") as td:
+    with tempfile.TemporaryDirectory(prefix="remux-claude-teams-wrapper-") as td:
         tmp = Path(td)
         wrapper_bin = tmp / "wrapper-bin"
         real_bin = tmp / "real-bin"
@@ -39,7 +39,7 @@ def main() -> int:
         make_executable(
             wrapper_bin / "claude",
             """#!/usr/bin/env bash
-# cmux claude wrapper - injects hooks and session tracking
+# remux claude wrapper - injects hooks and session tracking
 set -euo pipefail
 echo WRAPPER_EXECUTED >&2
 exit 91
@@ -67,7 +67,7 @@ printf 'REAL\\n' > {real_hit}
         )
 
         if proc.returncode != 0:
-            print("FAIL: `cmux claude-teams --version` executed a wrapper instead of the real claude binary")
+            print("FAIL: `remux claude-teams --version` executed a wrapper instead of the real claude binary")
             print(f"exit={proc.returncode}")
             print(f"stdout={proc.stdout.strip()}")
             print(f"stderr={proc.stderr.strip()}")
@@ -77,7 +77,7 @@ printf 'REAL\\n' > {real_hit}
             print("FAIL: real claude binary was not reached")
             return 1
 
-    print("PASS: cmux claude-teams skips cmux wrapper scripts on PATH")
+    print("PASS: remux claude-teams skips remux wrapper scripts on PATH")
     return 0
 
 

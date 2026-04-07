@@ -89,10 +89,10 @@ enum SessionRestorePolicy {
     static func isRunningUnderAutomatedTests(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        if environment["CMUX_UI_TEST_MODE"] == "1" {
+        if environment["REMUX_UI_TEST_MODE"] == "1" {
             return true
         }
-        if environment.keys.contains(where: { $0.hasPrefix("CMUX_UI_TEST_") }) {
+        if environment.keys.contains(where: { $0.hasPrefix("REMUX_UI_TEST_") }) {
             return true
         }
         if environment["XCTestConfigurationFilePath"] != nil {
@@ -120,7 +120,7 @@ enum SessionRestorePolicy {
         arguments: [String] = CommandLine.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        if environment["CMUX_DISABLE_SESSION_RESTORE"] == "1" {
+        if environment["REMUX_DISABLE_SESSION_RESTORE"] == "1" {
             return false
         }
         if isRunningUnderAutomatedTests(environment: environment) {
@@ -413,21 +413,21 @@ enum SessionPersistenceStore {
         }
         let bundleId = (bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
             ? bundleIdentifier!
-            : "com.cmuxterm.app"
+            : "com.remuxterm.app"
         let safeBundleId = bundleId.replacingOccurrences(
             of: "[^A-Za-z0-9._-]",
             with: "_",
             options: .regularExpression
         )
         return resolvedAppSupport
-            .appendingPathComponent("cmux", isDirectory: true)
+            .appendingPathComponent("remux", isDirectory: true)
             .appendingPathComponent("session-\(safeBundleId).json", isDirectory: false)
     }
 }
 
 enum SessionScrollbackReplayStore {
-    static let environmentKey = "CMUX_RESTORE_SCROLLBACK_FILE"
-    private static let directoryName = "cmux-session-scrollback"
+    static let environmentKey = "REMUX_RESTORE_SCROLLBACK_FILE"
+    private static let directoryName = "remux-session-scrollback"
     private static let ansiEscape = "\u{001B}"
     private static let ansiReset = "\u{001B}[0m"
 

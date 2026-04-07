@@ -12,7 +12,7 @@ Bundled artifacts:
   - remux-agent (macOS arm64 build)
   - remux-agent-linux-x86_64
   - remux-agent-linux-aarch64
-  - cmuxd (native macOS build, only if ./cmuxd exists)
+  - remuxd (native macOS build, only if ./remuxd exists)
 EOF
 }
 
@@ -29,7 +29,7 @@ if ! command -v zig >/dev/null 2>&1; then
   exit 1
 fi
 
-ARTIFACT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cmux-runtime-binaries.XXXXXX")"
+ARTIFACT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/remux-runtime-binaries.XXXXXX")"
 ARTIFACT_BIN_DIR="$ARTIFACT_ROOT/bin"
 mkdir -p "$ARTIFACT_BIN_DIR"
 trap 'rm -rf "$ARTIFACT_ROOT"' EXIT
@@ -80,7 +80,7 @@ build_zig_artifact() {
 build_zig_artifact "agent" "remux-agent" "remux-agent" -Dtarget=aarch64-macos
 build_zig_artifact "agent" "remux-agent" "remux-agent-linux-x86_64" -Dtarget=x86_64-linux-gnu
 build_zig_artifact "agent" "remux-agent" "remux-agent-linux-aarch64" -Dtarget=aarch64-linux-gnu
-build_zig_artifact "cmuxd" "cmuxd" "cmuxd"
+build_zig_artifact "remuxd" "remuxd" "remuxd"
 
 if [[ -z "$(find "$ARTIFACT_BIN_DIR" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]]; then
   echo "no runtime binaries were built" >&2

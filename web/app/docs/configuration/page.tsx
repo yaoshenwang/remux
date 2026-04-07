@@ -5,7 +5,7 @@ import { Callout } from "../../components/callout";
 export const metadata: Metadata = {
   title: "Configuration",
   description:
-    "Configure cmux via Ghostty config files. Font, theme, colors, split pane styling, scrollback, and app settings for automation mode.",
+    "Configure remux via Ghostty config files. Font, theme, colors, split pane styling, scrollback, and app settings for automation mode.",
 };
 
 export default function ConfigurationPage() {
@@ -13,12 +13,12 @@ export default function ConfigurationPage() {
     <>
       <h1>Configuration</h1>
       <p>
-        cmux reads configuration from Ghostty config files, giving you familiar
+        remux reads configuration from Ghostty config files, giving you familiar
         options if you&apos;re coming from Ghostty.
       </p>
 
       <h2>Config file locations</h2>
-      <p>cmux looks for configuration in these locations (in order):</p>
+      <p>remux looks for configuration in these locations (in order):</p>
       <ol>
         <li>
           <code>~/.config/ghostty/config</code>
@@ -71,7 +71,7 @@ working-directory = ~/Projects`}</CodeBlock>
 
       <h2>App settings</h2>
       <p>
-        In-app settings are available via <strong>cmux → Settings</strong> (
+        In-app settings are available via <strong>remux → Settings</strong> (
         <code>⌘,</code>):
       </p>
 
@@ -95,35 +95,35 @@ working-directory = ~/Projects`}</CodeBlock>
           <strong>Off</strong> — no socket control (most secure)
         </li>
         <li>
-          <strong>cmux processes only</strong> — only allow processes started
-          inside cmux terminals to connect
+          <strong>remux processes only</strong> — only allow processes started
+          inside remux terminals to connect
         </li>
         <li>
           <strong>allowAll</strong> — allow any local process to connect (
-          <code>CMUX_SOCKET_MODE=allowAll</code>, env override only)
+          <code>REMUX_SOCKET_MODE=allowAll</code>, env override only)
         </li>
       </ul>
       <Callout type="warn">
         On shared machines, consider using &ldquo;Off&rdquo; or
-        &ldquo;cmux processes only&rdquo; mode.
+        &ldquo;remux processes only&rdquo; mode.
       </Callout>
 
       <h3>Browser link behavior</h3>
       <p>
-        In <strong>Settings → Browser</strong>, cmux exposes two host lists with
+        In <strong>Settings → Browser</strong>, remux exposes two host lists with
         different purposes:
       </p>
       <ul>
         <li>
           <strong>Hosts to Open in Embedded Browser</strong> — applies to links
-          clicked from terminal output. Hosts in this list open in cmux; other
+          clicked from terminal output. Hosts in this list open in remux; other
           hosts open in your default browser. Supports one host or wildcard per
           line (for example: <code>example.com</code>,{" "}
           <code>*.internal.example</code>).
         </li>
         <li>
           <strong>HTTP Hosts Allowed in Embedded Browser</strong> — applies only
-          to HTTP (non-HTTPS) URLs. Hosts in this list can open in cmux without
+          to HTTP (non-HTTPS) URLs. Hosts in this list can open in remux without
           a warning prompt. Defaults include <code>localhost</code>,{" "}
           <code>127.0.0.1</code>, <code>::1</code>, <code>0.0.0.0</code>, and{" "}
           <code>*.localtest.me</code>.

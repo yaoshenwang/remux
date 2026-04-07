@@ -39,12 +39,12 @@ if ! awk '
   exit 1
 fi
 
-if ! grep -Fq 'com.cmuxterm.app.nightly.universal' "$WORKFLOW_FILE"; then
+if ! grep -Fq 'com.remuxterm.app.nightly.universal' "$WORKFLOW_FILE"; then
   echo "FAIL: nightly workflow must set a distinct .universal bundle ID"
   exit 1
 fi
 
-if ! grep -Fq 'https://github.com/manaflow-ai/cmux/releases/download/nightly/appcast-universal.xml' "$WORKFLOW_FILE"; then
+if ! grep -Fq 'https://github.com/yaoshenwang/remux/releases/download/nightly/appcast-universal.xml' "$WORKFLOW_FILE"; then
   echo "FAIL: nightly workflow must publish a separate universal appcast feed"
   exit 1
 fi
@@ -64,8 +64,8 @@ if ! awk '
   in_upload && /^      - name:/ { in_upload=0 }
   in_upload && /if: needs\.decide\.outputs\.should_publish != '\''true'\''/ { saw_if=1 }
   in_upload && /uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4/ { saw_upload=1 }
-  in_upload && /cmux-nightly-macos\*\.dmg/ { saw_arm_artifacts=1 }
-  in_upload && /cmux-nightly-universal-macos\*\.dmg/ { saw_universal_artifacts=1 }
+  in_upload && /remux-nightly-macos\*\.dmg/ { saw_arm_artifacts=1 }
+  in_upload && /remux-nightly-universal-macos\*\.dmg/ { saw_universal_artifacts=1 }
   in_upload && /appcast-universal\.xml/ { saw_universal_appcast=1 }
   END { exit !(saw_if && saw_upload && saw_arm_artifacts && saw_universal_artifacts && saw_universal_appcast) }
 ' "$WORKFLOW_FILE"; then
@@ -87,8 +87,8 @@ if ! awk '
   /^      - name: Publish nightly release assets/ { in_publish=1; next }
   in_publish && /^      - name:/ { in_publish=0 }
   in_publish && /if: needs\.decide\.outputs\.should_publish == '\''true'\''/ { saw_publish_if=1 }
-  in_publish && /cmux-nightly-universal-macos-\$\{\{ github\.run_id \}\}\*\.dmg/ { saw_universal_immutable=1 }
-  in_publish && /cmux-nightly-universal-macos\.dmg/ { saw_universal_stable=1 }
+  in_publish && /remux-nightly-universal-macos-\$\{\{ github\.run_id \}\}\*\.dmg/ { saw_universal_immutable=1 }
+  in_publish && /remux-nightly-universal-macos\.dmg/ { saw_universal_stable=1 }
   in_publish && /appcast-universal\.xml/ { saw_universal_appcast=1 }
   END { exit !(saw_publish_if && saw_universal_immutable && saw_universal_stable && saw_universal_appcast) }
 ' "$WORKFLOW_FILE"; then

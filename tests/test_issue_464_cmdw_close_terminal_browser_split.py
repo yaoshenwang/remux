@@ -14,7 +14,7 @@ Expected:
 
 This test uses debug socket commands (`simulate_shortcut`, `layout_debug`,
 `surface_health`, `drag_hit_chain`).
-Run against a Debug app socket (typically with CMUX_SOCKET_MODE=allowAll).
+Run against a Debug app socket (typically with REMUX_SOCKET_MODE=allowAll).
 """
 
 import os
@@ -23,10 +23,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05) -> bool:
@@ -38,17 +38,17 @@ def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05) -> 
     return False
 
 
-def _wait_url_contains(client: cmux, panel_id: str, needle: str, timeout_s: float = 20.0) -> None:
+def _wait_url_contains(client: remux, panel_id: str, needle: str, timeout_s: float = 20.0) -> None:
     def _matches() -> bool:
         response = client._send_command(f"get_url {panel_id}").strip().lower()
         return not response.startswith("error") and needle.lower() in response
 
     if not _wait_until(_matches, timeout_s=timeout_s, interval_s=0.1):
         current = client._send_command(f"get_url {panel_id}")
-        raise cmuxError(f"Timed out waiting for browser URL containing '{needle}', got: {current}")
+        raise remuxError(f"Timed out waiting for browser URL containing '{needle}', got: {current}")
 
 
-def _capture_screenshot(client: cmux, label: str) -> str:
+def _capture_screenshot(client: remux, label: str) -> str:
     response = client._send_command(f"screenshot {label}").strip()
     if not response.startswith("OK "):
         return f"<unavailable: {response}>"
@@ -58,14 +58,14 @@ def _capture_screenshot(client: cmux, label: str) -> str:
     return parts[2]
 
 
-def _focused_terminal_ready(client: cmux, panel_id: str) -> bool:
+def _focused_terminal_ready(client: remux, panel_id: str) -> bool:
     try:
         return client.is_terminal_focused(panel_id)
     except Exception:
         return False
 
 
-def _drag_hit_chain(client: cmux, nx: float, ny: float) -> str:
+def _drag_hit_chain(client: remux, nx: float, ny: float) -> str:
     return client._send_command(f"drag_hit_chain {nx:.3f} {ny:.3f}").strip()
 
 
@@ -77,13 +77,13 @@ def _top_hit_view_class(hit_chain: str) -> str:
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         # Quick sanity check: fail early with actionable info if socket is not in allow mode.
         ping_ok = client.ping()
         if not ping_ok:
-            raise cmuxError(
+            raise remuxError(
                 f"Socket ping failed on {SOCKET_PATH}. "
-                "Launch Debug app with CMUX_SOCKET_MODE=allowAll for this test."
+                "Launch Debug app with REMUX_SOCKET_MODE=allowAll for this test."
             )
 
         workspace_id = client.new_workspace()
@@ -104,7 +104,7 @@ def main() -> int:
             terminal_rows = [row for row in health_before if row.get("type") == "terminal"]
             browser_rows = [row for row in health_before if row.get("type") == "browser"]
             if len(terminal_rows) != 1 or len(browser_rows) != 1:
-                raise cmuxError(
+                raise remuxError(
                     f"Expected exactly one terminal and one browser before close; "
                     f"health={health_before}"
                 )
@@ -112,7 +112,7 @@ def main() -> int:
             terminal_id = terminal_rows[0]["id"]
             client.focus_surface(terminal_id)
             if not _wait_until(lambda: _focused_terminal_ready(client, terminal_id), timeout_s=4.0):
-                raise cmuxError(f"Terminal did not become first responder before Cmd+W: {terminal_id}")
+                raise remuxError(f"Terminal did not become first responder before Cmd+W: {terminal_id}")
 
             before_surfaces = client.list_surfaces()
             before_panes = client.list_panes()
@@ -195,7 +195,7 @@ def main() -> int:
                     f"after_top_hit_class={after_top_hit_class}",
                 ]
                 details.extend(f"failure={msg}" for msg in failures)
-                raise cmuxError("\n".join(details))
+                raise remuxError("\n".join(details))
 
             print(
                 "PASS: Cmd+W closed terminal in terminal+browser split and left browser as sole visible pane."

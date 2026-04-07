@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression test: `cmux claude-teams --help` passes through to Claude.
+Regression test: `remux claude-teams --help` passes through to Claude.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from claude_teams_test_utils import resolve_cmux_cli
+from claude_teams_test_utils import resolve_remux_cli
 
 
 def make_executable(path: Path, content: str) -> None:
@@ -20,12 +20,12 @@ def make_executable(path: Path, content: str) -> None:
 
 def main() -> int:
     try:
-        cli_path = resolve_cmux_cli()
+        cli_path = resolve_remux_cli()
     except Exception as exc:
         print(f"FAIL: {exc}")
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="cmux-claude-teams-help-") as td:
+    with tempfile.TemporaryDirectory(prefix="remux-claude-teams-help-") as td:
         tmp = Path(td)
         home = tmp / "home"
         real_bin = tmp / "real-bin"
@@ -57,7 +57,7 @@ printf '%s\\n' "$@" > "$FAKE_ARGV_LOG"
         )
 
         if proc.returncode != 0:
-            print("FAIL: `cmux claude-teams --help` exited non-zero")
+            print("FAIL: `remux claude-teams --help` exited non-zero")
             print(f"exit={proc.returncode}")
             print(f"stdout={proc.stdout.strip()}")
             print(f"stderr={proc.stderr.strip()}")
@@ -78,7 +78,7 @@ printf '%s\\n' "$@" > "$FAKE_ARGV_LOG"
             print(f"FAIL: expected --help to reach Claude, got {argv_lines!r}")
             return 1
 
-    print("PASS: cmux claude-teams forwards --help to Claude")
+    print("PASS: remux claude-teams forwards --help to Claude")
     return 0
 
 

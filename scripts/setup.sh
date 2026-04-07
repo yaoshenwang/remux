@@ -17,7 +17,7 @@ if ! command -v zig &> /dev/null; then
 fi
 
 GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
-CACHE_ROOT="${CMUX_GHOSTTYKIT_CACHE_DIR:-$HOME/.cache/cmux/ghosttykit}"
+CACHE_ROOT="${REMUX_GHOSTTYKIT_CACHE_DIR:-$HOME/.cache/remux/ghosttykit}"
 CACHE_DIR="$CACHE_ROOT/$GHOSTTY_SHA"
 CACHE_XCFRAMEWORK="$CACHE_DIR/GhosttyKit.xcframework"
 LOCAL_XCFRAMEWORK="$PROJECT_DIR/ghostty/macos/GhosttyKit.xcframework"

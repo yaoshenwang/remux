@@ -23,13 +23,13 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
-def _health_map(c: cmux) -> dict[str, bool]:
+def _health_map(c: remux) -> dict[str, bool]:
     out: dict[str, bool] = {}
     for row in c.surface_health():
         pid = (row.get("id") or "").lower()
@@ -39,14 +39,14 @@ def _health_map(c: cmux) -> dict[str, bool]:
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         c.activate_app()
         c.new_workspace()
         time.sleep(0.25)
 
         base = c.list_surfaces()
         if not base:
-            raise cmuxError("expected initial surface")
+            raise remuxError("expected initial surface")
         left_panel = base[0][1]
 
         right_panel = c.new_split("right")
@@ -77,7 +77,7 @@ def main() -> int:
         if offenders:
             # Include only first few for brevity.
             sample = ", ".join([f"{pid}" for _ts, pid in seen_detach[:5]])
-            raise cmuxError(
+            raise remuxError(
                 f"saw in_window=false during nested split: {sample} (count={len(seen_detach)}) offenders={offenders}"
             )
 

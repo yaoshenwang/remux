@@ -7,15 +7,15 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _wait_until(pred, timeout_s: float, label: str) -> None:
@@ -29,24 +29,24 @@ def _wait_until(pred, timeout_s: float, label: str) -> None:
             last_exc = exc
         time.sleep(0.05)
     if last_exc is not None:
-        raise cmuxError(f"Timed out waiting for {label}: {last_exc}")
-    raise cmuxError(f"Timed out waiting for {label}")
+        raise remuxError(f"Timed out waiting for {label}: {last_exc}")
+    raise remuxError(f"Timed out waiting for {label}")
 
 
-def _surface_row(c: cmux, workspace_id: str, surface_id: str) -> dict:
+def _surface_row(c: remux, workspace_id: str, surface_id: str) -> dict:
     payload = c._call("surface.list", {"workspace_id": workspace_id}) or {}
     for row in payload.get("surfaces") or []:
         if str(row.get("id") or "") == surface_id:
             return row
-    raise cmuxError(f"surface.list missing surface {surface_id} in workspace {workspace_id}: {payload}")
+    raise remuxError(f"surface.list missing surface {surface_id} in workspace {workspace_id}: {payload}")
 
 
-def _devtools_visible(c: cmux, workspace_id: str, surface_id: str) -> bool:
+def _devtools_visible(c: remux, workspace_id: str, surface_id: str) -> bool:
     row = _surface_row(c, workspace_id, surface_id)
     return bool(row.get("developer_tools_visible"))
 
 
-def _focus_browser_webview(c: cmux, surface_id: str, timeout_s: float = 2.0) -> None:
+def _focus_browser_webview(c: remux, surface_id: str, timeout_s: float = 2.0) -> None:
     deadline = time.time() + timeout_s
     last_exc = None
     while time.time() < deadline:
@@ -58,11 +58,11 @@ def _focus_browser_webview(c: cmux, surface_id: str, timeout_s: float = 2.0) -> 
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
         time.sleep(0.05)
-    raise cmuxError(f"Timed out waiting for browser webview focus: {last_exc}")
+    raise remuxError(f"Timed out waiting for browser webview focus: {last_exc}")
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         workspace_id = c.new_workspace()
         try:
             c.select_workspace(workspace_id)

@@ -1,11 +1,11 @@
 > Ovaj prijevod je generisan od strane Claude. Ako imate prijedloge za poboljšanje, otvorite PR.
 
-<h1 align="center">cmux</h1>
+<h1 align="center">remux</h1>
 <p align="center">macOS terminal baziran na Ghostty sa vertikalnim tabovima i obavještenjima za AI agente za programiranje</p>
 
 <p align="center">
-  <a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-    <img src="./docs/assets/macos-badge.png" alt="Preuzmi cmux za macOS" width="180" />
+  <a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
+    <img src="./docs/assets/macos-badge.png" alt="Preuzmi remux za macOS" width="180" />
   </a>
 </p>
 
@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/main-first-image.png" alt="cmux snimak ekrana" width="900" />
+  <img src="./docs/assets/main-first-image.png" alt="remux snimak ekrana" width="900" />
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Demo video</a> · <a href="https://cmux.dev/blog/zen-of-cmux">The Zen of cmux</a>
+  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Demo video</a> · <a href="https://remux.dev/blog/zen-of-remux">The Zen of remux</a>
 </p>
 
 ## Funkcije
@@ -76,44 +76,44 @@ Bočna traka prikazuje git granu, status/broj povezanog PR-a, radni direktorij, 
 
 ### DMG (preporučeno)
 
-<a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-  <img src="./docs/assets/macos-badge.png" alt="Preuzmi cmux za macOS" width="180" />
+<a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
+  <img src="./docs/assets/macos-badge.png" alt="Preuzmi remux za macOS" width="180" />
 </a>
 
-Otvorite `.dmg` datoteku i prevucite cmux u folder Aplikacije. cmux se automatski ažurira putem Sparkle, tako da trebate preuzeti samo jednom.
+Otvorite `.dmg` datoteku i prevucite remux u folder Aplikacije. remux se automatski ažurira putem Sparkle, tako da trebate preuzeti samo jednom.
 
 ### Homebrew
 
 ```bash
-brew tap manaflow-ai/cmux
-brew install --cask cmux
+brew tap yaoshenwang/homebrew-tap
+brew install --cask remux
 ```
 
 Za ažuriranje kasnije:
 
 ```bash
-brew upgrade --cask cmux
+brew upgrade --cask remux
 ```
 
 Pri prvom pokretanju, macOS vas može zamoliti da potvrdite otvaranje aplikacije od identificiranog programera. Kliknite **Otvori** da nastavite.
 
-## Zašto cmux?
+## Zašto remux?
 
 Pokrećem mnogo Claude Code i Codex sesija paralelno. Koristio sam Ghostty sa gomilom podijeljenih panela i oslanjao se na nativna macOS obavještenja da znam kada agent treba mene. Ali tijelo obavještenja Claude Code je uvijek samo „Claude is waiting for your input" bez konteksta, a sa dovoljno otvorenih tabova nisam mogao ni pročitati naslove.
 
-Isprobao sam nekoliko orkestratora za kodiranje, ali većina ih je bila Electron/Tauri aplikacije i performanse su me nervirale. Također jednostavno preferiram terminal jer GUI orkestratori vas zaključavaju u svoj radni tok. Zato sam izgradio cmux kao nativnu macOS aplikaciju u Swift/AppKit. Koristi libghostty za renderiranje terminala i čita vašu postojeću Ghostty konfiguraciju za teme, fontove i boje.
+Isprobao sam nekoliko orkestratora za kodiranje, ali većina ih je bila Electron/Tauri aplikacije i performanse su me nervirale. Također jednostavno preferiram terminal jer GUI orkestratori vas zaključavaju u svoj radni tok. Zato sam izgradio remux kao nativnu macOS aplikaciju u Swift/AppKit. Koristi libghostty za renderiranje terminala i čita vašu postojeću Ghostty konfiguraciju za teme, fontove i boje.
 
-Glavni dodaci su bočna traka i sistem obavještenja. Bočna traka ima vertikalne tabove koji prikazuju git granu, status/broj povezanog PR-a, radni direktorij, portove koji slušaju i tekst posljednjeg obavještenja za svaki radni prostor. Sistem obavještenja hvata terminalne sekvence (OSC 9/99/777) i ima CLI (`cmux notify`) koji možete povezati sa hookovima agenata za Claude Code, OpenCode itd. Kada agent čeka, njegov panel dobija plavi prsten, a tab se osvjetljava u bočnoj traci, tako da mogu vidjeti koji me treba kroz podjele i tabove. Cmd+Shift+U skače na najnovije nepročitano.
+Glavni dodaci su bočna traka i sistem obavještenja. Bočna traka ima vertikalne tabove koji prikazuju git granu, status/broj povezanog PR-a, radni direktorij, portove koji slušaju i tekst posljednjeg obavještenja za svaki radni prostor. Sistem obavještenja hvata terminalne sekvence (OSC 9/99/777) i ima CLI (`remux notify`) koji možete povezati sa hookovima agenata za Claude Code, OpenCode itd. Kada agent čeka, njegov panel dobija plavi prsten, a tab se osvjetljava u bočnoj traci, tako da mogu vidjeti koji me treba kroz podjele i tabove. Cmd+Shift+U skače na najnovije nepročitano.
 
 Ugrađeni preglednik ima skriptabilni API portiran iz [agent-browser](https://github.com/vercel-labs/agent-browser). Agenti mogu snimiti stablo pristupačnosti, dobiti reference elemenata, kliknuti, popuniti formulare i evaluirati JS. Možete podijeliti panel preglednika pored terminala i omogućiti Claude Code da direktno komunicira sa vašim razvojnim serverom.
 
 Sve je skriptabilno kroz CLI i socket API — kreiranje radnih prostora/tabova, dijeljenje panela, slanje pritisaka tipki, otvaranje URL-ova u pregledniku.
 
-## The Zen of cmux
+## The Zen of remux
 
-cmux ne propisuje programerima kako da koriste svoje alate. To je terminal i preglednik sa CLI-jem, a ostatak je na vama.
+remux ne propisuje programerima kako da koriste svoje alate. To je terminal i preglednik sa CLI-jem, a ostatak je na vama.
 
-cmux je primitiv, ne rješenje. Daje vam terminal, preglednik, obavještenja, radne prostore, podjele, tabove i CLI za kontrolu svega toga. cmux vas ne prisiljava na određeni način korištenja agenata za kodiranje. Ono što izgradite sa tim primitivima je vaše.
+remux je primitiv, ne rješenje. Daje vam terminal, preglednik, obavještenja, radne prostore, podjele, tabove i CLI za kontrolu svega toga. remux vas ne prisiljava na određeni način korištenja agenata za kodiranje. Ono što izgradite sa tim primitivima je vaše.
 
 Najbolji programeri su oduvijek gradili vlastite alate. Niko još nije otkrio najbolji način rada sa agentima, a timovi koji grade zatvorene proizvode to također nisu uradili. Programeri koji su najbliži svojim bazama koda će to otkriti prvi.
 
@@ -121,7 +121,7 @@ Dajte milion programera kompozabilne primitive i oni će kolektivno pronaći naj
 
 ## Dokumentacija
 
-Za više informacija o konfiguraciji cmux, posjetite [našu dokumentaciju](https://cmux.dev/docs/getting-started?utm_source=readme).
+Za više informacija o konfiguraciji remux, posjetite [našu dokumentaciju](https://remux.dev/docs/getting-started?utm_source=readme).
 
 ## Prečice na Tastaturi
 
@@ -211,27 +211,27 @@ Prečice razvojnih alata preglednika prate Safari zadane postavke i mogu se pril
 
 ## Noćne verzije
 
-[Preuzmi cmux NIGHTLY](https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-macos.dmg)
+[Preuzmi remux NIGHTLY](https://github.com/yaoshenwang/remux/releases/download/nightly/remux-nightly-macos.dmg)
 
-cmux NIGHTLY je zasebna aplikacija sa vlastitim bundle ID-om, tako da radi uporedo sa stabilnom verzijom. Automatski se gradi iz najnovijeg `main` commita i ažurira se putem vlastitog Sparkle feeda.
+remux NIGHTLY je zasebna aplikacija sa vlastitim bundle ID-om, tako da radi uporedo sa stabilnom verzijom. Automatski se gradi iz najnovijeg `main` commita i ažurira se putem vlastitog Sparkle feeda.
 
 ## Vraćanje sesije (trenutno ponašanje)
 
-Prilikom ponovnog pokretanja, cmux trenutno vraća samo raspored aplikacije i metapodatke:
+Prilikom ponovnog pokretanja, remux trenutno vraća samo raspored aplikacije i metapodatke:
 - Raspored prozora/radnih prostora/panela
 - Radne direktorije
 - Scrollback terminala (po mogućnosti)
 - URL preglednika i historija navigacije
 
-cmux **ne** vraća stanje živih procesa unutar terminalnih aplikacija. Na primjer, aktivne sesije Claude Code/tmux/vim se još ne nastavljaju nakon restarta.
+remux **ne** vraća stanje živih procesa unutar terminalnih aplikacija. Na primjer, aktivne sesije Claude Code/tmux/vim se još ne nastavljaju nakon restarta.
 
 ## Historija zvjezdica
 
-<a href="https://star-history.com/#manaflow-ai/cmux&Date">
+<a href="https://star-history.com/#yaoshenwang/remux&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" width="600" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" width="600" />
  </picture>
 </a>
 
@@ -241,26 +241,26 @@ Načini da se uključite:
 
 - Pratite nas na X za ažuriranja [@manaflowai](https://x.com/manaflowai), [@lawrencecchen](https://x.com/lawrencecchen) i [@austinywang](https://x.com/austinywang)
 - Pridružite se razgovoru na [Discordu](https://discord.gg/xsgFEVrWCZ)
-- Kreirajte i učestvujte u [GitHub issues](https://github.com/manaflow-ai/cmux/issues) i [diskusijama](https://github.com/manaflow-ai/cmux/discussions)
-- Javite nam šta gradite sa cmux
+- Kreirajte i učestvujte u [GitHub issues](https://github.com/yaoshenwang/remux/issues) i [diskusijama](https://github.com/yaoshenwang/remux/discussions)
+- Javite nam šta gradite sa remux
 
 ## Zajednica
 
 - [Discord](https://discord.gg/xsgFEVrWCZ)
-- [GitHub](https://github.com/manaflow-ai/cmux)
+- [GitHub](https://github.com/yaoshenwang/remux)
 - [X / Twitter](https://twitter.com/manaflowai)
 - [YouTube](https://www.youtube.com/channel/UCAa89_j-TWkrXfk9A3CbASw)
 - [LinkedIn](https://www.linkedin.com/company/manaflow-ai/)
-- [Reddit](https://www.reddit.com/r/cmux/)
+- [Reddit](https://www.reddit.com/r/remux/)
 
 ## Osnivačko izdanje
 
-cmux je besplatan, otvorenog koda i uvijek će biti. Ako želite podržati razvoj i dobiti rani pristup onome što dolazi:
+remux je besplatan, otvorenog koda i uvijek će biti. Ako želite podržati razvoj i dobiti rani pristup onome što dolazi:
 
 **[Nabavite Osnivačko izdanje](https://buy.stripe.com/3cI00j2Ld0it5OU33r5EY0q)**
 
 - **Prioritetni zahtjevi za funkcije/ispravke grešaka**
-- **Rani pristup: cmux AI koji vam daje kontekst o svakom radnom prostoru, tabu i panelu**
+- **Rani pristup: remux AI koji vam daje kontekst o svakom radnom prostoru, tabu i panelu**
 - **Rani pristup: iOS aplikacija sa terminalima sinhroniziranim između desktopa i telefona**
 - **Rani pristup: Cloud VM-ovi**
 - **Rani pristup: Glasovni režim**

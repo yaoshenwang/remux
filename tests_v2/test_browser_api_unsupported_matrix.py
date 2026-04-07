@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 # Methods expected to be present in system.capabilities for the browser v2 surface.
 EXPECTED_BROWSER_METHODS = {
@@ -119,22 +119,22 @@ WKWEBVIEW_NOT_SUPPORTED = {
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
-def _expect_not_supported(c: cmux, method: str, params: dict) -> None:
+def _expect_not_supported(c: remux, method: str, params: dict) -> None:
     try:
         c._call(method, params)
-    except cmuxError as exc:
+    except remuxError as exc:
         text = str(exc)
         if "not_supported" in text:
             return
-        raise cmuxError(f"Expected not_supported for {method}, got: {text}")
-    raise cmuxError(f"Expected not_supported for {method}, but call succeeded")
+        raise remuxError(f"Expected not_supported for {method}, got: {text}")
+    raise remuxError(f"Expected not_supported for {method}, but call succeeded")
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         caps = c.capabilities() or {}
         methods = set(caps.get("methods") or [])
 

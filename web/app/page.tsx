@@ -17,12 +17,12 @@ export default function Home() {
         <div className="flex items-center gap-4 mb-10" data-dev="header">
           <img
             src="/logo.png"
-            alt="cmux icon"
+            alt="remux icon"
             width={48}
             height={48}
             className="rounded-xl"
           />
-          <h1 className="text-2xl font-semibold tracking-tight">cmux</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">remux</h1>
         </div>
 
         {/* Tagline */}
@@ -130,7 +130,7 @@ export default function Home() {
         <div data-dev="screenshot" className="mb-12 -mx-6 sm:-mx-24 md:-mx-40 lg:-mx-72 xl:-mx-96">
           <FadeImage
             src={landingImage}
-            alt="cmux terminal app screenshot"
+            alt="remux terminal app screenshot"
             priority
             className="w-full rounded-xl"
           />
@@ -144,24 +144,24 @@ export default function Home() {
           </h2>
           <div className="space-y-5 text-[15px]" style={{ lineHeight: 1.5 }}>
             <div>
-              <p className="font-medium mb-1">How does cmux relate to Ghostty?</p>
+              <p className="font-medium mb-1">How does remux relate to Ghostty?</p>
               <p className="text-muted">
-                cmux is not a fork of Ghostty. It uses{" "}
+                remux is not a fork of Ghostty. It uses{" "}
                 <a href="https://github.com/ghostty-org/ghostty" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">libghostty</a>{" "}
                 as a library for terminal rendering, the same way apps use WebKit for web views.
-                Ghostty is a standalone terminal; cmux is a different app built on top of its rendering engine.
+                Ghostty is a standalone terminal; remux is a different app built on top of its rendering engine.
               </p>
             </div>
             <div>
               <p className="font-medium mb-1">What platforms does it support?</p>
               <p className="text-muted">
-                macOS only, for now. cmux is a native Swift + AppKit app.
+                macOS only, for now. remux is a native Swift + AppKit app.
               </p>
             </div>
             <div>
-              <p className="font-medium mb-1">What coding agents does cmux work with?</p>
+              <p className="font-medium mb-1">What coding agents does remux work with?</p>
               <p className="text-muted">
-                All of them. cmux is a terminal, so any agent that runs in a terminal works out of the
+                All of them. remux is a terminal, so any agent that runs in a terminal works out of the
                 box: Claude Code, Codex, OpenCode, Gemini CLI, Kiro, Aider, Goose, Amp, Cline,
                 Cursor Agent, and anything else you can launch from the command line.
               </p>
@@ -169,11 +169,11 @@ export default function Home() {
             <div>
               <p className="font-medium mb-1">How do notifications work?</p>
               <p className="text-muted">
-                When a process needs attention, cmux shows notification rings around panes,
+                When a process needs attention, remux shows notification rings around panes,
                 unread badges in the sidebar, a notification popover, and a macOS desktop
                 notification. These fire automatically via standard terminal escape sequences
                 (OSC 9/99/777), or you can trigger them with the{" "}
-                <a href="/docs/notifications" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">cmux CLI</a>{" "}
+                <a href="/docs/notifications" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">remux CLI</a>{" "}
                 and{" "}
                 <a href="/docs/notifications" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">Claude Code hooks</a>.
               </p>
@@ -183,7 +183,7 @@ export default function Home() {
               <p className="text-muted">
                 Terminal keybindings are read from your Ghostty config
                 file (<code className="text-xs bg-code-bg px-1.5 py-0.5 rounded">~/.config/ghostty/config</code>).
-                cmux-specific shortcuts (workspaces, splits, browser, notifications) can be
+                remux-specific shortcuts (workspaces, splits, browser, notifications) can be
                 customized in Settings. See the{" "}
                 <a href="/docs/keyboard-shortcuts" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">default shortcuts</a>{" "}
                 for a full list.
@@ -192,16 +192,16 @@ export default function Home() {
             <div>
               <p className="font-medium mb-1">How does it compare to tmux?</p>
               <p className="text-muted">
-                tmux is a terminal multiplexer that runs inside any terminal. cmux is a native macOS app
+                tmux is a terminal multiplexer that runs inside any terminal. remux is a native macOS app
                 with a GUI: vertical tabs, split panes, an embedded browser, and a socket API are all
                 built in. No config files or prefix keys needed.
               </p>
             </div>
             <div>
-              <p className="font-medium mb-1">Is cmux free?</p>
+              <p className="font-medium mb-1">Is remux free?</p>
               <p className="text-muted">
-                Yes, cmux is free to use. The source code is available on{" "}
-                <a href="https://github.com/manaflow-ai/cmux" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">GitHub</a>.
+                Yes, remux is free to use. The source code is available on{" "}
+                <a href="https://github.com/yaoshenwang/remux" className="underline underline-offset-2 decoration-border hover:decoration-foreground transition-colors">GitHub</a>.
               </p>
             </div>
           </div>

@@ -156,7 +156,7 @@ jobs:
 
       - name: Build Apple Silicon app (Release)
         run: |
-          xcodebuild -scheme cmux -configuration Release -derivedDataPath build-arm \
+          xcodebuild -scheme remux -configuration Release -derivedDataPath build-arm \
             -destination 'platform=macOS,arch=arm64' \
             -clonedSourcePackagesDirPath .spm-cache \
             ARCHS="arm64" \
@@ -165,23 +165,23 @@ jobs:
 
       - name: Build universal app (Release)
         run: |
-          xcodebuild -scheme cmux -configuration Release -derivedDataPath build-universal \
+          xcodebuild -scheme remux -configuration Release -derivedDataPath build-universal \
             -destination 'generic/platform=macOS' \
             -clonedSourcePackagesDirPath .spm-cache \
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon-Nightly build
           ./scripts/bundle-runtime-binaries.sh \
-            "build-arm/Build/Products/Release/cmux.app" \
-            "build-universal/Build/Products/Release/cmux.app"
+            "build-arm/Build/Products/Release/remux.app" \
+            "build-universal/Build/Products/Release/remux.app"
 
       - name: Verify nightly binary architectures
         run: |
           set -euo pipefail
-          ARM_APP_BINARY="build-arm/Build/Products/Release/cmux.app/Contents/MacOS/cmux"
-          ARM_CLI_BINARY="build-arm/Build/Products/Release/cmux.app/Contents/Resources/bin/cmux"
-          APP_BINARY="build-universal/Build/Products/Release/cmux.app/Contents/MacOS/cmux"
-          CLI_BINARY="build-universal/Build/Products/Release/cmux.app/Contents/Resources/bin/cmux"
+          ARM_APP_BINARY="build-arm/Build/Products/Release/remux.app/Contents/MacOS/remux"
+          ARM_CLI_BINARY="build-arm/Build/Products/Release/remux.app/Contents/Resources/bin/remux"
+          APP_BINARY="build-universal/Build/Products/Release/remux.app/Contents/MacOS/remux"
+          CLI_BINARY="build-universal/Build/Products/Release/remux.app/Contents/Resources/bin/remux"
           ARM_APP_ARCHS="$(lipo -archs "$ARM_APP_BINARY")"
           ARM_CLI_ARCHS="$(lipo -archs "$ARM_CLI_BINARY")"
           APP_ARCHS="$(lipo -archs "$APP_BINARY")"
@@ -224,7 +224,7 @@ jobs:
           ARM_APP_DIR="build-arm/Build/Products/Release"
           UNIVERSAL_APP_DIR="build-universal/Build/Products/Release"
 
-          BASE_MARKETING=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${ARM_APP_DIR}/cmux.app/Contents/Info.plist")
+          BASE_MARKETING=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${ARM_APP_DIR}/remux.app/Contents/Info.plist")
           NIGHTLY_DATE=$(date -u +%Y%m%d)
 
           # Build number: unique/monotonic per workflow run attempt so same-day
@@ -237,8 +237,8 @@ jobs:
           fi
           echo "NIGHTLY_BUILD=${NIGHTLY_BUILD}" >> "$GITHUB_ENV"
 
-          ARM_DMG_IMMUTABLE="cmux-nightly-macos-${NIGHTLY_BUILD}.dmg"
-          UNIVERSAL_DMG_IMMUTABLE="cmux-nightly-universal-macos-${NIGHTLY_BUILD}.dmg"
+          ARM_DMG_IMMUTABLE="remux-nightly-macos-${NIGHTLY_BUILD}.dmg"
+          UNIVERSAL_DMG_IMMUTABLE="remux-nightly-universal-macos-${NIGHTLY_BUILD}.dmg"
           echo "NIGHTLY_DMG_IMMUTABLE=${ARM_DMG_IMMUTABLE}" >> "$GITHUB_ENV"
           echo "NIGHTLY_UNIVERSAL_DMG_IMMUTABLE=${UNIVERSAL_DMG_IMMUTABLE}" >> "$GITHUB_ENV"
 
@@ -246,10 +246,10 @@ jobs:
             local app_dir="$1"
             local bundle_id="$2"
             local feed_url="$3"
-            local app_plist="$app_dir/cmux.app/Contents/Info.plist"
+            local app_plist="$app_dir/remux.app/Contents/Info.plist"
 
-            /usr/libexec/PlistBuddy -c "Set :CFBundleName cmux NIGHTLY" "$app_plist"
-            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName cmux NIGHTLY" "$app_plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName remux NIGHTLY" "$app_plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName remux NIGHTLY" "$app_plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${bundle_id}" "$app_plist"
             /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$app_plist" >/dev/null 2>&1 || true
             /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$app_plist" >/dev/null 2>&1 || true
@@ -257,23 +257,23 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :SUFeedURL string ${feed_url}" "$app_plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${BASE_MARKETING}-nightly.${NIGHTLY_DATE}" "$app_plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${NIGHTLY_BUILD}" "$app_plist"
-            /usr/libexec/PlistBuddy -c "Delete :CMUXCommit" "$app_plist" >/dev/null 2>&1 || true
-            /usr/libexec/PlistBuddy -c "Add :CMUXCommit string ${SHORT_SHA}" "$app_plist"
-            mv "$app_dir/cmux.app" "$app_dir/cmux NIGHTLY.app"
+            /usr/libexec/PlistBuddy -c "Delete :REMUXCommit" "$app_plist" >/dev/null 2>&1 || true
+            /usr/libexec/PlistBuddy -c "Add :REMUXCommit string ${SHORT_SHA}" "$app_plist"
+            mv "$app_dir/remux.app" "$app_dir/remux NIGHTLY.app"
           }
 
           prepare_variant \
             "$ARM_APP_DIR" \
-            "com.cmuxterm.app.nightly" \
-            "https://github.com/manaflow-ai/cmux/releases/download/nightly/appcast.xml"
+            "com.remuxterm.app.nightly" \
+            "https://github.com/yaoshenwang/remux/releases/download/nightly/appcast.xml"
           prepare_variant \
             "$UNIVERSAL_APP_DIR" \
-            "com.cmuxterm.app.nightly.universal" \
-            "https://github.com/manaflow-ai/cmux/releases/download/nightly/appcast-universal.xml"
+            "com.remuxterm.app.nightly.universal" \
+            "https://github.com/yaoshenwang/remux/releases/download/nightly/appcast-universal.xml"
 
-          echo "Nightly app name: cmux NIGHTLY"
-          echo "Nightly arm64 bundle ID: com.cmuxterm.app.nightly"
-          echo "Nightly universal bundle ID: com.cmuxterm.app.nightly.universal"
+          echo "Nightly app name: remux NIGHTLY"
+          echo "Nightly arm64 bundle ID: com.remuxterm.app.nightly"
+          echo "Nightly universal bundle ID: com.remuxterm.app.nightly.universal"
           echo "Nightly marketing version: ${BASE_MARKETING}-nightly.${NIGHTLY_DATE}"
           echo "Nightly build number: ${NIGHTLY_BUILD}"
           echo "Nightly arm64 immutable DMG: ${ARM_DMG_IMMUTABLE}"
@@ -283,40 +283,46 @@ jobs:
       - name: Import signing cert
         if: needs.decide.outputs.should_publish != 'true' || steps.current_head.outputs.still_current == 'true'
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}
+          APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
         run: |
-          if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
-            echo "Missing APPLE_CERTIFICATE_BASE64 secret" >&2
+          if [ -z "$APPLE_CERTIFICATES_P12" ]; then
+            echo "Missing APPLE_CERTIFICATES_P12 secret" >&2
             exit 1
           fi
-          if [ -z "$APPLE_CERTIFICATE_PASSWORD" ]; then
-            echo "Missing APPLE_CERTIFICATE_PASSWORD secret" >&2
+          if [ -z "$APPLE_CERTIFICATES_PASSWORD" ]; then
+            echo "Missing APPLE_CERTIFICATES_PASSWORD secret" >&2
             exit 1
           fi
           KEYCHAIN_PASSWORD="$(uuidgen)"
-          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > /tmp/cert.p12
+          CERT_PATH="/tmp/remux-signing-cert.p12"
+          echo "$APPLE_CERTIFICATES_P12" | base64 --decode > "$CERT_PATH"
           security delete-keychain build.keychain >/dev/null 2>&1 || true
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security import "$CERT_PATH" -k build.keychain -P "$APPLE_CERTIFICATES_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security list-keychains -d user -s build.keychain
+          APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning build.keychain | awk -F'\"' '/\"/{print $2; exit}')"
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "Unable to determine signing identity from build.keychain" >&2
+            security find-identity -v -p codesigning build.keychain || true
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
       - name: Codesign apps
         if: needs.decide.outputs.should_publish != 'true' || steps.current_head.outputs.still_current == 'true'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
             echo "Missing APPLE_SIGNING_IDENTITY secret" >&2
             exit 1
           fi
-          ENTITLEMENTS="cmux.entitlements"
+          ENTITLEMENTS="remux.entitlements"
           for APP_PATH in \
-            "build-arm/Build/Products/Release/cmux NIGHTLY.app" \
-            "build-universal/Build/Products/Release/cmux NIGHTLY.app"
+            "build-arm/Build/Products/Release/remux NIGHTLY.app" \
+            "build-universal/Build/Products/Release/remux NIGHTLY.app"
           do
             for BIN_PATH in "$APP_PATH/Contents/Resources/bin/"*; do
               [ -f "$BIN_PATH" ] || continue
@@ -331,15 +337,17 @@ jobs:
       - name: Notarize apps and dmgs
         if: needs.decide.outputs.should_publish != 'true' || steps.current_head.outputs.still_current == 'true'
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
-            echo "Missing notarization secrets (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID)" >&2
+          if [ -z "$APPLE_TEAM_ID" ] || [ -z "$APP_STORE_CONNECT_API_KEY_ID" ] || [ -z "$APP_STORE_CONNECT_API_KEY_P8" ] || [ -z "$APP_STORE_CONNECT_ISSUER_ID" ]; then
+            echo "Missing notarization secrets (APPLE_TEAM_ID, APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_KEY_P8, APP_STORE_CONNECT_ISSUER_ID)" >&2
             exit 1
           fi
+          AUTH_KEY_PATH="/tmp/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          printf "%s" "$APP_STORE_CONNECT_API_KEY_P8" > "$AUTH_KEY_PATH"
           notarize_and_package() {
             local app_path="$1"
             local dmg_release="$2"
@@ -349,12 +357,12 @@ jobs:
             local created_dmg
 
             ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip_submit"
-            APP_SUBMIT_JSON="$(xcrun notarytool submit "$zip_submit" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait --output-format json)"
+            APP_SUBMIT_JSON="$(xcrun notarytool submit "$zip_submit" --key "$AUTH_KEY_PATH" --key-id "$APP_STORE_CONNECT_API_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID" --team-id "$APPLE_TEAM_ID" --wait --output-format json)"
             APP_SUBMIT_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$APP_SUBMIT_JSON")"
             APP_STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$APP_SUBMIT_JSON")"
             if [ "$APP_STATUS" != "Accepted" ]; then
               echo "App notarization failed for $app_path with status: $APP_STATUS" >&2
-              xcrun notarytool log "$APP_SUBMIT_ID" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" || true
+              xcrun notarytool log "$APP_SUBMIT_ID" --key "$AUTH_KEY_PATH" --key-id "$APP_STORE_CONNECT_API_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID" --team-id "$APPLE_TEAM_ID" || true
               exit 1
             fi
             xcrun stapler staple "$app_path"
@@ -375,12 +383,12 @@ jobs:
             mv "$created_dmg" "$dmg_release"
             rm -rf "$dmg_tmp_dir"
 
-            DMG_SUBMIT_JSON="$(xcrun notarytool submit "$dmg_release" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait --output-format json)"
+            DMG_SUBMIT_JSON="$(xcrun notarytool submit "$dmg_release" --key "$AUTH_KEY_PATH" --key-id "$APP_STORE_CONNECT_API_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID" --team-id "$APPLE_TEAM_ID" --wait --output-format json)"
             DMG_SUBMIT_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$DMG_SUBMIT_JSON")"
             DMG_STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$DMG_SUBMIT_JSON")"
             if [ "$DMG_STATUS" != "Accepted" ]; then
               echo "DMG notarization failed for $dmg_release with status: $DMG_STATUS" >&2
-              xcrun notarytool log "$DMG_SUBMIT_ID" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" || true
+              xcrun notarytool log "$DMG_SUBMIT_ID" --key "$AUTH_KEY_PATH" --key-id "$APP_STORE_CONNECT_API_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID" --team-id "$APPLE_TEAM_ID" || true
               exit 1
             fi
             xcrun stapler staple "$dmg_release"
@@ -389,12 +397,12 @@ jobs:
           }
 
           notarize_and_package \
-            "build-arm/Build/Products/Release/cmux NIGHTLY.app" \
-            "cmux-nightly-macos.dmg" \
+            "build-arm/Build/Products/Release/remux NIGHTLY.app" \
+            "remux-nightly-macos.dmg" \
             "$NIGHTLY_DMG_IMMUTABLE"
           notarize_and_package \
-            "build-universal/Build/Products/Release/cmux NIGHTLY.app" \
-            "cmux-nightly-universal-macos.dmg" \
+            "build-universal/Build/Products/Release/remux NIGHTLY.app" \
+            "remux-nightly-universal-macos.dmg" \
             "$NIGHTLY_UNIVERSAL_DMG_IMMUTABLE"
 
       - name: Upload dSYMs to Sentry
@@ -402,10 +410,10 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: manaflow
-          SENTRY_PROJECT: cmuxterm-macos
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
         run: |
-          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
-            echo "SENTRY_AUTH_TOKEN not set, skipping dSYM upload"
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
+            echo "SENTRY_AUTH_TOKEN or SENTRY_PROJECT not set, skipping dSYM upload"
             exit 0
           fi
           brew install getsentry/tools/sentry-cli || true
@@ -417,6 +425,8 @@ jobs:
         if: needs.decide.outputs.should_publish != 'true' || steps.current_head.outputs.still_current == 'true'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/download/nightly/
+          RELEASE_NOTES_URL: https://github.com/${{ github.repository }}/releases/tag/nightly
         run: |
           if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
             echo "Missing SPARKLE_PRIVATE_KEY secret" >&2
@@ -429,10 +439,10 @@ jobs:
         if: needs.decide.outputs.should_publish != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cmux-nightly-${{ needs.decide.outputs.short_sha }}
+          name: remux-nightly-${{ needs.decide.outputs.short_sha }}
           path: |
-            cmux-nightly-macos*.dmg
-            cmux-nightly-universal-macos*.dmg
+            remux-nightly-macos*.dmg
+            remux-nightly-universal-macos*.dmg
             appcast.xml
             appcast-universal.xml
           if-no-files-found: error
@@ -457,17 +467,17 @@ jobs:
           body: |
             Automated nightly build for `${{ needs.decide.outputs.short_sha }}`.
 
-            **cmux NIGHTLY** has two update tracks:
-            - Apple Silicon: bundle ID `com.cmuxterm.app.nightly`, feed `appcast.xml`
-            - Universal: bundle ID `com.cmuxterm.app.nightly.universal`, feed `appcast-universal.xml`
+            **remux NIGHTLY** has two update tracks:
+            - Apple Silicon: bundle ID `com.remuxterm.app.nightly`, feed `appcast.xml`
+            - Universal: bundle ID `com.remuxterm.app.nightly.universal`, feed `appcast-universal.xml`
 
-            [Download cmux-nightly-macos.dmg](https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-macos.dmg)
-            [Download cmux-nightly-universal-macos.dmg](https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-universal-macos.dmg)
+            [Download remux-nightly-macos.dmg](https://github.com/${{ github.repository }}/releases/download/nightly/remux-nightly-macos.dmg)
+            [Download remux-nightly-universal-macos.dmg](https://github.com/${{ github.repository }}/releases/download/nightly/remux-nightly-universal-macos.dmg)
           files: |
-            cmux-nightly-macos-${{ github.run_id }}*.dmg
-            cmux-nightly-macos.dmg
-            cmux-nightly-universal-macos-${{ github.run_id }}*.dmg
-            cmux-nightly-universal-macos.dmg
+            remux-nightly-macos-${{ github.run_id }}*.dmg
+            remux-nightly-macos.dmg
+            remux-nightly-universal-macos-${{ github.run_id }}*.dmg
+            remux-nightly-universal-macos.dmg
             appcast.xml
             appcast-universal.xml
           overwrite_files: true
@@ -476,4 +486,5 @@ jobs:
         if: always()
         run: |
           security delete-keychain build.keychain >/dev/null 2>&1 || true
-          rm -f /tmp/cert.p12
+          rm -f /tmp/remux-signing-cert.p12
+          rm -f /tmp/AuthKey_*.p8

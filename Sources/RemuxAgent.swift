@@ -133,7 +133,7 @@ enum RemuxAgent {
     }
 
     private static func defaultSocketPath() -> String {
-        let baseDir = "\(NSHomeDirectory())/Library/Application Support/cmux"
+        let baseDir = "\(NSHomeDirectory())/Library/Application Support/remux"
         return "\(baseDir)/\(socketFileName())"
     }
 

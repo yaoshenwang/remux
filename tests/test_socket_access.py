@@ -2,12 +2,12 @@
 """
 Tests for socket access control (process ancestry check).
 
-In cmuxOnly mode (default), only processes descended from the cmux
+In remuxOnly mode (default), only processes descended from the remux
 app process can connect. External processes (e.g., SSH) are rejected.
 
 Test strategy:
-  Phase 1: cmuxOnly — external processes get rejected
-  Phase 2: cmuxOnly — internal process CAN connect (inject via shell rc)
+  Phase 1: remuxOnly — external processes get rejected
+  Phase 2: remuxOnly — internal process CAN connect (inject via shell rc)
   Phase 3: allowAll env override — existing test commands still work
 
 Usage:
@@ -25,7 +25,7 @@ import glob
 import plistlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
 class TestResult:
@@ -44,7 +44,7 @@ class TestResult:
 
 
 def _find_socket_path():
-    return cmux().socket_path
+    return remux().socket_path
 
 
 def _raw_connect(socket_path: str, timeout: float = 3.0):
@@ -72,7 +72,7 @@ def _raw_send(sock, command: str, timeout: float = 3.0) -> str:
 
 
 def _preferred_worktree_slug():
-    env_slug = os.environ.get("CMUX_TAG") or os.environ.get("CMUX_BRANCH_SLUG")
+    env_slug = os.environ.get("REMUX_TAG") or os.environ.get("REMUX_BRANCH_SLUG")
     if env_slug:
         return env_slug.strip().lower()
 
@@ -104,22 +104,22 @@ def _derived_app_candidates_for_current_worktree():
         if os.path.realpath(workspace_path) != project_path:
             continue
         derived_root = os.path.dirname(info_path)
-        app_path = os.path.join(derived_root, "Build/Products/Debug/cmux DEV.app")
+        app_path = os.path.join(derived_root, "Build/Products/Debug/remux DEV.app")
         if os.path.exists(app_path):
             matches.append(app_path)
     return matches
 
 
 def _find_app():
-    explicit = os.environ.get("CMUX_APP_PATH")
+    explicit = os.environ.get("REMUX_APP_PATH")
     if explicit and os.path.exists(explicit):
         return explicit
 
     preferred_slug = _preferred_worktree_slug()
     if preferred_slug:
         preferred_tmp = []
-        preferred_tmp.extend(glob.glob(f"/tmp/cmux-{preferred_slug}/Build/Products/Debug/cmux DEV*.app"))
-        preferred_tmp.extend(glob.glob(f"/private/tmp/cmux-{preferred_slug}/Build/Products/Debug/cmux DEV*.app"))
+        preferred_tmp.extend(glob.glob(f"/tmp/remux-{preferred_slug}/Build/Products/Debug/remux DEV*.app"))
+        preferred_tmp.extend(glob.glob(f"/private/tmp/remux-{preferred_slug}/Build/Products/Debug/remux DEV*.app"))
         preferred_tmp = [p for p in preferred_tmp if os.path.exists(p)]
         if preferred_tmp:
             preferred_tmp.sort(key=os.path.getmtime, reverse=True)
@@ -132,11 +132,11 @@ def _find_app():
 
     home = os.path.expanduser("~")
     derived_candidates = glob.glob(os.path.join(
-        home, "Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/cmux DEV.app"
+        home, "Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/remux DEV.app"
     ))
     tmp_candidates = []
-    tmp_candidates.extend(glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux DEV*.app"))
-    tmp_candidates.extend(glob.glob("/private/tmp/cmux-*/Build/Products/Debug/cmux DEV*.app"))
+    tmp_candidates.extend(glob.glob("/tmp/remux-*/Build/Products/Debug/remux DEV*.app"))
+    tmp_candidates.extend(glob.glob("/private/tmp/remux-*/Build/Products/Debug/remux DEV*.app"))
 
     derived_candidates = [p for p in derived_candidates if os.path.exists(p)]
     tmp_candidates = [p for p in tmp_candidates if os.path.exists(p)]
@@ -161,23 +161,23 @@ def _find_app():
 
 
 def _find_cli(preferred_app_path: str = ""):
-    explicit = os.environ.get("CMUX_CLI_BIN") or os.environ.get("CMUX_CLI")
+    explicit = os.environ.get("REMUX_CLI_BIN") or os.environ.get("REMUX_CLI")
     if explicit and os.path.exists(explicit) and os.access(explicit, os.X_OK):
         return explicit
 
     if preferred_app_path:
         debug_dir = os.path.dirname(preferred_app_path)
-        sibling = os.path.join(debug_dir, "cmux")
+        sibling = os.path.join(debug_dir, "remux")
         if os.path.exists(sibling) and os.access(sibling, os.X_OK):
             return sibling
 
     candidates = []
     home = os.path.expanduser("~")
     candidates.extend(glob.glob(os.path.join(
-        home, "Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/cmux"
+        home, "Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/remux"
     )))
-    candidates.extend(glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux"))
-    candidates.extend(glob.glob("/private/tmp/cmux-*/Build/Products/Debug/cmux"))
+    candidates.extend(glob.glob("/tmp/remux-*/Build/Products/Debug/remux"))
+    candidates.extend(glob.glob("/private/tmp/remux-*/Build/Products/Debug/remux"))
     candidates = [p for p in candidates if os.path.exists(p) and os.access(p, os.X_OK)]
     if not candidates:
         return ""
@@ -206,16 +206,16 @@ def _wait_for_socket(socket_path: str, timeout: float = 10.0) -> bool:
     return False
 
 
-def _kill_cmux(app_path: str = None):
+def _kill_remux(app_path: str = None):
     if app_path:
-        exe = os.path.join(app_path, "Contents/MacOS/cmux DEV")
+        exe = os.path.join(app_path, "Contents/MacOS/remux DEV")
         subprocess.run(["pkill", "-f", exe], capture_output=True)
     else:
-        subprocess.run(["pkill", "-x", "cmux DEV"], capture_output=True)
+        subprocess.run(["pkill", "-x", "remux DEV"], capture_output=True)
     time.sleep(1.5)
 
 
-def _launch_cmux(app_path: str, socket_path: str, mode: str = None, extra_env: dict = None):
+def _launch_remux(app_path: str, socket_path: str, mode: str = None, extra_env: dict = None):
     if os.path.exists(socket_path):
         try:
             os.unlink(socket_path)
@@ -224,10 +224,10 @@ def _launch_cmux(app_path: str, socket_path: str, mode: str = None, extra_env: d
 
     env_args = []
     if mode:
-        env_args = ["--env", f"CMUX_SOCKET_MODE={mode}"]
+        env_args = ["--env", f"REMUX_SOCKET_MODE={mode}"]
     launch_env = {
-        "CMUX_SOCKET_PATH": socket_path,
-        "CMUX_ALLOW_SOCKET_OVERRIDE": "1",
+        "REMUX_SOCKET_PATH": socket_path,
+        "REMUX_ALLOW_SOCKET_OVERRIDE": "1",
     }
     if extra_env:
         launch_env.update(extra_env)
@@ -349,13 +349,13 @@ else:
 
 def test_internal_process_allowed(socket_path: str, app_path: str) -> TestResult:
     """
-    Verify a cmux-spawned terminal process CAN connect in cmuxOnly mode.
-    Inject a test via the shell rc file, then launch cmux in cmuxOnly mode.
-    The shell (a descendant of cmux) runs the test on startup.
+    Verify a remux-spawned terminal process CAN connect in remuxOnly mode.
+    Inject a test via the shell rc file, then launch remux in remuxOnly mode.
+    The shell (a descendant of remux) runs the test on startup.
     """
-    result = TestResult("Internal process can connect (cmuxOnly)")
-    marker = os.path.join(tempfile.gettempdir(), f"cmux_internal_{os.getpid()}")
-    hook_file = os.path.join(tempfile.gettempdir(), f"cmux_rc_hook_{os.getpid()}.sh")
+    result = TestResult("Internal process can connect (remuxOnly)")
+    marker = os.path.join(tempfile.gettempdir(), f"remux_internal_{os.getpid()}")
+    hook_file = os.path.join(tempfile.gettempdir(), f"remux_rc_hook_{os.getpid()}.sh")
     zprofile_path = os.path.expanduser("~/.zprofile")
 
     try:
@@ -386,9 +386,9 @@ fi
         with open(zprofile_path, "a") as f:
             f.write(hook_line)
 
-        # Kill existing cmux, launch in cmuxOnly mode (default)
-        _kill_cmux(app_path)
-        _launch_cmux(app_path, socket_path, mode="cmuxOnly")
+        # Kill existing remux, launch in remuxOnly mode (default)
+        _kill_remux(app_path)
+        _launch_remux(app_path, socket_path, mode="remuxOnly")
 
         # Wait for marker (the shell sources .zprofile on startup)
         for _ in range(40):
@@ -404,7 +404,7 @@ fi
             content = f.read().strip()
 
         if content == "OK":
-            result.success("Internal process pinged socket successfully in cmuxOnly mode")
+            result.success("Internal process pinged socket successfully in remuxOnly mode")
         else:
             result.failure(f"Internal process got: {content!r}")
 
@@ -440,11 +440,11 @@ fi
 # ---------------------------------------------------------------------------
 
 def test_allowall_mode_works(socket_path: str, app_path: str) -> TestResult:
-    """Verify CMUX_SOCKET_MODE=allowAll bypasses ancestry check."""
+    """Verify REMUX_SOCKET_MODE=allowAll bypasses ancestry check."""
     result = TestResult("allowAll mode allows external")
     try:
-        _kill_cmux(app_path)
-        _launch_cmux(app_path, socket_path, mode="allowAll")
+        _kill_remux(app_path)
+        _launch_remux(app_path, socket_path, mode="allowAll")
 
         sock = _raw_connect(socket_path)
         response = _raw_send(sock, "ping")
@@ -462,14 +462,14 @@ def test_allowall_mode_works(socket_path: str, app_path: str) -> TestResult:
 def test_password_mode_requires_auth(socket_path: str, app_path: str) -> TestResult:
     """Verify password mode rejects unauthenticated commands."""
     result = TestResult("Password mode requires auth")
-    password = f"cmux-pass-{os.getpid()}"
+    password = f"remux-pass-{os.getpid()}"
     try:
-        _kill_cmux(app_path)
-        _launch_cmux(
+        _kill_remux(app_path)
+        _launch_remux(
             app_path,
             socket_path,
             mode="password",
-            extra_env={"CMUX_SOCKET_PASSWORD": password}
+            extra_env={"REMUX_SOCKET_PASSWORD": password}
         )
 
         sock = _raw_connect(socket_path)
@@ -488,14 +488,14 @@ def test_password_mode_requires_auth(socket_path: str, app_path: str) -> TestRes
 def test_password_mode_v1_auth_flow(socket_path: str, app_path: str) -> TestResult:
     """Verify v1 auth command unlocks the connection only with correct password."""
     result = TestResult("Password mode v1 auth flow")
-    password = f"cmux-pass-{os.getpid()}"
+    password = f"remux-pass-{os.getpid()}"
     try:
-        _kill_cmux(app_path)
-        _launch_cmux(
+        _kill_remux(app_path)
+        _launch_remux(
             app_path,
             socket_path,
             mode="password",
-            extra_env={"CMUX_SOCKET_PASSWORD": password}
+            extra_env={"REMUX_SOCKET_PASSWORD": password}
         )
 
         sock = _raw_connect(socket_path)
@@ -526,14 +526,14 @@ def test_password_mode_v1_auth_flow(socket_path: str, app_path: str) -> TestResu
 def test_password_mode_v2_auth_flow(socket_path: str, app_path: str) -> TestResult:
     """Verify v2 auth.login unlocks subsequent v2 requests."""
     result = TestResult("Password mode v2 auth flow")
-    password = f"cmux-pass-{os.getpid()}"
+    password = f"remux-pass-{os.getpid()}"
     try:
-        _kill_cmux(app_path)
-        _launch_cmux(
+        _kill_remux(app_path)
+        _launch_remux(
             app_path,
             socket_path,
             mode="password",
-            extra_env={"CMUX_SOCKET_PASSWORD": password}
+            extra_env={"REMUX_SOCKET_PASSWORD": password}
         )
 
         sock = _raw_connect(socket_path)
@@ -580,19 +580,19 @@ def test_password_mode_v2_auth_flow(socket_path: str, app_path: str) -> TestResu
 def test_password_mode_cli_exit_code(socket_path: str, app_path: str) -> TestResult:
     """Verify CLI exits non-zero on auth-required and succeeds with --password."""
     result = TestResult("Password mode CLI exit code")
-    password = f"cmux-pass-{os.getpid()}"
+    password = f"remux-pass-{os.getpid()}"
     try:
         cli_path = _find_cli(preferred_app_path=app_path)
         if not cli_path:
-            result.failure("Could not find cmux CLI binary")
+            result.failure("Could not find remux CLI binary")
             return result
 
-        _kill_cmux(app_path)
-        _launch_cmux(
+        _kill_remux(app_path)
+        _launch_remux(
             app_path,
             socket_path,
             mode="password",
-            extra_env={"CMUX_SOCKET_PASSWORD": password}
+            extra_env={"REMUX_SOCKET_PASSWORD": password}
         )
 
         no_auth = subprocess.run(
@@ -637,17 +637,17 @@ def test_password_mode_cli_exit_code(socket_path: str, app_path: str) -> TestRes
 
 def run_tests():
     print("=" * 60)
-    print("cmux Socket Access Control Tests")
+    print("remux Socket Access Control Tests")
     print("=" * 60)
     print()
 
     app_path = _find_app()
     if not app_path:
-        print("Error: Could not find cmux DEV.app in DerivedData")
+        print("Error: Could not find remux DEV.app in DerivedData")
         return 1
     print(f"App: {app_path}")
 
-    socket_path = f"/tmp/cmux-test-socket-access-{os.getpid()}.sock"
+    socket_path = f"/tmp/remux-test-socket-access-{os.getpid()}.sock"
     try:
         os.unlink(socket_path)
     except OSError:
@@ -665,14 +665,14 @@ def run_tests():
         status = "\u2705" if r.passed else "\u274c"
         print(f"    {status} {r.message}")
 
-    # ── Phase 1: cmuxOnly — external rejection ──
-    print("Phase 1: cmuxOnly mode — external rejection")
+    # ── Phase 1: remuxOnly — external rejection ──
+    print("Phase 1: remuxOnly mode — external rejection")
     print("-" * 50)
 
-    # Ensure cmux is running in cmuxOnly mode
-    _kill_cmux(app_path)
-    print("  Launching cmux in cmuxOnly mode...")
-    _launch_cmux(app_path, socket_path, mode="cmuxOnly")
+    # Ensure remux is running in remuxOnly mode
+    _kill_remux(app_path)
+    print("  Launching remux in remuxOnly mode...")
+    _launch_remux(app_path, socket_path, mode="remuxOnly")
 
     run_test(test_external_rejected, socket_path)
     run_test(test_connection_closed_after_reject, socket_path)
@@ -680,8 +680,8 @@ def run_tests():
     run_test(test_subprocess_rejected, socket_path)
     print()
 
-    # ── Phase 2: cmuxOnly — internal process CAN connect ──
-    print("Phase 2: cmuxOnly mode — internal process allowed")
+    # ── Phase 2: remuxOnly — internal process CAN connect ──
+    print("Phase 2: remuxOnly mode — internal process allowed")
     print("-" * 50)
 
     run_test(test_internal_process_allowed, socket_path, app_path)
@@ -704,9 +704,9 @@ def run_tests():
     run_test(test_password_mode_cli_exit_code, socket_path, app_path)
     print()
 
-    # ── Cleanup: leave cmux in cmuxOnly mode ──
-    _kill_cmux(app_path)
-    _launch_cmux(app_path, socket_path, mode="cmuxOnly")
+    # ── Cleanup: leave remux in remuxOnly mode ──
+    _kill_remux(app_path)
+    _launch_remux(app_path, socket_path, mode="remuxOnly")
 
     # ── Summary ──
     print("=" * 60)

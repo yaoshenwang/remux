@@ -3,7 +3,7 @@
 Regression test: Cmd+Option+T closes all other tabs in the focused pane
 after an explicit confirmation.
 
-Run this against an app launched with CMUX_SOCKET_MODE=allowAll.
+Run this against an app launched with REMUX_SOCKET_MODE=allowAll.
 """
 
 import os
@@ -13,10 +13,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05) -> bool:
@@ -28,7 +28,7 @@ def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05) -> 
     return False
 
 
-def _pane_state(client: cmux) -> list[dict]:
+def _pane_state(client: remux) -> list[dict]:
     rows: list[dict] = []
     for index, panel_id, title, selected in client.list_pane_surfaces():
         rows.append(
@@ -48,18 +48,18 @@ def _send_shortcut_via_system_events(key: str, modifiers: str) -> None:
         subprocess.run(["osascript", "-e", script], check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
-        raise cmuxError(
+        raise remuxError(
             "Failed to send keyboard shortcut via System Events. "
             f"Ensure macOS Accessibility automation is enabled. stderr={stderr}"
         ) from exc
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         if not client.ping():
-            raise cmuxError(
+            raise remuxError(
                 f"Socket ping failed on {SOCKET_PATH}. "
-                "Launch Debug app with CMUX_SOCKET_MODE=allowAll for this test."
+                "Launch Debug app with REMUX_SOCKET_MODE=allowAll for this test."
             )
 
         workspace_id = client.new_workspace()
@@ -76,16 +76,16 @@ def main() -> int:
 
             before = _pane_state(client)
             if len(before) < 3:
-                raise cmuxError(f"Expected >=3 tabs before shortcut, got {before}")
+                raise remuxError(f"Expected >=3 tabs before shortcut, got {before}")
 
             selected_rows = [row for row in before if row["selected"]]
             if len(selected_rows) != 1:
-                raise cmuxError(f"Expected exactly one selected tab before shortcut, got {before}")
+                raise remuxError(f"Expected exactly one selected tab before shortcut, got {before}")
             selected_panel_id = selected_rows[0]["panel_id"]
 
             expected_to_close = [row for row in before if row["panel_id"] != selected_panel_id]
             if len(expected_to_close) < 2:
-                raise cmuxError(
+                raise remuxError(
                     f"Expected at least two non-selected tabs before shortcut, got {before}"
                 )
 
@@ -94,7 +94,7 @@ def main() -> int:
             time.sleep(0.25)
             after_trigger = _pane_state(client)
             if len(after_trigger) != len(before):
-                raise cmuxError(
+                raise remuxError(
                     "Cmd+Option+T should require confirmation before closing.\n"
                     f"before={before}\n"
                     f"after_trigger={after_trigger}"
@@ -104,7 +104,7 @@ def main() -> int:
             _send_shortcut_via_system_events("d", "command down")
             closed = _wait_until(lambda: len(_pane_state(client)) == 1, timeout_s=5.0, interval_s=0.05)
             if not closed:
-                raise cmuxError(
+                raise remuxError(
                     "Timed out waiting for tabs to close after confirming Cmd+Option+T.\n"
                     f"before={before}\n"
                     f"after_trigger={after_trigger}\n"
@@ -113,12 +113,12 @@ def main() -> int:
 
             after_confirm = _pane_state(client)
             if len(after_confirm) != 1:
-                raise cmuxError(
+                raise remuxError(
                     f"Expected one remaining tab after confirmation, got {after_confirm}"
                 )
             remaining = after_confirm[0]
             if remaining["panel_id"] != selected_panel_id:
-                raise cmuxError(
+                raise remuxError(
                     "Expected selected tab to remain after closing others.\n"
                     f"expected_selected={selected_panel_id}\n"
                     f"remaining={remaining}\n"

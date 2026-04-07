@@ -1,0 +1,4 @@
+interface:
+  display_name: "remux Core"
+  short_description: "Control windows/workspaces/panes/surfaces and routing with remux CLI."
+  default_prompt: "Use this skill to inspect and manipulate remux topology: identify context, target handles, create/focus/move/reorder windows/workspaces/panes/surfaces, and use trigger-flash for visual confirmation."

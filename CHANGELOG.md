@@ -1,80 +1,98 @@
 # Changelog
 
-All notable changes to cmux are documented here.
+All notable changes to remux are documented here.
+
+## [0.63.0] - 2026-04-07
+
+### Added
+- `remux-agent` for persistent sessions and SSH-backed remote workflows
+
+### Changed
+- Renamed the app from cmux to remux across the app bundle, CLI, docs, blog, Homebrew tap, and release assets
+- Pointed the ghostty and bonsplit submodules plus GhosttyKit artifact pipeline at writable `yaoshenwang/*` forks so branch releases can be reproduced end to end
+- Updated installation docs to match the current remux release and Homebrew tap paths
+
+### Fixed
+- Tagged GitHub releases now publish downloadable `remux-macos.dmg` and `appcast.xml` assets from the current dev branch workflow
+- Ghostty theme preview and debug-log integrations now use remux-specific bundle IDs, environment variables, and file paths consistently
+- Homebrew cask metadata now resolves to the remux app instead of the old cmux package
+
+### Thanks to 1 contributor!
+- [@yaoshenwang](https://github.com/yaoshenwang)
 
 ## [0.62.0] - 2026-03-07
 
 ### Added
-- Markdown viewer panel with live file watching ([#883](https://github.com/manaflow-ai/cmux/pull/883))
-- Find-in-page (Cmd+F) for browser panels ([#837](https://github.com/manaflow-ai/cmux/issues/837), [#875](https://github.com/manaflow-ai/cmux/pull/875))
-- Keyboard copy mode for terminal scrollback with vi-style navigation ([#792](https://github.com/manaflow-ai/cmux/pull/792))
-- Custom notification sounds with file picker support ([#839](https://github.com/manaflow-ai/cmux/pull/839), [#869](https://github.com/manaflow-ai/cmux/pull/869))
-- Browser camera and microphone permission support ([#760](https://github.com/manaflow-ai/cmux/issues/760), [#913](https://github.com/manaflow-ai/cmux/pull/913))
-- Language setting for per-app locale override ([#886](https://github.com/manaflow-ai/cmux/pull/886))
-- Japanese localization ([#819](https://github.com/manaflow-ai/cmux/pull/819))
-- 16 new languages added to localization ([#895](https://github.com/manaflow-ai/cmux/pull/895))
-- Kagi as a search provider option ([#561](https://github.com/manaflow-ai/cmux/pull/561))
-- Open Folder command (Cmd+O) ([#656](https://github.com/manaflow-ai/cmux/pull/656))
-- Dark mode app icon for macOS Sequoia ([#702](https://github.com/manaflow-ai/cmux/pull/702))
-- Close other pane tabs with confirmation ([#475](https://github.com/manaflow-ai/cmux/pull/475))
-- Flash Focused Panel command palette action ([#638](https://github.com/manaflow-ai/cmux/pull/638))
-- Zoom/maximize focused pane in splits ([#634](https://github.com/manaflow-ai/cmux/pull/634))
-- `cmux tree` command for full CLI hierarchy view ([#592](https://github.com/manaflow-ai/cmux/pull/592))
-- Install or uninstall the `cmux` CLI from the command palette ([#626](https://github.com/manaflow-ai/cmux/pull/626))
-- Clipboard image paste in terminal with Cmd+V ([#562](https://github.com/manaflow-ai/cmux/pull/562), [#853](https://github.com/manaflow-ai/cmux/pull/853))
-- Middle-click X11-style selection paste in terminal ([#369](https://github.com/manaflow-ai/cmux/pull/369))
-- Honor Ghostty `background-opacity` across all cmux chrome ([#667](https://github.com/manaflow-ai/cmux/pull/667))
-- Setting to hide Cmd-hold shortcut hints ([#765](https://github.com/manaflow-ai/cmux/pull/765))
-- Focus-follows-mouse on terminal hover ([#519](https://github.com/manaflow-ai/cmux/pull/519))
-- Sidebar help menu in the footer ([#958](https://github.com/manaflow-ai/cmux/pull/958))
-- External URL bypass rules for the embedded browser ([#768](https://github.com/manaflow-ai/cmux/pull/768))
-- Telemetry opt-out setting ([#610](https://github.com/manaflow-ai/cmux/pull/610))
-- Browser automation docs page ([#622](https://github.com/manaflow-ai/cmux/pull/622))
+- Markdown viewer panel with live file watching ([#883](https://github.com/yaoshenwang/remux/pull/883))
+- Find-in-page (Cmd+F) for browser panels ([#837](https://github.com/yaoshenwang/remux/issues/837), [#875](https://github.com/yaoshenwang/remux/pull/875))
+- Keyboard copy mode for terminal scrollback with vi-style navigation ([#792](https://github.com/yaoshenwang/remux/pull/792))
+- Custom notification sounds with file picker support ([#839](https://github.com/yaoshenwang/remux/pull/839), [#869](https://github.com/yaoshenwang/remux/pull/869))
+- Browser camera and microphone permission support ([#760](https://github.com/yaoshenwang/remux/issues/760), [#913](https://github.com/yaoshenwang/remux/pull/913))
+- Language setting for per-app locale override ([#886](https://github.com/yaoshenwang/remux/pull/886))
+- Japanese localization ([#819](https://github.com/yaoshenwang/remux/pull/819))
+- 16 new languages added to localization ([#895](https://github.com/yaoshenwang/remux/pull/895))
+- Kagi as a search provider option ([#561](https://github.com/yaoshenwang/remux/pull/561))
+- Open Folder command (Cmd+O) ([#656](https://github.com/yaoshenwang/remux/pull/656))
+- Dark mode app icon for macOS Sequoia ([#702](https://github.com/yaoshenwang/remux/pull/702))
+- Close other pane tabs with confirmation ([#475](https://github.com/yaoshenwang/remux/pull/475))
+- Flash Focused Panel command palette action ([#638](https://github.com/yaoshenwang/remux/pull/638))
+- Zoom/maximize focused pane in splits ([#634](https://github.com/yaoshenwang/remux/pull/634))
+- `remux tree` command for full CLI hierarchy view ([#592](https://github.com/yaoshenwang/remux/pull/592))
+- Install or uninstall the `remux` CLI from the command palette ([#626](https://github.com/yaoshenwang/remux/pull/626))
+- Clipboard image paste in terminal with Cmd+V ([#562](https://github.com/yaoshenwang/remux/pull/562), [#853](https://github.com/yaoshenwang/remux/pull/853))
+- Middle-click X11-style selection paste in terminal ([#369](https://github.com/yaoshenwang/remux/pull/369))
+- Honor Ghostty `background-opacity` across all remux chrome ([#667](https://github.com/yaoshenwang/remux/pull/667))
+- Setting to hide Cmd-hold shortcut hints ([#765](https://github.com/yaoshenwang/remux/pull/765))
+- Focus-follows-mouse on terminal hover ([#519](https://github.com/yaoshenwang/remux/pull/519))
+- Sidebar help menu in the footer ([#958](https://github.com/yaoshenwang/remux/pull/958))
+- External URL bypass rules for the embedded browser ([#768](https://github.com/yaoshenwang/remux/pull/768))
+- Telemetry opt-out setting ([#610](https://github.com/yaoshenwang/remux/pull/610))
+- Browser automation docs page ([#622](https://github.com/yaoshenwang/remux/pull/622))
 
 ### Changed
 - Command palette search is now async and decoupled from typing for reduced lag
 - Fuzzy matching improved with single-edit and omitted-character word matches
-- Replaced keychain password storage with file-based storage ([#576](https://github.com/manaflow-ai/cmux/pull/576))
-- Fullscreen shortcut changed to Cmd+Ctrl+F, and Cmd+Enter also toggles fullscreen ([#530](https://github.com/manaflow-ai/cmux/pull/530))
+- Replaced keychain password storage with file-based storage ([#576](https://github.com/yaoshenwang/remux/pull/576))
+- Fullscreen shortcut changed to Cmd+Ctrl+F, and Cmd+Enter also toggles fullscreen ([#530](https://github.com/yaoshenwang/remux/pull/530))
 - Workspace rename shortcut Cmd+Shift+R now uses the command palette flow
-- Renamed tab color to workspace color in user-facing strings ([#637](https://github.com/manaflow-ai/cmux/pull/637))
-- Feedback recipient changed to `feedback@manaflow.com` ([#1007](https://github.com/manaflow-ai/cmux/pull/1007))
-- Regenerated app icons from Icon Composer ([#1005](https://github.com/manaflow-ai/cmux/pull/1005))
-- Moved update logs into the Debug menu ([#1008](https://github.com/manaflow-ai/cmux/pull/1008))
+- Renamed tab color to workspace color in user-facing strings ([#637](https://github.com/yaoshenwang/remux/pull/637))
+- Feedback recipient changed to `feedback@manaflow.com` ([#1007](https://github.com/yaoshenwang/remux/pull/1007))
+- Regenerated app icons from Icon Composer ([#1005](https://github.com/yaoshenwang/remux/pull/1005))
+- Moved update logs into the Debug menu ([#1008](https://github.com/yaoshenwang/remux/pull/1008))
 
 ### Fixed
-- Frozen blank launch from session restore race condition ([#399](https://github.com/manaflow-ai/cmux/issues/399), [#565](https://github.com/manaflow-ai/cmux/pull/565))
-- Crash on launch from an exclusive access violation in drag-handle hit testing ([#490](https://github.com/manaflow-ai/cmux/issues/490))
-- Use-after-free in `ghostty_surface_refresh` after sleep/wake ([#432](https://github.com/manaflow-ai/cmux/issues/432), [#619](https://github.com/manaflow-ai/cmux/pull/619))
-- Startup SIGSEGV by pre-warming locale before `SentrySDK.start` ([#927](https://github.com/manaflow-ai/cmux/pull/927))
-- IME issues: Shift+Space toggle inserting a space ([#641](https://github.com/manaflow-ai/cmux/issues/641), [#670](https://github.com/manaflow-ai/cmux/pull/670)), Ctrl fast path blocking IME events, browser address bar Japanese IME ([#789](https://github.com/manaflow-ai/cmux/issues/789), [#867](https://github.com/manaflow-ai/cmux/pull/867)), and Cmd shortcuts during IME composition
-- CLI socket autodiscovery for tagged sockets ([#832](https://github.com/manaflow-ai/cmux/pull/832))
-- Flaky CLI socket listener recovery ([#952](https://github.com/manaflow-ai/cmux/issues/952), [#954](https://github.com/manaflow-ai/cmux/pull/954))
-- Side-docked dev tools resize ([#712](https://github.com/manaflow-ai/cmux/pull/712))
-- Dvorak Cmd+C colliding with the notifications shortcut ([#762](https://github.com/manaflow-ai/cmux/pull/762))
+- Frozen blank launch from session restore race condition ([#399](https://github.com/yaoshenwang/remux/issues/399), [#565](https://github.com/yaoshenwang/remux/pull/565))
+- Crash on launch from an exclusive access violation in drag-handle hit testing ([#490](https://github.com/yaoshenwang/remux/issues/490))
+- Use-after-free in `ghostty_surface_refresh` after sleep/wake ([#432](https://github.com/yaoshenwang/remux/issues/432), [#619](https://github.com/yaoshenwang/remux/pull/619))
+- Startup SIGSEGV by pre-warming locale before `SentrySDK.start` ([#927](https://github.com/yaoshenwang/remux/pull/927))
+- IME issues: Shift+Space toggle inserting a space ([#641](https://github.com/yaoshenwang/remux/issues/641), [#670](https://github.com/yaoshenwang/remux/pull/670)), Ctrl fast path blocking IME events, browser address bar Japanese IME ([#789](https://github.com/yaoshenwang/remux/issues/789), [#867](https://github.com/yaoshenwang/remux/pull/867)), and Cmd shortcuts during IME composition
+- CLI socket autodiscovery for tagged sockets ([#832](https://github.com/yaoshenwang/remux/pull/832))
+- Flaky CLI socket listener recovery ([#952](https://github.com/yaoshenwang/remux/issues/952), [#954](https://github.com/yaoshenwang/remux/pull/954))
+- Side-docked dev tools resize ([#712](https://github.com/yaoshenwang/remux/pull/712))
+- Dvorak Cmd+C colliding with the notifications shortcut ([#762](https://github.com/yaoshenwang/remux/pull/762))
 - Terminal drag hover overlay flicker
-- Titlebar controls clipped at the bottom edge ([#1016](https://github.com/manaflow-ai/cmux/pull/1016))
-- Sidebar git branch recovery after sleep/wake and agent checkout ([#494](https://github.com/manaflow-ai/cmux/issues/494), [#671](https://github.com/manaflow-ai/cmux/pull/671), [#905](https://github.com/manaflow-ai/cmux/pull/905))
-- Browser portal routing, uploads, and click focus regressions ([#908](https://github.com/manaflow-ai/cmux/pull/908), [#961](https://github.com/manaflow-ai/cmux/pull/961))
+- Titlebar controls clipped at the bottom edge ([#1016](https://github.com/yaoshenwang/remux/pull/1016))
+- Sidebar git branch recovery after sleep/wake and agent checkout ([#494](https://github.com/yaoshenwang/remux/issues/494), [#671](https://github.com/yaoshenwang/remux/pull/671), [#905](https://github.com/yaoshenwang/remux/pull/905))
+- Browser portal routing, uploads, and click focus regressions ([#908](https://github.com/yaoshenwang/remux/pull/908), [#961](https://github.com/yaoshenwang/remux/pull/961))
 - Notification unread persistence on workspace focus
-- Escape propagation when the command palette is visible ([#847](https://github.com/manaflow-ai/cmux/pull/847))
-- Cmd+Shift+Enter pane zoom regression in browser focus ([#826](https://github.com/manaflow-ai/cmux/pull/826))
-- Cross-window theme background after jump-to-unread ([#861](https://github.com/manaflow-ai/cmux/pull/861))
-- `window.open()` and `target=_blank` not opening in a new tab ([#693](https://github.com/manaflow-ai/cmux/pull/693))
-- Terminal wrap width for the overlay scrollbar ([#522](https://github.com/manaflow-ai/cmux/pull/522))
-- Orphaned child processes when closing workspace tabs ([#889](https://github.com/manaflow-ai/cmux/pull/889))
-- Cmd+F Escape passthrough into terminal ([#918](https://github.com/manaflow-ai/cmux/pull/918))
-- Terminal link opens staying in the source workspace ([#912](https://github.com/manaflow-ai/cmux/pull/912))
-- Ghost terminal surface rebind after close ([#808](https://github.com/manaflow-ai/cmux/pull/808))
-- Cmd+plus zoom handling on non-US keyboard layouts ([#680](https://github.com/manaflow-ai/cmux/pull/680))
-- Menubar icon invisible in light mode ([#741](https://github.com/manaflow-ai/cmux/pull/741))
+- Escape propagation when the command palette is visible ([#847](https://github.com/yaoshenwang/remux/pull/847))
+- Cmd+Shift+Enter pane zoom regression in browser focus ([#826](https://github.com/yaoshenwang/remux/pull/826))
+- Cross-window theme background after jump-to-unread ([#861](https://github.com/yaoshenwang/remux/pull/861))
+- `window.open()` and `target=_blank` not opening in a new tab ([#693](https://github.com/yaoshenwang/remux/pull/693))
+- Terminal wrap width for the overlay scrollbar ([#522](https://github.com/yaoshenwang/remux/pull/522))
+- Orphaned child processes when closing workspace tabs ([#889](https://github.com/yaoshenwang/remux/pull/889))
+- Cmd+F Escape passthrough into terminal ([#918](https://github.com/yaoshenwang/remux/pull/918))
+- Terminal link opens staying in the source workspace ([#912](https://github.com/yaoshenwang/remux/pull/912))
+- Ghost terminal surface rebind after close ([#808](https://github.com/yaoshenwang/remux/pull/808))
+- Cmd+plus zoom handling on non-US keyboard layouts ([#680](https://github.com/yaoshenwang/remux/pull/680))
+- Menubar icon invisible in light mode ([#741](https://github.com/yaoshenwang/remux/pull/741))
 - Various drag-handle crash fixes and reentrancy guards
 - Background workspace git metadata refresh after external checkout
-- Markdown panel text click focus ([#991](https://github.com/manaflow-ai/cmux/pull/991))
-- Browser Cmd+F overlay clipping in portal mode ([#916](https://github.com/manaflow-ai/cmux/pull/916))
-- Voice dictation text insertion ([#857](https://github.com/manaflow-ai/cmux/pull/857))
-- Browser panel lifecycle after WebContent process termination ([#892](https://github.com/manaflow-ai/cmux/pull/892))
-- Typing lag reduction by hiding invisible views from the accessibility tree ([#862](https://github.com/manaflow-ai/cmux/pull/862))
+- Markdown panel text click focus ([#991](https://github.com/yaoshenwang/remux/pull/991))
+- Browser Cmd+F overlay clipping in portal mode ([#916](https://github.com/yaoshenwang/remux/pull/916))
+- Voice dictation text insertion ([#857](https://github.com/yaoshenwang/remux/pull/857))
+- Browser panel lifecycle after WebContent process termination ([#892](https://github.com/yaoshenwang/remux/pull/892))
+- Typing lag reduction by hiding invisible views from the accessibility tree ([#862](https://github.com/yaoshenwang/remux/pull/862))
 
 ### Thanks to 21 contributors!
 - [@afxjzs](https://github.com/afxjzs)
@@ -102,29 +120,29 @@ All notable changes to cmux are documented here.
 ## [0.61.0] - 2026-02-25
 
 ### Added
-- Command palette (Cmd+Shift+P) with update actions and all-window switcher results ([#358](https://github.com/manaflow-ai/cmux/pull/358), [#361](https://github.com/manaflow-ai/cmux/pull/361))
+- Command palette (Cmd+Shift+P) with update actions and all-window switcher results ([#358](https://github.com/yaoshenwang/remux/pull/358), [#361](https://github.com/yaoshenwang/remux/pull/361))
 - Split actions and shortcut hints in terminal context menus
 - Cross-window tab and workspace move UI with improved destination focus behavior
 - Sidebar pull request metadata rows and workspace PR open actions
-- Workspace color schemes and left-rail workspace indicator settings ([#324](https://github.com/manaflow-ai/cmux/pull/324), [#329](https://github.com/manaflow-ai/cmux/pull/329), [#332](https://github.com/manaflow-ai/cmux/pull/332))
-- URL open-wrapper routing into the embedded browser ([#332](https://github.com/manaflow-ai/cmux/pull/332))
-- Cmd+Q quit warning with suppression toggle ([#295](https://github.com/manaflow-ai/cmux/pull/295))
-- `cmux --version` output now includes commit metadata
+- Workspace color schemes and left-rail workspace indicator settings ([#324](https://github.com/yaoshenwang/remux/pull/324), [#329](https://github.com/yaoshenwang/remux/pull/329), [#332](https://github.com/yaoshenwang/remux/pull/332))
+- URL open-wrapper routing into the embedded browser ([#332](https://github.com/yaoshenwang/remux/pull/332))
+- Cmd+Q quit warning with suppression toggle ([#295](https://github.com/yaoshenwang/remux/pull/295))
+- `remux --version` output now includes commit metadata
 
 ### Changed
-- Added light mode and unified theme refresh across app surfaces ([#258](https://github.com/manaflow-ai/cmux/pull/258)) — thanks @ijpatricio for the report!
-- Browser link middle-click handling now uses native WebKit behavior ([#416](https://github.com/manaflow-ai/cmux/pull/416))
+- Added light mode and unified theme refresh across app surfaces ([#258](https://github.com/yaoshenwang/remux/pull/258)) — thanks @ijpatricio for the report!
+- Browser link middle-click handling now uses native WebKit behavior ([#416](https://github.com/yaoshenwang/remux/pull/416))
 - Settings-window actions now route through a single command-palette/settings flow
-- Sentry upgraded with tracing, breadcrumbs, and dSYM upload support ([#366](https://github.com/manaflow-ai/cmux/pull/366))
-- Session restore scope clarification: cmux restores layout, working directory, scrollback, and browser history, but does not resume live terminal process state yet
+- Sentry upgraded with tracing, breadcrumbs, and dSYM upload support ([#366](https://github.com/yaoshenwang/remux/pull/366))
+- Session restore scope clarification: remux restores layout, working directory, scrollback, and browser history, but does not resume live terminal process state yet
 
 ### Fixed
-- Startup split hang when pressing Cmd+D then Ctrl+D early after launch ([#364](https://github.com/manaflow-ai/cmux/pull/364))
-- Browser focus handoff and click-to-focus regressions in mixed terminal/browser workspaces ([#381](https://github.com/manaflow-ai/cmux/pull/381), [#355](https://github.com/manaflow-ai/cmux/pull/355))
-- Caps Lock handling in browser omnibar keyboard paths ([#382](https://github.com/manaflow-ai/cmux/pull/382))
-- Embedded browser deeplink URL scheme handling ([#392](https://github.com/manaflow-ai/cmux/pull/392))
-- Sidebar resize cap regression ([#393](https://github.com/manaflow-ai/cmux/pull/393))
-- Terminal zoom inheritance for new splits, surfaces, and workspaces ([#384](https://github.com/manaflow-ai/cmux/pull/384))
+- Startup split hang when pressing Cmd+D then Ctrl+D early after launch ([#364](https://github.com/yaoshenwang/remux/pull/364))
+- Browser focus handoff and click-to-focus regressions in mixed terminal/browser workspaces ([#381](https://github.com/yaoshenwang/remux/pull/381), [#355](https://github.com/yaoshenwang/remux/pull/355))
+- Caps Lock handling in browser omnibar keyboard paths ([#382](https://github.com/yaoshenwang/remux/pull/382))
+- Embedded browser deeplink URL scheme handling ([#392](https://github.com/yaoshenwang/remux/pull/392))
+- Sidebar resize cap regression ([#393](https://github.com/yaoshenwang/remux/pull/393))
+- Terminal zoom inheritance for new splits, surfaces, and workspaces ([#384](https://github.com/yaoshenwang/remux/pull/384))
 - Terminal find overlay layering across split and portal-hosted layouts
 - Titlebar drag and double-click zoom handling on browser-side panes
 - Stale browser favicon and window-title updates after navigation
@@ -141,58 +159,58 @@ All notable changes to cmux are documented here.
 ## [0.60.0] - 2026-02-21
 
 ### Added
-- Tab context menu with rename, close, unread, and workspace actions ([#225](https://github.com/manaflow-ai/cmux/pull/225))
-- Cmd+Shift+T reopens closed browser panels ([#253](https://github.com/manaflow-ai/cmux/pull/253))
+- Tab context menu with rename, close, unread, and workspace actions ([#225](https://github.com/yaoshenwang/remux/pull/225))
+- Cmd+Shift+T reopens closed browser panels ([#253](https://github.com/yaoshenwang/remux/pull/253))
 - Vertical sidebar branch layout setting showing git branch and directory per pane
-- JavaScript alert/confirm/prompt dialogs in browser panel ([#237](https://github.com/manaflow-ai/cmux/pull/237))
-- File drag-and-drop and file input in browser panel ([#214](https://github.com/manaflow-ai/cmux/pull/214))
-- tmux-compatible command set with matrix tests ([#221](https://github.com/manaflow-ai/cmux/pull/221))
-- Pane resize divider control via CLI ([#223](https://github.com/manaflow-ai/cmux/pull/223))
-- Production read-screen capture APIs ([#219](https://github.com/manaflow-ai/cmux/pull/219))
-- Notification rings on terminal panes ([#132](https://github.com/manaflow-ai/cmux/pull/132))
-- Claude Code integration enabled by default ([#247](https://github.com/manaflow-ai/cmux/pull/247))
-- HTTP host allowlist for embedded browser with save and proceed flow ([#206](https://github.com/manaflow-ai/cmux/pull/206), [#203](https://github.com/manaflow-ai/cmux/pull/203))
-- Setting to disable workspace auto-reorder on notification ([#215](https://github.com/manaflow-ai/cmux/issues/205))
-- Browser panel mouse back/forward buttons and middle-click close ([#139](https://github.com/manaflow-ai/cmux/pull/139))
-- Browser DevTools shortcut wiring and persistence ([#117](https://github.com/manaflow-ai/cmux/pull/117))
-- CJK IME input support for Korean, Chinese, and Japanese ([#125](https://github.com/manaflow-ai/cmux/pull/125))
-- `--help` flag on CLI subcommands ([#128](https://github.com/manaflow-ai/cmux/pull/128))
-- `--command` flag for `new-workspace` CLI command ([#121](https://github.com/manaflow-ai/cmux/pull/121))
-- `rename-tab` socket command ([#260](https://github.com/manaflow-ai/cmux/pull/260))
-- Remap-aware bonsplit tooltips and browser split shortcuts ([#200](https://github.com/manaflow-ai/cmux/pull/200))
+- JavaScript alert/confirm/prompt dialogs in browser panel ([#237](https://github.com/yaoshenwang/remux/pull/237))
+- File drag-and-drop and file input in browser panel ([#214](https://github.com/yaoshenwang/remux/pull/214))
+- tmux-compatible command set with matrix tests ([#221](https://github.com/yaoshenwang/remux/pull/221))
+- Pane resize divider control via CLI ([#223](https://github.com/yaoshenwang/remux/pull/223))
+- Production read-screen capture APIs ([#219](https://github.com/yaoshenwang/remux/pull/219))
+- Notification rings on terminal panes ([#132](https://github.com/yaoshenwang/remux/pull/132))
+- Claude Code integration enabled by default ([#247](https://github.com/yaoshenwang/remux/pull/247))
+- HTTP host allowlist for embedded browser with save and proceed flow ([#206](https://github.com/yaoshenwang/remux/pull/206), [#203](https://github.com/yaoshenwang/remux/pull/203))
+- Setting to disable workspace auto-reorder on notification ([#215](https://github.com/yaoshenwang/remux/issues/205))
+- Browser panel mouse back/forward buttons and middle-click close ([#139](https://github.com/yaoshenwang/remux/pull/139))
+- Browser DevTools shortcut wiring and persistence ([#117](https://github.com/yaoshenwang/remux/pull/117))
+- CJK IME input support for Korean, Chinese, and Japanese ([#125](https://github.com/yaoshenwang/remux/pull/125))
+- `--help` flag on CLI subcommands ([#128](https://github.com/yaoshenwang/remux/pull/128))
+- `--command` flag for `new-workspace` CLI command ([#121](https://github.com/yaoshenwang/remux/pull/121))
+- `rename-tab` socket command ([#260](https://github.com/yaoshenwang/remux/pull/260))
+- Remap-aware bonsplit tooltips and browser split shortcuts ([#200](https://github.com/yaoshenwang/remux/pull/200))
 
 ### Fixed
-- IME preedit anchor sizing ([#266](https://github.com/manaflow-ai/cmux/pull/266))
-- Cmd+Shift+T focus against deferred stale callbacks ([#267](https://github.com/manaflow-ai/cmux/pull/267))
-- Unknown Bonsplit tab context actions causing crash ([#264](https://github.com/manaflow-ai/cmux/pull/264))
-- Socket CLI commands stealing macOS app focus ([#260](https://github.com/manaflow-ai/cmux/pull/260))
-- CLI unix socket lag from main-thread blocking ([#259](https://github.com/manaflow-ai/cmux/pull/259))
-- Main-thread notification cascade causing hangs ([#232](https://github.com/manaflow-ai/cmux/pull/232))
-- Favicon out-of-sync during back/forward navigation ([#233](https://github.com/manaflow-ai/cmux/pull/233))
+- IME preedit anchor sizing ([#266](https://github.com/yaoshenwang/remux/pull/266))
+- Cmd+Shift+T focus against deferred stale callbacks ([#267](https://github.com/yaoshenwang/remux/pull/267))
+- Unknown Bonsplit tab context actions causing crash ([#264](https://github.com/yaoshenwang/remux/pull/264))
+- Socket CLI commands stealing macOS app focus ([#260](https://github.com/yaoshenwang/remux/pull/260))
+- CLI unix socket lag from main-thread blocking ([#259](https://github.com/yaoshenwang/remux/pull/259))
+- Main-thread notification cascade causing hangs ([#232](https://github.com/yaoshenwang/remux/pull/232))
+- Favicon out-of-sync during back/forward navigation ([#233](https://github.com/yaoshenwang/remux/pull/233))
 - Stale sidebar git branch after closing a split
-- Browser download UX and crash path ([#235](https://github.com/manaflow-ai/cmux/pull/235))
-- Browser reopen focus across workspace switches ([#257](https://github.com/manaflow-ai/cmux/pull/257))
-- Mark Tab as Unread no-op on focused tab ([#249](https://github.com/manaflow-ai/cmux/pull/249))
-- Split dividers disappearing in tiny panes ([#250](https://github.com/manaflow-ai/cmux/pull/250))
-- Flaky browser download activity accounting ([#246](https://github.com/manaflow-ai/cmux/pull/246))
-- Drag overlay routing and terminal overlay regressions ([#218](https://github.com/manaflow-ai/cmux/pull/218))
+- Browser download UX and crash path ([#235](https://github.com/yaoshenwang/remux/pull/235))
+- Browser reopen focus across workspace switches ([#257](https://github.com/yaoshenwang/remux/pull/257))
+- Mark Tab as Unread no-op on focused tab ([#249](https://github.com/yaoshenwang/remux/pull/249))
+- Split dividers disappearing in tiny panes ([#250](https://github.com/yaoshenwang/remux/pull/250))
+- Flaky browser download activity accounting ([#246](https://github.com/yaoshenwang/remux/pull/246))
+- Drag overlay routing and terminal overlay regressions ([#218](https://github.com/yaoshenwang/remux/pull/218))
 - Initial bonsplit split animation flicker
-- Window top inset on new window creation ([#224](https://github.com/manaflow-ai/cmux/pull/224))
-- Cmd+Enter being routed as browser reload ([#213](https://github.com/manaflow-ai/cmux/pull/213))
-- Child-exit close for last-terminal workspaces ([#254](https://github.com/manaflow-ai/cmux/pull/254))
-- Sidebar resizer hitbox and cursor across portals ([#255](https://github.com/manaflow-ai/cmux/pull/255))
+- Window top inset on new window creation ([#224](https://github.com/yaoshenwang/remux/pull/224))
+- Cmd+Enter being routed as browser reload ([#213](https://github.com/yaoshenwang/remux/pull/213))
+- Child-exit close for last-terminal workspaces ([#254](https://github.com/yaoshenwang/remux/pull/254))
+- Sidebar resizer hitbox and cursor across portals ([#255](https://github.com/yaoshenwang/remux/pull/255))
 - Workspace-scoped tab action resolution
 - IDN host allowlist normalization
-- `setup.sh` cache rebuild and stale lock timeout ([#217](https://github.com/manaflow-ai/cmux/pull/217))
-- Inconsistent Tab/Workspace terminology in settings and menus ([#187](https://github.com/manaflow-ai/cmux/pull/187))
+- `setup.sh` cache rebuild and stale lock timeout ([#217](https://github.com/yaoshenwang/remux/pull/217))
+- Inconsistent Tab/Workspace terminology in settings and menus ([#187](https://github.com/yaoshenwang/remux/pull/187))
 
 ### Changed
-- CLI workspace commands now run off the main thread for better responsiveness ([#270](https://github.com/manaflow-ai/cmux/pull/270))
-- Remove border below titlebar ([#242](https://github.com/manaflow-ai/cmux/pull/242))
-- Slimmer browser omnibar with button hover/press states ([#271](https://github.com/manaflow-ai/cmux/pull/271))
-- Browser under-page background refreshes on theme updates ([#272](https://github.com/manaflow-ai/cmux/pull/272))
-- Command shortcut hints scoped to active window ([#226](https://github.com/manaflow-ai/cmux/pull/226))
-- Nightly and release assets are now immutable (no accidental overwrite) ([#268](https://github.com/manaflow-ai/cmux/pull/268), [#269](https://github.com/manaflow-ai/cmux/pull/269))
+- CLI workspace commands now run off the main thread for better responsiveness ([#270](https://github.com/yaoshenwang/remux/pull/270))
+- Remove border below titlebar ([#242](https://github.com/yaoshenwang/remux/pull/242))
+- Slimmer browser omnibar with button hover/press states ([#271](https://github.com/yaoshenwang/remux/pull/271))
+- Browser under-page background refreshes on theme updates ([#272](https://github.com/yaoshenwang/remux/pull/272))
+- Command shortcut hints scoped to active window ([#226](https://github.com/yaoshenwang/remux/pull/226))
+- Nightly and release assets are now immutable (no accidental overwrite) ([#268](https://github.com/yaoshenwang/remux/pull/268), [#269](https://github.com/yaoshenwang/remux/pull/269))
 
 ## [0.59.0] - 2026-02-19
 
@@ -234,7 +252,7 @@ _No user-facing changes._
 ## [0.53.0] - 2026-02-18
 
 ### Changed
-- CLI commands are now workspace-relative: commands use `CMUX_WORKSPACE_ID` environment variable so background agents target their own workspace instead of the user's focused workspace
+- CLI commands are now workspace-relative: commands use `REMUX_WORKSPACE_ID` environment variable so background agents target their own workspace instead of the user's focused workspace
 - Remove all index-based CLI APIs in favor of short ID refs (`surface:1`, `pane:2`, `workspace:3`)
 - CLI `send` and `send-key` support `--workspace` and `--surface` flags for explicit targeting
 - CLI escape sequences (`\n`, `\r`, `\t`) in `send` payloads are now handled correctly
@@ -244,7 +262,7 @@ _No user-facing changes._
 - Fix background agents sending input to the wrong workspace
 - Fix `close-surface` rejecting cross-workspace surface refs
 - Fix malformed surface/pane/workspace/window handles passing through without error
-- Fix `--window` flag being overridden by `CMUX_WORKSPACE_ID` environment variable
+- Fix `--window` flag being overridden by `REMUX_WORKSPACE_ID` environment variable
 
 ## [0.52.0] - 2026-02-18
 
@@ -360,7 +378,7 @@ _No user-facing changes._
 - localhost and 127.0.0.1 URLs not resolving correctly in the browser panel
 
 ### Changed
-- `browser open` now targets the caller's workspace by default via CMUX_WORKSPACE_ID
+- `browser open` now targets the caller's workspace by default via REMUX_WORKSPACE_ID
 
 ## [0.31.0] - 2026-02-15
 
@@ -442,12 +460,12 @@ _No user-facing changes._
 ## [0.24.0] - 2026-02-09
 
 ### Changed
-- Update bundle identifier to `com.cmuxterm.app` for consistency
+- Update bundle identifier to `com.remuxterm.app` for consistency
 
 ## [0.23.0] - 2026-02-09
 
 ### Changed
-- Rename app to cmux — new app name, socket paths, Homebrew tap, and CLI binary name (bundle ID remains `com.cmuxterm.app` for Sparkle update continuity)
+- Rename app to remux — new app name, socket paths, Homebrew tap, and CLI binary name (bundle ID remains `com.remuxterm.app` for Sparkle update continuity)
 - Sidebar now shows tab status as text instead of colored dots, with instant git HEAD change detection
 
 ### Fixed
@@ -534,7 +552,7 @@ _No user-facing changes._
 ### Added
 - Sentry SDK for crash reporting
 - Documentation site with Fumadocs
-- Homebrew installation support (`brew install --cask cmux`)
+- Homebrew installation support (`brew install --cask remux`)
 - Auto-update Homebrew cask on release
 
 ### Fixed
@@ -580,7 +598,7 @@ _No user-facing changes._
 ## [0.4.0] - 2025-01-28
 
 ### Added
-- cmux CLI with socket control modes
+- remux CLI with socket control modes
 - NSPopover-based notifications
 
 ### Fixed
@@ -604,7 +622,7 @@ _No user-facing changes._
 - Update UI error details and pill visibility
 
 ### Changed
-- Renamed app to cmux
+- Renamed app to remux
 - Improved CI UI test stability
 
 ## [0.1.0] - 2025-01-28

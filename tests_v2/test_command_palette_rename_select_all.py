@@ -13,10 +13,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s=4.0, interval_s=0.05, message="timeout"):
@@ -25,7 +25,7 @@ def _wait_until(predicate, timeout_s=4.0, interval_s=0.05, message="timeout"):
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
 def _palette_visible(client, window_id):
@@ -130,7 +130,7 @@ def _open_rename_tab_input(client, window_id):
 
 
 def main():
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 

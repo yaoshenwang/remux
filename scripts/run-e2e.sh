@@ -8,7 +8,7 @@
 #   ./scripts/run-e2e.sh UpdatePillUITests --no-video --timeout 300
 set -euo pipefail
 
-REPO="manaflow-ai/cmux"
+REPO="yaoshenwang/remux"
 WORKFLOW="test-e2e.yml"
 
 # Defaults
@@ -94,7 +94,7 @@ if [ "$WAIT" = true ]; then
   echo "Run: $RUN_URL"
 
   # Find the issue created for this run (search by run ID in body)
-  ISSUE_URL=$(gh search issues "$RUN_ID" --repo manaflow-ai/cmux-dev-artifacts --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)
+  ISSUE_URL=$(gh search issues "$RUN_ID" --repo yaoshenwang/remux-dev-artifacts --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)
   if [ -n "$ISSUE_URL" ]; then
     echo "Issue: $ISSUE_URL"
   fi

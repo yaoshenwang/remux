@@ -4,7 +4,7 @@ import { KeyboardShortcuts } from "../../keyboard-shortcuts";
 export const metadata: Metadata = {
   title: "Keyboard Shortcuts",
   description:
-    "All cmux keyboard shortcuts for workspaces, surfaces, split panes, browser, notifications, find, and window management on macOS.",
+    "All remux keyboard shortcuts for workspaces, surfaces, split panes, browser, notifications, find, and window management on macOS.",
 };
 
 export default function KeyboardShortcutsPage() {
@@ -12,7 +12,7 @@ export default function KeyboardShortcutsPage() {
     <>
       <h1>Keyboard Shortcuts</h1>
       <p>
-        All keyboard shortcuts available in cmux, grouped by category.
+        All keyboard shortcuts available in remux, grouped by category.
       </p>
       <KeyboardShortcuts />
     </>

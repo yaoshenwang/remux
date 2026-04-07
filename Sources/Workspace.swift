@@ -5,7 +5,7 @@ import Bonsplit
 import Combine
 import CoreText
 
-func cmuxSurfaceContextName(_ context: ghostty_surface_context_e) -> String {
+func remuxSurfaceContextName(_ context: ghostty_surface_context_e) -> String {
     switch context {
     case GHOSTTY_SURFACE_CONTEXT_WINDOW:
         return "window"
@@ -18,7 +18,7 @@ func cmuxSurfaceContextName(_ context: ghostty_surface_context_e) -> String {
     }
 }
 
-func cmuxCurrentSurfaceFontSizePoints(_ surface: ghostty_surface_t) -> Float? {
+func remuxCurrentSurfaceFontSizePoints(_ surface: ghostty_surface_t) -> Float? {
     guard let quicklookFont = ghostty_surface_quicklook_font(surface) else {
         return nil
     }
@@ -29,7 +29,7 @@ func cmuxCurrentSurfaceFontSizePoints(_ surface: ghostty_surface_t) -> Float? {
     return points
 }
 
-func cmuxInheritedSurfaceConfig(
+func remuxInheritedSurfaceConfig(
     sourceSurface: ghostty_surface_t,
     context: ghostty_surface_context_e
 ) -> ghostty_surface_config_s {
@@ -38,7 +38,7 @@ func cmuxInheritedSurfaceConfig(
 
     // Make runtime zoom inheritance explicit, even when Ghostty's
     // inherit-font-size config is disabled.
-    let runtimePoints = cmuxCurrentSurfaceFontSizePoints(sourceSurface)
+    let runtimePoints = remuxCurrentSurfaceFontSizePoints(sourceSurface)
     if let points = runtimePoints {
         config.font_size = points
     }
@@ -48,7 +48,7 @@ func cmuxInheritedSurfaceConfig(
     let runtimeText = runtimePoints.map { String(format: "%.2f", $0) } ?? "nil"
     let finalText = String(format: "%.2f", config.font_size)
     dlog(
-        "zoom.inherit context=\(cmuxSurfaceContextName(context)) " +
+        "zoom.inherit context=\(remuxSurfaceContextName(context)) " +
         "inherited=\(inheritedText) runtime=\(runtimeText) final=\(finalText)"
     )
 #endif
@@ -938,7 +938,7 @@ final class Workspace: Identifiable, ObservableObject {
     @Published var customColor: String?  // hex string, e.g. "#C0392B"
     @Published var currentDirectory: String
 
-    /// Ordinal for CMUX_PORT range assignment (monotonically increasing per app session)
+    /// Ordinal for REMUX_PORT range assignment (monotonically increasing per app session)
     var portOrdinal: Int = 0
 
     /// The bonsplit controller managing the split panes for this workspace
@@ -1858,7 +1858,7 @@ final class Workspace: Identifiable, ObservableObject {
         sourceSurface: ghostty_surface_t,
         inheritedConfig: ghostty_surface_config_s
     ) -> Float? {
-        let runtimePoints = cmuxCurrentSurfaceFontSizePoints(sourceSurface)
+        let runtimePoints = remuxCurrentSurfaceFontSizePoints(sourceSurface)
         if let rooted = terminalInheritanceFontPointsByPanelId[terminalPanel.id], rooted > 0 {
             if let runtimePoints, abs(runtimePoints - rooted) > 0.05 {
                 // Runtime zoom changed after lineage was seeded (manual zoom on descendant);
@@ -1876,7 +1876,7 @@ final class Workspace: Identifiable, ObservableObject {
     private func rememberTerminalConfigInheritanceSource(_ terminalPanel: TerminalPanel) {
         lastTerminalConfigInheritancePanelId = terminalPanel.id
         if let sourceSurface = terminalPanel.surface.surface,
-           let runtimePoints = cmuxCurrentSurfaceFontSizePoints(sourceSurface) {
+           let runtimePoints = remuxCurrentSurfaceFontSizePoints(sourceSurface) {
             let existing = terminalInheritanceFontPointsByPanelId[terminalPanel.id]
             if existing == nil || abs((existing ?? runtimePoints) - runtimePoints) > 0.05 {
                 terminalInheritanceFontPointsByPanelId[terminalPanel.id] = runtimePoints
@@ -1974,7 +1974,7 @@ final class Workspace: Identifiable, ObservableObject {
             inPane: preferredPaneId
         ) {
             guard let sourceSurface = terminalPanel.surface.surface else { continue }
-            var config = cmuxInheritedSurfaceConfig(
+            var config = remuxInheritedSurfaceConfig(
                 sourceSurface: sourceSurface,
                 context: GHOSTTY_SURFACE_CONTEXT_SPLIT
             )
@@ -2480,7 +2480,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Mapping can transiently drift during split-tree mutations. If the target panel is
         // currently focused (or is the active terminal first responder), close whichever tab
         // bonsplit marks selected in that focused pane.
-        let firstResponderPanelId = cmuxOwningGhosttyView(
+        let firstResponderPanelId = remuxOwningGhosttyView(
             for: NSApp.keyWindow?.firstResponder ?? NSApp.mainWindow?.firstResponder
         )?.terminalSurface?.id
         let targetIsActive = focusedPanelId == panelId || firstResponderPanelId == panelId
@@ -4058,7 +4058,7 @@ final class Workspace: Identifiable, ObservableObject {
             let failure = NSAlert()
             failure.alertStyle = .warning
             failure.messageText = String(localized: "dialog.moveFailed.title", defaultValue: "Move Failed")
-            failure.informativeText = String(localized: "dialog.moveFailed.message", defaultValue: "cmux could not move this tab to the selected destination.")
+            failure.informativeText = String(localized: "dialog.moveFailed.message", defaultValue: "remux could not move this tab to the selected destination.")
             failure.addButton(withTitle: String(localized: "common.ok", defaultValue: "OK"))
             _ = failure.runModal()
         }
@@ -4911,7 +4911,7 @@ extension Workspace: BonsplitDelegate {
         // If the new pane already has a tab, this split moved an existing tab (drag-to-split).
         //
         // In the "drag the only tab to split edge" case, bonsplit inserts a placeholder "Empty"
-        // tab in the source pane to avoid leaving it tabless. In cmux, this is undesirable:
+        // tab in the source pane to avoid leaving it tabless. In remux, this is undesirable:
         // it creates a pane with no real surfaces and leaves an "Empty" tab in the tab bar.
         //
         // Replace placeholder-only source panes with a real terminal surface, then drop the

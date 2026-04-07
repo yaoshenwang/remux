@@ -1,10 +1,10 @@
 [submodule "ghostty"]
 	path = ghostty
-	url = https://github.com/manaflow-ai/ghostty.git
+	url = https://github.com/yaoshenwang/ghostty.git
 	branch = main
-[submodule "homebrew-cmux"]
-	path = homebrew-cmux
-	url = https://github.com/manaflow-ai/homebrew-cmux.git
+[submodule "homebrew-tap"]
+	path = homebrew-tap
+	url = https://github.com/yaoshenwang/homebrew-tap.git
 [submodule "vendor/bonsplit"]
 	path = vendor/bonsplit
-	url = https://github.com/manaflow-ai/bonsplit.git
+	url = https://github.com/yaoshenwang/bonsplit.git

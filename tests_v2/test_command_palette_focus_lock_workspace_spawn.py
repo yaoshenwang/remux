@@ -12,10 +12,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05, message: str = "timeout") -> None:
@@ -24,23 +24,23 @@ def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05, mes
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
-def _palette_visible(client: cmux, window_id: str) -> bool:
+def _palette_visible(client: remux, window_id: str) -> bool:
     payload = client._call("debug.command_palette.visible", {"window_id": window_id}) or {}
     return bool(payload.get("visible"))
 
 
-def _palette_results(client: cmux, window_id: str, limit: int = 20) -> dict:
+def _palette_results(client: remux, window_id: str, limit: int = 20) -> dict:
     return client.command_palette_results(window_id=window_id, limit=limit)
 
 
-def _palette_input_selection(client: cmux, window_id: str) -> dict:
+def _palette_input_selection(client: remux, window_id: str) -> dict:
     return client._call("debug.command_palette.rename_input.selection", {"window_id": window_id}) or {}
 
 
-def _close_palette_if_open(client: cmux, window_id: str) -> None:
+def _close_palette_if_open(client: remux, window_id: str) -> None:
     if _palette_visible(client, window_id):
         client._call("debug.command_palette.toggle", {"window_id": window_id})
         _wait_until(
@@ -51,19 +51,19 @@ def _close_palette_if_open(client: cmux, window_id: str) -> None:
 
 def _assert_caret_at_end(selection: dict, context: str) -> None:
     if not selection.get("focused"):
-        raise cmuxError(f"{context}: palette input is not focused")
+        raise remuxError(f"{context}: palette input is not focused")
     text_length = int(selection.get("text_length") or 0)
     selection_location = int(selection.get("selection_location") or 0)
     selection_length = int(selection.get("selection_length") or 0)
     if selection_location != text_length or selection_length != 0:
-        raise cmuxError(
+        raise remuxError(
             f"{context}: expected caret-at-end, got location={selection_location}, "
             f"length={selection_length}, text_length={text_length}"
         )
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 

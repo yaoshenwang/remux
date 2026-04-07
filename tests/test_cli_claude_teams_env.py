@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression test: `cmux claude-teams` injects the tmux-style auto-mode env.
+Regression test: `remux claude-teams` injects the tmux-style auto-mode env.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from claude_teams_test_utils import resolve_cmux_cli
+from claude_teams_test_utils import resolve_remux_cli
 
 
 def make_executable(path: Path, content: str) -> None:
@@ -26,19 +26,19 @@ def read_text(path: Path) -> str:
 
 def main() -> int:
     try:
-        cli_path = resolve_cmux_cli()
+        cli_path = resolve_remux_cli()
     except Exception as exc:
         print(f"FAIL: {exc}")
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="cmux-claude-teams-env-") as td:
+    with tempfile.TemporaryDirectory(prefix="remux-claude-teams-env-") as td:
         tmp = Path(td)
         real_bin = tmp / "real-bin"
         real_bin.mkdir(parents=True, exist_ok=True)
 
         env_log = tmp / "agent-teams.log"
         tmux_log = tmp / "tmux-path.log"
-        cmux_bin_log = tmp / "cmux-bin.log"
+        remux_bin_log = tmp / "remux-bin.log"
         argv_log = tmp / "argv.log"
         tmux_env_log = tmp / "tmux-env.log"
         tmux_pane_log = tmp / "tmux-pane.log"
@@ -55,14 +55,14 @@ def main() -> int:
 set -euo pipefail
 printf '%s\\n' "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS-__UNSET__}" > "$FAKE_AGENT_TEAMS_LOG"
 command -v tmux > "$FAKE_TMUX_PATH_LOG"
-printf '%s\\n' "${CMUX_CLAUDE_TEAMS_CMUX_BIN-__UNSET__}" > "$FAKE_CMUX_BIN_LOG"
+printf '%s\\n' "${REMUX_CLAUDE_TEAMS_REMUX_BIN-__UNSET__}" > "$FAKE_REMUX_BIN_LOG"
 printf '%s\\n' "$@" > "$FAKE_ARGV_LOG"
 printf '%s\\n' "${TMUX-__UNSET__}" > "$FAKE_TMUX_ENV_LOG"
 printf '%s\\n' "${TMUX_PANE-__UNSET__}" > "$FAKE_TMUX_PANE_LOG"
 printf '%s\\n' "${TERM-__UNSET__}" > "$FAKE_TERM_LOG"
 printf '%s\\n' "${TERM_PROGRAM-__UNSET__}" > "$FAKE_TERM_PROGRAM_LOG"
-printf '%s\\n' "${CMUX_SOCKET_PATH-__UNSET__}" > "$FAKE_SOCKET_PATH_LOG"
-printf '%s\\n' "${CMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
+printf '%s\\n' "${REMUX_SOCKET_PATH-__UNSET__}" > "$FAKE_SOCKET_PATH_LOG"
+printf '%s\\n' "${REMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
 """,
         )
 
@@ -71,7 +71,7 @@ printf '%s\\n' "${CMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
         env["PATH"] = f"{real_bin}:/usr/bin:/bin"
         env["FAKE_AGENT_TEAMS_LOG"] = str(env_log)
         env["FAKE_TMUX_PATH_LOG"] = str(tmux_log)
-        env["FAKE_CMUX_BIN_LOG"] = str(cmux_bin_log)
+        env["FAKE_REMUX_BIN_LOG"] = str(remux_bin_log)
         env["FAKE_ARGV_LOG"] = str(argv_log)
         env["FAKE_TMUX_ENV_LOG"] = str(tmux_env_log)
         env["FAKE_TMUX_PANE_LOG"] = str(tmux_pane_log)
@@ -83,7 +83,7 @@ printf '%s\\n' "${CMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
         env["TMUX_PANE"] = "%999"
         env["TERM"] = "xterm-256color"
         env["TERM_PROGRAM"] = "__HOST_TERM_PROGRAM__"
-        explicit_socket_path = str(tmp / "explicit-cmux.sock")
+        explicit_socket_path = str(tmp / "explicit-remux.sock")
         explicit_socket_password = "topsecret"
 
         proc = subprocess.run(
@@ -104,7 +104,7 @@ printf '%s\\n' "${CMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
         )
 
         if proc.returncode != 0:
-            print("FAIL: `cmux claude-teams --version` exited non-zero")
+            print("FAIL: `remux claude-teams --version` exited non-zero")
             print(f"exit={proc.returncode}")
             print(f"stdout={proc.stdout.strip()}")
             print(f"stderr={proc.stderr.strip()}")
@@ -130,16 +130,16 @@ printf '%s\\n' "${CMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
             return 1
 
         if tmux_path.startswith(str(real_bin)):
-            print(f"FAIL: expected cmux tmux shim to shadow PATH, got {tmux_path!r}")
+            print(f"FAIL: expected remux tmux shim to shadow PATH, got {tmux_path!r}")
             return 1
 
-        cmux_bin_value = read_text(cmux_bin_log)
-        if not cmux_bin_value or cmux_bin_value == "__UNSET__":
-            print("FAIL: missing CMUX_CLAUDE_TEAMS_CMUX_BIN")
+        remux_bin_value = read_text(remux_bin_log)
+        if not remux_bin_value or remux_bin_value == "__UNSET__":
+            print("FAIL: missing REMUX_CLAUDE_TEAMS_REMUX_BIN")
             return 1
 
-        if not os.path.exists(cmux_bin_value):
-            print(f"FAIL: CMUX_CLAUDE_TEAMS_CMUX_BIN does not exist: {cmux_bin_value!r}")
+        if not os.path.exists(remux_bin_value):
+            print(f"FAIL: REMUX_CLAUDE_TEAMS_REMUX_BIN does not exist: {remux_bin_value!r}")
             return 1
 
         argv_lines = argv_log.read_text(encoding="utf-8").splitlines()
@@ -173,18 +173,18 @@ printf '%s\\n' "${CMUX_SOCKET_PASSWORD-__UNSET__}" > "$FAKE_SOCKET_PASSWORD_LOG"
 
         socket_path_value = read_text(socket_path_log)
         if socket_path_value != explicit_socket_path:
-            print(f"FAIL: expected CMUX_SOCKET_PATH={explicit_socket_path!r}, got {socket_path_value!r}")
+            print(f"FAIL: expected REMUX_SOCKET_PATH={explicit_socket_path!r}, got {socket_path_value!r}")
             return 1
 
         socket_password_value = read_text(socket_password_log)
         if socket_password_value != explicit_socket_password:
             print(
-                "FAIL: expected CMUX_SOCKET_PASSWORD to preserve the explicit CLI override, "
+                "FAIL: expected REMUX_SOCKET_PASSWORD to preserve the explicit CLI override, "
                 f"got {socket_password_value!r}"
             )
             return 1
 
-    print("PASS: cmux claude-teams injects the auto-mode tmux env and shim")
+    print("PASS: remux claude-teams injects the auto-mode tmux env and shim")
     return 0
 
 

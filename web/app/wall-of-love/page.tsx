@@ -3,9 +3,9 @@ import { SiteHeader } from "../components/site-header";
 import { testimonials, TestimonialCard } from "../testimonials";
 
 export const metadata: Metadata = {
-  title: "Wall of Love — cmux",
+  title: "Wall of Love — remux",
   description:
-    "What people are saying about cmux, the terminal built for multitasking.",
+    "What people are saying about remux, the terminal built for multitasking.",
 };
 
 export default function WallOfLovePage() {
@@ -17,7 +17,7 @@ export default function WallOfLovePage() {
           Wall of Love
         </h1>
         <p className="text-muted text-[15px] mb-8">
-          What people are saying about cmux.
+          What people are saying about remux.
         </p>
 
         <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">

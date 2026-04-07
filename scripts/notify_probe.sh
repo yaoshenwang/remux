@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Probe common desktop-notification escape sequences.
-# NOTE: cmux suppresses notifications when the app + surface are focused,
+# NOTE: remux suppresses notifications when the app + surface are focused,
 # so switch to another app/window while this runs.
 
 esc=$'\033'
@@ -22,15 +22,15 @@ sleep_between() {
   sleep 1.2
 }
 
-send_seq "OSC 9 (iTerm2) body-only, BEL terminator" "${esc}]9;cmux OSC 9 BEL $RANDOM${bel}"
+send_seq "OSC 9 (iTerm2) body-only, BEL terminator" "${esc}]9;remux OSC 9 BEL $RANDOM${bel}"
 sleep_between
 
-send_seq "OSC 9 (iTerm2) body-only, ST terminator" "${esc}]9;cmux OSC 9 ST $RANDOM${st}"
+send_seq "OSC 9 (iTerm2) body-only, ST terminator" "${esc}]9;remux OSC 9 ST $RANDOM${st}"
 sleep_between
 
-send_seq "OSC 777 (rxvt) notify, BEL terminator" "${esc}]777;notify;cmux OSC 777 BEL $RANDOM;body ${RANDOM}${bel}"
+send_seq "OSC 777 (rxvt) notify, BEL terminator" "${esc}]777;notify;remux OSC 777 BEL $RANDOM;body ${RANDOM}${bel}"
 sleep_between
 
-send_seq "OSC 777 (rxvt) notify, ST terminator" "${esc}]777;notify;cmux OSC 777 ST $RANDOM;body ${RANDOM}${st}"
+send_seq "OSC 777 (rxvt) notify, ST terminator" "${esc}]777;notify;remux OSC 777 ST $RANDOM;body ${RANDOM}${st}"
 
 printf '\nDone.\n'

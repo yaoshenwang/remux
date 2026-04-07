@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+
 jobs:
   update-cask:
     runs-on: ubuntu-latest
@@ -23,8 +26,19 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     steps:
+      - name: Resolve tap configuration
+        id: tap
+        run: |
+          if [ -z "${TAP_REPOSITORY:-}" ]; then
+            echo "No HOMEBREW_TAP_REPOSITORY configured, skipping Homebrew publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Get version
         id: version
+        if: steps.tap.outputs.skip != 'true'
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
@@ -55,11 +69,11 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          URL="https://github.com/manaflow-ai/cmux/releases/download/v${VERSION}/cmux-macos.dmg"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/remux-macos.dmg"
           MAX_RETRIES=5
           for i in $(seq 1 $MAX_RETRIES); do
-            HTTP_CODE=$(curl -sL -w '%{http_code}' "$URL" -o cmux.dmg)
-            FILE_SIZE=$(stat --printf="%s" cmux.dmg 2>/dev/null || stat -f%z cmux.dmg)
+            HTTP_CODE=$(curl -sL -w '%{http_code}' "$URL" -o remux.dmg)
+            FILE_SIZE=$(stat --printf="%s" remux.dmg 2>/dev/null || stat -f%z remux.dmg)
             if [ "$HTTP_CODE" = "200" ] && [ "$FILE_SIZE" -gt 1000000 ]; then
               echo "Download OK: HTTP $HTTP_CODE, size $FILE_SIZE bytes"
               break
@@ -71,17 +85,17 @@ jobs:
             fi
             sleep 30
           done
-          SHA256=$(shasum -a 256 cmux.dmg | cut -d' ' -f1)
+          SHA256=$(shasum -a 256 remux.dmg | cut -d' ' -f1)
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
           echo "DMG SHA256: $SHA256"
 
-      - name: Checkout homebrew-cmux
+      - name: Checkout Homebrew tap
         if: steps.version.outputs.skip != 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: manaflow-ai/homebrew-cmux
+          repository: ${{ env.TAP_REPOSITORY }}
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-cmux
+          path: homebrew-tap
 
       - name: Update cask formula
         if: steps.version.outputs.skip != 'true'
@@ -89,15 +103,15 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           SHA256: ${{ steps.sha.outputs.sha256 }}
         run: |
-          cat > homebrew-cmux/Casks/cmux.rb << CASKEOF
-          cask "cmux" do
+          cat > homebrew-tap/Casks/remux.rb << CASKEOF
+          cask "remux" do
             version "${VERSION}"
             sha256 "${SHA256}"
 
-            url "https://github.com/manaflow-ai/cmux/releases/download/v#{version}/cmux-macos.dmg"
-            name "cmux"
+            url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/remux-macos.dmg"
+            name "remux"
             desc "Lightweight native macOS terminal with vertical tabs for AI coding agents"
-            homepage "https://cmux.dev"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
 
             livecheck do
               url :url
@@ -106,24 +120,24 @@ jobs:
 
             depends_on macos: ">= :sonoma"
 
-            app "cmux.app"
-            binary "#{appdir}/cmux.app/Contents/Resources/bin/cmux"
+            app "remux.app"
+            binary "#{appdir}/remux.app/Contents/Resources/bin/remux"
 
             zap trash: [
-              "~/Library/Application Support/cmux",
-              "~/Library/Caches/cmux",
-              "~/Library/Preferences/ai.manaflow.cmuxterm.plist",
+              "~/Library/Application Support/remux",
+              "~/Library/Caches/remux",
+              "~/Library/Preferences/ai.manaflow.remuxterm.plist",
             ]
           end
           CASKEOF
           # Remove leading whitespace from heredoc
-          sed -i 's/^          //' homebrew-cmux/Casks/cmux.rb
+          sed -i 's/^          //' homebrew-tap/Casks/remux.rb
 
       - name: Verify cask SHA matches DMG
         if: steps.version.outputs.skip != 'true'
         run: |
-          CASK_SHA=$(grep 'sha256' homebrew-cmux/Casks/cmux.rb | sed 's/.*"\(.*\)".*/\1/')
-          ACTUAL_SHA=$(shasum -a 256 cmux.dmg | cut -d' ' -f1)
+          CASK_SHA=$(grep 'sha256' homebrew-tap/Casks/remux.rb | sed 's/.*"\(.*\)".*/\1/')
+          ACTUAL_SHA=$(shasum -a 256 remux.dmg | cut -d' ' -f1)
           if [ "$CASK_SHA" != "$ACTUAL_SHA" ]; then
             echo "SHA mismatch! Cask: $CASK_SHA, Actual: $ACTUAL_SHA" >&2
             exit 1
@@ -135,13 +149,13 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cd homebrew-cmux
+          cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/cmux.rb
+          git add Casks/remux.rb
           if git diff --staged --quiet; then
             echo "No changes - cask already up to date"
           else
-            git commit -m "Update cmux to ${VERSION}"
+            git commit -m "Update remux to ${VERSION}"
             git push
           fi

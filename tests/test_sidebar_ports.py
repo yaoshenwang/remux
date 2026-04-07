@@ -6,7 +6,7 @@ This covers regressions where a listening server (e.g. `python3 -m http.server`)
 doesn't show up in the sidebar ports row.
 
 Run with a tagged instance to avoid unix socket conflicts:
-  CMUX_TAG=<tag> python3 tests/test_sidebar_ports.py
+  REMUX_TAG=<tag> python3 tests/test_sidebar_ports.py
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ import sys
 import time
 from pathlib import Path
 
-# Add the directory containing cmux.py to the path
+# Add the directory containing remux.py to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux, cmuxError  # noqa: E402
+from remux import remux, remuxError  # noqa: E402
 
 
 # Historically, ports detection only checked a small allowlist. This test
@@ -83,7 +83,7 @@ def _find_free_allowed_port() -> int:
 
 def _start_external_server(base: Path, port: int) -> subprocess.Popen:
     """
-    Start an http.server outside cmux and ensure it is actually listening.
+    Start an http.server outside remux and ensure it is actually listening.
     Retries are handled by the caller by picking a different port.
     """
     proc = subprocess.Popen(
@@ -96,7 +96,7 @@ def _start_external_server(base: Path, port: int) -> subprocess.Popen:
     return proc
 
 
-def _wait_for_port(client: cmux, port: int, timeout: float = 18.0) -> dict[str, str]:
+def _wait_for_port(client: remux, port: int, timeout: float = 18.0) -> dict[str, str]:
     def pred():
         state = _parse_sidebar_state(client.sidebar_state())
         raw = state.get("ports", "")
@@ -116,7 +116,7 @@ def _wait_for_port(client: cmux, port: int, timeout: float = 18.0) -> dict[str, 
     return _wait_for(pred, timeout=timeout, interval=0.15, label=f"ports include {port}")
 
 
-def _wait_for_port_absent(client: cmux, port: int, timeout: float = 18.0) -> dict[str, str]:
+def _wait_for_port_absent(client: remux, port: int, timeout: float = 18.0) -> dict[str, str]:
     def pred():
         state = _parse_sidebar_state(client.sidebar_state())
         raw = state.get("ports", "")
@@ -136,7 +136,7 @@ def _wait_for_port_absent(client: cmux, port: int, timeout: float = 18.0) -> dic
     return _wait_for(pred, timeout=timeout, interval=0.15, label=f"ports do not include {port}")
 
 
-def _assert_port_absent_for_duration(client: cmux, port: int, duration: float = 6.0, interval: float = 0.15) -> None:
+def _assert_port_absent_for_duration(client: remux, port: int, duration: float = 6.0, interval: float = 0.15) -> None:
     """
     Assert the port does not appear in sidebar_state during the full duration.
     This is important to catch "machine-wide ports" leaking into a fresh tab.
@@ -201,11 +201,11 @@ def _wait_for_lsof_listen_gone(port: int, timeout: float = 8.0) -> None:
 
 
 def main() -> int:
-    tag = os.environ.get("CMUX_TAG") or ""
+    tag = os.environ.get("REMUX_TAG") or ""
     if not tag:
-        print("Tip: set CMUX_TAG=<tag> when running this test to avoid socket conflicts.")
+        print("Tip: set REMUX_TAG=<tag> when running this test to avoid socket conflicts.")
 
-    base = Path("/tmp") / f"cmux_ports_test_{os.getpid()}"
+    base = Path("/tmp") / f"remux_ports_test_{os.getpid()}"
     pid_file = base / "server.pid"
     log_file = base / "server.log"
     external_proc: subprocess.Popen | None = None
@@ -215,7 +215,7 @@ def main() -> int:
             shutil.rmtree(base)
         base.mkdir(parents=True, exist_ok=True)
 
-        # Start a listening server outside cmux. A fresh tab should NOT show this port,
+        # Start a listening server outside remux. A fresh tab should NOT show this port,
         # since ports should be attributed to the shell session in the tab.
         port = None
         last_start_err: Exception | None = None
@@ -236,13 +236,13 @@ def main() -> int:
         if port is None or external_proc is None:
             raise RuntimeError(f"Failed to start external http.server. Last error: {last_start_err}")
 
-        with cmux() as client:
+        with remux() as client:
             new_tab_id = client.new_tab()
             client.select_tab(new_tab_id)
             time.sleep(0.8)
 
             # Trigger a prompt cycle (and thus a ports scan burst) before checking absence.
-            client.send("echo cmux_ports_test\n")
+            client.send("echo remux_ports_test\n")
             _assert_port_absent_for_duration(client, port, duration=6.0)
 
             # Stop the external server, then reuse the port inside the tab.
@@ -283,7 +283,7 @@ def main() -> int:
         print("Sidebar ports test passed.")
         return 0
 
-    except (cmuxError, AssertionError, RuntimeError, ValueError) as e:
+    except (remuxError, AssertionError, RuntimeError, ValueError) as e:
         print(f"Sidebar ports test failed: {e}")
         return 1
     finally:

@@ -1,4 +1,4 @@
-// Adapted from manaflow-ai/cmux cmuxd/src/bridge.zig
+// Adapted from yaoshenwang/remux remuxd/src/bridge.zig
 // Attach client: connects to daemon, proxies stdin/stdout ↔ PTY session.
 const std = @import("std");
 const posix = std.posix;

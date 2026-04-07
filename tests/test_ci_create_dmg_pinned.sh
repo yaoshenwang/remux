@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for https://github.com/manaflow-ai/cmux/issues/387.
+# Regression test for https://github.com/yaoshenwang/remux/issues/387.
 # Ensures release workflows pin create-dmg to an explicit version.
 set -euo pipefail
 

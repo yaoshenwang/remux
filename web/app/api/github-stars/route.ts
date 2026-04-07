@@ -5,7 +5,7 @@ export const revalidate = 300; // ISR: regenerate every 5 minutes
 export async function GET() {
   try {
     const res = await fetch(
-      "https://api.github.com/repos/manaflow-ai/cmux",
+      "https://api.github.com/repos/yaoshenwang/remux",
       {
         headers: { Accept: "application/vnd.github.v3+json" },
         next: { revalidate: 300 },

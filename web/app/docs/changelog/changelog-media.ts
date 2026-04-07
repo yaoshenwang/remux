@@ -37,7 +37,7 @@ export const changelogMedia: Record<string, VersionMedia> = {
       {
         title: "Find in Browser",
         description:
-          "Browser panels now support Cmd+F with inline find controls, so you can search long docs, dashboards, and issue threads without leaving cmux.",
+          "Browser panels now support Cmd+F with inline find controls, so you can search long docs, dashboards, and issue threads without leaving remux.",
       },
       {
         title: "Vi Copy Mode",
@@ -52,7 +52,7 @@ export const changelogMedia: Record<string, VersionMedia> = {
       {
         title: "Expanded Localization",
         description:
-          "cmux now includes Japanese plus 16 additional languages, and a per-app language override lets you change the UI language without changing macOS system settings.",
+          "remux now includes Japanese plus 16 additional languages, and a per-app language override lets you change the UI language without changing macOS system settings.",
       },
     ],
   },
@@ -68,7 +68,7 @@ export const changelogMedia: Record<string, VersionMedia> = {
       {
         title: "Command Palette",
         description:
-          "Hit Cmd+Shift+P to open a searchable command palette. Every action in cmux is here: creating workspaces, toggling the sidebar, checking for updates, switching windows. Keyboard shortcuts are shown inline so you can learn them as you go.",
+          "Hit Cmd+Shift+P to open a searchable command palette. Every action in remux is here: creating workspaces, toggling the sidebar, checking for updates, switching windows. Keyboard shortcuts are shown inline so you can learn them as you go.",
         image: "/changelog/0.61.0-command-palette.png",
       },
       {
@@ -103,7 +103,7 @@ export const changelogMedia: Record<string, VersionMedia> = {
       {
         title: "Browser DevTools",
         description:
-          "The embedded browser now has full WebKit DevTools. Open them with the standard shortcut and they persist across tab switches. Inspect elements, debug JavaScript, and monitor network requests without leaving cmux.",
+          "The embedded browser now has full WebKit DevTools. Open them with the standard shortcut and they persist across tab switches. Inspect elements, debug JavaScript, and monitor network requests without leaving remux.",
         image: "/changelog/0.60.0-devtools.png",
       },
       {

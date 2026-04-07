@@ -175,49 +175,49 @@ enum BrowserThemeSettings {
 }
 
 enum BrowserLinkOpenSettings {
-    static let openTerminalLinksInCmuxBrowserKey = "browserOpenTerminalLinksInCmuxBrowser"
-    static let defaultOpenTerminalLinksInCmuxBrowser: Bool = true
+    static let openTerminalLinksInRemuxBrowserKey = "browserOpenTerminalLinksInRemuxBrowser"
+    static let defaultOpenTerminalLinksInRemuxBrowser: Bool = true
 
-    static let openSidebarPullRequestLinksInCmuxBrowserKey = "browserOpenSidebarPullRequestLinksInCmuxBrowser"
-    static let defaultOpenSidebarPullRequestLinksInCmuxBrowser: Bool = true
+    static let openSidebarPullRequestLinksInRemuxBrowserKey = "browserOpenSidebarPullRequestLinksInRemuxBrowser"
+    static let defaultOpenSidebarPullRequestLinksInRemuxBrowser: Bool = true
 
-    static let interceptTerminalOpenCommandInCmuxBrowserKey = "browserInterceptTerminalOpenCommandInCmuxBrowser"
-    static let defaultInterceptTerminalOpenCommandInCmuxBrowser: Bool = true
+    static let interceptTerminalOpenCommandInRemuxBrowserKey = "browserInterceptTerminalOpenCommandInRemuxBrowser"
+    static let defaultInterceptTerminalOpenCommandInRemuxBrowser: Bool = true
 
     static let browserHostWhitelistKey = "browserHostWhitelist"
     static let defaultBrowserHostWhitelist: String = ""
     static let browserExternalOpenPatternsKey = "browserExternalOpenPatterns"
     static let defaultBrowserExternalOpenPatterns: String = ""
 
-    static func openTerminalLinksInCmuxBrowser(defaults: UserDefaults = .standard) -> Bool {
-        if defaults.object(forKey: openTerminalLinksInCmuxBrowserKey) == nil {
-            return defaultOpenTerminalLinksInCmuxBrowser
+    static func openTerminalLinksInRemuxBrowser(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: openTerminalLinksInRemuxBrowserKey) == nil {
+            return defaultOpenTerminalLinksInRemuxBrowser
         }
-        return defaults.bool(forKey: openTerminalLinksInCmuxBrowserKey)
+        return defaults.bool(forKey: openTerminalLinksInRemuxBrowserKey)
     }
 
-    static func openSidebarPullRequestLinksInCmuxBrowser(defaults: UserDefaults = .standard) -> Bool {
-        if defaults.object(forKey: openSidebarPullRequestLinksInCmuxBrowserKey) == nil {
-            return defaultOpenSidebarPullRequestLinksInCmuxBrowser
+    static func openSidebarPullRequestLinksInRemuxBrowser(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: openSidebarPullRequestLinksInRemuxBrowserKey) == nil {
+            return defaultOpenSidebarPullRequestLinksInRemuxBrowser
         }
-        return defaults.bool(forKey: openSidebarPullRequestLinksInCmuxBrowserKey)
+        return defaults.bool(forKey: openSidebarPullRequestLinksInRemuxBrowserKey)
     }
 
-    static func interceptTerminalOpenCommandInCmuxBrowser(defaults: UserDefaults = .standard) -> Bool {
-        if defaults.object(forKey: interceptTerminalOpenCommandInCmuxBrowserKey) != nil {
-            return defaults.bool(forKey: interceptTerminalOpenCommandInCmuxBrowserKey)
+    static func interceptTerminalOpenCommandInRemuxBrowser(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: interceptTerminalOpenCommandInRemuxBrowserKey) != nil {
+            return defaults.bool(forKey: interceptTerminalOpenCommandInRemuxBrowserKey)
         }
 
         // Migrate existing behavior for users who only had the link-click toggle.
-        if defaults.object(forKey: openTerminalLinksInCmuxBrowserKey) != nil {
-            return defaults.bool(forKey: openTerminalLinksInCmuxBrowserKey)
+        if defaults.object(forKey: openTerminalLinksInRemuxBrowserKey) != nil {
+            return defaults.bool(forKey: openTerminalLinksInRemuxBrowserKey)
         }
 
-        return defaultInterceptTerminalOpenCommandInCmuxBrowser
+        return defaultInterceptTerminalOpenCommandInRemuxBrowser
     }
 
-    static func initialInterceptTerminalOpenCommandInCmuxBrowserValue(defaults: UserDefaults = .standard) -> Bool {
-        interceptTerminalOpenCommandInCmuxBrowser(defaults: defaults)
+    static func initialInterceptTerminalOpenCommandInRemuxBrowserValue(defaults: UserDefaults = .standard) -> Bool {
+        interceptTerminalOpenCommandInRemuxBrowser(defaults: defaults)
     }
 
     static func hostWhitelist(defaults: UserDefaults = .standard) -> [String] {
@@ -535,11 +535,11 @@ enum BrowserUserAgentSettings {
 }
 
 func normalizedBrowserHistoryNamespace(bundleIdentifier: String) -> String {
-    if bundleIdentifier.hasPrefix("com.cmuxterm.app.debug.") {
-        return "com.cmuxterm.app.debug"
+    if bundleIdentifier.hasPrefix("com.remuxterm.app.debug.") {
+        return "com.remuxterm.app.debug"
     }
-    if bundleIdentifier.hasPrefix("com.cmuxterm.app.staging.") {
-        return "com.cmuxterm.app.staging"
+    if bundleIdentifier.hasPrefix("com.remuxterm.app.staging.") {
+        return "com.remuxterm.app.staging"
     }
     return bundleIdentifier
 }
@@ -1047,7 +1047,7 @@ final class BrowserHistoryStore: ObservableObject {
         guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
-        let bundleId = Bundle.main.bundleIdentifier ?? "cmux"
+        let bundleId = Bundle.main.bundleIdentifier ?? "remux"
         let namespace = normalizedBrowserHistoryNamespace(bundleIdentifier: bundleId)
         let dir = appSupport.appendingPathComponent(namespace, isDirectory: true)
         return dir.appendingPathComponent("browser_history.json", isDirectory: false)
@@ -1085,8 +1085,8 @@ actor BrowserSearchSuggestionService {
 
         // Deterministic UI-test hook for validating remote suggestion rendering
         // without relying on external network behavior.
-        let forced = ProcessInfo.processInfo.environment["CMUX_UI_TEST_REMOTE_SUGGESTIONS_JSON"]
-            ?? UserDefaults.standard.string(forKey: "CMUX_UI_TEST_REMOTE_SUGGESTIONS_JSON")
+        let forced = ProcessInfo.processInfo.environment["REMUX_UI_TEST_REMOTE_SUGGESTIONS_JSON"]
+            ?? UserDefaults.standard.string(forKey: "REMUX_UI_TEST_REMOTE_SUGGESTIONS_JSON")
         if let forced,
            let data = forced.data(using: .utf8),
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [Any] {
@@ -1260,19 +1260,19 @@ final class BrowserPanel: Panel, ObservableObject {
 
     static let telemetryHookBootstrapScriptSource = """
     (() => {
-      if (window.__cmuxHooksInstalled) return true;
-      window.__cmuxHooksInstalled = true;
+      if (window.__remuxHooksInstalled) return true;
+      window.__remuxHooksInstalled = true;
 
-      window.__cmuxConsoleLog = window.__cmuxConsoleLog || [];
+      window.__remuxConsoleLog = window.__remuxConsoleLog || [];
       const __pushConsole = (level, args) => {
         try {
           const text = Array.from(args || []).map((x) => {
             if (typeof x === 'string') return x;
             try { return JSON.stringify(x); } catch (_) { return String(x); }
           }).join(' ');
-          window.__cmuxConsoleLog.push({ level, text, timestamp_ms: Date.now() });
-          if (window.__cmuxConsoleLog.length > 512) {
-            window.__cmuxConsoleLog.splice(0, window.__cmuxConsoleLog.length - 512);
+          window.__remuxConsoleLog.push({ level, text, timestamp_ms: Date.now() });
+          if (window.__remuxConsoleLog.length > 512) {
+            window.__remuxConsoleLog.splice(0, window.__remuxConsoleLog.length - 512);
           }
         } catch (_) {}
       };
@@ -1286,16 +1286,16 @@ final class BrowserPanel: Panel, ObservableObject {
         };
       }
 
-      window.__cmuxErrorLog = window.__cmuxErrorLog || [];
+      window.__remuxErrorLog = window.__remuxErrorLog || [];
       window.addEventListener('error', (ev) => {
         try {
           const message = String((ev && ev.message) || '');
           const source = String((ev && ev.filename) || '');
           const line = Number((ev && ev.lineno) || 0);
           const col = Number((ev && ev.colno) || 0);
-          window.__cmuxErrorLog.push({ message, source, line, column: col, timestamp_ms: Date.now() });
-          if (window.__cmuxErrorLog.length > 512) {
-            window.__cmuxErrorLog.splice(0, window.__cmuxErrorLog.length - 512);
+          window.__remuxErrorLog.push({ message, source, line, column: col, timestamp_ms: Date.now() });
+          if (window.__remuxErrorLog.length > 512) {
+            window.__remuxErrorLog.splice(0, window.__remuxErrorLog.length - 512);
           }
         } catch (_) {}
       });
@@ -1303,9 +1303,9 @@ final class BrowserPanel: Panel, ObservableObject {
         try {
           const reason = ev && ev.reason;
           const message = typeof reason === 'string' ? reason : (reason && reason.message ? String(reason.message) : String(reason));
-          window.__cmuxErrorLog.push({ message, source: 'unhandledrejection', line: 0, column: 0, timestamp_ms: Date.now() });
-          if (window.__cmuxErrorLog.length > 512) {
-            window.__cmuxErrorLog.splice(0, window.__cmuxErrorLog.length - 512);
+          window.__remuxErrorLog.push({ message, source: 'unhandledrejection', line: 0, column: 0, timestamp_ms: Date.now() });
+          if (window.__remuxErrorLog.length > 512) {
+            window.__remuxErrorLog.splice(0, window.__remuxErrorLog.length - 512);
           }
         } catch (_) {}
       });
@@ -1316,20 +1316,20 @@ final class BrowserPanel: Panel, ObservableObject {
 
     static let dialogTelemetryHookBootstrapScriptSource = """
     (() => {
-      if (window.__cmuxDialogHooksInstalled) return true;
-      window.__cmuxDialogHooksInstalled = true;
+      if (window.__remuxDialogHooksInstalled) return true;
+      window.__remuxDialogHooksInstalled = true;
 
-      window.__cmuxDialogQueue = window.__cmuxDialogQueue || [];
-      window.__cmuxDialogDefaults = window.__cmuxDialogDefaults || { confirm: false, prompt: null };
+      window.__remuxDialogQueue = window.__remuxDialogQueue || [];
+      window.__remuxDialogDefaults = window.__remuxDialogDefaults || { confirm: false, prompt: null };
       const __pushDialog = (type, message, defaultText) => {
-        window.__cmuxDialogQueue.push({
+        window.__remuxDialogQueue.push({
           type,
           message: String(message || ''),
           default_text: defaultText == null ? null : String(defaultText),
           timestamp_ms: Date.now()
         });
-        if (window.__cmuxDialogQueue.length > 128) {
-          window.__cmuxDialogQueue.splice(0, window.__cmuxDialogQueue.length - 128);
+        if (window.__remuxDialogQueue.length > 128) {
+          window.__remuxDialogQueue.splice(0, window.__remuxDialogQueue.length - 128);
         }
       };
 
@@ -1338,11 +1338,11 @@ final class BrowserPanel: Panel, ObservableObject {
       };
       window.confirm = function(message) {
         __pushDialog('confirm', message, null);
-        return !!window.__cmuxDialogDefaults.confirm;
+        return !!window.__remuxDialogDefaults.confirm;
       };
       window.prompt = function(message, defaultValue) {
         __pushDialog('prompt', message, defaultValue == null ? null : defaultValue);
-        const v = window.__cmuxDialogDefaults.prompt;
+        const v = window.__remuxDialogDefaults.prompt;
         if (v === null || v === undefined) {
           return defaultValue == null ? '' : String(defaultValue);
         }
@@ -1418,12 +1418,12 @@ final class BrowserPanel: Panel, ObservableObject {
     (() => {
       try {
         const syncState = (state) => {
-          window.__cmuxAddressBarFocusState = state;
+          window.__remuxAddressBarFocusState = state;
           try {
             if (window.top && window.top !== window) {
-              window.top.postMessage({ cmuxAddressBarFocusState: state }, "*");
+              window.top.postMessage({ remuxAddressBarFocusState: state }, "*");
             } else if (window.top) {
-              window.top.__cmuxAddressBarFocusState = state;
+              window.top.__remuxAddressBarFocusState = state;
             }
           } catch (_) {}
         };
@@ -1445,10 +1445,10 @@ final class BrowserPanel: Panel, ObservableObject {
           return "cleared:noneditable";
         }
 
-        let id = active.getAttribute("data-cmux-addressbar-focus-id");
+        let id = active.getAttribute("data-remux-addressbar-focus-id");
         if (!id) {
-          id = "cmux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-          active.setAttribute("data-cmux-addressbar-focus-id", id);
+          id = "remux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+          active.setAttribute("data-remux-addressbar-focus-id", id);
         }
 
         const state = { id, selectionStart: null, selectionEnd: null };
@@ -1466,27 +1466,27 @@ final class BrowserPanel: Panel, ObservableObject {
     private static let addressBarFocusTrackingBootstrapScript = """
     (() => {
       try {
-        if (window.__cmuxAddressBarFocusTrackerInstalled) return true;
-        window.__cmuxAddressBarFocusTrackerInstalled = true;
+        if (window.__remuxAddressBarFocusTrackerInstalled) return true;
+        window.__remuxAddressBarFocusTrackerInstalled = true;
 
         const syncState = (state) => {
-          window.__cmuxAddressBarFocusState = state;
+          window.__remuxAddressBarFocusState = state;
           try {
             if (window.top && window.top !== window) {
-              window.top.postMessage({ cmuxAddressBarFocusState: state }, "*");
+              window.top.postMessage({ remuxAddressBarFocusState: state }, "*");
             } else if (window.top) {
-              window.top.__cmuxAddressBarFocusState = state;
+              window.top.__remuxAddressBarFocusState = state;
             }
           } catch (_) {}
         };
 
-        if (window.top === window && !window.__cmuxAddressBarFocusMessageBridgeInstalled) {
-          window.__cmuxAddressBarFocusMessageBridgeInstalled = true;
+        if (window.top === window && !window.__remuxAddressBarFocusMessageBridgeInstalled) {
+          window.__remuxAddressBarFocusMessageBridgeInstalled = true;
           window.addEventListener("message", (ev) => {
             try {
               const data = ev ? ev.data : null;
-              if (!data || !Object.prototype.hasOwnProperty.call(data, "cmuxAddressBarFocusState")) return;
-              window.__cmuxAddressBarFocusState = data.cmuxAddressBarFocusState || null;
+              if (!data || !Object.prototype.hasOwnProperty.call(data, "remuxAddressBarFocusState")) return;
+              window.__remuxAddressBarFocusState = data.remuxAddressBarFocusState || null;
             } catch (_) {}
           }, true);
         }
@@ -1499,10 +1499,10 @@ final class BrowserPanel: Panel, ObservableObject {
         };
 
         const ensureFocusId = (el) => {
-          let id = el.getAttribute("data-cmux-addressbar-focus-id");
+          let id = el.getAttribute("data-remux-addressbar-focus-id");
           if (!id) {
-            id = "cmux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-            el.setAttribute("data-cmux-addressbar-focus-id", id);
+            id = "remux-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+            el.setAttribute("data-remux-addressbar-focus-id", id);
           }
           return id;
         };
@@ -1554,23 +1554,23 @@ final class BrowserPanel: Panel, ObservableObject {
     (() => {
       try {
         const readState = () => {
-          let state = window.__cmuxAddressBarFocusState;
+          let state = window.__remuxAddressBarFocusState;
           try {
             if ((!state || typeof state.id !== "string" || !state.id) &&
-                window.top && window.top.__cmuxAddressBarFocusState) {
-              state = window.top.__cmuxAddressBarFocusState;
+                window.top && window.top.__remuxAddressBarFocusState) {
+              state = window.top.__remuxAddressBarFocusState;
             }
           } catch (_) {}
           return state;
         };
 
         const clearState = () => {
-          window.__cmuxAddressBarFocusState = null;
+          window.__remuxAddressBarFocusState = null;
           try {
             if (window.top && window.top !== window) {
-              window.top.postMessage({ cmuxAddressBarFocusState: null }, "*");
+              window.top.postMessage({ remuxAddressBarFocusState: null }, "*");
             } else if (window.top) {
-              window.top.__cmuxAddressBarFocusState = null;
+              window.top.__remuxAddressBarFocusState = null;
             }
           } catch (_) {}
         };
@@ -1580,7 +1580,7 @@ final class BrowserPanel: Panel, ObservableObject {
           return "no_state";
         }
 
-        const selector = '[data-cmux-addressbar-focus-id="' + state.id + '"]';
+        const selector = '[data-remux-addressbar-focus-id="' + state.id + '"]';
         const findTarget = (doc) => {
           if (!doc) return null;
           const direct = doc.querySelector(selector);
@@ -1948,7 +1948,7 @@ final class BrowserPanel: Panel, ObservableObject {
         false
     }
 
-    private static func makeWebView() -> CmuxWebView {
+    private static func makeWebView() -> RemuxWebView {
         let config = WKWebViewConfiguration()
         config.processPool = BrowserPanel.sharedProcessPool
         config.mediaTypesRequiringUserActionForPlayback = []
@@ -1979,7 +1979,7 @@ final class BrowserPanel: Panel, ObservableObject {
             )
         )
 
-        let webView = CmuxWebView(frame: .zero, configuration: config)
+        let webView = RemuxWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         if #available(macOS 13.3, *) {
             webView.isInspectable = true
@@ -1992,7 +1992,7 @@ final class BrowserPanel: Panel, ObservableObject {
         return webView
     }
 
-    private func bindWebView(_ webView: CmuxWebView) {
+    private func bindWebView(_ webView: RemuxWebView) {
         webView.onContextMenuDownloadStateChanged = { [weak self] downloading in
             if downloading {
                 self?.beginDownloadActivity()
@@ -2254,8 +2254,8 @@ final class BrowserPanel: Panel, ObservableObject {
         terminatedWebView.stopLoading()
         terminatedWebView.navigationDelegate = nil
         terminatedWebView.uiDelegate = nil
-        if let terminatedCmuxWebView = terminatedWebView as? CmuxWebView {
-            terminatedCmuxWebView.onContextMenuDownloadStateChanged = nil
+        if let terminatedRemuxWebView = terminatedWebView as? RemuxWebView {
+            terminatedRemuxWebView.onContextMenuDownloadStateChanged = nil
         }
 
         let replacement = Self.makeWebView()
@@ -2637,12 +2637,12 @@ final class BrowserPanel: Panel, ObservableObject {
         let alert = insecureHTTPAlertFactory()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "browser.error.insecure.title", defaultValue: "Connection isn\u{2019}t secure")
-        alert.informativeText = String(localized: "browser.error.insecure.message", defaultValue: "\(host) uses plain HTTP, so traffic can be read or modified on the network.\n\nOpen this URL in your default browser, or proceed in cmux.")
+        alert.informativeText = String(localized: "browser.error.insecure.message", defaultValue: "\(host) uses plain HTTP, so traffic can be read or modified on the network.\n\nOpen this URL in your default browser, or proceed in remux.")
         alert.addButton(withTitle: String(localized: "browser.openInDefaultBrowser", defaultValue: "Open in Default Browser"))
-        alert.addButton(withTitle: String(localized: "browser.proceedInCmux", defaultValue: "Proceed in cmux"))
+        alert.addButton(withTitle: String(localized: "browser.proceedInRemux", defaultValue: "Proceed in remux"))
         alert.addButton(withTitle: String(localized: "common.cancel", defaultValue: "Cancel"))
         alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = String(localized: "browser.alwaysAllowHost", defaultValue: "Always allow this host in cmux")
+        alert.suppressionButton?.title = String(localized: "browser.alwaysAllowHost", defaultValue: "Always allow this host in remux")
 
         let handleResponse: (NSApplication.ModalResponse) -> Void = { [weak self, weak alert] response in
             self?.handleInsecureHTTPAlertResponse(
@@ -2960,13 +2960,13 @@ extension BrowserPanel {
         guard preferredDeveloperToolsPresentation == .unknown else { return }
         let attachSelector = NSSelectorFromString("attach")
         guard inspector.responds(to: attachSelector) else { return }
-        inspector.cmuxCallVoid(selector: attachSelector)
+        inspector.remuxCallVoid(selector: attachSelector)
     }
 
     @discardableResult
     private func revealDeveloperTools(_ inspector: NSObject) -> Bool {
         let isVisibleSelector = NSSelectorFromString("isVisible")
-        if inspector.cmuxCallBool(selector: isVisibleSelector) ?? false {
+        if inspector.remuxCallBool(selector: isVisibleSelector) ?? false {
             developerToolsDetachedOpenGraceDeadline = nil
             return true
         }
@@ -2975,8 +2975,8 @@ extension BrowserPanel {
 
         let showSelector = NSSelectorFromString("show")
         guard inspector.responds(to: showSelector) else { return false }
-        inspector.cmuxCallVoid(selector: showSelector)
-        let visibleAfterShow = inspector.cmuxCallBool(selector: isVisibleSelector) ?? false
+        inspector.remuxCallVoid(selector: showSelector)
+        let visibleAfterShow = inspector.remuxCallBool(selector: isVisibleSelector) ?? false
         if preferredDeveloperToolsPresentation == .detached {
             developerToolsDetachedOpenGraceDeadline = visibleAfterShow
                 ? nil
@@ -2990,12 +2990,12 @@ extension BrowserPanel {
     @discardableResult
     private func concealDeveloperTools(_ inspector: NSObject) -> Bool {
         let isVisibleSelector = NSSelectorFromString("isVisible")
-        guard inspector.cmuxCallBool(selector: isVisibleSelector) ?? false else { return true }
+        guard inspector.remuxCallBool(selector: isVisibleSelector) ?? false else { return true }
 
         for rawSelector in ["hide", "close"] {
             let selector = NSSelectorFromString(rawSelector)
             guard inspector.responds(to: selector) else { continue }
-            inspector.cmuxCallVoid(selector: selector)
+            inspector.remuxCallVoid(selector: selector)
             return true
         }
 
@@ -3010,9 +3010,9 @@ extension BrowserPanel {
             "\(debugDeveloperToolsStateSummary()) \(debugDeveloperToolsGeometrySummary())"
         )
 #endif
-        guard let inspector = webView.cmuxInspectorObject() else { return false }
+        guard let inspector = webView.remuxInspectorObject() else { return false }
         let isVisibleSelector = NSSelectorFromString("isVisible")
-        let visible = inspector.cmuxCallBool(selector: isVisibleSelector) ?? false
+        let visible = inspector.remuxCallBool(selector: isVisibleSelector) ?? false
         let targetVisible = !visible
         if targetVisible {
             _ = revealDeveloperTools(inspector)
@@ -3023,7 +3023,7 @@ extension BrowserPanel {
         }
         preferredDeveloperToolsVisible = targetVisible
         if targetVisible {
-            let visibleAfterToggle = inspector.cmuxCallBool(selector: isVisibleSelector) ?? false
+            let visibleAfterToggle = inspector.remuxCallBool(selector: isVisibleSelector) ?? false
             if visibleAfterToggle {
                 syncDeveloperToolsPresentationPreferenceFromUI()
                 cancelDeveloperToolsRestoreRetry()
@@ -3054,13 +3054,13 @@ extension BrowserPanel {
 
     @discardableResult
     func showDeveloperTools() -> Bool {
-        guard let inspector = webView.cmuxInspectorObject() else { return false }
-        let visible = inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
+        guard let inspector = webView.remuxInspectorObject() else { return false }
+        let visible = inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
         if !visible {
             guard revealDeveloperTools(inspector) else { return false }
         }
         preferredDeveloperToolsVisible = true
-        if (inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false) {
+        if (inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false) {
             syncDeveloperToolsPresentationPreferenceFromUI()
             cancelDeveloperToolsRestoreRetry()
             scheduleDetachedDeveloperToolsWindowDismissal()
@@ -3073,7 +3073,7 @@ extension BrowserPanel {
     @discardableResult
     func showDeveloperToolsConsole() -> Bool {
         guard showDeveloperTools() else { return false }
-        guard let inspector = webView.cmuxInspectorObject() else { return true }
+        guard let inspector = webView.remuxInspectorObject() else { return true }
         // WebKit private inspector API differs by OS; try known console selectors.
         let consoleSelectors = [
             "showConsole",
@@ -3083,7 +3083,7 @@ extension BrowserPanel {
         for raw in consoleSelectors {
             let selector = NSSelectorFromString(raw)
             if inspector.responds(to: selector) {
-                inspector.cmuxCallVoid(selector: selector)
+                inspector.remuxCallVoid(selector: selector)
                 break
             }
         }
@@ -3092,8 +3092,8 @@ extension BrowserPanel {
 
     /// Called before WKWebView detaches so manual inspector closes are respected.
     func syncDeveloperToolsPreferenceFromInspector(preserveVisibleIntent: Bool = false) {
-        guard let inspector = webView.cmuxInspectorObject() else { return }
-        guard let visible = inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) else { return }
+        guard let inspector = webView.remuxInspectorObject() else { return }
+        guard let visible = inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) else { return }
         if visible {
             developerToolsDetachedOpenGraceDeadline = nil
             syncDeveloperToolsPresentationPreferenceFromUI()
@@ -3115,7 +3115,7 @@ extension BrowserPanel {
             forceDeveloperToolsRefreshOnNextAttach = false
             return
         }
-        guard let inspector = webView.cmuxInspectorObject() else {
+        guard let inspector = webView.remuxInspectorObject() else {
             scheduleDeveloperToolsRestoreRetry()
             return
         }
@@ -3123,7 +3123,7 @@ extension BrowserPanel {
         let shouldForceRefresh = forceDeveloperToolsRefreshOnNextAttach
         forceDeveloperToolsRefreshOnNextAttach = false
 
-        let visible = inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
+        let visible = inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
         if visible {
             developerToolsDetachedOpenGraceDeadline = nil
             syncDeveloperToolsPresentationPreferenceFromUI()
@@ -3158,11 +3158,11 @@ extension BrowserPanel {
         // WebKit inspector show can trigger transient first-responder churn while
         // panel attachment is still stabilizing. Keep this auto-restore path from
         // mutating first responder so AppKit doesn't walk tearing-down responder chains.
-        cmuxWithWindowFirstResponderBypass {
+        remuxWithWindowFirstResponderBypass {
             _ = revealDeveloperTools(inspector)
         }
         preferredDeveloperToolsVisible = true
-        let visibleAfterShow = inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
+        let visibleAfterShow = inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
         if visibleAfterShow {
             syncDeveloperToolsPresentationPreferenceFromUI()
             cancelDeveloperToolsRestoreRetry()
@@ -3174,14 +3174,14 @@ extension BrowserPanel {
 
     @discardableResult
     func isDeveloperToolsVisible() -> Bool {
-        guard let inspector = webView.cmuxInspectorObject() else { return false }
-        return inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
+        guard let inspector = webView.remuxInspectorObject() else { return false }
+        return inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
     }
 
     @discardableResult
     func hideDeveloperTools() -> Bool {
-        guard let inspector = webView.cmuxInspectorObject() else { return false }
-        let visible = inspector.cmuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
+        guard let inspector = webView.remuxInspectorObject() else { return false }
+        let visible = inspector.remuxCallBool(selector: NSSelectorFromString("isVisible")) ?? false
         if visible {
             syncDeveloperToolsPresentationPreferenceFromUI()
             guard concealDeveloperTools(inspector) else { return false }
@@ -3943,7 +3943,7 @@ private extension BrowserPanel {
 
         return """
         (() => {
-          const metaId = 'cmux-browser-theme-mode-meta';
+          const metaId = 'remux-browser-theme-mode-meta';
           const colorScheme = \(colorSchemeLiteral);
           const root = document.documentElement || document.body;
           if (!root) return;
@@ -3951,7 +3951,7 @@ private extension BrowserPanel {
           let meta = document.getElementById(metaId);
           if (colorScheme) {
             root.style.setProperty('color-scheme', colorScheme, 'important');
-            root.setAttribute('data-cmux-browser-theme', colorScheme);
+            root.setAttribute('data-remux-browser-theme', colorScheme);
             if (!meta) {
               meta = document.createElement('meta');
               meta.id = metaId;
@@ -3961,7 +3961,7 @@ private extension BrowserPanel {
             meta.setAttribute('content', colorScheme);
           } else {
             root.style.removeProperty('color-scheme');
-            root.removeAttribute('data-cmux-browser-theme');
+            root.removeAttribute('data-remux-browser-theme');
             if (meta) {
               meta.remove();
             }
@@ -4052,7 +4052,7 @@ extension BrowserPanel {
     func debugDeveloperToolsStateSummary() -> String {
         let preferred = preferredDeveloperToolsVisible ? 1 : 0
         let visible = isDeveloperToolsVisible() ? 1 : 0
-        let inspector = webView.cmuxInspectorObject() == nil ? 0 : 1
+        let inspector = webView.remuxInspectorObject() == nil ? 0 : 1
         let attached = webView.superview == nil ? 0 : 1
         let inWindow = webView.window == nil ? 0 : 1
         let forceRefresh = forceDeveloperToolsRefreshOnNextAttach ? 1 : 0
@@ -4163,7 +4163,7 @@ private extension BrowserPanel {
 }
 
 extension WKWebView {
-    func cmuxInspectorObject() -> NSObject? {
+    func remuxInspectorObject() -> NSObject? {
         let selector = NSSelectorFromString("_inspector")
         guard responds(to: selector),
               let inspector = perform(selector)?.takeUnretainedValue() as? NSObject else {
@@ -4172,8 +4172,8 @@ extension WKWebView {
         return inspector
     }
 
-    func cmuxInspectorFrontendWebView() -> WKWebView? {
-        guard let inspector = cmuxInspectorObject() else { return nil }
+    func remuxInspectorFrontendWebView() -> WKWebView? {
+        guard let inspector = remuxInspectorObject() else { return nil }
         let selector = NSSelectorFromString("inspectorWebView")
         guard inspector.responds(to: selector),
               let inspectorWebView = inspector.perform(selector)?.takeUnretainedValue() as? WKWebView else {
@@ -4184,14 +4184,14 @@ extension WKWebView {
 }
 
 private extension NSObject {
-    func cmuxCallBool(selector: Selector) -> Bool? {
+    func remuxCallBool(selector: Selector) -> Bool? {
         guard responds(to: selector) else { return nil }
         typealias Fn = @convention(c) (AnyObject, Selector) -> Bool
         let fn = unsafeBitCast(method(for: selector), to: Fn.self)
         return fn(self, selector)
     }
 
-    func cmuxCallVoid(selector: Selector) {
+    func remuxCallVoid(selector: Selector) {
         guard responds(to: selector) else { return }
         typealias Fn = @convention(c) (AnyObject, Selector) -> Void
         let fn = unsafeBitCast(method(for: selector), to: Fn.self)
@@ -4217,7 +4217,7 @@ private class BrowserDownloadDelegate: NSObject, WKDownloadDelegate {
     var onDownloadFailed: ((Error) -> Void)?
 
     private static let tempDir: URL = {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cmux-downloads", isDirectory: true)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("remux-downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -4531,7 +4531,7 @@ private class BrowserNavigationDelegate: NSObject, WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        let hasRecentMiddleClickIntent = CmuxWebView.hasRecentMiddleClickIntent(for: webView)
+        let hasRecentMiddleClickIntent = RemuxWebView.hasRecentMiddleClickIntent(for: webView)
         let shouldOpenInNewTab = browserNavigationShouldOpenInNewTab(
             navigationType: navigationAction.navigationType,
             modifierFlags: navigationAction.modifierFlags,

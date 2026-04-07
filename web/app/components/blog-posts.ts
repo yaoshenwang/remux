@@ -4,25 +4,25 @@ export const blogPosts = [
     title: "Cmd+Shift+U",
     date: "2026-03-04",
     summary:
-      "How Cmd+Shift+U navigates between finished agents across workspaces in cmux.",
+      "How Cmd+Shift+U navigates between finished agents across workspaces in remux.",
   },
   {
-    slug: "zen-of-cmux",
-    title: "The Zen of cmux",
+    slug: "zen-of-remux",
+    title: "The Zen of remux",
     date: "2026-02-27",
     summary:
-      "cmux is a primitive, not a solution. It gives you composable pieces and your workflow is up to you.",
+      "remux is a primitive, not a solution. It gives you composable pieces and your workflow is up to you.",
   },
   {
     slug: "show-hn-launch",
-    title: "Launching cmux on Show HN",
+    title: "Launching remux on Show HN",
     date: "2026-02-21",
     summary:
-      "cmux hit #2 on Hacker News, got shared by Mitchell Hashimoto, and went viral in Japan.",
+      "remux hit #2 on Hacker News, got shared by Mitchell Hashimoto, and went viral in Japan.",
   },
   {
-    slug: "introducing-cmux",
-    title: "Introducing cmux",
+    slug: "introducing-remux",
+    title: "Introducing remux",
     date: "2026-02-12",
     summary:
       "A native macOS terminal built on Ghostty, designed for running multiple AI coding agents side by side.",

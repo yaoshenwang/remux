@@ -16,31 +16,31 @@ from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmuxError
+from remux import remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _find_cli_binary() -> str:
-    env_cli = os.environ.get("CMUXTERM_CLI")
+    env_cli = os.environ.get("REMUXTERM_CLI")
     if env_cli and os.path.isfile(env_cli) and os.access(env_cli, os.X_OK):
         return env_cli
 
-    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/cmux-tests-v2/Build/Products/Debug/cmux")
+    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/remux-tests-v2/Build/Products/Debug/remux")
     if os.path.isfile(fixed) and os.access(fixed, os.X_OK):
         return fixed
 
-    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/cmux"), recursive=True)
-    candidates += glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux")
+    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/remux"), recursive=True)
+    candidates += glob.glob("/tmp/remux-*/Build/Products/Debug/remux")
     candidates = [p for p in candidates if os.path.isfile(p) and os.access(p, os.X_OK)]
     if not candidates:
-        raise cmuxError("Could not locate cmux CLI binary; set CMUXTERM_CLI")
+        raise remuxError("Could not locate remux CLI binary; set REMUXTERM_CLI")
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
 
@@ -58,16 +58,16 @@ def _run_cli_json(cli: str, args: list[str], retries: int = 4) -> dict:
             try:
                 return json.loads(proc.stdout or "{}")
             except Exception as exc:  # noqa: BLE001
-                raise cmuxError(f"Invalid CLI JSON output for {' '.join(args)}: {proc.stdout!r} ({exc})")
+                raise remuxError(f"Invalid CLI JSON output for {' '.join(args)}: {proc.stdout!r} ({exc})")
 
         merged = f"{proc.stdout}\n{proc.stderr}".strip()
         last_merged = merged
         if "Command timed out" in merged and attempt < retries:
             time.sleep(0.2)
             continue
-        raise cmuxError(f"CLI failed ({' '.join(args)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(args)}): {merged}")
 
-    raise cmuxError(f"CLI failed ({' '.join(args)}): {last_merged}")
+    raise remuxError(f"CLI failed ({' '.join(args)}): {last_merged}")
 
 
 def _run_cli_text(cli: str, args: list[str], retries: int = 3) -> str:
@@ -87,9 +87,9 @@ def _run_cli_text(cli: str, args: list[str], retries: int = 3) -> str:
         if "Command timed out" in merged and attempt < retries:
             time.sleep(0.2)
             continue
-        raise cmuxError(f"CLI failed ({' '.join(args)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(args)}): {merged}")
 
-    raise cmuxError(f"CLI failed ({' '.join(args)}): {last_merged}")
+    raise remuxError(f"CLI failed ({' '.join(args)}): {last_merged}")
 
 
 def _run_cli_tail_json(cli: str, args: list[str], retries: int = 3) -> dict:
@@ -105,16 +105,16 @@ def _run_cli_tail_json(cli: str, args: list[str], retries: int = 3) -> dict:
             try:
                 return json.loads(proc.stdout or "{}")
             except Exception as exc:  # noqa: BLE001
-                raise cmuxError(f"Invalid CLI JSON output for {' '.join(args)}: {proc.stdout!r} ({exc})")
+                raise remuxError(f"Invalid CLI JSON output for {' '.join(args)}: {proc.stdout!r} ({exc})")
 
         merged = f"{proc.stdout}\n{proc.stderr}".strip()
         last_merged = merged
         if "Command timed out" in merged and attempt < retries:
             time.sleep(0.2)
             continue
-        raise cmuxError(f"CLI failed ({' '.join(args)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(args)}): {merged}")
 
-    raise cmuxError(f"CLI failed ({' '.join(args)}): {last_merged}")
+    raise remuxError(f"CLI failed ({' '.join(args)}): {last_merged}")
 
 
 def _run_cli_expect_failure(cli: str, args: list[str], needles: list[str]) -> None:
@@ -125,15 +125,15 @@ def _run_cli_expect_failure(cli: str, args: list[str], needles: list[str]) -> No
         check=False,
     )
     if proc.returncode == 0:
-        raise cmuxError(f"Expected CLI failure for {' '.join(args)}, but it succeeded: {proc.stdout}")
+        raise remuxError(f"Expected CLI failure for {' '.join(args)}, but it succeeded: {proc.stdout}")
     merged = f"{proc.stdout}\n{proc.stderr}"
     if not any(needle in merged for needle in needles):
-        raise cmuxError(f"Expected CLI failure containing one of {needles!r} for {' '.join(args)}, got: {merged}")
+        raise remuxError(f"Expected CLI failure containing one of {needles!r} for {' '.join(args)}, got: {merged}")
 
 
 @contextmanager
 def _local_test_server() -> str:
-    with tempfile.TemporaryDirectory(prefix="cmux-browser-cli-") as root:
+    with tempfile.TemporaryDirectory(prefix="remux-browser-cli-") as root:
         root_path = Path(root)
         (root_path / "index.html").write_text(
             """<!doctype html>
@@ -180,7 +180,7 @@ def main() -> int:
             or ""
         )
         _must(bool(workspace), f"Expected workspace handle from identify: {identify}")
-        os.environ["CMUX_WORKSPACE_ID"] = workspace
+        os.environ["REMUX_WORKSPACE_ID"] = workspace
 
         opened_tail_json = _run_cli_tail_json(
             cli,
@@ -273,7 +273,7 @@ def main() -> int:
         _run_cli_json(cli, ["browser", surface, "errors", "list"])
         _run_cli_json(cli, ["browser", surface, "highlight", "#btn"])
 
-        state_file = tempfile.NamedTemporaryFile(delete=False, prefix="cmux-cli-state-", suffix=".json").name
+        state_file = tempfile.NamedTemporaryFile(delete=False, prefix="remux-cli-state-", suffix=".json").name
         saved = _run_cli_json(cli, ["browser", surface, "state", "save", state_file])
         _must(str(saved.get("path") or "") == state_file, f"Expected saved state path via CLI: {saved}")
         _run_cli_json(cli, ["browser", surface, "state", "load", state_file])

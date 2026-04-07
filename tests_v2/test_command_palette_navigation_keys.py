@@ -13,10 +13,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(
@@ -30,27 +30,27 @@ def _wait_until(
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
-def _palette_visible(client: cmux, window_id: str) -> bool:
+def _palette_visible(client: remux, window_id: str) -> bool:
     res = client._call("debug.command_palette.visible", {"window_id": window_id}) or {}
     return bool(res.get("visible"))
 
 
-def _palette_selected_index(client: cmux, window_id: str) -> int:
+def _palette_selected_index(client: remux, window_id: str) -> int:
     res = client._call("debug.command_palette.selection", {"window_id": window_id}) or {}
     return int(res.get("selected_index") or 0)
 
 
-def _has_focused_surface(client: cmux) -> bool:
+def _has_focused_surface(client: remux) -> bool:
     try:
         return any(bool(row[2]) for row in client.list_surfaces())
     except Exception:
         return False
 
 
-def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
+def _set_palette_visible(client: remux, window_id: str, visible: bool) -> None:
     if _palette_visible(client, window_id) == visible:
         return
     client._call("debug.command_palette.toggle", {"window_id": window_id})
@@ -60,7 +60,7 @@ def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
     )
 
 
-def _open_palette_with_query(client: cmux, window_id: str, query: str) -> None:
+def _open_palette_with_query(client: remux, window_id: str, query: str) -> None:
     _set_palette_visible(client, window_id, False)
     _set_palette_visible(client, window_id, True)
     client.simulate_type(query)
@@ -70,7 +70,7 @@ def _open_palette_with_query(client: cmux, window_id: str, query: str) -> None:
     )
 
 
-def _assert_move(client: cmux, window_id: str, combo: str, start_index: int, expected_index: int) -> None:
+def _assert_move(client: remux, window_id: str, combo: str, start_index: int, expected_index: int) -> None:
     _open_palette_with_query(client, window_id, "new")
     for _ in range(start_index):
         client.simulate_shortcut("down")
@@ -87,7 +87,7 @@ def _assert_move(client: cmux, window_id: str, combo: str, start_index: int, exp
     )
 
 
-def _assert_can_navigate_past_ten_results(client: cmux, window_id: str) -> None:
+def _assert_can_navigate_past_ten_results(client: remux, window_id: str) -> None:
     _open_palette_with_query(client, window_id, "")
 
     for _ in range(12):
@@ -101,7 +101,7 @@ def _assert_can_navigate_past_ten_results(client: cmux, window_id: str) -> None:
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
         client.new_workspace()

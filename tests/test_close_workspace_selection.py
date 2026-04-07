@@ -16,10 +16,10 @@ import sys
 import time
 from typing import List, Optional, Tuple
 
-# Add the directory containing cmux.py to the path
+# Add the directory containing remux.py to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux
+from remux import remux
 
 
 class TestResult:
@@ -48,7 +48,7 @@ def _by_index(workspaces: List[WorkspaceTuple], index: int) -> Optional[Workspac
     return next((w for w in workspaces if w[0] == index), None)
 
 
-def _ensure_workspaces(client: cmux, count: int) -> List[str]:
+def _ensure_workspaces(client: remux, count: int) -> List[str]:
     """
     Ensure at least `count` workspaces exist. Returns IDs of newly created workspaces.
     """
@@ -61,7 +61,7 @@ def _ensure_workspaces(client: cmux, count: int) -> List[str]:
     return created
 
 
-def test_close_middle_selects_next(client: cmux) -> TestResult:
+def test_close_middle_selects_next(client: remux) -> TestResult:
     result = TestResult("Close Selected Middle Workspace Selects Next")
     try:
         _ensure_workspaces(client, 3)
@@ -103,7 +103,7 @@ def test_close_middle_selects_next(client: cmux) -> TestResult:
     return result
 
 
-def test_close_last_selects_previous(client: cmux) -> TestResult:
+def test_close_last_selects_previous(client: remux) -> TestResult:
     result = TestResult("Close Selected Last Workspace Selects Previous")
     try:
         _ensure_workspaces(client, 3)
@@ -150,7 +150,7 @@ def test_close_last_selects_previous(client: cmux) -> TestResult:
 
 def run_tests() -> int:
     results = []
-    with cmux() as client:
+    with remux() as client:
         results.append(test_close_middle_selects_next(client))
         results.append(test_close_last_selects_previous(client))
 

@@ -2,9 +2,9 @@
 import Foundation
 
 final class UpdateTestURLProtocol: URLProtocol {
-    static let host = "cmux.test"
+    static let host = "remux.test"
     static let appcastPath = "/appcast.xml"
-    static let updatePath = "/cmux-test.zip"
+    static let updatePath = "/remux-test.zip"
 
     private static var isRegistered = false
     private static let registrationLock = NSLock()
@@ -73,8 +73,8 @@ final class UpdateTestURLProtocol: URLProtocol {
 
     private static func appcastData() -> Data {
         let env = ProcessInfo.processInfo.environment
-        let mode = env["CMUX_UI_TEST_FEED_MODE"] ?? "available"
-        let version = env["CMUX_UI_TEST_UPDATE_VERSION"] ?? "9.9.9"
+        let mode = env["REMUX_UI_TEST_FEED_MODE"] ?? "available"
+        let version = env["REMUX_UI_TEST_UPDATE_VERSION"] ?? "9.9.9"
         let updateURL = "https://\(host)\(updatePath)"
         let updateLength = updateArchiveData().count
 
@@ -84,7 +84,7 @@ final class UpdateTestURLProtocol: URLProtocol {
         } else {
             item = """
             <item>
-              <title>cmux \(version)</title>
+              <title>remux \(version)</title>
               <sparkle:version>\(version)</sparkle:version>
               <sparkle:shortVersionString>\(version)</sparkle:shortVersionString>
               <enclosure url="\(updateURL)" length="\(updateLength)" type="application/octet-stream" />
@@ -98,7 +98,7 @@ final class UpdateTestURLProtocol: URLProtocol {
           xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
           xmlns:dc="http://purl.org/dc/elements/1.1/">
           <channel>
-            <title>cmux Test Updates</title>
+            <title>remux Test Updates</title>
             <link>https://\(host)</link>
             <description>Test updates feed</description>
             <language>en</language>
@@ -111,7 +111,7 @@ final class UpdateTestURLProtocol: URLProtocol {
     }
 
     private static func updateArchiveData() -> Data {
-        Data("cmux test update".utf8)
+        Data("remux test update".utf8)
     }
 }
 #endif

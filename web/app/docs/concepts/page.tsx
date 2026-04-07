@@ -4,7 +4,7 @@ import { CodeBlock } from "../../components/code-block";
 export const metadata: Metadata = {
   title: "Concepts",
   description:
-    "How cmux organizes terminals: windows, workspaces, panes, and surfaces. The hierarchy behind the sidebar, splits, and socket API.",
+    "How remux organizes terminals: windows, workspaces, panes, and surfaces. The hierarchy behind the sidebar, splits, and socket API.",
 };
 
 export default function ConceptsPage() {
@@ -12,7 +12,7 @@ export default function ConceptsPage() {
     <>
       <h1>Concepts</h1>
       <p>
-        cmux organizes your terminals in a four-level hierarchy. Understanding
+        remux organizes your terminals in a four-level hierarchy. Understanding
         these levels helps when using the socket API, CLI, and keyboard
         shortcuts.
       </p>
@@ -67,7 +67,7 @@ export default function ConceptsPage() {
           <tr>
             <td>Environment variable</td>
             <td>
-              <code>CMUX_WORKSPACE_ID</code>
+              <code>REMUX_WORKSPACE_ID</code>
             </td>
           </tr>
         </tbody>
@@ -96,7 +96,7 @@ export default function ConceptsPage() {
       </p>
       <p>
         Surfaces are the individual terminal or browser sessions you interact
-        with. Each surface has its own <code>CMUX_SURFACE_ID</code> environment
+        with. Each surface has its own <code>REMUX_SURFACE_ID</code> environment
         variable.
       </p>
 
@@ -178,7 +178,7 @@ export default function ConceptsPage() {
               <code>⌘N</code>
             </td>
             <td>
-              <code>CMUX_WORKSPACE_ID</code>
+              <code>REMUX_WORKSPACE_ID</code>
             </td>
           </tr>
           <tr>
@@ -196,7 +196,7 @@ export default function ConceptsPage() {
               <code>⌘T</code>
             </td>
             <td>
-              <code>CMUX_SURFACE_ID</code>
+              <code>REMUX_SURFACE_ID</code>
             </td>
           </tr>
           <tr>

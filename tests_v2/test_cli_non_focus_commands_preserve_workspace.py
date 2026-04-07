@@ -9,61 +9,61 @@ from pathlib import Path
 from typing import List
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _find_cli_binary() -> str:
-    env_cli = os.environ.get("CMUXTERM_CLI")
+    env_cli = os.environ.get("REMUXTERM_CLI")
     if env_cli and os.path.isfile(env_cli) and os.access(env_cli, os.X_OK):
         return env_cli
 
-    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/cmux-tests-v2/Build/Products/Debug/cmux")
+    fixed = os.path.expanduser("~/Library/Developer/Xcode/DerivedData/remux-tests-v2/Build/Products/Debug/remux")
     if os.path.isfile(fixed) and os.access(fixed, os.X_OK):
         return fixed
 
-    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/cmux"), recursive=True)
-    candidates += glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux")
+    candidates = glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/remux"), recursive=True)
+    candidates += glob.glob("/tmp/remux-*/Build/Products/Debug/remux")
     candidates = [p for p in candidates if os.path.isfile(p) and os.access(p, os.X_OK)]
     if not candidates:
-        raise cmuxError("Could not locate cmux CLI binary; set CMUXTERM_CLI")
+        raise remuxError("Could not locate remux CLI binary; set REMUXTERM_CLI")
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
 
 
 def _run_cli(cli: str, args: List[str]) -> str:
     env = dict(os.environ)
-    env.pop("CMUX_WORKSPACE_ID", None)
-    env.pop("CMUX_SURFACE_ID", None)
-    env.pop("CMUX_TAB_ID", None)
+    env.pop("REMUX_WORKSPACE_ID", None)
+    env.pop("REMUX_SURFACE_ID", None)
+    env.pop("REMUX_TAB_ID", None)
 
     cmd = [cli, "--socket", SOCKET_PATH] + args
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if proc.returncode != 0:
         merged = f"{proc.stdout}\n{proc.stderr}".strip()
-        raise cmuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
     return proc.stdout.strip()
 
 
-def _current_workspace(c: cmux) -> str:
+def _current_workspace(c: remux) -> str:
     payload = c._call("workspace.current") or {}
     ws_id = str(payload.get("workspace_id") or "")
     if not ws_id:
-        raise cmuxError(f"workspace.current returned no workspace_id: {payload}")
+        raise remuxError(f"workspace.current returned no workspace_id: {payload}")
     return ws_id
 
 
 def main() -> int:
     cli = _find_cli_binary()
 
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         baseline_ws = _current_workspace(c)
 
         created = _run_cli(cli, ["new-workspace"])

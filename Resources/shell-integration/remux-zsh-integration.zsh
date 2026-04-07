@@ -1,0 +1,428 @@
+# remux shell integration for zsh
+# Injected automatically — do not source manually
+
+_remux_send() {
+    local payload="$1"
+    if command -v ncat >/dev/null 2>&1; then
+        print -r -- "$payload" | ncat -w 1 -U "$REMUX_SOCKET_PATH" --send-only
+    elif command -v socat >/dev/null 2>&1; then
+        print -r -- "$payload" | socat -T 1 - "UNIX-CONNECT:$REMUX_SOCKET_PATH"
+    elif command -v nc >/dev/null 2>&1; then
+        # Some nc builds don't support unix sockets, but keep as a last-ditch fallback.
+        #
+        # Important: macOS/BSD nc will often wait for the peer to close the socket
+        # after it has finished writing. remux keeps the connection open, so
+        # a plain `nc -U` can hang indefinitely and leak background processes.
+        #
+        # Prefer flags that guarantee we exit after sending, and fall back to a
+        # short timeout so we never block sidebar updates.
+        if print -r -- "$payload" | nc -N -U "$REMUX_SOCKET_PATH" >/dev/null 2>&1; then
+            :
+        else
+            print -r -- "$payload" | nc -w 1 -U "$REMUX_SOCKET_PATH" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+_remux_restore_scrollback_once() {
+    local path="${REMUX_RESTORE_SCROLLBACK_FILE:-}"
+    [[ -n "$path" ]] || return 0
+    unset REMUX_RESTORE_SCROLLBACK_FILE
+
+    if [[ -r "$path" ]]; then
+        /bin/cat -- "$path" 2>/dev/null || true
+        /bin/rm -f -- "$path" >/dev/null 2>&1 || true
+    fi
+}
+_remux_restore_scrollback_once
+
+# Throttle heavy work to avoid prompt latency.
+typeset -g _REMUX_PWD_LAST_PWD=""
+typeset -g _REMUX_GIT_LAST_PWD=""
+typeset -g _REMUX_GIT_LAST_RUN=0
+typeset -g _REMUX_GIT_JOB_PID=""
+typeset -g _REMUX_GIT_JOB_STARTED_AT=0
+typeset -g _REMUX_GIT_FORCE=0
+typeset -g _REMUX_GIT_HEAD_LAST_PWD=""
+typeset -g _REMUX_GIT_HEAD_PATH=""
+typeset -g _REMUX_GIT_HEAD_SIGNATURE=""
+typeset -g _REMUX_GIT_HEAD_WATCH_PID=""
+typeset -g _REMUX_PR_LAST_PWD=""
+typeset -g _REMUX_PR_LAST_RUN=0
+typeset -g _REMUX_PR_JOB_PID=""
+typeset -g _REMUX_PR_JOB_STARTED_AT=0
+typeset -g _REMUX_PR_FORCE=0
+typeset -g _REMUX_ASYNC_JOB_TIMEOUT=20
+
+typeset -g _REMUX_PORTS_LAST_RUN=0
+typeset -g _REMUX_CMD_START=0
+typeset -g _REMUX_TTY_NAME=""
+typeset -g _REMUX_TTY_REPORTED=0
+
+_remux_git_resolve_head_path() {
+    # Resolve the HEAD file path without invoking git (fast; works for worktrees).
+    local dir="$PWD"
+    while true; do
+        if [[ -d "$dir/.git" ]]; then
+            print -r -- "$dir/.git/HEAD"
+            return 0
+        fi
+        if [[ -f "$dir/.git" ]]; then
+            local line gitdir
+            line="$(<"$dir/.git")"
+            if [[ "$line" == gitdir:* ]]; then
+                gitdir="${line#gitdir:}"
+                gitdir="${gitdir## }"
+                gitdir="${gitdir%% }"
+                [[ -n "$gitdir" ]] || return 1
+                [[ "$gitdir" != /* ]] && gitdir="$dir/$gitdir"
+                print -r -- "$gitdir/HEAD"
+                return 0
+            fi
+        fi
+        [[ "$dir" == "/" || -z "$dir" ]] && break
+        dir="${dir:h}"
+    done
+    return 1
+}
+
+_remux_git_head_signature() {
+    local head_path="$1"
+    [[ -n "$head_path" && -r "$head_path" ]] || return 1
+    local line=""
+    if IFS= read -r line < "$head_path"; then
+        print -r -- "$line"
+        return 0
+    fi
+    return 1
+}
+
+_remux_report_tty_once() {
+    # Send the TTY name to the app once per session so the batched port scanner
+    # knows which TTY belongs to this panel.
+    (( _REMUX_TTY_REPORTED )) && return 0
+    [[ -S "$REMUX_SOCKET_PATH" ]] || return 0
+    [[ -n "$REMUX_TAB_ID" ]] || return 0
+    [[ -n "$REMUX_PANEL_ID" ]] || return 0
+    [[ -n "$_REMUX_TTY_NAME" ]] || return 0
+    _REMUX_TTY_REPORTED=1
+    {
+        _remux_send "report_tty $_REMUX_TTY_NAME --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+    } >/dev/null 2>&1 &!
+}
+
+_remux_ports_kick() {
+    # Lightweight: just tell the app to run a batched scan for this panel.
+    # The app coalesces kicks across all panels and runs a single ps+lsof.
+    [[ -S "$REMUX_SOCKET_PATH" ]] || return 0
+    [[ -n "$REMUX_TAB_ID" ]] || return 0
+    [[ -n "$REMUX_PANEL_ID" ]] || return 0
+    _REMUX_PORTS_LAST_RUN=$EPOCHSECONDS
+    {
+        _remux_send "ports_kick --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+    } >/dev/null 2>&1 &!
+}
+
+_remux_report_git_branch_for_path() {
+    local repo_path="$1"
+    [[ -n "$repo_path" ]] || return 0
+    [[ -S "$REMUX_SOCKET_PATH" ]] || return 0
+    [[ -n "$REMUX_TAB_ID" ]] || return 0
+    [[ -n "$REMUX_PANEL_ID" ]] || return 0
+
+    local branch dirty_opt="" first
+    branch="$(git -C "$repo_path" branch --show-current 2>/dev/null)"
+    if [[ -n "$branch" ]]; then
+        first="$(git -C "$repo_path" status --porcelain -uno 2>/dev/null | head -1)"
+        [[ -n "$first" ]] && dirty_opt="--status=dirty"
+        _remux_send "report_git_branch $branch $dirty_opt --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+    else
+        _remux_send "clear_git_branch --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+    fi
+}
+
+_remux_stop_git_head_watch() {
+    if [[ -n "$_REMUX_GIT_HEAD_WATCH_PID" ]]; then
+        kill "$_REMUX_GIT_HEAD_WATCH_PID" >/dev/null 2>&1 || true
+        _REMUX_GIT_HEAD_WATCH_PID=""
+    fi
+}
+
+_remux_start_git_head_watch() {
+    [[ -S "$REMUX_SOCKET_PATH" ]] || return 0
+    [[ -n "$REMUX_TAB_ID" ]] || return 0
+    [[ -n "$REMUX_PANEL_ID" ]] || return 0
+
+    local watch_pwd="$PWD"
+    local watch_head_path
+    watch_head_path="$(_remux_git_resolve_head_path 2>/dev/null || true)"
+    [[ -n "$watch_head_path" ]] || return 0
+
+    local watch_head_signature
+    watch_head_signature="$(_remux_git_head_signature "$watch_head_path" 2>/dev/null || true)"
+
+    _REMUX_GIT_HEAD_LAST_PWD="$watch_pwd"
+    _REMUX_GIT_HEAD_PATH="$watch_head_path"
+    _REMUX_GIT_HEAD_SIGNATURE="$watch_head_signature"
+
+    _remux_stop_git_head_watch
+    {
+        local last_signature="$watch_head_signature"
+        while true; do
+            sleep 1
+
+            local signature
+            signature="$(_remux_git_head_signature "$watch_head_path" 2>/dev/null || true)"
+            if [[ -n "$signature" && "$signature" != "$last_signature" ]]; then
+                last_signature="$signature"
+                _remux_report_git_branch_for_path "$watch_pwd"
+            fi
+        done
+    } >/dev/null 2>&1 &!
+    _REMUX_GIT_HEAD_WATCH_PID=$!
+}
+
+_remux_preexec() {
+    if [[ -z "$_REMUX_TTY_NAME" ]]; then
+        local t
+        t="$(tty 2>/dev/null || true)"
+        t="${t##*/}"
+        [[ -n "$t" && "$t" != "not a tty" ]] && _REMUX_TTY_NAME="$t"
+    fi
+
+    _REMUX_CMD_START=$EPOCHSECONDS
+
+    # Heuristic: commands that may change git branch/dirty state without changing $PWD.
+    local cmd="${1## }"
+    case "$cmd" in
+        git\ *|git|gh\ *|lazygit|lazygit\ *|tig|tig\ *|gitui|gitui\ *|stg\ *|jj\ *)
+            _REMUX_GIT_FORCE=1
+            _REMUX_PR_FORCE=1 ;;
+    esac
+
+    # Register TTY + kick batched port scan for foreground commands (servers).
+    _remux_report_tty_once
+    _remux_ports_kick
+    _remux_start_git_head_watch
+}
+
+_remux_precmd() {
+    _remux_stop_git_head_watch
+
+    # Skip if socket doesn't exist yet
+    [[ -S "$REMUX_SOCKET_PATH" ]] || return 0
+    [[ -n "$REMUX_TAB_ID" ]] || return 0
+    [[ -n "$REMUX_PANEL_ID" ]] || return 0
+
+    if [[ -z "$_REMUX_TTY_NAME" ]]; then
+        local t
+        t="$(tty 2>/dev/null || true)"
+        t="${t##*/}"
+        [[ -n "$t" && "$t" != "not a tty" ]] && _REMUX_TTY_NAME="$t"
+    fi
+
+    _remux_report_tty_once
+
+    local now=$EPOCHSECONDS
+    local pwd="$PWD"
+    local cmd_start="$_REMUX_CMD_START"
+    _REMUX_CMD_START=0
+
+    # Post-wake socket writes can occasionally leave a probe process wedged.
+    # If one probe is stale, clear the guard so fresh async probes can resume.
+    if [[ -n "$_REMUX_GIT_JOB_PID" ]]; then
+        if ! kill -0 "$_REMUX_GIT_JOB_PID" 2>/dev/null; then
+            _REMUX_GIT_JOB_PID=""
+            _REMUX_GIT_JOB_STARTED_AT=0
+        elif (( _REMUX_GIT_JOB_STARTED_AT > 0 )) && (( now - _REMUX_GIT_JOB_STARTED_AT >= _REMUX_ASYNC_JOB_TIMEOUT )); then
+            _REMUX_GIT_JOB_PID=""
+            _REMUX_GIT_JOB_STARTED_AT=0
+            _REMUX_GIT_FORCE=1
+        fi
+    fi
+
+    if [[ -n "$_REMUX_PR_JOB_PID" ]]; then
+        if ! kill -0 "$_REMUX_PR_JOB_PID" 2>/dev/null; then
+            _REMUX_PR_JOB_PID=""
+            _REMUX_PR_JOB_STARTED_AT=0
+        elif (( _REMUX_PR_JOB_STARTED_AT > 0 )) && (( now - _REMUX_PR_JOB_STARTED_AT >= _REMUX_ASYNC_JOB_TIMEOUT )); then
+            _REMUX_PR_JOB_PID=""
+            _REMUX_PR_JOB_STARTED_AT=0
+            _REMUX_PR_FORCE=1
+        fi
+    fi
+
+    # CWD: keep the app in sync with the actual shell directory.
+    # This is also the simplest way to test sidebar directory behavior end-to-end.
+    if [[ "$pwd" != "$_REMUX_PWD_LAST_PWD" ]]; then
+        _REMUX_PWD_LAST_PWD="$pwd"
+        {
+            # Quote to preserve spaces.
+            local qpwd="${pwd//\"/\\\"}"
+            _remux_send "report_pwd \"${qpwd}\" --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+        } >/dev/null 2>&1 &!
+    fi
+
+    # Git branch/dirty: update immediately on directory change, otherwise every ~3s.
+    # While a foreground command is running, _remux_start_git_head_watch probes HEAD
+    # once per second so agent-initiated git checkouts still surface quickly.
+    local should_git=0
+
+    # Git branch can change without a `git ...`-prefixed command (aliases like `gco`,
+    # tools like `gh pr checkout`, etc.). Detect HEAD changes and force a refresh.
+    if [[ "$pwd" != "$_REMUX_GIT_HEAD_LAST_PWD" ]]; then
+        _REMUX_GIT_HEAD_LAST_PWD="$pwd"
+        _REMUX_GIT_HEAD_PATH="$(_remux_git_resolve_head_path 2>/dev/null || true)"
+        _REMUX_GIT_HEAD_SIGNATURE=""
+    fi
+    if [[ -n "$_REMUX_GIT_HEAD_PATH" ]]; then
+        local head_signature
+        head_signature="$(_remux_git_head_signature "$_REMUX_GIT_HEAD_PATH" 2>/dev/null || true)"
+        if [[ -n "$head_signature" && "$head_signature" != "$_REMUX_GIT_HEAD_SIGNATURE" ]]; then
+            _REMUX_GIT_HEAD_SIGNATURE="$head_signature"
+            # Treat HEAD file change like a git command — force-replace any
+            # running probe so the sidebar picks up the new branch immediately.
+            _REMUX_GIT_FORCE=1
+            _REMUX_PR_FORCE=1
+            should_git=1
+        fi
+    fi
+
+    if [[ "$pwd" != "$_REMUX_GIT_LAST_PWD" ]]; then
+        should_git=1
+    elif (( _REMUX_GIT_FORCE )); then
+        should_git=1
+    elif (( now - _REMUX_GIT_LAST_RUN >= 3 )); then
+        should_git=1
+    fi
+
+    if (( should_git )); then
+        local can_launch_git=1
+        if [[ -n "$_REMUX_GIT_JOB_PID" ]] && kill -0 "$_REMUX_GIT_JOB_PID" 2>/dev/null; then
+            # If a stale probe is still running but the cwd changed (or we just ran
+            # a git command), restart immediately so branch state isn't delayed
+            # until the next user command/prompt.
+            # Note: this repeats the cwd check above on purpose. The first check
+            # decides whether we should refresh at all; this one decides whether
+            # an in-flight older probe can be reused vs. replaced.
+            if [[ "$pwd" != "$_REMUX_GIT_LAST_PWD" ]] || (( _REMUX_GIT_FORCE )); then
+                kill "$_REMUX_GIT_JOB_PID" >/dev/null 2>&1 || true
+                _REMUX_GIT_JOB_PID=""
+                _REMUX_GIT_JOB_STARTED_AT=0
+            else
+                can_launch_git=0
+            fi
+        fi
+
+        if (( can_launch_git )); then
+            _REMUX_GIT_FORCE=0
+            _REMUX_GIT_LAST_PWD="$pwd"
+            _REMUX_GIT_LAST_RUN=$now
+            {
+                _remux_report_git_branch_for_path "$pwd"
+            } >/dev/null 2>&1 &!
+            _REMUX_GIT_JOB_PID=$!
+            _REMUX_GIT_JOB_STARTED_AT=$now
+        fi
+    fi
+
+    # Pull request metadata (number/state/url):
+    # - refresh on cwd change, explicit git/gh commands, and occasionally for status drift
+    # - keep this independent from the git probe cadence to avoid hitting GitHub too often
+    local should_pr=0
+    if [[ "$pwd" != "$_REMUX_PR_LAST_PWD" ]]; then
+        should_pr=1
+    elif (( _REMUX_PR_FORCE )); then
+        should_pr=1
+    elif (( now - _REMUX_PR_LAST_RUN >= 60 )); then
+        should_pr=1
+    fi
+
+    if (( should_pr )); then
+        local can_launch_pr=1
+        if [[ -n "$_REMUX_PR_JOB_PID" ]] && kill -0 "$_REMUX_PR_JOB_PID" 2>/dev/null; then
+            if [[ "$pwd" != "$_REMUX_PR_LAST_PWD" ]] || (( _REMUX_PR_FORCE )); then
+                kill "$_REMUX_PR_JOB_PID" >/dev/null 2>&1 || true
+                _REMUX_PR_JOB_PID=""
+                _REMUX_PR_JOB_STARTED_AT=0
+            else
+                can_launch_pr=0
+            fi
+        fi
+
+        if (( can_launch_pr )); then
+            _REMUX_PR_FORCE=0
+            _REMUX_PR_LAST_PWD="$pwd"
+            _REMUX_PR_LAST_RUN=$now
+            {
+                local branch pr_tsv number state url status_opt=""
+                branch=$(git branch --show-current 2>/dev/null)
+                if [[ -z "$branch" ]] || ! command -v gh >/dev/null 2>&1; then
+                    _remux_send "clear_pr --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+                else
+                    pr_tsv="$(gh pr view --json number,state,url --jq '[.number, .state, .url] | @tsv' 2>/dev/null || true)"
+                    if [[ -z "$pr_tsv" ]]; then
+                        _remux_send "clear_pr --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+                    else
+                        local IFS=$'\t'
+                        read -r number state url <<< "$pr_tsv"
+                        if [[ -z "$number" ]] || [[ -z "$url" ]]; then
+                            _remux_send "clear_pr --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+                        else
+                            case "$state" in
+                                MERGED) status_opt="--state=merged" ;;
+                                OPEN) status_opt="--state=open" ;;
+                                CLOSED) status_opt="--state=closed" ;;
+                                *) status_opt="" ;;
+                            esac
+                            _remux_send "report_pr $number $url $status_opt --tab=$REMUX_TAB_ID --panel=$REMUX_PANEL_ID"
+                        fi
+                    fi
+                fi
+            } >/dev/null 2>&1 &!
+            _REMUX_PR_JOB_PID=$!
+            _REMUX_PR_JOB_STARTED_AT=$now
+        fi
+    fi
+
+    # Ports: lightweight kick to the app's batched scanner.
+    # - Periodic scan to avoid stale values.
+    # - Forced scan when a long-running command returns to the prompt (common when stopping a server).
+    local cmd_dur=0
+    if [[ -n "$cmd_start" && "$cmd_start" != 0 ]]; then
+        cmd_dur=$(( now - cmd_start ))
+    fi
+
+    if (( cmd_dur >= 2 || now - _REMUX_PORTS_LAST_RUN >= 10 )); then
+        _remux_ports_kick
+    fi
+}
+
+# Ensure Resources/bin is at the front of PATH, and remove the app's
+# Contents/MacOS entry so the GUI remux binary cannot shadow the CLI remux.
+# Shell init (.zprofile/.zshrc) may prepend other dirs after launch.
+# We fix this once on first prompt (after all init files have run).
+_remux_fix_path() {
+    if [[ -n "${GHOSTTY_BIN_DIR:-}" ]]; then
+        local gui_dir="${GHOSTTY_BIN_DIR%/}"
+        local bin_dir="${gui_dir%/MacOS}/Resources/bin"
+        if [[ -d "$bin_dir" ]]; then
+            # Remove existing entries and re-prepend the CLI bin dir.
+            local -a parts=("${(@s/:/)PATH}")
+            parts=("${(@)parts:#$bin_dir}")
+            parts=("${(@)parts:#$gui_dir}")
+            PATH="${bin_dir}:${(j/:/)parts}"
+        fi
+    fi
+    add-zsh-hook -d precmd _remux_fix_path
+}
+
+_remux_zshexit() {
+    _remux_stop_git_head_watch
+}
+
+autoload -Uz add-zsh-hook
+add-zsh-hook preexec _remux_preexec
+add-zsh-hook precmd _remux_precmd
+add-zsh-hook precmd _remux_fix_path
+add-zsh-hook zshexit _remux_zshexit

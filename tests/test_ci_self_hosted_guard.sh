@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for https://github.com/manaflow-ai/cmux/issues/385.
+# Regression test for https://github.com/yaoshenwang/remux/issues/385.
 # Ensures Depot-hosted UI tests are never run for fork pull requests.
 set -euo pipefail
 

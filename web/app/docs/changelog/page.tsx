@@ -17,7 +17,7 @@ function pngDimensions(filePath: string): { width: number; height: number } {
 export const metadata: Metadata = {
   title: "Changelog",
   description:
-    "cmux release notes and version history. New features, bug fixes, and changes for the native macOS terminal.",
+    "remux release notes and version history. New features, bug fixes, and changes for the native macOS terminal.",
 };
 
 interface ChangelogSection {
@@ -123,7 +123,7 @@ function HeroImage({ src, version }: { src: string; version: string }) {
       <div className="overflow-hidden rounded-lg">
         <Image
           src={src}
-          alt={`cmux ${version}`}
+          alt={`remux ${version}`}
           width={width}
           height={height}
           sizes="(max-width: 640px) 100vw, 640px"

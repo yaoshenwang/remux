@@ -15,10 +15,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05, message: str = "timeout") -> None:
@@ -27,24 +27,24 @@ def _wait_until(predicate, timeout_s: float = 5.0, interval_s: float = 0.05, mes
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
-def _palette_visible(client: cmux, window_id: str) -> bool:
+def _palette_visible(client: remux, window_id: str) -> bool:
     payload = client._call("debug.command_palette.visible", {"window_id": window_id}) or {}
     return bool(payload.get("visible"))
 
 
-def _palette_results(client: cmux, window_id: str, limit: int = 20) -> dict:
+def _palette_results(client: remux, window_id: str, limit: int = 20) -> dict:
     return client.command_palette_results(window_id=window_id, limit=limit)
 
 
-def _palette_input_selection(client: cmux, window_id: str) -> dict:
+def _palette_input_selection(client: remux, window_id: str) -> dict:
     return client._call("debug.command_palette.rename_input.selection", {"window_id": window_id}) or {}
 
 
 def _wait_for_palette_input_caret_at_end(
-    client: cmux,
+    client: remux,
     window_id: str,
     expected_text_length: int,
     message: str,
@@ -66,7 +66,7 @@ def _wait_for_palette_input_caret_at_end(
     _wait_until(_matches, timeout_s=timeout_s, message=message)
 
 
-def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
+def _set_palette_visible(client: remux, window_id: str, visible: bool) -> None:
     if _palette_visible(client, window_id) == visible:
         return
     client._call("debug.command_palette.toggle", {"window_id": window_id})
@@ -78,7 +78,7 @@ def _set_palette_visible(client: cmux, window_id: str, visible: bool) -> None:
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 
@@ -128,10 +128,10 @@ def main() -> int:
         )
         switched_rows = (_palette_results(client, window_id, limit=12).get("results") or [])
         if not switched_rows:
-            raise cmuxError("switcher returned no rows for workspace query")
+            raise remuxError("switcher returned no rows for workspace query")
         top_id = str((switched_rows[0] or {}).get("command_id") or "")
         if not top_id.startswith("switcher."):
-            raise cmuxError(f"expected switcher row on top for cmd+p query, got: {switched_rows[0]}")
+            raise remuxError(f"expected switcher row on top for cmd+p query, got: {switched_rows[0]}")
 
         client.simulate_shortcut("enter")
         _wait_until(
@@ -162,10 +162,10 @@ def main() -> int:
 
         command_rows = (_palette_results(client, window_id, limit=8).get("results") or [])
         if not command_rows:
-            raise cmuxError("commands mode returned no rows")
+            raise remuxError("commands mode returned no rows")
         top_command_id = str((command_rows[0] or {}).get("command_id") or "")
         if not top_command_id.startswith("palette."):
-            raise cmuxError(f"expected command row in commands mode, got: {command_rows[0]}")
+            raise remuxError(f"expected command row in commands mode, got: {command_rows[0]}")
 
         # Repeating either shortcut should toggle visibility.
         client.simulate_shortcut("cmd+shift+p")

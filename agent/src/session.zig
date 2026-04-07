@@ -1,4 +1,4 @@
-// Adapted from manaflow-ai/cmux cmuxd/src/session.zig
+// Adapted from yaoshenwang/remux remuxd/src/session.zig
 const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;

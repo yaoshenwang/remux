@@ -4,7 +4,7 @@ import { blogPosts } from "../components/blog-posts";
 
 export const metadata: Metadata = {
   title: "Blog",
-  description: "News and updates from the cmux team",
+  description: "News and updates from the remux team",
 };
 
 export default function BlogPage() {

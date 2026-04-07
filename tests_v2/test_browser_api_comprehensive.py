@@ -8,15 +8,15 @@ import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _data_url(html: str) -> str:
@@ -34,30 +34,30 @@ def _wait_until(pred, timeout_s: float, label: str) -> None:
             last_exc = exc
         time.sleep(0.05)
     if last_exc is not None:
-        raise cmuxError(f"Timed out waiting for {label}: {last_exc}")
-    raise cmuxError(f"Timed out waiting for {label}")
+        raise remuxError(f"Timed out waiting for {label}: {last_exc}")
+    raise remuxError(f"Timed out waiting for {label}")
 
 
 def _expect_error(label: str, fn, code_substr: str) -> None:
     try:
         fn()
-    except cmuxError as exc:
+    except remuxError as exc:
         text = str(exc)
         if code_substr in text:
             return
-        raise cmuxError(f"{label}: expected error containing {code_substr!r}, got: {text}")
-    raise cmuxError(f"{label}: expected error containing {code_substr!r}, but call succeeded")
+        raise remuxError(f"{label}: expected error containing {code_substr!r}, got: {text}")
+    raise remuxError(f"{label}: expected error containing {code_substr!r}, but call succeeded")
 
 def _expect_error_contains(label: str, fn, *needles: str) -> None:
     try:
         fn()
-    except cmuxError as exc:
+    except remuxError as exc:
         text = str(exc)
         missing = [needle for needle in needles if needle not in text]
         if missing:
-            raise cmuxError(f"{label}: missing expected substrings {missing!r} in error: {text}")
+            raise remuxError(f"{label}: missing expected substrings {missing!r} in error: {text}")
         return
-    raise cmuxError(f"{label}: expected failure, but call succeeded")
+    raise remuxError(f"{label}: expected failure, but call succeeded")
 
 
 def _value(res: dict, key: str = "value"):
@@ -65,13 +65,13 @@ def _value(res: dict, key: str = "value"):
 
 
 
-def _wait_with_fallback(c: cmux, surface_id: str, params: dict, pred, timeout_s: float, label: str) -> None:
+def _wait_with_fallback(c: remux, surface_id: str, params: dict, pred, timeout_s: float, label: str) -> None:
     call_params = dict(params)
     call_params["surface_id"] = surface_id
     try:
         c._call("browser.wait", call_params)
         return
-    except cmuxError as exc:
+    except remuxError as exc:
         if "timeout" not in str(exc):
             raise
     _wait_until(pred, timeout_s=timeout_s, label=f"{label} fallback")
@@ -82,7 +82,7 @@ def _build_pages() -> tuple[str, str]:
 <!doctype html>
 <html>
   <head>
-    <title>cmux-browser-comprehensive-1</title>
+    <title>remux-browser-comprehensive-1</title>
     <style>
       body { margin: 0; font-family: sans-serif; min-height: 2200px; }
       #scroller { width: 220px; height: 90px; overflow: auto; border: 1px solid #666; }
@@ -132,7 +132,7 @@ def _build_pages() -> tuple[str, str]:
     page2 = """
 <!doctype html>
 <html>
-  <head><title>cmux-browser-comprehensive-2</title></head>
+  <head><title>remux-browser-comprehensive-2</title></head>
   <body>
     <div id="page2">page-two</div>
   </body>
@@ -145,7 +145,7 @@ def _build_pages() -> tuple[str, str]:
 def main() -> int:
     page1_url, page2_url = _build_pages()
 
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         opened = c._call("browser.open_split", {"url": "about:blank"}) or {}
         sid = str(opened.get("surface_id") or "")
         sref = str(opened.get("surface_ref") or "")
@@ -200,7 +200,7 @@ def main() -> int:
         )
 
         _wait_until(
-            lambda: "cmux-browser-comprehensive-1"
+            lambda: "remux-browser-comprehensive-1"
             in str((c._call("browser.get.title", {"surface_id": target}) or {}).get("title") or ""),
             timeout_s=3.0,
             label="browser.get.title page1",
@@ -208,20 +208,20 @@ def main() -> int:
         url_payload = c._call("browser.url.get", {"surface_id": target}) or {}
         _must("data:text/html" in str(url_payload.get("url") or ""), f"Expected data URL from browser.url.get: {url_payload}")
 
-        c._call("browser.fill", {"surface_id": target, "selector": "#name", "text": "cmux"})
+        c._call("browser.fill", {"surface_id": target, "selector": "#name", "text": "remux"})
         c._call("browser.click", {"surface_id": target, "selector": "#btn"})
         out_text = c._call("browser.get.text", {"surface_id": target, "selector": "#status"}) or {}
-        _must(str(_value(out_text)) == "cmux", f"Expected status text to be cmux: {out_text}")
+        _must(str(_value(out_text)) == "remux", f"Expected status text to be remux: {out_text}")
 
         cleared = c._call("browser.fill", {"surface_id": target, "selector": "#name", "text": "", "snapshot_after": True}) or {}
         _must(bool(cleared.get("post_action_snapshot")), f"Expected post_action_snapshot from fill(snapshot_after): {cleared}")
         cleared_value = c._call("browser.get.value", {"surface_id": target, "selector": "#name"}) or {}
         _must(str(_value(cleared_value)) == "", f"Expected fill with empty text to clear input: {cleared_value}")
 
-        c._call("browser.fill", {"surface_id": target, "selector": "#name", "text": "cmux"})
+        c._call("browser.fill", {"surface_id": target, "selector": "#name", "text": "remux"})
         c._call("browser.type", {"surface_id": target, "selector": "#name", "text": "-v2"})
         name_val = c._call("browser.get.value", {"surface_id": target, "selector": "#name"}) or {}
-        _must(str(_value(name_val)) == "cmux-v2", f"Expected typed suffix in input value: {name_val}")
+        _must(str(_value(name_val)) == "remux-v2", f"Expected typed suffix in input value: {name_val}")
 
         c._call("browser.focus", {"surface_id": target, "selector": "#keys"})
         active = c._call(
@@ -320,7 +320,7 @@ def main() -> int:
 
         snap = c._call("browser.snapshot", {"surface_id": target}) or {}
         snapshot_text = str((snap or {}).get("snapshot") or "")
-        _must("cmux-browser-comprehensive-1" in snapshot_text, f"Expected snapshot text for page1: {snap}")
+        _must("remux-browser-comprehensive-1" in snapshot_text, f"Expected snapshot text for page1: {snap}")
         refs = (snap or {}).get("refs") or {}
         _must(isinstance(refs, dict), f"Expected snapshot refs dict: {snap}")
         _must(any(str(key).startswith("e") for key in refs.keys()), f"Expected eN refs from snapshot: {snap}")
@@ -335,7 +335,7 @@ def main() -> int:
             label="browser.wait text_contains page-two",
         )
         _wait_until(
-            lambda: "cmux-browser-comprehensive-2"
+            lambda: "remux-browser-comprehensive-2"
             in str((c._call("browser.get.title", {"surface_id": target}) or {}).get("title") or ""),
             timeout_s=3.0,
             label="browser.get.title page2",
@@ -345,8 +345,8 @@ def main() -> int:
         _wait_with_fallback(
             c,
             target,
-            {"url_contains": "cmux-browser-comprehensive-1", "timeout_ms": 4000},
-            lambda: "cmux-browser-comprehensive-1" in str((c._call("browser.url.get", {"surface_id": target}) or {}).get("url") or ""),
+            {"url_contains": "remux-browser-comprehensive-1", "timeout_ms": 4000},
+            lambda: "remux-browser-comprehensive-1" in str((c._call("browser.url.get", {"surface_id": target}) or {}).get("url") or ""),
             timeout_s=5.0,
             label="browser.wait url_contains page1 (history)",
         )
@@ -354,8 +354,8 @@ def main() -> int:
         _wait_with_fallback(
             c,
             target,
-            {"url_contains": "cmux-browser-comprehensive-2", "timeout_ms": 4000},
-            lambda: "cmux-browser-comprehensive-2" in str((c._call("browser.url.get", {"surface_id": target}) or {}).get("url") or ""),
+            {"url_contains": "remux-browser-comprehensive-2", "timeout_ms": 4000},
+            lambda: "remux-browser-comprehensive-2" in str((c._call("browser.url.get", {"surface_id": target}) or {}).get("url") or ""),
             timeout_s=5.0,
             label="browser.wait url_contains page2 (history)",
         )
@@ -363,8 +363,8 @@ def main() -> int:
         _wait_with_fallback(
             c,
             target,
-            {"url_contains": "cmux-browser-comprehensive-2", "timeout_ms": 4000},
-            lambda: "cmux-browser-comprehensive-2" in str((c._call("browser.url.get", {"surface_id": target}) or {}).get("url") or ""),
+            {"url_contains": "remux-browser-comprehensive-2", "timeout_ms": 4000},
+            lambda: "remux-browser-comprehensive-2" in str((c._call("browser.url.get", {"surface_id": target}) or {}).get("url") or ""),
             timeout_s=5.0,
             label="browser.wait url_contains page2 (reload)",
         )

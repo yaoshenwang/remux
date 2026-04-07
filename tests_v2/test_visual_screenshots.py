@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Visual Screenshot Tests for cmux
+Visual Screenshot Tests for remux
 
 Comprehensive edge-case testing with before/after screenshots for:
   A. Basic splits (baseline)
@@ -30,9 +30,9 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux
+from remux import remux
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 HTML_REPORT = Path(__file__).parent / "visual_report.html"
 
 # Timing constants
@@ -75,13 +75,13 @@ class StateChange:
 _screenshot_idx = 0
 
 
-def get_client() -> cmux:
-    c = cmux(SOCKET_PATH)
+def get_client() -> remux:
+    c = remux(SOCKET_PATH)
     c.connect()
     return c
 
 
-def take_screenshot(client: cmux, label: str) -> Optional[Screenshot]:
+def take_screenshot(client: remux, label: str) -> Optional[Screenshot]:
     global _screenshot_idx
     idx = _screenshot_idx
     _screenshot_idx += 1
@@ -102,7 +102,7 @@ def take_screenshot(client: cmux, label: str) -> Optional[Screenshot]:
         return None
 
 
-def capture_state(client: cmux) -> str:
+def capture_state(client: remux) -> str:
     try:
         panes = client.list_panes()
         state = {
@@ -116,7 +116,7 @@ def capture_state(client: cmux) -> str:
     except Exception as e:
         return f"Error: {e}"
 
-def stamp_terminals(client: cmux, label: str) -> None:
+def stamp_terminals(client: remux, label: str) -> None:
     """Emit a visible marker line in each terminal surface for screenshots."""
     safe = label.replace("\n", " ").replace("\r", " ").strip()
     if not safe:
@@ -132,12 +132,12 @@ def stamp_terminals(client: cmux, label: str) -> None:
             continue
         try:
             # Keep it simple to avoid shell quoting issues.
-            client.send_surface(idx, f"echo CMUX_VIS {safe} surf={idx}\n")
+            client.send_surface(idx, f"echo REMUX_VIS {safe} surf={idx}\n")
         except Exception:
             pass
 
 
-def capture(client: cmux, label: str):
+def capture(client: remux, label: str):
     """Take screenshot + state snapshot. Returns (Screenshot|None, state_str)."""
     stamp_terminals(client, label)
     time.sleep(SCREENSHOT_WAIT)
@@ -146,7 +146,7 @@ def capture(client: cmux, label: str):
     return ss, state
 
 
-def reset_workspace(client: cmux) -> cmux:
+def reset_workspace(client: remux) -> remux:
     """Create a fresh workspace and return a reconnected client."""
     try:
         client.new_workspace()
@@ -158,10 +158,10 @@ def reset_workspace(client: cmux) -> cmux:
     return get_client()
 
 
-def surface_count(client: cmux) -> int:
+def surface_count(client: remux) -> int:
     return len(client.list_surfaces())
 
-def pane_count(client: cmux) -> int:
+def pane_count(client: remux) -> int:
     """Return number of panes in current workspace (via list_panes)."""
     try:
         panes = client.list_panes()
@@ -170,7 +170,7 @@ def pane_count(client: cmux) -> int:
     return len(panes)
 
 
-def wait_surface_count(client: cmux, expected: int, timeout: float = 3.0) -> bool:
+def wait_surface_count(client: remux, expected: int, timeout: float = 3.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         if surface_count(client) == expected:
@@ -186,7 +186,7 @@ def _parse_ok_id(response: str) -> Optional[str]:
     return None
 
 
-def wait_url_contains(client: cmux, panel_id: str, needle: str, timeout: float = 8.0) -> bool:
+def wait_url_contains(client: remux, panel_id: str, needle: str, timeout: float = 8.0) -> bool:
     """Poll get_url until it contains `needle`."""
     start = time.time()
     while time.time() - start < timeout:
@@ -200,7 +200,7 @@ def wait_url_contains(client: cmux, panel_id: str, needle: str, timeout: float =
     return False
 
 
-def cleanup_workspaces(client: cmux):
+def cleanup_workspaces(client: remux):
     """Close all but the current workspace."""
     try:
         workspaces = client.list_workspaces()
@@ -229,7 +229,7 @@ def _wait_marker(marker: Path, timeout: float = 3.0) -> bool:
     return False
 
 
-def _verify_surface_responsive(client: cmux, surface_idx: int, marker: Path,
+def _verify_surface_responsive(client: remux, surface_idx: int, marker: Path,
                                 retries: int = 3) -> bool:
     """Try sending a command to one surface, return True if it responds."""
     for attempt in range(retries):
@@ -251,7 +251,7 @@ def _verify_surface_responsive(client: cmux, surface_idx: int, marker: Path,
     return False
 
 
-def verify_views_in_window(client: cmux, label: str = "", timeout: float = 5.0) -> Optional[str]:
+def verify_views_in_window(client: remux, label: str = "", timeout: float = 5.0) -> Optional[str]:
     """Verify all surface views are attached to a window.
 
     Polls surface_health until all surfaces report in_window=true,
@@ -279,7 +279,7 @@ def verify_views_in_window(client: cmux, label: str = "", timeout: float = 5.0) 
     return f"surface(s) not in window after {timeout}s: {types_and_ids} [{label}]"
 
 
-def verify_all_responsive(client: cmux, label: str = "") -> Optional[str]:
+def verify_all_responsive(client: remux, label: str = "") -> Optional[str]:
     """Verify every terminal surface is responsive by writing a marker file.
 
     Returns None on success, or an error string describing which surface
@@ -310,7 +310,7 @@ def verify_all_responsive(client: cmux, label: str = "") -> Optional[str]:
     blanks = []
     for idx, h in enumerate(terminal_surfaces):
         surface_idx = h["index"]
-        marker = Path(tempfile.gettempdir()) / f"cmux_vis_{os.getpid()}_{idx}"
+        marker = Path(tempfile.gettempdir()) / f"remux_vis_{os.getpid()}_{idx}"
         try:
             if not _verify_surface_responsive(client, surface_idx, marker, retries=3):
                 blanks.append(surface_idx)
@@ -327,7 +327,7 @@ def verify_all_responsive(client: cmux, label: str = "") -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_a1_initial_state(client: cmux) -> StateChange:
+def test_a1_initial_state(client: remux) -> StateChange:
     """A1: Capture initial single-terminal state."""
     change = StateChange(
         name="Initial State", group="A",
@@ -337,7 +337,7 @@ def test_a1_initial_state(client: cmux) -> StateChange:
     return change
 
 
-def test_a2_split_right(client: cmux) -> StateChange:
+def test_a2_split_right(client: remux) -> StateChange:
     """A2: Horizontal split right."""
     change = StateChange(
         name="Horizontal Split Right", group="A",
@@ -360,7 +360,7 @@ def test_a2_split_right(client: cmux) -> StateChange:
     return change
 
 
-def test_a3_split_down(client: cmux) -> StateChange:
+def test_a3_split_down(client: remux) -> StateChange:
     """A3: Vertical split down."""
     change = StateChange(
         name="Vertical Split Down", group="A",
@@ -383,7 +383,7 @@ def test_a3_split_down(client: cmux) -> StateChange:
     return change
 
 
-def _close_and_verify(client: cmux, change: StateChange, close_idx: int,
+def _close_and_verify(client: remux, change: StateChange, close_idx: int,
                       expected: int, before_label: str, after_label: str) -> StateChange:
     """Shared logic: close a surface, verify count, verify responsiveness, capture after."""
     change.before, change.before_state = capture(client, before_label)
@@ -406,7 +406,7 @@ def _close_and_verify(client: cmux, change: StateChange, close_idx: int,
     return change
 
 
-def test_b4_close_right(client: cmux) -> StateChange:
+def test_b4_close_right(client: remux) -> StateChange:
     """B4: Close RIGHT pane in horizontal split."""
     change = StateChange(
         name="Close Right Pane (H-split)", group="B",
@@ -418,7 +418,7 @@ def test_b4_close_right(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 1, 1, "b4_before", "b4_after")
 
 
-def test_b5_close_left(client: cmux) -> StateChange:
+def test_b5_close_left(client: remux) -> StateChange:
     """B5: Close LEFT (first) pane in horizontal split."""
     change = StateChange(
         name="Close Left Pane (H-split)", group="B",
@@ -430,7 +430,7 @@ def test_b5_close_left(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 0, 1, "b5_before", "b5_after")
 
 
-def test_b6_close_bottom(client: cmux) -> StateChange:
+def test_b6_close_bottom(client: remux) -> StateChange:
     """B6: Close BOTTOM pane in vertical split."""
     change = StateChange(
         name="Close Bottom Pane (V-split)", group="B",
@@ -442,7 +442,7 @@ def test_b6_close_bottom(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 1, 1, "b6_before", "b6_after")
 
 
-def test_b7_close_top(client: cmux) -> StateChange:
+def test_b7_close_top(client: remux) -> StateChange:
     """B7: Close TOP (first) pane in vertical split."""
     change = StateChange(
         name="Close Top Pane (V-split)", group="B",
@@ -454,7 +454,7 @@ def test_b7_close_top(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 0, 1, "b7_before", "b7_after")
 
 
-def test_c8_3way_close_middle(client: cmux) -> StateChange:
+def test_c8_3way_close_middle(client: remux) -> StateChange:
     """C8: 3-way horizontal — close middle pane."""
     change = StateChange(
         name="3-Way H-Split: Close Middle", group="C",
@@ -470,7 +470,7 @@ def test_c8_3way_close_middle(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 1, 2, "c8_before", "c8_after")
 
 
-def test_c9_grid_close_topleft(client: cmux) -> StateChange:
+def test_c9_grid_close_topleft(client: remux) -> StateChange:
     """C9: 2x2 grid — close top-left."""
     change = StateChange(
         name="2x2 Grid: Close Top-Left", group="C",
@@ -492,7 +492,7 @@ def test_c9_grid_close_topleft(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 0, 3, "c9_before", "c9_after")
 
 
-def test_c10_grid_close_bottomright(client: cmux) -> StateChange:
+def test_c10_grid_close_bottomright(client: remux) -> StateChange:
     """C10: 2x2 grid — close bottom-right."""
     change = StateChange(
         name="2x2 Grid: Close Bottom-Right", group="C",
@@ -515,7 +515,7 @@ def test_c10_grid_close_bottomright(client: cmux) -> StateChange:
     return _close_and_verify(client, change, n - 1, n - 1, "c10_before", "c10_after")
 
 
-def test_d11_nested_close_bottomright(client: cmux) -> StateChange:
+def test_d11_nested_close_bottomright(client: remux) -> StateChange:
     """D11: Split right, split right pane down → close bottom-right."""
     change = StateChange(
         name="Nested: Close Bottom-Right of L-shape", group="D",
@@ -531,7 +531,7 @@ def test_d11_nested_close_bottomright(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 2, 2, "d11_before", "d11_after")
 
 
-def test_d12_nested_close_top(client: cmux) -> StateChange:
+def test_d12_nested_close_top(client: remux) -> StateChange:
     """D12: Split down, split bottom right → close top pane."""
     change = StateChange(
         name="Nested: Close Top of T-shape", group="D",
@@ -547,7 +547,7 @@ def test_d12_nested_close_top(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 0, 2, "d12_before", "d12_after")
 
 
-def test_d13_4pane_close_second(client: cmux) -> StateChange:
+def test_d13_4pane_close_second(client: remux) -> StateChange:
     """D13: 4 horizontal panes — close 2nd from left."""
     change = StateChange(
         name="4 H-Panes: Close 2nd From Left", group="D",
@@ -567,7 +567,7 @@ def test_d13_4pane_close_second(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 1, 3, "d13_before", "d13_after")
 
 
-def test_e14_browser_close_terminal(client: cmux) -> StateChange:
+def test_e14_browser_close_terminal(client: remux) -> StateChange:
     """E14: Split right, open browser right, close terminal (left)."""
     change = StateChange(
         name="Browser Mix: Close Terminal (Left)", group="E",
@@ -608,7 +608,7 @@ def test_e14_browser_close_terminal(client: cmux) -> StateChange:
     return change
 
 
-def test_e15_browser_close_browser(client: cmux) -> StateChange:
+def test_e15_browser_close_browser(client: remux) -> StateChange:
     """E15: Split right, open browser right, close browser (right)."""
     change = StateChange(
         name="Browser Mix: Close Browser (Right)", group="E",
@@ -650,7 +650,7 @@ def test_e15_browser_close_browser(client: cmux) -> StateChange:
     return change
 
 
-def test_f16_nested_tabs_close_first(client: cmux) -> StateChange:
+def test_f16_nested_tabs_close_first(client: remux) -> StateChange:
     """F16: 2 surfaces in same pane, close the first."""
     change = StateChange(
         name="Nested Tabs: Close First Surface", group="F",
@@ -667,7 +667,7 @@ def test_f16_nested_tabs_close_first(client: cmux) -> StateChange:
     return _close_and_verify(client, change, 0, 1, "f16_before", "f16_after")
 
 
-def test_g17_rapid_down_close_top(client: cmux) -> StateChange:
+def test_g17_rapid_down_close_top(client: remux) -> StateChange:
     """G17: 5x rapid split down → close top pane."""
     change = StateChange(
         name="Rapid: 5x Split Down → Close Top", group="G",
@@ -698,7 +698,7 @@ def test_g17_rapid_down_close_top(client: cmux) -> StateChange:
     return change
 
 
-def test_g18_rapid_right_close_left(client: cmux) -> StateChange:
+def test_g18_rapid_right_close_left(client: remux) -> StateChange:
     """G18: 5x rapid split right → close left pane."""
     change = StateChange(
         name="Rapid: 5x Split Right → Close Left", group="G",
@@ -728,7 +728,7 @@ def test_g18_rapid_right_close_left(client: cmux) -> StateChange:
     return change
 
 
-def test_g19_alternating_close_reverse(client: cmux) -> StateChange:
+def test_g19_alternating_close_reverse(client: remux) -> StateChange:
     """G19: Alternating splits then close all in reverse."""
     change = StateChange(
         name="Alternating Splits: Close in Reverse", group="G",
@@ -768,7 +768,7 @@ def test_g19_alternating_close_reverse(client: cmux) -> StateChange:
     return change
 
 
-def test_h20_workspace_switch_back(client: cmux) -> StateChange:
+def test_h20_workspace_switch_back(client: remux) -> StateChange:
     """H20: Create workspace with splits, switch away, switch back."""
     change = StateChange(
         name="Workspace Switch-Back", group="H",
@@ -812,11 +812,11 @@ def test_h20_workspace_switch_back(client: cmux) -> StateChange:
     return change
 
 
-def _create_browser_surface(client: cmux, url: Optional[str] = None) -> str:
+def _create_browser_surface(client: remux, url: Optional[str] = None) -> str:
     return client.new_surface(panel_type="browser", url=url)
 
 
-def test_i21_browser_drag_split_right_wait_load(client: cmux) -> StateChange:
+def test_i21_browser_drag_split_right_wait_load(client: remux) -> StateChange:
     """I21: Browser tab → navigate → drag-to-split right (wait for load)."""
     change = StateChange(
         name="Browser: Navigate Then Drag-To-Split Right (Wait Load)", group="I",
@@ -850,7 +850,7 @@ def test_i21_browser_drag_split_right_wait_load(client: cmux) -> StateChange:
     return change
 
 
-def test_i22_browser_drag_split_right_immediate(client: cmux) -> StateChange:
+def test_i22_browser_drag_split_right_immediate(client: remux) -> StateChange:
     """I22: Browser tab → navigate → drag-to-split right (no wait)."""
     change = StateChange(
         name="Browser: Drag-To-Split Right Immediately", group="I",
@@ -882,7 +882,7 @@ def test_i22_browser_drag_split_right_immediate(client: cmux) -> StateChange:
     return change
 
 
-def test_i23_browser_drag_split_right_webview_focused(client: cmux) -> StateChange:
+def test_i23_browser_drag_split_right_webview_focused(client: remux) -> StateChange:
     """I23: Browser tab (webview focused) → drag-to-split right."""
     change = StateChange(
         name="Browser: WebView Focused Then Drag-To-Split Right", group="I",
@@ -920,7 +920,7 @@ def test_i23_browser_drag_split_right_webview_focused(client: cmux) -> StateChan
     return change
 
 
-def test_i24_browser_drag_split_right_focus_bounce(client: cmux) -> StateChange:
+def test_i24_browser_drag_split_right_focus_bounce(client: remux) -> StateChange:
     """I24: Browser tab → navigate → focus bounce → drag-to-split right."""
     change = StateChange(
         name="Browser: Focus Bounce Then Drag-To-Split Right", group="I",
@@ -960,7 +960,7 @@ def test_i24_browser_drag_split_right_focus_bounce(client: cmux) -> StateChange:
     return change
 
 
-def test_i25_browser_drag_split_right_then_switch_panes(client: cmux) -> StateChange:
+def test_i25_browser_drag_split_right_then_switch_panes(client: remux) -> StateChange:
     """I25: Browser drag-to-split right → switch panes → verify webview stays attached."""
     change = StateChange(
         name="Browser: Drag-To-Split Right Then Switch Panes", group="I",
@@ -999,7 +999,7 @@ def test_i25_browser_drag_split_right_then_switch_panes(client: cmux) -> StateCh
     return change
 
 
-def test_i26_browser_drag_split_right_initial_url(client: cmux) -> StateChange:
+def test_i26_browser_drag_split_right_initial_url(client: remux) -> StateChange:
     """I26: Browser tab (initial URL) → drag-to-split right."""
     change = StateChange(
         name="Browser: Initial URL Then Drag-To-Split Right", group="I",
@@ -1031,7 +1031,7 @@ def test_i26_browser_drag_split_right_initial_url(client: cmux) -> StateChange:
     return change
 
 
-def test_i27_browser_drag_split_right_after_reload(client: cmux) -> StateChange:
+def test_i27_browser_drag_split_right_after_reload(client: remux) -> StateChange:
     """I27: Browser tab → navigate → reload → drag-to-split right."""
     change = StateChange(
         name="Browser: Reload Then Drag-To-Split Right", group="I",
@@ -1068,7 +1068,7 @@ def test_i27_browser_drag_split_right_after_reload(client: cmux) -> StateChange:
     return change
 
 
-def test_i28_browser_drag_split_right_double_drag(client: cmux) -> StateChange:
+def test_i28_browser_drag_split_right_double_drag(client: remux) -> StateChange:
     """I28: Browser tab → navigate → drag-to-split right twice (idempotence-ish)."""
     change = StateChange(
         name="Browser: Double Drag-To-Split Right", group="I",
@@ -1119,7 +1119,7 @@ def generate_html_report(changes: list[StateChange]) -> None:
     html = '''<!DOCTYPE html>
 <html>
 <head>
-    <title>cmux Visual Test Report</title>
+    <title>remux Visual Test Report</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -1178,7 +1178,7 @@ def generate_html_report(changes: list[StateChange]) -> None:
     </style>
 </head>
 <body>
-    <h1>cmux Visual Test Report</h1>
+    <h1>remux Visual Test Report</h1>
     <p class="timestamp">Generated: ''' + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + '''</p>
 
     <div class="summary">
@@ -1361,7 +1361,7 @@ def run_visual_tests():
     ]
 
     print("=" * 60)
-    print(f"cmux Visual Screenshot Tests ({len(test_fns)} scenarios)")
+    print(f"remux Visual Screenshot Tests ({len(test_fns)} scenarios)")
     print("=" * 60)
     print()
 

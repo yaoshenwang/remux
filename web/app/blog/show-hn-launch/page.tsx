@@ -3,13 +3,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { Tweet } from "react-tweet";
 import starHistory from "./star-history.png";
+import { absoluteUrl } from "../../site";
 
 export const metadata: Metadata = {
-  title: "Launching cmux on Show HN",
+  title: "Launching remux on Show HN",
   description:
-    "cmux launched on Hacker News, hit #2, went viral in Japan, and people started building extensions on the CLI. Here's what happened.",
+    "remux launched on Hacker News, hit #2, went viral in Japan, and people started building extensions on the CLI. Here's what happened.",
   keywords: [
-    "cmux",
+    "remux",
     "Show HN",
     "Hacker News",
     "terminal",
@@ -24,21 +25,21 @@ export const metadata: Metadata = {
     "notification rings",
   ],
   openGraph: {
-    title: "Launching cmux on Show HN",
+    title: "Launching remux on Show HN",
     description:
-      "cmux launched on Hacker News, hit #2, went viral in Japan, and people started building extensions on the CLI.",
+      "remux launched on Hacker News, hit #2, went viral in Japan, and people started building extensions on the CLI.",
     type: "article",
     publishedTime: "2026-02-21T00:00:00Z",
-    url: "https://cmux.dev/blog/show-hn-launch",
+    url: absoluteUrl("/blog/show-hn-launch"),
   },
   twitter: {
     card: "summary",
-    title: "Launching cmux on Show HN",
+    title: "Launching remux on Show HN",
     description:
-      "cmux launched on Hacker News, hit #2, went viral in Japan, and people started building extensions on the CLI.",
+      "remux launched on Hacker News, hit #2, went viral in Japan, and people started building extensions on the CLI.",
   },
   alternates: {
-    canonical: "https://cmux.dev/blog/show-hn-launch",
+    canonical: absoluteUrl("/blog/show-hn-launch"),
   },
 };
 
@@ -54,11 +55,11 @@ export default function ShowHNLaunchPage() {
         </Link>
       </div>
 
-      <h1>Launching cmux on Show HN</h1>
+      <h1>Launching remux on Show HN</h1>
       <time dateTime="2026-02-21" className="text-sm text-muted">February 21, 2026</time>
 
       <p className="mt-6">
-        We posted cmux on{" "}
+        We posted remux on{" "}
         <a href="https://news.ycombinator.com/item?id=47079718">Show HN</a>{" "}
         on Feb 19:
       </p>
@@ -75,7 +76,7 @@ export default function ShowHNLaunchPage() {
         <p>
           I tried a few coding orchestrators but most of them were Electron/Tauri
           apps and the performance bugged me. I also just prefer the terminal
-          since GUI orchestrators lock you into their workflow. So I built cmux as
+          since GUI orchestrators lock you into their workflow. So I built remux as
           a native macOS app in Swift/AppKit. It uses libghostty for terminal
           rendering and reads your existing Ghostty config for themes, fonts,
           colors, and more.
@@ -85,7 +86,7 @@ export default function ShowHNLaunchPage() {
           has vertical tabs that show git branch, working directory, listening
           ports, and the latest notification text for each workspace. The
           notification system picks up terminal sequences (OSC 9/99/777) and has a
-          CLI (cmux notify) you can wire into agent hooks for Claude Code,
+          CLI (remux notify) you can wire into agent hooks for Claude Code,
           OpenCode, etc. When an agent is waiting, its pane gets a blue ring and
           the tab lights up in the sidebar, so I can tell which one needs me
           across splits and tabs. Cmd+Shift+U jumps to the most recent unread.
@@ -135,7 +136,7 @@ export default function ShowHNLaunchPage() {
             <ul className="list-disc pl-5 mt-1 space-y-1">
               <li>
                 hotkey overrides – I have some things explicitly unmapped /
-                remapped in my ghostty config that conflict with some cmux
+                remapped in my ghostty config that conflict with some remux
                 keybindings and weren&apos;t respected
               </li>
               <li>
@@ -157,7 +158,7 @@ export default function ShowHNLaunchPage() {
       </blockquote>
 
       <p>
-        Surprisingly, cmux went viral in Japan:
+        Surprisingly, remux went viral in Japan:
       </p>
 
       <Tweet id="2025129675262251026" />
@@ -176,17 +177,17 @@ export default function ShowHNLaunchPage() {
       <Tweet id="2024867449947275444" />
 
       <p>
-        Another exciting thing was seeing people build on top of the cmux
-        CLI. sasha built a pi-cmux extension that shows model info, token
+        Another exciting thing was seeing people build on top of the remux
+        CLI. sasha built a pi-remux extension that shows model info, token
         usage, and agent state in the sidebar:
       </p>
 
       <Tweet id="2024978414822916358" />
 
       <p>
-        Everything in cmux is scriptable through the CLI: creating workspaces,
+        Everything in remux is scriptable through the CLI: creating workspaces,
         sending keystrokes, controlling the browser, reading notifications.
-        Part of the cmux philosophy is being programmable and composable, so
+        Part of the remux philosophy is being programmable and composable, so
         people can customize the way they work with coding agents. The
         state of the art for coding agents is changing fast, and you don&apos;t
         want to be locked into an inflexible GUI orchestrator that can&apos;t
@@ -195,13 +196,13 @@ export default function ShowHNLaunchPage() {
 
       <p>
         If you&apos;re running multiple coding agents,{" "}
-        <a href="https://github.com/manaflow-ai/cmux">give cmux a try</a>.
+        <a href="https://github.com/yaoshenwang/remux">give remux a try</a>.
       </p>
 
       <div className="my-6">
         <Image
           src={starHistory}
-          alt="cmux GitHub star history showing growth from near 0 to 900+ stars after the Show HN launch"
+          alt="remux GitHub star history showing growth from near 0 to 900+ stars after the Show HN launch"
           placeholder="blur"
           className="w-full rounded-xl"
         />

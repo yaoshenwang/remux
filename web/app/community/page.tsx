@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { SiteHeader } from "../components/site-header";
 
 export const metadata: Metadata = {
-  title: "Community — cmux",
-  description: "Join the cmux community on Discord, Twitter, GitHub, and more",
+  title: "Community — remux",
+  description: "Join the remux community on Discord, Twitter, GitHub, and more",
 };
 
 function CommunityLink({
@@ -49,7 +49,7 @@ export default function CommunityPage() {
           Community
         </h1>
         <p className="text-muted text-[15px] mb-8">
-          Connect with other cmux users and the team behind it.
+          Connect with other remux users and the team behind it.
         </p>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -66,7 +66,7 @@ export default function CommunityPage() {
           />
 
           <CommunityLink
-            href="https://github.com/manaflow-ai/cmux"
+            href="https://github.com/yaoshenwang/remux"
             name="GitHub"
             action="View on GitHub"
             description="Star the repo, report issues, and contribute"

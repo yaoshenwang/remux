@@ -13,34 +13,34 @@ from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _expect_error_contains(label: str, fn, needle: str) -> None:
     try:
         fn()
-    except cmuxError as exc:
+    except remuxError as exc:
         text = str(exc)
         if needle in text:
             return
-        raise cmuxError(f"{label}: expected error containing {needle!r}, got: {text}")
-    raise cmuxError(f"{label}: expected error containing {needle!r}, but call succeeded")
+        raise remuxError(f"{label}: expected error containing {needle!r}, got: {text}")
+    raise remuxError(f"{label}: expected error containing {needle!r}, but call succeeded")
 
 
-def _wait_selector(c: cmux, surface_id: str, selector: str, timeout_s: float = 6.0) -> None:
+def _wait_selector(c: remux, surface_id: str, selector: str, timeout_s: float = 6.0) -> None:
     timeout_ms = max(1, int(timeout_s * 1000.0))
     try:
         c._call("browser.wait", {"surface_id": surface_id, "selector": selector, "timeout_ms": timeout_ms})
         return
-    except cmuxError as exc:
+    except remuxError as exc:
         if "timeout" not in str(exc):
             raise
 
@@ -51,15 +51,15 @@ def _wait_selector(c: cmux, surface_id: str, selector: str, timeout_s: float = 6
         if bool(probe.get("value")):
             return
         time.sleep(0.05)
-    raise cmuxError(f"Timed out waiting for selector {selector}")
+    raise remuxError(f"Timed out waiting for selector {selector}")
 
 
-def _wait_function(c: cmux, surface_id: str, expression: str, timeout_s: float = 6.0) -> None:
+def _wait_function(c: remux, surface_id: str, expression: str, timeout_s: float = 6.0) -> None:
     timeout_ms = max(1, int(timeout_s * 1000.0))
     try:
         c._call("browser.wait", {"surface_id": surface_id, "function": expression, "timeout_ms": timeout_ms})
         return
-    except cmuxError as exc:
+    except remuxError as exc:
         if "timeout" not in str(exc):
             raise
 
@@ -69,12 +69,12 @@ def _wait_function(c: cmux, surface_id: str, expression: str, timeout_s: float =
         if bool(probe.get("value")):
             return
         time.sleep(0.05)
-    raise cmuxError(f"Timed out waiting for function: {expression}")
+    raise remuxError(f"Timed out waiting for function: {expression}")
 
 
 @contextmanager
 def _local_test_server() -> str:
-    with tempfile.TemporaryDirectory(prefix="cmux-browser-ext-") as root:
+    with tempfile.TemporaryDirectory(prefix="remux-browser-ext-") as root:
         root_path = Path(root)
 
         pixel = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
@@ -96,7 +96,7 @@ def _local_test_server() -> str:
             """<!doctype html>
 <html>
   <head>
-    <title>cmux-browser-extended-second</title>
+    <title>remux-browser-extended-second</title>
   </head>
   <body>
     <div id="second">second-page</div>
@@ -111,7 +111,7 @@ def _local_test_server() -> str:
             """<!doctype html>
 <html>
   <head>
-    <title>cmux-browser-extended</title>
+    <title>remux-browser-extended</title>
     <style>
       #style-target { color: rgb(255, 0, 0); }
     </style>
@@ -143,9 +143,9 @@ def _local_test_server() -> str:
         return true;
       };
       window.emitConsoleAndError = function () {
-        console.log('cmux-console-entry');
+        console.log('remux-console-entry');
         setTimeout(function () {
-          throw new Error('cmux-boom');
+          throw new Error('remux-boom');
         }, 0);
         return true;
       };
@@ -183,7 +183,7 @@ def main() -> int:
         index_url = f"{base_url}/index.html"
         second_url = f"{base_url}/second.html"
 
-        with cmux(SOCKET_PATH) as c:
+        with remux(SOCKET_PATH) as c:
             opened = c._call("browser.open_split", {"url": "about:blank"}) or {}
             sid = str(opened.get("surface_id") or "")
             _must(bool(sid), f"browser.open_split returned no surface_id: {opened}")
@@ -239,7 +239,7 @@ def main() -> int:
                 "not_found",
             )
 
-            download_path = tempfile.NamedTemporaryFile(delete=False, prefix="cmux-download-", suffix=".txt").name
+            download_path = tempfile.NamedTemporaryFile(delete=False, prefix="remux-download-", suffix=".txt").name
             os.unlink(download_path)
 
             def _write_download() -> None:
@@ -255,16 +255,16 @@ def main() -> int:
                 "browser.cookies.set",
                 {
                     "surface_id": sid,
-                    "name": "cmux_cookie",
+                    "name": "remux_cookie",
                     "value": "cookie_value",
                     "url": index_url,
                 },
             )
-            got_cookie = c._call("browser.cookies.get", {"surface_id": sid, "name": "cmux_cookie"}) or {}
+            got_cookie = c._call("browser.cookies.get", {"surface_id": sid, "name": "remux_cookie"}) or {}
             cookies = got_cookie.get("cookies") or []
-            _must(any(str(row.get("name")) == "cmux_cookie" for row in cookies), f"Expected cmux_cookie in cookies.get: {got_cookie}")
-            c._call("browser.cookies.clear", {"surface_id": sid, "name": "cmux_cookie"})
-            got_after_clear = c._call("browser.cookies.get", {"surface_id": sid, "name": "cmux_cookie"}) or {}
+            _must(any(str(row.get("name")) == "remux_cookie" for row in cookies), f"Expected remux_cookie in cookies.get: {got_cookie}")
+            c._call("browser.cookies.clear", {"surface_id": sid, "name": "remux_cookie"})
+            got_after_clear = c._call("browser.cookies.get", {"surface_id": sid, "name": "remux_cookie"}) or {}
             _must(len(got_after_clear.get("cookies") or []) == 0, f"Expected cookie cleared: {got_after_clear}")
 
             c._call("browser.storage.set", {"surface_id": sid, "type": "local", "key": "alpha", "value": "one"})
@@ -296,10 +296,10 @@ def main() -> int:
             style_color = c._call("browser.get.styles", {"surface_id": sid, "selector": "#style-target", "property": "color"}) or {}
             _must("0, 128, 0" in str(style_color.get("value") or ""), f"Expected updated style color: {style_color}")
 
-            c._call("browser.addinitscript", {"surface_id": sid, "script": "window.__cmuxInitMarker = 'init-ok';"})
+            c._call("browser.addinitscript", {"surface_id": sid, "script": "window.__remuxInitMarker = 'init-ok';"})
             c._call("browser.navigate", {"surface_id": sid, "url": second_url})
             _wait_selector(c, sid, "#second", timeout_s=7.0)
-            init_value = c._call("browser.eval", {"surface_id": sid, "script": "window.__cmuxInitMarker || ''"}) or {}
+            init_value = c._call("browser.eval", {"surface_id": sid, "script": "window.__remuxInitMarker || ''"}) or {}
             _must(str(init_value.get("value") or "") == "init-ok", f"Expected init script marker after navigation: {init_value}")
 
             c._call("browser.navigate", {"surface_id": sid, "url": index_url})
@@ -317,7 +317,7 @@ def main() -> int:
 
             c._call("browser.highlight", {"surface_id": sid, "selector": "#action-btn"})
 
-            state_path = tempfile.NamedTemporaryFile(delete=False, prefix="cmux-state-", suffix=".json").name
+            state_path = tempfile.NamedTemporaryFile(delete=False, prefix="remux-state-", suffix=".json").name
             c._call("browser.storage.set", {"surface_id": sid, "type": "local", "key": "persist", "value": "yes"})
             c._call("browser.state.save", {"surface_id": sid, "path": state_path})
             c._call("browser.storage.set", {"surface_id": sid, "type": "local", "key": "persist", "value": "no"})

@@ -1,0 +1,4 @@
+interface:
+  display_name: "remux Debug Windows"
+  short_description: "Tune remux debug windows and copy snapshots."
+  default_prompt: "Use this skill to manage remux sidebar/background/menu-bar debug windows, keep Debug menu wiring clean, and capture copyable debug snapshots."

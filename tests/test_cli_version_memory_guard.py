@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression test: `cmux --version` must not scan huge sibling app lists just to
+Regression test: `remux --version` must not scan huge sibling app lists just to
 resolve optional version metadata.
 """
 
@@ -18,27 +18,27 @@ import time
 JUNK_APP_COUNT = 40000
 RSS_LIMIT_KB = 64 * 1024
 TIMEOUT_SECONDS = 10.0
-EXPECTED_STDOUT = "cmux 9.9.9 (999)"
+EXPECTED_STDOUT = "remux 9.9.9 (999)"
 
 
-def resolve_cmux_cli() -> str:
-    explicit = os.environ.get("CMUX_CLI_BIN") or os.environ.get("CMUX_CLI")
+def resolve_remux_cli() -> str:
+    explicit = os.environ.get("REMUX_CLI_BIN") or os.environ.get("REMUX_CLI")
     if explicit and os.path.exists(explicit) and os.access(explicit, os.X_OK):
         return explicit
 
     candidates: list[str] = []
-    candidates.extend(glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/cmux")))
-    candidates.extend(glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux"))
+    candidates.extend(glob.glob(os.path.expanduser("~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/remux")))
+    candidates.extend(glob.glob("/tmp/remux-*/Build/Products/Debug/remux"))
     candidates = [p for p in candidates if os.path.exists(p) and os.access(p, os.X_OK)]
     if candidates:
         candidates.sort(key=os.path.getmtime, reverse=True)
         return candidates[0]
 
-    in_path = shutil.which("cmux")
+    in_path = shutil.which("remux")
     if in_path:
         return in_path
 
-    raise RuntimeError("Unable to find cmux CLI binary. Set CMUX_CLI_BIN.")
+    raise RuntimeError("Unable to find remux CLI binary. Set REMUX_CLI_BIN.")
 
 
 def copy_runtime_frameworks(cli_path: str, fixture_contents: str) -> None:
@@ -63,19 +63,19 @@ def copy_runtime_frameworks(cli_path: str, fixture_contents: str) -> None:
 
 
 def build_fixture(root: str, cli_path: str) -> str:
-    app_path = os.path.join(root, "cmux.app")
+    app_path = os.path.join(root, "remux.app")
     contents_path = os.path.join(app_path, "Contents")
     resources_path = os.path.join(contents_path, "Resources")
     bin_path = os.path.join(resources_path, "bin")
     os.makedirs(bin_path, exist_ok=True)
 
-    fixture_cli = os.path.join(bin_path, "cmux")
+    fixture_cli = os.path.join(bin_path, "remux")
     shutil.copy2(cli_path, fixture_cli)
     copy_runtime_frameworks(cli_path, contents_path)
 
     info = {
-        "CFBundleExecutable": "cmux",
-        "CFBundleIdentifier": "test.cmux.version-memory-guard",
+        "CFBundleExecutable": "remux",
+        "CFBundleIdentifier": "test.remux.version-memory-guard",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "9.9.9",
         "CFBundleVersion": "999",
@@ -91,7 +91,7 @@ def build_fixture(root: str, cli_path: str) -> str:
 
 def run_with_limits(cli_path: str, *args: str) -> dict[str, object]:
     env = dict(os.environ)
-    env.pop("CMUX_COMMIT", None)
+    env.pop("REMUX_COMMIT", None)
 
     proc = subprocess.Popen(
         [cli_path, *args],
@@ -154,17 +154,17 @@ def run_with_limits(cli_path: str, *args: str) -> dict[str, object]:
 
 def main() -> int:
     try:
-        cli_path = resolve_cmux_cli()
+        cli_path = resolve_remux_cli()
     except Exception as exc:
         print(f"FAIL: {exc}")
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="cmux-version-memory-guard-") as root:
+    with tempfile.TemporaryDirectory(prefix="remux-version-memory-guard-") as root:
         fixture_cli = build_fixture(root, cli_path)
         result = run_with_limits(fixture_cli, "--version")
 
     if result["failure_reason"]:
-        print("FAIL: `cmux --version` exceeded runtime guard")
+        print("FAIL: `remux --version` exceeded runtime guard")
         print(f"reason={result['failure_reason']}")
         print(f"elapsed={result['elapsed']:.2f}s")
         print(f"peak_rss_kb={result['peak_rss_kb']}")
@@ -173,7 +173,7 @@ def main() -> int:
         return 1
 
     if result["exit_code"] != 0:
-        print("FAIL: `cmux --version` exited non-zero")
+        print("FAIL: `remux --version` exited non-zero")
         print(f"exit={result['exit_code']}")
         print(f"stdout={result['stdout']}")
         print(f"stderr={result['stderr']}")
@@ -186,7 +186,7 @@ def main() -> int:
         return 1
 
     print(
-        "PASS: `cmux --version` exits within memory/time limits "
+        "PASS: `remux --version` exits within memory/time limits "
         f"(peak_rss_kb={result['peak_rss_kb']}, elapsed={result['elapsed']:.2f}s)"
     )
     return 0

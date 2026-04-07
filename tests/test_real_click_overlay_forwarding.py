@@ -16,7 +16,7 @@ import sys
 import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
 def run_osascript(script: str) -> subprocess.CompletedProcess[str]:
@@ -204,7 +204,7 @@ def candidate_screen_points(
     return dedup
 
 
-def wait_for_terminal_focus(client: cmux, panel_id: str, timeout_s: float = 2.0) -> bool:
+def wait_for_terminal_focus(client: remux, panel_id: str, timeout_s: float = 2.0) -> bool:
     start = time.time()
     while time.time() - start < timeout_s:
         try:
@@ -217,7 +217,7 @@ def wait_for_terminal_focus(client: cmux, panel_id: str, timeout_s: float = 2.0)
 
 
 def attempt_focus_via_real_clicks(
-    client: cmux,
+    client: remux,
     panel_id: str,
     points: list[tuple[float, float]],
 ) -> tuple[bool, tuple[float, float]]:
@@ -232,20 +232,20 @@ def attempt_focus_via_real_clicks(
 
 
 def main() -> int:
-    socket_path = cmux.default_socket_path()
+    socket_path = remux.default_socket_path()
     if not os.path.exists(socket_path):
         print(f"SKIP: Socket not found at {socket_path}")
-        print("Tip: start cmux first (or set CMUX_TAG / CMUX_SOCKET_PATH).")
+        print("Tip: start remux first (or set REMUX_TAG / REMUX_SOCKET_PATH).")
         return 0
 
-    bundle_id = cmux.default_bundle_id()
+    bundle_id = remux.default_bundle_id()
     try:
         app_name = app_name_for_bundle(bundle_id)
     except subprocess.CalledProcessError as e:
         print(f"SKIP: Could not resolve app name for bundle {bundle_id}: {e}")
         return 0
 
-    with cmux(socket_path) as client:
+    with remux(socket_path) as client:
         ws_id = None
         try:
             client.activate_app()
@@ -345,6 +345,6 @@ if __name__ == "__main__":
         if getattr(e, "output", None):
             print(e.output.strip())
         raise SystemExit(1)
-    except cmuxError as e:
+    except remuxError as e:
         print(f"FAIL: {e}")
         raise SystemExit(1)

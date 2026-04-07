@@ -13,10 +13,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_until(predicate, timeout_s: float = 4.0, interval_s: float = 0.05, message: str = "timeout") -> None:
@@ -25,21 +25,21 @@ def _wait_until(predicate, timeout_s: float = 4.0, interval_s: float = 0.05, mes
         if predicate():
             return
         time.sleep(interval_s)
-    raise cmuxError(message)
+    raise remuxError(message)
 
 
-def _sidebar_visible(client: cmux, window_id: str) -> bool:
+def _sidebar_visible(client: remux, window_id: str) -> bool:
     payload = client._call("debug.sidebar.visible", {"window_id": window_id}) or {}
     return bool(payload.get("visible"))
 
 
-def _surface_count(client: cmux, workspace_id: str) -> int:
+def _surface_count(client: remux, workspace_id: str) -> int:
     payload = client._call("surface.list", {"workspace_id": workspace_id}) or {}
     return len(payload.get("surfaces") or [])
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as client:
+    with remux(SOCKET_PATH) as client:
         client.activate_app()
         time.sleep(0.2)
 
@@ -66,7 +66,7 @@ def main() -> int:
         a_after = _sidebar_visible(client, window_a)
         b_after = _sidebar_visible(client, window_b)
         if b_after != b_before:
-            raise cmuxError("Cmd+B in window A incorrectly toggled sidebar in window B")
+            raise remuxError("Cmd+B in window A incorrectly toggled sidebar in window B")
 
         client.focus_window(window_b)
         client.activate_app()
@@ -78,7 +78,7 @@ def main() -> int:
             message="Cmd+B did not toggle sidebar in active window B",
         )
         if _sidebar_visible(client, window_a) != a_after:
-            raise cmuxError("Cmd+B in window B incorrectly toggled sidebar in window A")
+            raise remuxError("Cmd+B in window B incorrectly toggled sidebar in window A")
 
         client.focus_window(window_a)
         client.activate_app()
@@ -97,7 +97,7 @@ def main() -> int:
 
         count_b_after = _surface_count(client, workspace_b)
         if count_b_after != count_b_before:
-            raise cmuxError("Cmd+T in window A incorrectly created a surface in window B")
+            raise remuxError("Cmd+T in window A incorrectly created a surface in window B")
 
     print("PASS: window-scoped shortcuts stay in the active window (Cmd+B, Cmd+T)")
     return 0

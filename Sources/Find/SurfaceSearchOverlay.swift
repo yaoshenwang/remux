@@ -3,7 +3,7 @@ import Bonsplit
 import SwiftUI
 
 private extension NSView {
-    func cmuxAncestor<T: NSView>(of type: T.Type) -> T? {
+    func remuxAncestor<T: NSView>(of type: T.Type) -> T? {
         var current: NSView? = self
         while let view = current {
             if let target = view as? T {
@@ -282,7 +282,7 @@ private struct SearchTextFieldRepresentable: NSViewRepresentable {
             case #selector(NSResponder.cancelOperation(_:)):
                 // Don't intercept Escape during CJK IME composition (issue #118)
                 if textView.hasMarkedText() { return false }
-                control.cmuxAncestor(of: GhosttySurfaceScrollView.self)?.beginFindEscapeSuppression()
+                control.remuxAncestor(of: GhosttySurfaceScrollView.self)?.beginFindEscapeSuppression()
                 parent.onEscape()
                 return true
             case #selector(NSResponder.insertNewline(_:)):

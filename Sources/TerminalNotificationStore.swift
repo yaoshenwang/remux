@@ -10,7 +10,7 @@ import Bonsplit
 // freeze the UI.
 extension UNUserNotificationCenter {
     private static let removalQueue = DispatchQueue(
-        label: "com.cmuxterm.notification-removal",
+        label: "com.remuxterm.notification-removal",
         qos: .utility
     )
 
@@ -35,9 +35,9 @@ enum NotificationSoundSettings {
     static let customFileValue = "custom_file"
     static let customFilePathKey = "notificationSoundCustomFilePath"
     static let defaultCustomFilePath = ""
-    private static let stagedCustomSoundBaseName = "cmux-custom-notification-sound"
+    private static let stagedCustomSoundBaseName = "remux-custom-notification-sound"
     private static let customSoundPreparationQueue = DispatchQueue(
-        label: "com.cmuxterm.notification-sound-preparation",
+        label: "com.remuxterm.notification-sound-preparation",
         qos: .utility
     )
     private static let pendingCustomSoundPreparationLock = NSLock()
@@ -487,7 +487,7 @@ enum NotificationSoundSettings {
     }
 
     private static let customCommandQueue = DispatchQueue(
-        label: "com.cmuxterm.notification-custom-command",
+        label: "com.remuxterm.notification-custom-command",
         qos: .utility
     )
 
@@ -500,9 +500,9 @@ enum NotificationSoundSettings {
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
             process.arguments = ["-c", command]
             var env = ProcessInfo.processInfo.environment
-            env["CMUX_NOTIFICATION_TITLE"] = title
-            env["CMUX_NOTIFICATION_SUBTITLE"] = subtitle
-            env["CMUX_NOTIFICATION_BODY"] = body
+            env["REMUX_NOTIFICATION_TITLE"] = title
+            env["REMUX_NOTIFICATION_SUBTITLE"] = subtitle
+            env["REMUX_NOTIFICATION_BODY"] = body
             process.environment = env
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
@@ -528,7 +528,7 @@ enum NotificationBadgeSettings {
 }
 
 enum TaggedRunBadgeSettings {
-    static let environmentKey = "CMUX_TAG"
+    static let environmentKey = "REMUX_TAG"
     private static let maxTagLength = 10
 
     static func normalizedTag(from env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
@@ -565,7 +565,7 @@ enum AppFocusState {
         // Only treat the app as "focused" for notification suppression when a main terminal window
         // is key. If Settings/About/debug panels are key, we still want notifications to show.
         if let raw = keyWindow.identifier?.rawValue {
-            return raw == "cmux.main" || raw.hasPrefix("cmux.main.")
+            return raw == "remux.main" || raw.hasPrefix("remux.main.")
         }
         return false
     }
@@ -632,8 +632,8 @@ final class TerminalNotificationStore: ObservableObject {
 
     static let shared = TerminalNotificationStore()
 
-    static let categoryIdentifier = "com.cmuxterm.app.userNotification"
-    static let actionShowIdentifier = "com.cmuxterm.app.userNotification.show"
+    static let categoryIdentifier = "com.remuxterm.app.userNotification"
+    static let actionShowIdentifier = "com.remuxterm.app.userNotification.show"
     private enum AuthorizationRequestOrigin: String {
         case notificationDelivery = "notification_delivery"
         case settingsButton = "settings_button"
@@ -775,13 +775,13 @@ final class TerminalNotificationStore: ObservableObject {
             guard let self, authorized else { return }
 
             let content = UNMutableNotificationContent()
-            content.title = "cmux test notification"
+            content.title = "remux test notification"
             content.body = "Desktop notifications are enabled."
             content.sound = NotificationSoundSettings.sound()
             content.categoryIdentifier = Self.categoryIdentifier
 
             let request = UNNotificationRequest(
-                identifier: "cmux.settings.test.\(UUID().uuidString)",
+                identifier: "remux.settings.test.\(UUID().uuidString)",
                 content: content,
                 trigger: nil
             )
@@ -995,7 +995,7 @@ final class TerminalNotificationStore: ObservableObject {
             let content = UNMutableNotificationContent()
             let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
                 ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-                ?? "cmux"
+                ?? "remux"
             content.title = notification.title.isEmpty ? appName : notification.title
             content.subtitle = notification.subtitle
             content.body = notification.body
@@ -1133,8 +1133,8 @@ final class TerminalNotificationStore: ObservableObject {
         }
 
         let alert = notificationSettingsAlertFactory()
-        alert.messageText = String(localized: "dialog.enableNotifications.title", defaultValue: "Enable Notifications for cmux")
-        alert.informativeText = String(localized: "dialog.enableNotifications.message", defaultValue: "Notifications are disabled for cmux. Enable them in System Settings to see alerts.")
+        alert.messageText = String(localized: "dialog.enableNotifications.title", defaultValue: "Enable Notifications for remux")
+        alert.informativeText = String(localized: "dialog.enableNotifications.message", defaultValue: "Notifications are disabled for remux. Enable them in System Settings to see alerts.")
         alert.addButton(withTitle: String(localized: "dialog.enableNotifications.openSettings", defaultValue: "Open Settings"))
         alert.addButton(withTitle: String(localized: "dialog.enableNotifications.notNow", defaultValue: "Not Now"))
         alert.beginSheetModal(for: window) { [weak self] response in

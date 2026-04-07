@@ -6,7 +6,7 @@ This specifically covers the regression where the sidebar directory can get
 stuck (e.g. showing "~" even after multiple `cd`s).
 
 Run with a tagged instance to avoid unix socket conflicts:
-  CMUX_TAG=<tag> python3 tests/test_sidebar_cwd_git.py
+  REMUX_TAG=<tag> python3 tests/test_sidebar_cwd_git.py
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ import sys
 import time
 from pathlib import Path
 
-# Add the directory containing cmux.py to the path
+# Add the directory containing remux.py to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux, cmuxError  # noqa: E402
+from remux import remux, remuxError  # noqa: E402
 
 
 def _parse_sidebar_state(text: str) -> dict[str, str]:
@@ -54,7 +54,7 @@ def _wait_for(predicate, timeout: float, interval: float, label: str):
 
 
 def _wait_for_state_field(
-    client: cmux,
+    client: remux,
     key: str,
     expected: str,
     timeout: float = 6.0,
@@ -68,7 +68,7 @@ def _wait_for_state_field(
 
 
 def _wait_for_git_branch(
-    client: cmux,
+    client: remux,
     expected: str,
     timeout: float = 12.0,
     interval: float = 0.15,
@@ -105,8 +105,8 @@ def _git(cwd: Path, *args: str) -> None:
 def _init_git_repo(repo: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     _git(repo, "init")
-    _git(repo, "config", "user.email", "cmux-test@example.com")
-    _git(repo, "config", "user.name", "cmux-test")
+    _git(repo, "config", "user.email", "remux-test@example.com")
+    _git(repo, "config", "user.name", "remux-test")
     (repo / "README.md").write_text("hello\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-m", "init")
@@ -119,7 +119,7 @@ def _init_git_repo(repo: Path) -> None:
 
 
 def _send_cd_and_wait(
-    client: cmux,
+    client: remux,
     target: Path,
     attempts: int = 3,
     timeout: float = 6.0,
@@ -150,11 +150,11 @@ def _send_cd_and_wait(
 
 
 def main() -> int:
-    tag = os.environ.get("CMUX_TAG") or ""
+    tag = os.environ.get("REMUX_TAG") or ""
     if not tag:
-        print("Tip: set CMUX_TAG=<tag> when running this test to avoid socket conflicts.")
+        print("Tip: set REMUX_TAG=<tag> when running this test to avoid socket conflicts.")
 
-    base = Path("/tmp") / f"cmux_sidebar_test_{os.getpid()}"
+    base = Path("/tmp") / f"remux_sidebar_test_{os.getpid()}"
     repo = base / "repo"
     other = base / "other"
 
@@ -164,7 +164,7 @@ def main() -> int:
         other.mkdir(parents=True, exist_ok=True)
         _init_git_repo(repo)
 
-        with cmux() as client:
+        with remux() as client:
             new_tab_id = client.new_tab()
             client.select_tab(new_tab_id)
             time.sleep(0.6)
@@ -218,7 +218,7 @@ def main() -> int:
         print("Sidebar CWD + git branch test passed.")
         return 0
 
-    except (cmuxError, subprocess.CalledProcessError, AssertionError) as e:
+    except (remuxError, subprocess.CalledProcessError, AssertionError) as e:
         print(f"Sidebar CWD + git branch test failed: {e}")
         return 1
     finally:

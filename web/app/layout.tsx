@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
+import { absoluteUrl, downloadUrl, siteUrl } from "./site";
 
 import { DevPanel } from "./components/spacing-control";
 import { SiteFooter } from "./components/site-footer";
@@ -17,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "cmux — The terminal built for multitasking",
+  title: "remux — The terminal built for multitasking",
   description:
     "Native macOS terminal built on Ghostty. Works with Claude Code, Codex, OpenCode, Gemini CLI, Kiro, Aider, and any CLI tool. Vertical tabs, notification rings, split panes, and a socket API.",
   keywords: [
@@ -35,20 +36,20 @@ export const metadata: Metadata = {
     "terminal for AI agents",
   ],
   openGraph: {
-    title: "cmux — The terminal built for multitasking",
+    title: "remux — The terminal built for multitasking",
     description:
       "Native macOS terminal for AI coding agents. Works with Claude Code, Codex, OpenCode, Gemini CLI, Kiro, Aider, and any CLI tool.",
-    url: "https://cmux.dev",
-    siteName: "cmux",
+    url: siteUrl,
+    siteName: "remux",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "cmux — The terminal built for multitasking",
+    title: "remux — The terminal built for multitasking",
     description:
       "Native macOS terminal for AI coding agents. Works with Claude Code, Codex, OpenCode, Gemini CLI, Kiro, Aider, and any CLI tool.",
   },
-  metadataBase: new URL("https://cmux.dev"),
+  metadataBase: new URL(siteUrl),
 };
 
 export default function RootLayout({
@@ -59,12 +60,11 @@ export default function RootLayout({
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    name: "cmux",
+    name: "remux",
     operatingSystem: "macOS",
     applicationCategory: "DeveloperApplication",
-    url: "https://cmux.dev",
-    downloadUrl:
-      "https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg",
+    url: siteUrl,
+    downloadUrl,
     description:
       "Native macOS terminal built on Ghostty. Works with Claude Code, Codex, OpenCode, Gemini CLI, Kiro, Aider, and any CLI tool. Vertical tabs, notification rings, split panes, and a socket API.",
     keywords:
@@ -76,6 +76,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="theme-color" content="#0a0a0a" />
+        <link rel="canonical" href={absoluteUrl("/")} />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

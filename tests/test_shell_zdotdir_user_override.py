@@ -3,8 +3,8 @@
 Regression: if the user's .zshenv changes ZDOTDIR, then .zshrc should be sourced
 from the updated ZDOTDIR (matching vanilla zsh semantics).
 
-Why this matters for cmux:
-- cmux sets ZDOTDIR to the app wrapper directory so zsh loads wrapper
+Why this matters for remux:
+- remux sets ZDOTDIR to the app wrapper directory so zsh loads wrapper
   startup files.
 - The wrapper .zshenv temporarily restores ZDOTDIR to the original directory
   while sourcing the user's real .zshenv.
@@ -30,7 +30,7 @@ def main() -> int:
         print(f"SKIP: missing wrapper .zshenv at {wrapper_dir}")
         return 0
 
-    base = Path("/tmp") / f"cmux_zdotdir_user_override_{os.getpid()}"
+    base = Path("/tmp") / f"remux_zdotdir_user_override_{os.getpid()}"
     try:
         shutil.rmtree(base, ignore_errors=True)
         base.mkdir(parents=True, exist_ok=True)
@@ -64,8 +64,8 @@ def main() -> int:
         env = dict(os.environ)
         env["HOME"] = str(home)
         env["ZDOTDIR"] = str(wrapper_dir)
-        env["CMUX_ZSH_ZDOTDIR"] = str(orig)
-        env["CMUX_SHELL_INTEGRATION"] = "0"
+        env["REMUX_ZSH_ZDOTDIR"] = str(orig)
+        env["REMUX_SHELL_INTEGRATION"] = "0"
 
         # Interactive is required for .zshrc; -d disables global rc files for isolation.
         result = subprocess.run(

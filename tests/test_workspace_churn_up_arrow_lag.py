@@ -32,26 +32,26 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
-NEW_WORKSPACES = int(os.environ.get("CMUX_LAG_NEW_WORKSPACES", "20"))
-SWITCH_PASSES = int(os.environ.get("CMUX_LAG_SWITCH_PASSES", "1"))
-SWITCH_DELAY_S = float(os.environ.get("CMUX_LAG_SWITCH_DELAY_S", "0.06"))
-HISTORY_SEED_LINES = int(os.environ.get("CMUX_LAG_HISTORY_LINES", "120"))
-KEY_EVENTS = int(os.environ.get("CMUX_LAG_KEY_EVENTS", "180"))
-KEY_DELAY_S = float(os.environ.get("CMUX_LAG_KEY_DELAY_S", "0.0"))
-KEY_COMBO = os.environ.get("CMUX_LAG_KEY_COMBO", "up")
+NEW_WORKSPACES = int(os.environ.get("REMUX_LAG_NEW_WORKSPACES", "20"))
+SWITCH_PASSES = int(os.environ.get("REMUX_LAG_SWITCH_PASSES", "1"))
+SWITCH_DELAY_S = float(os.environ.get("REMUX_LAG_SWITCH_DELAY_S", "0.06"))
+HISTORY_SEED_LINES = int(os.environ.get("REMUX_LAG_HISTORY_LINES", "120"))
+KEY_EVENTS = int(os.environ.get("REMUX_LAG_KEY_EVENTS", "180"))
+KEY_DELAY_S = float(os.environ.get("REMUX_LAG_KEY_DELAY_S", "0.0"))
+KEY_COMBO = os.environ.get("REMUX_LAG_KEY_COMBO", "up")
 
-MAX_P95_RATIO = float(os.environ.get("CMUX_LAG_MAX_P95_RATIO", "1.70"))
-MAX_AVG_RATIO = float(os.environ.get("CMUX_LAG_MAX_AVG_RATIO", "1.70"))
-MAX_CHURN_P95_MS = float(os.environ.get("CMUX_LAG_MAX_CHURN_P95_MS", "35.0"))
-MAX_P95_DELTA_MS = float(os.environ.get("CMUX_LAG_MAX_P95_DELTA_MS", "20.0"))
-MAX_AVG_DELTA_MS = float(os.environ.get("CMUX_LAG_MAX_AVG_DELTA_MS", "12.0"))
-MIN_BASELINE_P95_MS_FOR_RATIO = float(os.environ.get("CMUX_LAG_MIN_BASELINE_P95_MS_FOR_RATIO", "6.0"))
-MIN_BASELINE_AVG_MS_FOR_RATIO = float(os.environ.get("CMUX_LAG_MIN_BASELINE_AVG_MS_FOR_RATIO", "4.0"))
-MAX_CPU_PERCENT = float(os.environ.get("CMUX_LAG_MAX_CPU_PERCENT", "180.0"))
-ENFORCE_CPU = os.environ.get("CMUX_LAG_ENFORCE_CPU", "0") == "1"
-ALLOW_MAIN_SOCKET = os.environ.get("CMUX_LAG_ALLOW_MAIN_SOCKET", "0") == "1"
+MAX_P95_RATIO = float(os.environ.get("REMUX_LAG_MAX_P95_RATIO", "1.70"))
+MAX_AVG_RATIO = float(os.environ.get("REMUX_LAG_MAX_AVG_RATIO", "1.70"))
+MAX_CHURN_P95_MS = float(os.environ.get("REMUX_LAG_MAX_CHURN_P95_MS", "35.0"))
+MAX_P95_DELTA_MS = float(os.environ.get("REMUX_LAG_MAX_P95_DELTA_MS", "20.0"))
+MAX_AVG_DELTA_MS = float(os.environ.get("REMUX_LAG_MAX_AVG_DELTA_MS", "12.0"))
+MIN_BASELINE_P95_MS_FOR_RATIO = float(os.environ.get("REMUX_LAG_MIN_BASELINE_P95_MS_FOR_RATIO", "6.0"))
+MIN_BASELINE_AVG_MS_FOR_RATIO = float(os.environ.get("REMUX_LAG_MIN_BASELINE_AVG_MS_FOR_RATIO", "4.0"))
+MAX_CPU_PERCENT = float(os.environ.get("REMUX_LAG_MAX_CPU_PERCENT", "180.0"))
+ENFORCE_CPU = os.environ.get("REMUX_LAG_ENFORCE_CPU", "0") == "1"
+ALLOW_MAIN_SOCKET = os.environ.get("REMUX_LAG_ALLOW_MAIN_SOCKET", "0") == "1"
 
 
 @dataclass
@@ -92,7 +92,7 @@ class RawSocketClient:
 
     def command(self, command: str, timeout_s: float = 2.0) -> str:
         if self.sock is None:
-            raise cmuxError("Raw socket client not connected")
+            raise remuxError("Raw socket client not connected")
 
         self.sock.sendall((command + "\n").encode("utf-8"))
         deadline = time.time() + timeout_s
@@ -104,15 +104,15 @@ class RawSocketClient:
 
             remaining = deadline - time.time()
             if remaining <= 0:
-                raise cmuxError(f"Timed out waiting for response to: {command}")
+                raise remuxError(f"Timed out waiting for response to: {command}")
 
             ready, _, _ = select.select([self.sock], [], [], remaining)
             if not ready:
-                raise cmuxError(f"Timed out waiting for response to: {command}")
+                raise remuxError(f"Timed out waiting for response to: {command}")
 
             chunk = self.sock.recv(8192)
             if not chunk:
-                raise cmuxError("Socket closed while waiting for response")
+                raise remuxError("Socket closed while waiting for response")
             self.recv_buffer += chunk.decode("utf-8", errors="replace")
 
 
@@ -122,7 +122,7 @@ def wait_for(predicate: Callable[[], bool], timeout_s: float, step_s: float = 0.
         if predicate():
             return
         time.sleep(step_s)
-    raise cmuxError("Timed out waiting for condition")
+    raise remuxError("Timed out waiting for condition")
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -149,7 +149,7 @@ def compute_stats(values_ms: list[float]) -> LatencyStats:
     )
 
 
-def get_cmux_pid_for_socket(socket_path: Optional[str]) -> Optional[int]:
+def get_remux_pid_for_socket(socket_path: Optional[str]) -> Optional[int]:
     if socket_path and os.path.exists(socket_path):
         result = subprocess.run(["lsof", "-t", socket_path], capture_output=True, text=True)
         if result.returncode == 0:
@@ -165,7 +165,7 @@ def get_cmux_pid_for_socket(socket_path: Optional[str]) -> Optional[int]:
                     return pid
 
     result = subprocess.run(
-        ["pgrep", "-f", r"cmux DEV.*\.app/Contents/MacOS/cmux DEV"],
+        ["pgrep", "-f", r"remux DEV.*\.app/Contents/MacOS/remux DEV"],
         capture_output=True,
         text=True,
     )
@@ -176,15 +176,15 @@ def get_cmux_pid_for_socket(socket_path: Optional[str]) -> Optional[int]:
 
 
 def resolve_target_socket() -> str:
-    socket_path = os.environ.get("CMUX_SOCKET_PATH")
+    socket_path = os.environ.get("REMUX_SOCKET_PATH")
     if not socket_path:
-        raise cmuxError(
-            "CMUX_SOCKET_PATH is required. Point it to a tagged dev socket (for example /tmp/cmux-debug-<tag>.sock)."
+        raise remuxError(
+            "REMUX_SOCKET_PATH is required. Point it to a tagged dev socket (for example /tmp/remux-debug-<tag>.sock)."
         )
     base = os.path.basename(socket_path)
-    if not ALLOW_MAIN_SOCKET and base in {"cmux.sock", "cmux-debug.sock"}:
-        raise cmuxError(
-            f"Refusing to run against main socket '{socket_path}'. Set CMUX_SOCKET_PATH to a tagged dev instance."
+    if not ALLOW_MAIN_SOCKET and base in {"remux.sock", "remux-debug.sock"}:
+        raise remuxError(
+            f"Refusing to run against main socket '{socket_path}'. Set REMUX_SOCKET_PATH to a tagged dev instance."
         )
     return socket_path
 
@@ -220,7 +220,7 @@ class CPUMonitor:
         self._thread.join(timeout=2.0)
 
 
-def keep_only_first_workspace(client: cmux) -> str:
+def keep_only_first_workspace(client: remux) -> str:
     workspaces = sorted(client.list_workspaces(), key=lambda row: row[0])
     if not workspaces:
         first_id = client.new_workspace()
@@ -242,7 +242,7 @@ def keep_only_first_workspace(client: cmux) -> str:
     return first_id
 
 
-def create_workspaces(client: cmux, count: int) -> list[str]:
+def create_workspaces(client: remux, count: int) -> list[str]:
     created: list[str] = []
     for _ in range(count):
         wid = client.new_workspace()
@@ -251,7 +251,7 @@ def create_workspaces(client: cmux, count: int) -> list[str]:
     return created
 
 
-def cycle_all_workspaces(client: cmux, passes: int, delay_s: float) -> list[str]:
+def cycle_all_workspaces(client: remux, passes: int, delay_s: float) -> list[str]:
     ids = [wid for _idx, wid, _title, _selected in sorted(client.list_workspaces(), key=lambda row: row[0])]
     for _ in range(passes):
         for wid in ids:
@@ -260,10 +260,10 @@ def cycle_all_workspaces(client: cmux, passes: int, delay_s: float) -> list[str]
     return ids
 
 
-def focused_terminal_panel(client: cmux) -> str:
+def focused_terminal_panel(client: remux) -> str:
     surfaces = client.list_surfaces()
     if not surfaces:
-        raise cmuxError("No surfaces available in selected workspace")
+        raise remuxError("No surfaces available in selected workspace")
     focused = next(((idx, sid) for idx, sid, is_focused in surfaces if is_focused), None)
     if focused is None:
         idx, sid, _ = surfaces[0]
@@ -272,9 +272,9 @@ def focused_terminal_panel(client: cmux) -> str:
     return focused[1]
 
 
-def seed_history(client: cmux, lines: int) -> None:
+def seed_history(client: remux, lines: int) -> None:
     for i in range(lines):
-        client.send_line(f"echo cmux-lag-seed-{i}")
+        client.send_line(f"echo remux-lag-seed-{i}")
 
 
 def run_shortcut_latency_burst(
@@ -289,14 +289,14 @@ def run_shortcut_latency_burst(
         for _ in range(5):
             response = raw.command(f"simulate_shortcut {combo}")
             if not response.startswith("OK"):
-                raise cmuxError(response)
+                raise remuxError(response)
 
         for _ in range(count):
             start = time.perf_counter()
             response = raw.command(f"simulate_shortcut {combo}")
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             if not response.startswith("OK"):
-                raise cmuxError(response)
+                raise remuxError(response)
             latencies_ms.append(elapsed_ms)
             if delay_s > 0:
                 time.sleep(delay_s)
@@ -323,7 +323,7 @@ def print_stats(label: str, stats: LatencyStats) -> None:
     print(f"  max_ms:   {stats.max_ms:.2f}")
 
 
-def run_baseline_scenario(client: cmux, socket_path: str) -> tuple[str, LatencyStats]:
+def run_baseline_scenario(client: remux, socket_path: str) -> tuple[str, LatencyStats]:
     first_workspace_id = keep_only_first_workspace(client)
     client.select_workspace(first_workspace_id)
     panel_id = focused_terminal_panel(client)
@@ -337,7 +337,7 @@ def run_baseline_scenario(client: cmux, socket_path: str) -> tuple[str, LatencyS
     return panel_id, compute_stats(latencies)
 
 
-def run_churn_scenario(client: cmux, socket_path: str, first_workspace_id: str) -> tuple[str, LatencyStats]:
+def run_churn_scenario(client: remux, socket_path: str, first_workspace_id: str) -> tuple[str, LatencyStats]:
     first_workspace_id = keep_only_first_workspace(client)
     _ = create_workspaces(client, NEW_WORKSPACES)
     ordered_ids = cycle_all_workspaces(client, SWITCH_PASSES, SWITCH_DELAY_S)
@@ -363,19 +363,19 @@ def main() -> int:
     print("Workspace Churn + Up-Arrow Latency Regression")
     print("=" * 64)
 
-    client: Optional[cmux] = None
+    client: Optional[remux] = None
     pid: Optional[int] = None
     first_workspace_id: Optional[str] = None
 
     try:
         target_socket = resolve_target_socket()
-        client = cmux(socket_path=target_socket)
+        client = remux(socket_path=target_socket)
         client.connect()
         print(f"Using socket: {client.socket_path}")
 
-        pid = get_cmux_pid_for_socket(client.socket_path)
+        pid = get_remux_pid_for_socket(client.socket_path)
         if pid is None:
-            print("SKIP: cmux process not found for socket")
+            print("SKIP: remux process not found for socket")
             return 0
 
         cpu_monitor = CPUMonitor(pid)
@@ -436,7 +436,7 @@ def main() -> int:
             print("\nFAIL")
             for item in failures:
                 print(f"  - {item}")
-            sample_path = maybe_write_sample(pid, "cmux_workspace_churn_up_arrow_lag")
+            sample_path = maybe_write_sample(pid, "remux_workspace_churn_up_arrow_lag")
             if sample_path:
                 print(f"  sample_path: {sample_path}")
             return 1
@@ -444,9 +444,9 @@ def main() -> int:
         print("\nPASS")
         return 0
 
-    except cmuxError as e:
+    except remuxError as e:
         print(f"FAIL: {e}")
-        sample_path = maybe_write_sample(pid, "cmux_workspace_churn_up_arrow_error")
+        sample_path = maybe_write_sample(pid, "remux_workspace_churn_up_arrow_error")
         if sample_path:
             print(f"sample_path: {sample_path}")
         return 1

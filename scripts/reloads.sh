@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cmux STAGING"
-BUNDLE_ID="com.cmuxterm.app.staging"
-BASE_APP_NAME="cmux"
+APP_NAME="remux STAGING"
+BUNDLE_ID="com.remuxterm.app.staging"
+BASE_APP_NAME="remux"
 DERIVED_DATA=""
 NAME_SET=0
 BUNDLE_SET=0
@@ -14,8 +14,8 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/reloads.sh [options]
 
-Release build with isolated "cmux STAGING" identity. Runs side-by-side with
-the production cmux app.
+Release build with isolated "remux STAGING" identity. Runs side-by-side with
+the production remux app.
 
 Options:
   --tag <name>           Short tag for parallel builds (e.g., feature-xyz-lol).
@@ -100,19 +100,19 @@ if [[ -n "$TAG" ]]; then
   TAG_ID="$(sanitize_bundle "$TAG")"
   TAG_SLUG="$(sanitize_path "$TAG")"
   if [[ "$NAME_SET" -eq 0 ]]; then
-    APP_NAME="cmux STAGING ${TAG}"
+    APP_NAME="remux STAGING ${TAG}"
   fi
   if [[ "$BUNDLE_SET" -eq 0 ]]; then
-    BUNDLE_ID="com.cmuxterm.app.staging.${TAG_ID}"
+    BUNDLE_ID="com.remuxterm.app.staging.${TAG_ID}"
   fi
   if [[ "$DERIVED_SET" -eq 0 ]]; then
-    DERIVED_DATA="/tmp/cmux-staging-${TAG_SLUG}"
+    DERIVED_DATA="/tmp/remux-staging-${TAG_SLUG}"
   fi
 fi
 
 XCODEBUILD_ARGS=(
   -project GhosttyTabs.xcodeproj
-  -scheme cmux
+  -scheme remux
   -configuration Release
   -destination 'platform=macOS'
 )
@@ -172,7 +172,7 @@ fi
 
 # Staging always copies the built app and patches the plist to set an isolated
 # socket path, bundle id, and display name. This prevents conflicts with the
-# production cmux app.
+# production remux app.
 STAGING_APP_PATH="$(dirname "$APP_PATH")/${APP_NAME}.app"
 rm -rf "$STAGING_APP_PATH"
 cp -R "$APP_PATH" "$STAGING_APP_PATH"
@@ -186,25 +186,25 @@ if [[ -f "$INFO_PLIST" ]]; then
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$INFO_PLIST"
 
   # Inject staging socket paths via LSEnvironment so the Release binary
-  # (which defaults to /tmp/cmux.sock) uses isolated sockets instead.
+  # (which defaults to /tmp/remux.sock) uses isolated sockets instead.
   STAGING_SLUG="${TAG_SLUG:-staging}"
-  APP_SUPPORT_DIR="$HOME/Library/Application Support/cmux"
-  CMUXD_SOCKET="${APP_SUPPORT_DIR}/cmuxd-${STAGING_SLUG}.sock"
-  CMUX_SOCKET="/tmp/cmux-${STAGING_SLUG}.sock"
-  echo "$CMUX_SOCKET" > /tmp/cmux-last-socket-path || true
+  APP_SUPPORT_DIR="$HOME/Library/Application Support/remux"
+  REMUXD_SOCKET="${APP_SUPPORT_DIR}/remuxd-${STAGING_SLUG}.sock"
+  REMUX_SOCKET="/tmp/remux-${STAGING_SLUG}.sock"
+  echo "$REMUX_SOCKET" > /tmp/remux-last-socket-path || true
   /usr/libexec/PlistBuddy -c "Add :LSEnvironment dict" "$INFO_PLIST" 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUXD_UNIX_PATH \"${CMUXD_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUXD_UNIX_PATH string \"${CMUXD_SOCKET}\"" "$INFO_PLIST"
-  /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUX_SOCKET_PATH \"${CMUX_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_SOCKET_PATH string \"${CMUX_SOCKET}\"" "$INFO_PLIST"
-  if [[ -S "$CMUXD_SOCKET" ]]; then
-    for PID in $(lsof -t "$CMUXD_SOCKET" 2>/dev/null); do
+  /usr/libexec/PlistBuddy -c "Set :LSEnvironment:REMUXD_UNIX_PATH \"${REMUXD_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:REMUXD_UNIX_PATH string \"${REMUXD_SOCKET}\"" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Set :LSEnvironment:REMUX_SOCKET_PATH \"${REMUX_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:REMUX_SOCKET_PATH string \"${REMUX_SOCKET}\"" "$INFO_PLIST"
+  if [[ -S "$REMUXD_SOCKET" ]]; then
+    for PID in $(lsof -t "$REMUXD_SOCKET" 2>/dev/null); do
       kill "$PID" 2>/dev/null || true
     done
-    rm -f "$CMUXD_SOCKET"
+    rm -f "$REMUXD_SOCKET"
   fi
-  if [[ -S "$CMUX_SOCKET" ]]; then
-    rm -f "$CMUX_SOCKET"
+  if [[ -S "$REMUX_SOCKET" ]]; then
+    rm -f "$REMUX_SOCKET"
   fi
   /usr/bin/codesign --force --sign - --timestamp=none --generate-entitlement-der "$STAGING_APP_PATH" >/dev/null 2>&1 || true
 fi
@@ -217,23 +217,23 @@ sleep 0.3
 pkill -f "${APP_NAME}.app/Contents/MacOS/${BASE_APP_NAME}" || true
 sleep 0.3
 "$PWD/scripts/bundle-runtime-binaries.sh" "$APP_PATH"
-# Avoid inheriting cmux/ghostty environment variables from the terminal that
-# runs this script (often inside another cmux instance), which can cause
+# Avoid inheriting remux/ghostty environment variables from the terminal that
+# runs this script (often inside another remux instance), which can cause
 # socket and resource-path conflicts.
 OPEN_CLEAN_ENV=(
   env
-  -u CMUX_SOCKET_PATH
-  -u CMUX_TAB_ID
-  -u CMUX_PANEL_ID
-  -u CMUXD_UNIX_PATH
-  -u CMUX_TAG
-  -u CMUX_BUNDLE_ID
-  -u CMUX_SHELL_INTEGRATION
+  -u REMUX_SOCKET_PATH
+  -u REMUX_TAB_ID
+  -u REMUX_PANEL_ID
+  -u REMUXD_UNIX_PATH
+  -u REMUX_TAG
+  -u REMUX_BUNDLE_ID
+  -u REMUX_SHELL_INTEGRATION
   -u GHOSTTY_BIN_DIR
   -u GHOSTTY_RESOURCES_DIR
   -u GHOSTTY_SHELL_FEATURES
   # Dev shells (including CI/Codex) often force-disable paging by exporting these.
-  # Don't leak that into cmux, otherwise `git diff` won't page even with PAGER=less.
+  # Don't leak that into remux, otherwise `git diff` won't page even with PAGER=less.
   -u GIT_PAGER
   -u GH_PAGER
   -u TERMINFO
@@ -242,7 +242,7 @@ OPEN_CLEAN_ENV=(
 
 # Always inject staging socket paths via env to ensure they take effect
 # (LSEnvironment requires app restart to pick up plist changes).
-"${OPEN_CLEAN_ENV[@]}" CMUX_SOCKET_PATH="$CMUX_SOCKET" CMUXD_UNIX_PATH="$CMUXD_SOCKET" open -g "$APP_PATH"
+"${OPEN_CLEAN_ENV[@]}" REMUX_SOCKET_PATH="$REMUX_SOCKET" REMUXD_UNIX_PATH="$REMUXD_SOCKET" open -g "$APP_PATH"
 
 # Safety: ensure only one instance is running.
 sleep 0.2

@@ -4,8 +4,8 @@ Regression: GhosttyKit already injects zsh shell integration by setting ZDOTDIR
 to Ghostty's own integration directory (and optionally preserving a user-set
 ZDOTDIR in GHOSTTY_ZSH_ZDOTDIR).
 
-cmux also injects its own zsh integration by setting ZDOTDIR to
-Resources/shell-integration. If cmux incorrectly treats Ghostty's injected
+remux also injects its own zsh integration by setting ZDOTDIR to
+Resources/shell-integration. If remux incorrectly treats Ghostty's injected
 ZDOTDIR as the "user" ZDOTDIR, zsh history will be isolated to the integration
 directory rather than the user's HOME/ZDOTDIR, breaking cross-terminal history
 and therefore zsh-autosuggestions.
@@ -37,17 +37,17 @@ def _run_zsh_print_histfile(env: dict[str, str]) -> tuple[int, str]:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    cmux_wrapper_dir = root / "Resources" / "shell-integration"
+    remux_wrapper_dir = root / "Resources" / "shell-integration"
     ghostty_zsh_dir = root / "ghostty" / "src" / "shell-integration" / "zsh"
 
-    if not (cmux_wrapper_dir / ".zshenv").exists():
-        print(f"SKIP: missing cmux wrapper .zshenv at {cmux_wrapper_dir}")
+    if not (remux_wrapper_dir / ".zshenv").exists():
+        print(f"SKIP: missing remux wrapper .zshenv at {remux_wrapper_dir}")
         return 0
     if not (ghostty_zsh_dir / ".zshenv").exists():
         print(f"SKIP: missing Ghostty zsh .zshenv at {ghostty_zsh_dir}")
         return 0
 
-    base = Path("/tmp") / f"cmux_histfile_ghostty_stack_{os.getpid()}"
+    base = Path("/tmp") / f"remux_histfile_ghostty_stack_{os.getpid()}"
     try:
         shutil.rmtree(base, ignore_errors=True)
         base.mkdir(parents=True, exist_ok=True)
@@ -63,11 +63,11 @@ def main() -> int:
         env.pop("GHOSTTY_SHELL_FEATURES", None)
         env.pop("GHOSTTY_BIN_DIR", None)
 
-        # Simulate the buggy situation: cmux stores Ghostty's injected ZDOTDIR
+        # Simulate the buggy situation: remux stores Ghostty's injected ZDOTDIR
         # as the "original" ZDOTDIR, then sets ZDOTDIR to its own wrapper.
-        env["CMUX_ORIGINAL_ZDOTDIR"] = str(ghostty_zsh_dir)
-        env["ZDOTDIR"] = str(cmux_wrapper_dir)
-        env["CMUX_SHELL_INTEGRATION"] = "0"
+        env["REMUX_ORIGINAL_ZDOTDIR"] = str(ghostty_zsh_dir)
+        env["ZDOTDIR"] = str(remux_wrapper_dir)
+        env["REMUX_SHELL_INTEGRATION"] = "0"
 
         rc, out = _run_zsh_print_histfile(env)
         if rc != 0:
@@ -82,7 +82,7 @@ def main() -> int:
         expected = str(home / ".zsh_history")
         if seen != expected:
             print(f"FAIL: HISTFILE={seen!r}, expected {expected!r}")
-            print(f"  cmux_wrapper_dir={cmux_wrapper_dir}")
+            print(f"  remux_wrapper_dir={remux_wrapper_dir}")
             print(f"  ghostty_zsh_dir={ghostty_zsh_dir}")
             return 1
 

@@ -153,8 +153,8 @@ export async function POST(request: Request) {
 
 function resolveFeedbackConfig() {
   const resendApiKey = env.RESEND_API_KEY;
-  const fromEmail = env.CMUX_FEEDBACK_FROM_EMAIL;
-  const rateLimitId = env.CMUX_FEEDBACK_RATE_LIMIT_ID;
+  const fromEmail = env.REMUX_FEEDBACK_FROM_EMAIL;
+  const rateLimitId = env.REMUX_FEEDBACK_RATE_LIMIT_ID;
 
   if (!resendApiKey || !fromEmail || !rateLimitId) {
     return null;
@@ -229,7 +229,7 @@ function buildSubject(email: string, message: string, appVersion: string) {
       : firstNonEmptyLine;
   const versionSuffix = appVersion ? ` (v${appVersion})` : "";
 
-  return `cmux feedback from ${email}${versionSuffix}: ${summary}`;
+  return `remux feedback from ${email}${versionSuffix}: ${summary}`;
 }
 
 function buildTextBody(input: {
@@ -294,7 +294,7 @@ function buildHtmlBody(input: {
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;line-height:1.5">
-      <h1 style="font-size:18px;margin:0 0 16px">cmux feedback</h1>
+      <h1 style="font-size:18px;margin:0 0 16px">remux feedback</h1>
       <p><strong>From:</strong> ${escapeHtml(input.email)}</p>
       <p><strong>App version:</strong> ${escapeHtml(input.appVersion || "unknown")}</p>
       <p><strong>App build:</strong> ${escapeHtml(input.appBuild || "unknown")}</p>

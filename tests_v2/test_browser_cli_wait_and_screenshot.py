@@ -11,36 +11,36 @@ import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _find_cli_binary() -> str:
-    env_cli = os.environ.get("CMUXTERM_CLI")
+    env_cli = os.environ.get("REMUXTERM_CLI")
     if env_cli and os.path.isfile(env_cli) and os.access(env_cli, os.X_OK):
         return env_cli
 
     fixed = os.path.expanduser(
-        "~/Library/Developer/Xcode/DerivedData/cmux-tests-v2/Build/Products/Debug/cmux"
+        "~/Library/Developer/Xcode/DerivedData/remux-tests-v2/Build/Products/Debug/remux"
     )
     if os.path.isfile(fixed) and os.access(fixed, os.X_OK):
         return fixed
 
     candidates = glob.glob(
-        os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/cmux"),
+        os.path.expanduser("~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug/remux"),
         recursive=True,
     )
-    candidates += glob.glob("/tmp/cmux-*/Build/Products/Debug/cmux")
+    candidates += glob.glob("/tmp/remux-*/Build/Products/Debug/remux")
     candidates = [p for p in candidates if os.path.isfile(p) and os.access(p, os.X_OK)]
     if not candidates:
-        raise cmuxError("Could not locate cmux CLI binary; set CMUXTERM_CLI")
+        raise remuxError("Could not locate remux CLI binary; set REMUXTERM_CLI")
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
 
@@ -50,14 +50,14 @@ def _run_cli(cli: str, *args: str) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         merged = f"{proc.stdout}\n{proc.stderr}".strip()
-        raise cmuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
+        raise remuxError(f"CLI failed ({' '.join(cmd)}): {merged}")
     return proc
 
 
 def main() -> int:
     cli = _find_cli_binary()
 
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         opened = c._call("browser.open_split", {"url": "about:blank"}) or {}
         target = str(opened.get("surface_id") or opened.get("surface_ref") or "")
         _must(target != "", f"browser.open_split returned no surface handle: {opened}")
@@ -65,7 +65,7 @@ def main() -> int:
         html = """
 <!doctype html>
 <html>
-  <head><title>cmux-browser-cli-regression</title></head>
+  <head><title>remux-browser-cli-regression</title></head>
   <body>
     <main>
       <h1>browser cli regression</h1>
@@ -124,7 +124,7 @@ def main() -> int:
         _must(screenshot_url.startswith("file://"), f"Expected screenshot file URL in JSON payload: {payload}")
         _must(Path(screenshot_path).is_file(), f"Expected screenshot file to exist: {payload}")
 
-        out_dir = Path(tempfile.mkdtemp(prefix="cmux-browser-screenshot-cli-")) / "nested" / "dir"
+        out_dir = Path(tempfile.mkdtemp(prefix="remux-browser-screenshot-cli-")) / "nested" / "dir"
         out_path = out_dir / "capture.png"
         screenshot_out_proc = _run_cli(
             cli,

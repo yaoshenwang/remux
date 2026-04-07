@@ -3,7 +3,7 @@
 Regression: zsh wrapper startup files must source user files with the *original*
 ZDOTDIR, not the wrapper directory.
 
-The cmux zsh integration sets ZDOTDIR to the app's wrapper directory so zsh
+The remux zsh integration sets ZDOTDIR to the app's wrapper directory so zsh
 loads wrapper .zshenv/.zprofile/.zshrc. Those wrappers must temporarily restore
 ZDOTDIR while sourcing the user's real startup files so $ZDOTDIR semantics match
 normal zsh behavior.
@@ -25,7 +25,7 @@ def main() -> int:
         print(f"SKIP: missing wrapper .zshenv at {wrapper_dir}")
         return 0
 
-    base = Path("/tmp") / f"cmux_zdotdir_test_{os.getpid()}"
+    base = Path("/tmp") / f"remux_zdotdir_test_{os.getpid()}"
     try:
         if base.exists():
             for child in base.iterdir():
@@ -41,15 +41,15 @@ def main() -> int:
 
         # User .zshenv that records the ZDOTDIR it sees.
         (orig / ".zshenv").write_text(
-            'echo "$ZDOTDIR" > "$CMUX_ZDOTDIR_TEST_OUTPUT"\n',
+            'echo "$ZDOTDIR" > "$REMUX_ZDOTDIR_TEST_OUTPUT"\n',
             encoding="utf-8",
         )
 
         env = dict(os.environ)
         env["ZDOTDIR"] = str(wrapper_dir)
-        env["CMUX_ZSH_ZDOTDIR"] = str(orig)
-        env["CMUX_ZDOTDIR_TEST_OUTPUT"] = str(seen_path)
-        env["CMUX_SHELL_INTEGRATION"] = "0"
+        env["REMUX_ZSH_ZDOTDIR"] = str(orig)
+        env["REMUX_ZDOTDIR_TEST_OUTPUT"] = str(seen_path)
+        env["REMUX_SHELL_INTEGRATION"] = "0"
 
         # Non-interactive is enough: .zshenv is always sourced.
         result = subprocess.run(

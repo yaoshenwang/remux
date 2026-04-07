@@ -8,7 +8,7 @@ Verifies that:
   3. Cmd+[/] are no-ops when a terminal panel is focused
 
 Requires:
-  - cmux running
+  - remux running
   - Debug socket commands enabled (`simulate_shortcut`)
 """
 
@@ -19,10 +19,10 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-def focused_pane_id(client: cmux) -> Optional[str]:
+def focused_pane_id(client: remux) -> Optional[str]:
     """Return the pane_id of the currently focused pane, or None."""
     for _idx, pane_id, _count, is_focused in client.list_panes():
         if is_focused:
@@ -30,19 +30,19 @@ def focused_pane_id(client: cmux) -> Optional[str]:
     return None
 
 
-def get_browser_url(client: cmux, panel_id: str) -> str:
+def get_browser_url(client: remux, panel_id: str) -> str:
     """Get the current URL of a browser panel."""
     return client._send_command(f"get_url {panel_id}").strip()
 
 
-def navigate_browser(client: cmux, panel_id: str, url: str) -> None:
+def navigate_browser(client: remux, panel_id: str, url: str) -> None:
     """Navigate a browser panel to a URL."""
     response = client._send_command(f"navigate {panel_id} {url}")
     if not response.startswith("OK"):
-        raise cmuxError(response)
+        raise remuxError(response)
 
 
-def wait_for_url(client: cmux, panel_id: str, expected_url: str,
+def wait_for_url(client: remux, panel_id: str, expected_url: str,
                  timeout_s: float = 5.0, contains: bool = False) -> bool:
     """Poll until the browser panel's URL matches the expected value."""
     start = time.time()
@@ -58,7 +58,7 @@ def wait_for_url(client: cmux, panel_id: str, expected_url: str,
     return False
 
 
-def test_cmd_bracket_back_forward(client: cmux) -> tuple[bool, str]:
+def test_cmd_bracket_back_forward(client: remux) -> tuple[bool, str]:
     """
     1. Create workspace with a browser pane
     2. Navigate to page A, then page B
@@ -120,7 +120,7 @@ def test_cmd_bracket_back_forward(client: cmux) -> tuple[bool, str]:
     return True, "Cmd+[/] back/forward works correctly"
 
 
-def test_cmd_bracket_noop_on_terminal(client: cmux) -> tuple[bool, str]:
+def test_cmd_bracket_noop_on_terminal(client: remux) -> tuple[bool, str]:
     """
     Verify that Cmd+[/] are no-ops when focused on a terminal (no browser panel focused).
     The workspace should not change.
@@ -154,7 +154,7 @@ def test_cmd_bracket_noop_on_terminal(client: cmux) -> tuple[bool, str]:
     return True, "Cmd+[/] are no-ops on terminal"
 
 
-def test_browser_back_forward_socket_commands(client: cmux) -> tuple[bool, str]:
+def test_browser_back_forward_socket_commands(client: remux) -> tuple[bool, str]:
     """
     Test that browser_back and browser_forward socket commands work correctly.
     This verifies the underlying goBack()/goForward() methods independently
@@ -210,7 +210,7 @@ def test_browser_back_forward_socket_commands(client: cmux) -> tuple[bool, str]:
 
 
 def main():
-    client = cmux()
+    client = remux()
     client.connect()
 
     tests = [

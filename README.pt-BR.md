@@ -1,11 +1,11 @@
 > Esta tradução foi gerada pelo Claude. Se você tiver sugestões de melhoria, abra um PR.
 
-<h1 align="center">cmux</h1>
+<h1 align="center">remux</h1>
 <p align="center">Um terminal macOS baseado em Ghostty com abas verticais e notificações para agentes de programação com IA</p>
 
 <p align="center">
-  <a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-    <img src="./docs/assets/macos-badge.png" alt="Baixar cmux para macOS" width="180" />
+  <a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
+    <img src="./docs/assets/macos-badge.png" alt="Baixar remux para macOS" width="180" />
   </a>
 </p>
 
@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/main-first-image.png" alt="Captura de tela do cmux" width="900" />
+  <img src="./docs/assets/main-first-image.png" alt="Captura de tela do remux" width="900" />
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Vídeo de demonstração</a> · <a href="https://cmux.dev/blog/zen-of-cmux">O Zen do cmux</a>
+  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Vídeo de demonstração</a> · <a href="https://remux.dev/blog/zen-of-remux">O Zen do remux</a>
 </p>
 
 ## Recursos
@@ -76,44 +76,44 @@ A barra lateral mostra o branch do git, status/número do PR vinculado, diretór
 
 ### DMG (recomendado)
 
-<a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-  <img src="./docs/assets/macos-badge.png" alt="Baixar cmux para macOS" width="180" />
+<a href="https://github.com/yaoshenwang/remux/releases/latest/download/remux-macos.dmg">
+  <img src="./docs/assets/macos-badge.png" alt="Baixar remux para macOS" width="180" />
 </a>
 
-Abra o `.dmg` e arraste o cmux para a pasta Aplicativos. O cmux se atualiza automaticamente via Sparkle, então você só precisa baixar uma vez.
+Abra o `.dmg` e arraste o remux para a pasta Aplicativos. O remux se atualiza automaticamente via Sparkle, então você só precisa baixar uma vez.
 
 ### Homebrew
 
 ```bash
-brew tap manaflow-ai/cmux
-brew install --cask cmux
+brew tap yaoshenwang/homebrew-tap
+brew install --cask remux
 ```
 
 Para atualizar depois:
 
 ```bash
-brew upgrade --cask cmux
+brew upgrade --cask remux
 ```
 
 Na primeira execução, o macOS pode pedir para você confirmar a abertura de um app de um desenvolvedor identificado. Clique em **Abrir** para continuar.
 
-## Por que o cmux?
+## Por que o remux?
 
 Eu executo muitas sessões de Claude Code e Codex em paralelo. Eu estava usando o Ghostty com vários painéis divididos e contando com as notificações nativas do macOS para saber quando um agente precisava de mim. Mas o corpo da notificação do Claude Code é sempre apenas "Claude is waiting for your input" sem contexto, e com abas suficientes abertas eu não conseguia nem ler os títulos mais.
 
-Eu tentei alguns orquestradores de código, mas a maioria era apps Electron/Tauri e o desempenho me incomodava. Eu também prefiro o terminal, já que orquestradores GUI te prendem no fluxo de trabalho deles. Então eu construí o cmux como um app nativo macOS em Swift/AppKit. Ele usa o libghostty para renderização do terminal e lê sua configuração existente do Ghostty para temas, fontes e cores.
+Eu tentei alguns orquestradores de código, mas a maioria era apps Electron/Tauri e o desempenho me incomodava. Eu também prefiro o terminal, já que orquestradores GUI te prendem no fluxo de trabalho deles. Então eu construí o remux como um app nativo macOS em Swift/AppKit. Ele usa o libghostty para renderização do terminal e lê sua configuração existente do Ghostty para temas, fontes e cores.
 
-As principais adições são a barra lateral e o sistema de notificações. A barra lateral tem abas verticais que mostram o branch do git, status/número do PR vinculado, diretório de trabalho, portas em escuta e o texto da última notificação para cada workspace. O sistema de notificações captura sequências do terminal (OSC 9/99/777) e tem uma CLI (`cmux notify`) que você pode conectar aos hooks de agentes para Claude Code, OpenCode, etc. Quando um agente está esperando, seu painel recebe um anel azul e a aba acende na barra lateral, para que eu possa ver qual precisa de mim entre divisões e abas. Cmd+Shift+U pula para o mais recente não lido.
+As principais adições são a barra lateral e o sistema de notificações. A barra lateral tem abas verticais que mostram o branch do git, status/número do PR vinculado, diretório de trabalho, portas em escuta e o texto da última notificação para cada workspace. O sistema de notificações captura sequências do terminal (OSC 9/99/777) e tem uma CLI (`remux notify`) que você pode conectar aos hooks de agentes para Claude Code, OpenCode, etc. Quando um agente está esperando, seu painel recebe um anel azul e a aba acende na barra lateral, para que eu possa ver qual precisa de mim entre divisões e abas. Cmd+Shift+U pula para o mais recente não lido.
 
 O navegador integrado tem uma API programável portada do [agent-browser](https://github.com/vercel-labs/agent-browser). Agentes podem capturar a árvore de acessibilidade, obter referências de elementos, clicar, preencher formulários e executar JS. Você pode dividir um painel de navegador ao lado do seu terminal e fazer o Claude Code interagir diretamente com seu servidor de desenvolvimento.
 
 Tudo é programável através da CLI e socket API — criar workspaces/abas, dividir painéis, enviar teclas, abrir URLs no navegador.
 
-## O Zen do cmux
+## O Zen do remux
 
-O cmux não é prescritivo sobre como os desenvolvedores usam suas ferramentas. É um terminal e navegador com uma CLI, e o resto é com você.
+O remux não é prescritivo sobre como os desenvolvedores usam suas ferramentas. É um terminal e navegador com uma CLI, e o resto é com você.
 
-O cmux é uma primitiva, não uma solução. Ele te dá um terminal, um navegador, notificações, workspaces, divisões, abas e uma CLI para controlar tudo isso. O cmux não te força a usar agentes de programação de uma forma específica. O que você constrói com as primitivas é seu.
+O remux é uma primitiva, não uma solução. Ele te dá um terminal, um navegador, notificações, workspaces, divisões, abas e uma CLI para controlar tudo isso. O remux não te força a usar agentes de programação de uma forma específica. O que você constrói com as primitivas é seu.
 
 Os melhores desenvolvedores sempre construíram suas próprias ferramentas. Ninguém descobriu ainda a melhor forma de trabalhar com agentes, e as equipes construindo produtos fechados definitivamente também não. Os desenvolvedores mais próximos de suas próprias bases de código vão descobrir primeiro.
 
@@ -121,7 +121,7 @@ Dê a um milhão de desenvolvedores primitivas combináveis e eles coletivamente
 
 ## Documentação
 
-Para mais informações sobre como configurar o cmux, [acesse nossa documentação](https://cmux.dev/docs/getting-started?utm_source=readme).
+Para mais informações sobre como configurar o remux, [acesse nossa documentação](https://remux.dev/docs/getting-started?utm_source=readme).
 
 ## Atalhos de Teclado
 
@@ -211,27 +211,27 @@ Os atalhos de ferramentas do desenvolvedor do navegador seguem os padrões do Sa
 
 ## Builds Noturnos
 
-[Baixar cmux NIGHTLY](https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-macos.dmg)
+[Baixar remux NIGHTLY](https://github.com/yaoshenwang/remux/releases/download/nightly/remux-nightly-macos.dmg)
 
-O cmux NIGHTLY é um app separado com seu próprio bundle ID, então roda ao lado da versão estável. Construído automaticamente a partir do último commit em `main` e se atualiza automaticamente via seu próprio feed Sparkle.
+O remux NIGHTLY é um app separado com seu próprio bundle ID, então roda ao lado da versão estável. Construído automaticamente a partir do último commit em `main` e se atualiza automaticamente via seu próprio feed Sparkle.
 
 ## Restauração de sessão (comportamento atual)
 
-Ao reiniciar, o cmux atualmente restaura apenas o layout do app e metadados:
+Ao reiniciar, o remux atualmente restaura apenas o layout do app e metadados:
 - Layout de janelas/workspaces/painéis
 - Diretórios de trabalho
 - Histórico de rolagem do terminal (melhor esforço)
 - URL do navegador e histórico de navegação
 
-O cmux **não** restaura o estado de processos ativos dentro de apps de terminal. Por exemplo, sessões ativas de Claude Code/tmux/vim não são retomadas após reiniciar ainda.
+O remux **não** restaura o estado de processos ativos dentro de apps de terminal. Por exemplo, sessões ativas de Claude Code/tmux/vim não são retomadas após reiniciar ainda.
 
 ## Histórico de Estrelas
 
-<a href="https://star-history.com/#manaflow-ai/cmux&Date">
+<a href="https://star-history.com/#yaoshenwang/remux&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" width="600" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yaoshenwang/remux&type=Date" width="600" />
  </picture>
 </a>
 
@@ -241,26 +241,26 @@ Formas de participar:
 
 - Siga-nos no X para atualizações [@manaflowai](https://x.com/manaflowai), [@lawrencecchen](https://x.com/lawrencecchen), e [@austinywang](https://x.com/austinywang)
 - Participe da conversa no [Discord](https://discord.gg/xsgFEVrWCZ)
-- Crie e participe de [issues no GitHub](https://github.com/manaflow-ai/cmux/issues) e [discussões](https://github.com/manaflow-ai/cmux/discussions)
-- Nos conte o que você está construindo com o cmux
+- Crie e participe de [issues no GitHub](https://github.com/yaoshenwang/remux/issues) e [discussões](https://github.com/yaoshenwang/remux/discussions)
+- Nos conte o que você está construindo com o remux
 
 ## Comunidade
 
 - [Discord](https://discord.gg/xsgFEVrWCZ)
-- [GitHub](https://github.com/manaflow-ai/cmux)
+- [GitHub](https://github.com/yaoshenwang/remux)
 - [X / Twitter](https://twitter.com/manaflowai)
 - [YouTube](https://www.youtube.com/channel/UCAa89_j-TWkrXfk9A3CbASw)
 - [LinkedIn](https://www.linkedin.com/company/manaflow-ai/)
-- [Reddit](https://www.reddit.com/r/cmux/)
+- [Reddit](https://www.reddit.com/r/remux/)
 
 ## Edição do Fundador
 
-O cmux é gratuito, open source, e sempre será. Se você gostaria de apoiar o desenvolvimento e ter acesso antecipado ao que está por vir:
+O remux é gratuito, open source, e sempre será. Se você gostaria de apoiar o desenvolvimento e ter acesso antecipado ao que está por vir:
 
 **[Obter Edição do Fundador](https://buy.stripe.com/3cI00j2Ld0it5OU33r5EY0q)**
 
 - **Solicitações de recursos/correções de bugs priorizadas**
-- **Acesso antecipado: cmux AI que te dá contexto sobre cada workspace, aba e painel**
+- **Acesso antecipado: remux AI que te dá contexto sobre cada workspace, aba e painel**
 - **Acesso antecipado: app iOS com terminais sincronizados entre desktop e celular**
 - **Acesso antecipado: VMs na nuvem**
 - **Acesso antecipado: Modo de voz**

@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           GHOSTTY_SHA=$(git -C ghostty rev-parse HEAD)
           TAG="xcframework-$GHOSTTY_SHA"
-          URL="https://github.com/manaflow-ai/ghostty/releases/download/$TAG/GhosttyKit.xcframework.tar.gz"
+          URL="https://github.com/yaoshenwang/ghostty/releases/download/$TAG/GhosttyKit.xcframework.tar.gz"
           echo "Downloading xcframework for ghostty $GHOSTTY_SHA"
           MAX_RETRIES=30
           RETRY_DELAY=20
@@ -109,7 +109,7 @@ jobs:
           mkdir -p "$SOURCE_PACKAGES_DIR"
 
           for attempt in 1 2 3; do
-            if xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
+            if xcodebuild -project GhosttyTabs.xcodeproj -scheme remux-unit -configuration Debug \
               -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
               -resolvePackageDependencies; then
               exit 0
@@ -128,7 +128,7 @@ jobs:
           set -euo pipefail
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           run_unit_tests() {
-            xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
+            xcodebuild -project GhosttyTabs.xcodeproj -scheme remux-unit -configuration Debug \
               -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
               -disableAutomaticPackageResolution \
               -destination "platform=macOS" test 2>&1
@@ -174,12 +174,12 @@ jobs:
 
           # Build the -only-testing argument
           if [ -n "$TEST_FILTER" ]; then
-            ONLY_TESTING="-only-testing:cmuxUITests/$TEST_FILTER"
+            ONLY_TESTING="-only-testing:remuxUITests/$TEST_FILTER"
           else
-            ONLY_TESTING="-only-testing:cmuxUITests"
+            ONLY_TESTING="-only-testing:remuxUITests"
           fi
 
-          xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
+          xcodebuild -project GhosttyTabs.xcodeproj -scheme remux -configuration Debug \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
             -disableAutomaticPackageResolution \
             -destination "platform=macOS" \

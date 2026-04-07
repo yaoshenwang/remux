@@ -10,7 +10,7 @@ workspaces via bonsplit's isInteractive flag.
 
 Bug 2 (webview click focus): Clicking inside a WKWebView didn't focus the browser
 tab because AppKit delivers the click to WKWebView, not to the SwiftUI Color.clear
-overlay used for focus tracking. Fix: CmuxWebView.mouseDown posts a notification
+overlay used for focus tracking. Fix: RemuxWebView.mouseDown posts a notification
 that BrowserPanelView listens for to call onRequestPanelFocus().
 
 This test validates:
@@ -27,14 +27,14 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
 MARKER_DIR = Path(tempfile.gettempdir())
 
 
 def _marker(name: str) -> Path:
-    return MARKER_DIR / f"cmux_mwf_{name}_{os.getpid()}"
+    return MARKER_DIR / f"remux_mwf_{name}_{os.getpid()}"
 
 
 def _clear(marker: Path):
@@ -50,7 +50,7 @@ def _wait_marker(marker: Path, timeout: float = 5.0) -> bool:
     return False
 
 
-def _verify_responsive(c: cmux, marker: Path, surface_idx: int, retries: int = 3) -> bool:
+def _verify_responsive(c: remux, marker: Path, surface_idx: int, retries: int = 3) -> bool:
     """Send a touch command to a specific terminal surface and check the marker appears."""
     for attempt in range(retries):
         _clear(marker)
@@ -71,7 +71,7 @@ def _verify_responsive(c: cmux, marker: Path, surface_idx: int, retries: int = 3
     return False
 
 
-def _wait_terminal_in_window(c: cmux, surface_idx: int, timeout: float = 5.0) -> bool:
+def _wait_terminal_in_window(c: remux, surface_idx: int, timeout: float = 5.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
@@ -85,7 +85,7 @@ def _wait_terminal_in_window(c: cmux, surface_idx: int, timeout: float = 5.0) ->
     return False
 
 
-def test_multi_workspace_terminal_responsive(c: cmux) -> None:
+def test_multi_workspace_terminal_responsive(c: remux) -> None:
     """
     Create two workspaces with splits, cycle between them, and verify all terminals
     in each workspace remain responsive. Before the isHidden fix, terminals in
@@ -154,7 +154,7 @@ def test_multi_workspace_terminal_responsive(c: cmux) -> None:
     time.sleep(0.3)
 
 
-def test_three_workspaces_non_last_responsive(c: cmux) -> None:
+def test_three_workspaces_non_last_responsive(c: remux) -> None:
     """
     Three workspaces: verify the FIRST workspace (furthest back in ZStack) is still
     responsive. This is the worst case for the old bug since it has two inactive
@@ -197,7 +197,7 @@ def test_three_workspaces_non_last_responsive(c: cmux) -> None:
     time.sleep(0.2)
 
 
-def test_rapid_workspace_switching_preserves_focus(c: cmux) -> None:
+def test_rapid_workspace_switching_preserves_focus(c: remux) -> None:
     """
     Rapidly switch between workspaces and verify terminals remain responsive.
     The isHidden toggle must not break view attachment or cause blank terminals.
@@ -241,7 +241,7 @@ def test_rapid_workspace_switching_preserves_focus(c: cmux) -> None:
     time.sleep(0.2)
 
 
-def test_browser_panel_focus_and_return(c: cmux) -> None:
+def test_browser_panel_focus_and_return(c: remux) -> None:
     """
     Create a terminal and a browser surface in the same pane, focus the browser,
     then switch back to the terminal. Verifies focus routing works correctly for
@@ -253,7 +253,7 @@ def test_browser_panel_focus_and_return(c: cmux) -> None:
     # Get the terminal panel ID
     surfaces = c.list_pane_surfaces()
     if not surfaces:
-        raise cmuxError("No surfaces after new_workspace")
+        raise remuxError("No surfaces after new_workspace")
     term_panel_id = surfaces[0][1]
 
     # Create a browser surface in the same pane
@@ -287,7 +287,7 @@ def test_browser_panel_focus_and_return(c: cmux) -> None:
     time.sleep(0.2)
 
 
-def test_browser_focus_across_workspaces(c: cmux) -> None:
+def test_browser_focus_across_workspaces(c: remux) -> None:
     """
     Workspace A has a terminal, workspace B has a browser. Switching between them
     should correctly route focus to each panel type.
@@ -348,7 +348,7 @@ def main() -> int:
         ("Browser focus across workspaces", test_browser_focus_across_workspaces),
     ]
 
-    with cmux() as c:
+    with remux() as c:
         c.activate_app()
         time.sleep(0.2)
 
@@ -361,7 +361,7 @@ def main() -> int:
                 test_fn(c)
                 print("PASS")
                 passed += 1
-            except (AssertionError, cmuxError) as e:
+            except (AssertionError, remuxError) as e:
                 print(f"FAIL: {e}")
                 failed += 1
             except Exception as e:

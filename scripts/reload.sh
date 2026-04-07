@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cmux DEV"
-BUNDLE_ID="com.cmuxterm.app.debug"
-BASE_APP_NAME="cmux DEV"
+APP_NAME="remux DEV"
+BUNDLE_ID="com.remuxterm.app.debug"
+BASE_APP_NAME="remux DEV"
 DERIVED_DATA=""
 NAME_SET=0
 BUNDLE_SET=0
 DERIVED_SET=0
 TAG=""
-CMUX_DEBUG_LOG=""
+REMUX_DEBUG_LOG=""
 
 usage() {
   cat <<'EOF'
@@ -47,7 +47,7 @@ sanitize_path() {
 
 tagged_derived_data_path() {
   local slug="$1"
-  echo "$HOME/Library/Developer/Xcode/DerivedData/cmux-${slug}"
+  echo "$HOME/Library/Developer/Xcode/DerivedData/remux-${slug}"
 }
 
 print_tag_cleanup_reminder() {
@@ -58,10 +58,10 @@ print_tag_cleanup_reminder() {
   local -a stale_tags=()
 
   while IFS= read -r -d '' path; do
-    if [[ "$path" == /tmp/cmux-* ]]; then
-      tag="${path#/tmp/cmux-}"
-    elif [[ "$path" == "$HOME/Library/Developer/Xcode/DerivedData/cmux-"* ]]; then
-      tag="${path#$HOME/Library/Developer/Xcode/DerivedData/cmux-}"
+    if [[ "$path" == /tmp/remux-* ]]; then
+      tag="${path#/tmp/remux-}"
+    elif [[ "$path" == "$HOME/Library/Developer/Xcode/DerivedData/remux-"* ]]; then
+      tag="${path#$HOME/Library/Developer/Xcode/DerivedData/remux-}"
     else
       continue
     fi
@@ -78,8 +78,8 @@ print_tag_cleanup_reminder() {
     seen="${seen}${tag} "
     stale_tags+=("$tag")
   done < <(
-    find /tmp -maxdepth 1 -name 'cmux-*' -print0 2>/dev/null
-    find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 1 -type d -name 'cmux-*' -print0 2>/dev/null
+    find /tmp -maxdepth 1 -name 'remux-*' -print0 2>/dev/null
+    find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 1 -type d -name 'remux-*' -print0 2>/dev/null
   )
 
   echo
@@ -95,17 +95,17 @@ print_tag_cleanup_reminder() {
     done
     echo "Cleanup stale tags only:"
     for tag in "${stale_tags[@]}"; do
-      echo "  pkill -f \"cmux DEV ${tag}.app/Contents/MacOS/cmux DEV\""
-      echo "  rm -rf \"$(tagged_derived_data_path "$tag")\" \"/tmp/cmux-${tag}\" \"/tmp/cmux-debug-${tag}.sock\""
-      echo "  rm -f \"/tmp/cmux-debug-${tag}.log\""
-      echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${tag}.sock\""
+      echo "  pkill -f \"remux DEV ${tag}.app/Contents/MacOS/remux DEV\""
+      echo "  rm -rf \"$(tagged_derived_data_path "$tag")\" \"/tmp/remux-${tag}\" \"/tmp/remux-debug-${tag}.sock\""
+      echo "  rm -f \"/tmp/remux-debug-${tag}.log\""
+      echo "  rm -f \"$HOME/Library/Application Support/remux/remuxd-dev-${tag}.sock\""
     done
   fi
   echo "After you verify current tag, cleanup command:"
-  echo "  pkill -f \"cmux DEV ${current_slug}.app/Contents/MacOS/cmux DEV\""
-  echo "  rm -rf \"$(tagged_derived_data_path "$current_slug")\" \"/tmp/cmux-${current_slug}\" \"/tmp/cmux-debug-${current_slug}.sock\""
-  echo "  rm -f \"/tmp/cmux-debug-${current_slug}.log\""
-  echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${current_slug}.sock\""
+  echo "  pkill -f \"remux DEV ${current_slug}.app/Contents/MacOS/remux DEV\""
+  echo "  rm -rf \"$(tagged_derived_data_path "$current_slug")\" \"/tmp/remux-${current_slug}\" \"/tmp/remux-debug-${current_slug}.sock\""
+  echo "  rm -f \"/tmp/remux-debug-${current_slug}.log\""
+  echo "  rm -f \"$HOME/Library/Application Support/remux/remuxd-dev-${current_slug}.sock\""
 }
 
 while [[ $# -gt 0 ]]; do
@@ -167,10 +167,10 @@ if [[ -n "$TAG" ]]; then
   TAG_ID="$(sanitize_bundle "$TAG")"
   TAG_SLUG="$(sanitize_path "$TAG")"
   if [[ "$NAME_SET" -eq 0 ]]; then
-    APP_NAME="cmux DEV ${TAG}"
+    APP_NAME="remux DEV ${TAG}"
   fi
   if [[ "$BUNDLE_SET" -eq 0 ]]; then
-    BUNDLE_ID="com.cmuxterm.app.debug.${TAG_ID}"
+    BUNDLE_ID="com.remuxterm.app.debug.${TAG_ID}"
   fi
   if [[ "$DERIVED_SET" -eq 0 ]]; then
     DERIVED_DATA="$(tagged_derived_data_path "$TAG_SLUG")"
@@ -179,7 +179,7 @@ fi
 
 XCODEBUILD_ARGS=(
   -project GhosttyTabs.xcodeproj
-  -scheme cmux
+  -scheme remux
   -configuration Debug
   -destination 'platform=macOS'
 )
@@ -195,7 +195,7 @@ if [[ -z "$TAG" ]]; then
 fi
 XCODEBUILD_ARGS+=(build)
 
-XCODE_LOG="/tmp/cmux-xcodebuild-${TAG_SLUG}.log"
+XCODE_LOG="/tmp/remux-xcodebuild-${TAG_SLUG}.log"
 xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | tee "$XCODE_LOG" | grep -E '(warning:|error:|fatal:|BUILD FAILED|BUILD SUCCEEDED|\*\* BUILD)' || true
 XCODE_EXIT="${PIPESTATUS[0]}"
 echo "Full build log: $XCODE_LOG"
@@ -245,7 +245,7 @@ if [[ -z "${APP_PATH}" || ! -d "${APP_PATH}" ]]; then
 fi
 
 if [[ -n "${TAG_SLUG:-}" ]]; then
-  TMP_COMPAT_DERIVED_LINK="/tmp/cmux-${TAG_SLUG}"
+  TMP_COMPAT_DERIVED_LINK="/tmp/remux-${TAG_SLUG}"
   if [[ "$DERIVED_DATA" != "$TMP_COMPAT_DERIVED_LINK" ]]; then
     ABS_DERIVED_DATA="$(cd "$DERIVED_DATA" && pwd)"
     rm -rf "$TMP_COMPAT_DERIVED_LINK"
@@ -266,27 +266,27 @@ if [[ -n "$TAG" && "$APP_NAME" != "$SEARCH_APP_NAME" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$INFO_PLIST" 2>/dev/null \
       || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$INFO_PLIST"
     if [[ -n "${TAG_SLUG:-}" ]]; then
-      APP_SUPPORT_DIR="$HOME/Library/Application Support/cmux"
-      CMUXD_SOCKET="${APP_SUPPORT_DIR}/cmuxd-dev-${TAG_SLUG}.sock"
-      CMUX_SOCKET="/tmp/cmux-debug-${TAG_SLUG}.sock"
-      CMUX_DEBUG_LOG="/tmp/cmux-debug-${TAG_SLUG}.log"
-      echo "$CMUX_SOCKET" > /tmp/cmux-last-socket-path || true
-      echo "$CMUX_DEBUG_LOG" > /tmp/cmux-last-debug-log-path || true
+      APP_SUPPORT_DIR="$HOME/Library/Application Support/remux"
+      REMUXD_SOCKET="${APP_SUPPORT_DIR}/remuxd-dev-${TAG_SLUG}.sock"
+      REMUX_SOCKET="/tmp/remux-debug-${TAG_SLUG}.sock"
+      REMUX_DEBUG_LOG="/tmp/remux-debug-${TAG_SLUG}.log"
+      echo "$REMUX_SOCKET" > /tmp/remux-last-socket-path || true
+      echo "$REMUX_DEBUG_LOG" > /tmp/remux-last-debug-log-path || true
       /usr/libexec/PlistBuddy -c "Add :LSEnvironment dict" "$INFO_PLIST" 2>/dev/null || true
-      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUXD_UNIX_PATH \"${CMUXD_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
-        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUXD_UNIX_PATH string \"${CMUXD_SOCKET}\"" "$INFO_PLIST"
-      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUX_SOCKET_PATH \"${CMUX_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
-        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_SOCKET_PATH string \"${CMUX_SOCKET}\"" "$INFO_PLIST"
-      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUX_DEBUG_LOG \"${CMUX_DEBUG_LOG}\"" "$INFO_PLIST" 2>/dev/null \
-        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_DEBUG_LOG string \"${CMUX_DEBUG_LOG}\"" "$INFO_PLIST"
-      if [[ -S "$CMUXD_SOCKET" ]]; then
-        for PID in $(lsof -t "$CMUXD_SOCKET" 2>/dev/null); do
+      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:REMUXD_UNIX_PATH \"${REMUXD_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:REMUXD_UNIX_PATH string \"${REMUXD_SOCKET}\"" "$INFO_PLIST"
+      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:REMUX_SOCKET_PATH \"${REMUX_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:REMUX_SOCKET_PATH string \"${REMUX_SOCKET}\"" "$INFO_PLIST"
+      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:REMUX_DEBUG_LOG \"${REMUX_DEBUG_LOG}\"" "$INFO_PLIST" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:REMUX_DEBUG_LOG string \"${REMUX_DEBUG_LOG}\"" "$INFO_PLIST"
+      if [[ -S "$REMUXD_SOCKET" ]]; then
+        for PID in $(lsof -t "$REMUXD_SOCKET" 2>/dev/null); do
           kill "$PID" 2>/dev/null || true
         done
-        rm -f "$CMUXD_SOCKET"
+        rm -f "$REMUXD_SOCKET"
       fi
-      if [[ -S "$CMUX_SOCKET" ]]; then
-        rm -f "$CMUX_SOCKET"
+      if [[ -S "$REMUX_SOCKET" ]]; then
+        rm -f "$REMUX_SOCKET"
       fi
     fi
     /usr/bin/codesign --force --sign - --timestamp=none --generate-entitlement-der "$TAG_APP_PATH" >/dev/null 2>&1 || true
@@ -306,41 +306,41 @@ else
 fi
 sleep 0.3
 "$PWD/scripts/bundle-runtime-binaries.sh" "$APP_PATH"
-CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
+CLI_PATH="$APP_PATH/Contents/Resources/bin/remux"
 if [[ -x "$CLI_PATH" ]]; then
-  echo "$CLI_PATH" > /tmp/cmux-last-cli-path || true
+  echo "$CLI_PATH" > /tmp/remux-last-cli-path || true
 fi
-# Avoid inheriting cmux/ghostty environment variables from the terminal that
-# runs this script (often inside another cmux instance), which can cause
+# Avoid inheriting remux/ghostty environment variables from the terminal that
+# runs this script (often inside another remux instance), which can cause
 # socket and resource-path conflicts.
 OPEN_CLEAN_ENV=(
   env
-  -u CMUX_SOCKET_PATH
-  -u CMUX_TAB_ID
-  -u CMUX_PANEL_ID
-  -u CMUXD_UNIX_PATH
-  -u CMUX_TAG
-  -u CMUX_DEBUG_LOG
-  -u CMUX_BUNDLE_ID
-  -u CMUX_SHELL_INTEGRATION
+  -u REMUX_SOCKET_PATH
+  -u REMUX_TAB_ID
+  -u REMUX_PANEL_ID
+  -u REMUXD_UNIX_PATH
+  -u REMUX_TAG
+  -u REMUX_DEBUG_LOG
+  -u REMUX_BUNDLE_ID
+  -u REMUX_SHELL_INTEGRATION
   -u GHOSTTY_BIN_DIR
   -u GHOSTTY_RESOURCES_DIR
   -u GHOSTTY_SHELL_FEATURES
   # Dev shells (including CI/Codex) often force-disable paging by exporting these.
-  # Don't leak that into cmux, otherwise `git diff` won't page even with PAGER=less.
+  # Don't leak that into remux, otherwise `git diff` won't page even with PAGER=less.
   -u GIT_PAGER
   -u GH_PAGER
   -u TERMINFO
   -u XDG_DATA_DIRS
 )
 
-if [[ -n "${TAG_SLUG:-}" && -n "${CMUX_SOCKET:-}" ]]; then
-  # Ensure tag-specific socket paths win even if the caller has CMUX_* overrides.
-  "${OPEN_CLEAN_ENV[@]}" CMUX_TAG="$TAG_SLUG" CMUX_SOCKET_PATH="$CMUX_SOCKET" CMUXD_UNIX_PATH="$CMUXD_SOCKET" CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG" open -g "$APP_PATH"
+if [[ -n "${TAG_SLUG:-}" && -n "${REMUX_SOCKET:-}" ]]; then
+  # Ensure tag-specific socket paths win even if the caller has REMUX_* overrides.
+  "${OPEN_CLEAN_ENV[@]}" REMUX_TAG="$TAG_SLUG" REMUX_SOCKET_PATH="$REMUX_SOCKET" REMUXD_UNIX_PATH="$REMUXD_SOCKET" REMUX_DEBUG_LOG="$REMUX_DEBUG_LOG" open -g "$APP_PATH"
 elif [[ -n "${TAG_SLUG:-}" ]]; then
-  "${OPEN_CLEAN_ENV[@]}" CMUX_TAG="$TAG_SLUG" CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG" open -g "$APP_PATH"
+  "${OPEN_CLEAN_ENV[@]}" REMUX_TAG="$TAG_SLUG" REMUX_DEBUG_LOG="$REMUX_DEBUG_LOG" open -g "$APP_PATH"
 else
-  echo "/tmp/cmux-debug.log" > /tmp/cmux-last-debug-log-path || true
+  echo "/tmp/remux-debug.log" > /tmp/remux-last-debug-log-path || true
   "${OPEN_CLEAN_ENV[@]}" open -g "$APP_PATH"
 fi
 

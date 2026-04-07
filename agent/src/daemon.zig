@@ -1,4 +1,4 @@
-// Adapted from manaflow-ai/cmux cmuxd/src/main.zig
+// Adapted from yaoshenwang/remux remuxd/src/main.zig
 // Unix socket daemon managing persistent PTY sessions.
 const std = @import("std");
 const posix = std.posix;

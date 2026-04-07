@@ -11,10 +11,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-def wait_for_notification(client: cmux, surface_id: str, is_read: bool, timeout: float = 2.0) -> bool:
+def wait_for_notification(client: remux, surface_id: str, is_read: bool, timeout: float = 2.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         items = client.list_notifications()
@@ -25,7 +25,7 @@ def wait_for_notification(client: cmux, surface_id: str, is_read: bool, timeout:
     return False
 
 
-def surface_id_for_index(client: cmux, index: int) -> str:
+def surface_id_for_index(client: remux, index: int) -> str:
     surfaces = client.list_surfaces()
     for entry in surfaces:
         if entry[0] == index:
@@ -33,13 +33,13 @@ def surface_id_for_index(client: cmux, index: int) -> str:
     raise RuntimeError(f"Surface index {index} not found")
 
 
-def ensure_two_surfaces(client: cmux) -> None:
+def ensure_two_surfaces(client: remux) -> None:
     surfaces = client.list_surfaces()
     if len(surfaces) < 2:
         client.new_split("right")
         time.sleep(0.2)
 
-def first_two_terminal_indices(client: cmux) -> tuple[int, int]:
+def first_two_terminal_indices(client: remux) -> tuple[int, int]:
     health = client.surface_health()
     terms = [h["index"] for h in health if h.get("type") == "terminal"]
     if len(terms) < 2:
@@ -49,7 +49,7 @@ def first_two_terminal_indices(client: cmux) -> tuple[int, int]:
 
 def main() -> int:
     try:
-        with cmux() as client:
+        with remux() as client:
             # Socket-driven tests may run while the app isn't frontmost/key.
             # Override app focus to make notification->focus behavior deterministic.
             client.set_app_focus(True)
@@ -95,7 +95,7 @@ def main() -> int:
 
             print("PASS: Focus clears notification and flashes panel")
             return 0
-    except (cmuxError, RuntimeError) as exc:
+    except (remuxError, RuntimeError) as exc:
         print(f"FAIL: {exc}")
         return 1
 

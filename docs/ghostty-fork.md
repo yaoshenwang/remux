@@ -1,4 +1,4 @@
-# Ghostty Fork Changes (manaflow-ai/ghostty)
+# Ghostty Fork Changes (yaoshenwang/ghostty)
 
 This repo uses a fork of Ghostty for local patches that aren't upstream yet.
 When we change the fork, update this document and the parent submodule SHA.
@@ -6,7 +6,7 @@ When we change the fork, update this document and the parent submodule SHA.
 ## Fork update checklist
 
 1) Make changes in `ghostty/`.
-2) Commit and push to `manaflow-ai/ghostty`.
+2) Commit and push to `yaoshenwang/ghostty`.
 3) Update this file with the new change summary + conflict notes.
 4) In the parent repo: `git add ghostty` and commit the submodule SHA.
 
@@ -41,7 +41,7 @@ Fork rebased onto upstream `v1.3.0` plus newer `main` commits as of March 9, 202
   - `src/apprt/embedded.zig`
 - Summary:
   - Restores `ghostty_surface_select_cursor_cell` and `ghostty_surface_clear_selection`.
-  - Keeps cmux keyboard copy mode working against the refreshed Ghostty base.
+  - Keeps remux keyboard copy mode working against the refreshed Ghostty base.
 
 ### 4) macOS resize stale-frame mitigation
 

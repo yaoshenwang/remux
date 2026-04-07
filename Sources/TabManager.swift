@@ -480,7 +480,7 @@ fileprivate final class VsyncIOSurfaceTimelineState {
     }
 }
 
-fileprivate func cmuxVsyncIOSurfaceTimelineCallback(
+fileprivate func remuxVsyncIOSurfaceTimelineCallback(
     _ displayLink: CVDisplayLink,
     _ inNow: UnsafePointer<CVTimeStamp>,
     _ inOutputTime: UnsafePointer<CVTimeStamp>,
@@ -572,7 +572,7 @@ class TabManager: ObservableObject {
     @Published private(set) var pendingBackgroundWorkspaceLoadIds: Set<UUID> = []
     @Published private(set) var debugPinnedWorkspaceLoadIds: Set<UUID> = []
 
-    /// Global monotonically increasing counter for CMUX_PORT ordinal assignment.
+    /// Global monotonically increasing counter for REMUX_PORT ordinal assignment.
     /// Static so port ranges don't overlap across multiple windows (each window has its own TabManager).
     private static var nextPortOrdinal: Int = 0
     private static let initialWorkspaceGitProbeDelays: [TimeInterval] = [0, 0.5, 1.5, 3.0, 6.0, 10.0]
@@ -632,7 +632,7 @@ class TabManager: ObservableObject {
     private let panelTitleUpdateCoalescer = NotificationBurstCoalescer(delay: 1.0 / 30.0)
     private var recentlyClosedBrowsers = RecentlyClosedBrowserStack(capacity: 20)
     private let initialWorkspaceGitProbeQueue = DispatchQueue(
-        label: "com.cmux.initial-workspace-git-probe",
+        label: "com.remux.initial-workspace-git-probe",
         qos: .utility
     )
     private var initialWorkspaceGitProbeGenerationByWorkspace: [UUID: UUID] = [:]
@@ -880,7 +880,7 @@ class TabManager: ObservableObject {
             // Wait a bit more for the shell prompt to be ready
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 UserDefaults.standard.set(true, forKey: WelcomeSettings.shownKey)
-                terminalPanel.sendText("cmux welcome\n")
+                terminalPanel.sendText("remux welcome\n")
             }
             return
         }
@@ -1104,7 +1104,7 @@ class TabManager: ObservableObject {
 
     private func inheritedTerminalConfigForNewWorkspace() -> ghostty_surface_config_s? {
         if let sourceSurface = terminalPanelForWorkspaceConfigInheritanceSource()?.surface.surface {
-            return cmuxInheritedSurfaceConfig(
+            return remuxInheritedSurfaceConfig(
                 sourceSurface: sourceSurface,
                 context: GHOSTTY_SURFACE_CONTEXT_TAB
             )
@@ -1697,7 +1697,7 @@ class TabManager: ObservableObject {
 
     private func workspaceNeedsConfirmClose(_ workspace: Workspace) -> Bool {
 #if DEBUG
-        if ProcessInfo.processInfo.environment["CMUX_UI_TEST_FORCE_CONFIRM_CLOSE_WORKSPACE"] == "1" {
+        if ProcessInfo.processInfo.environment["REMUX_UI_TEST_FORCE_CONFIRM_CLOSE_WORKSPACE"] == "1" {
             return true
         }
 #endif
@@ -1980,13 +1980,13 @@ class TabManager: ObservableObject {
     }
 
     private func windowTitle(for tab: Workspace?) -> String {
-        guard let tab else { return "cmux" }
+        guard let tab else { return "remux" }
         let trimmedTitle = tab.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedTitle.isEmpty {
             return trimmedTitle
         }
         let trimmedDirectory = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedDirectory.isEmpty ? "cmux" : trimmedDirectory
+        return trimmedDirectory.isEmpty ? "remux" : trimmedDirectory
     }
 
     func focusTab(_ tabId: UUID, surfaceId: UUID? = nil, suppressFlash: Bool = false) {
@@ -2774,7 +2774,7 @@ class TabManager: ObservableObject {
         didSetupUITestFocusShortcuts = true
 
         let env = ProcessInfo.processInfo.environment
-        guard env["CMUX_UI_TEST_FOCUS_SHORTCUTS"] == "1" else { return }
+        guard env["REMUX_UI_TEST_FOCUS_SHORTCUTS"] == "1" else { return }
 
         // UI tests can't record arrow keys via the shortcut recorder. Use letter-based shortcuts
         // so tests can reliably drive pane navigation without mouse clicks.
@@ -2801,14 +2801,14 @@ class TabManager: ObservableObject {
         didSetupSplitCloseRightUITest = true
 
         let env = ProcessInfo.processInfo.environment
-        guard env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_SETUP"] == "1" else { return }
-        guard let path = env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_PATH"], !path.isEmpty else { return }
-        let visualMode = env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_VISUAL"] == "1"
-        let shotsDir = (env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_SHOTS_DIR"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let visualIterations = Int((env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_ITERATIONS"] ?? "20").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 20
-        let burstFrames = Int((env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_BURST_FRAMES"] ?? "6").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 6
-        let closeDelayMs = Int((env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_CLOSE_DELAY_MS"] ?? "70").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 70
-        let pattern = (env["CMUX_UI_TEST_SPLIT_CLOSE_RIGHT_PATTERN"] ?? "close_right")
+        guard env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_SETUP"] == "1" else { return }
+        guard let path = env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_PATH"], !path.isEmpty else { return }
+        let visualMode = env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_VISUAL"] == "1"
+        let shotsDir = (env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_SHOTS_DIR"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let visualIterations = Int((env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_ITERATIONS"] ?? "20").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 20
+        let burstFrames = Int((env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_BURST_FRAMES"] ?? "6").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 6
+        let closeDelayMs = Int((env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_CLOSE_DELAY_MS"] ?? "70").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 70
+        let pattern = (env["REMUX_UI_TEST_SPLIT_CLOSE_RIGHT_PATTERN"] ?? "close_right")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
@@ -3085,13 +3085,13 @@ class TabManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 180_000_000)
 
             // Fill left panes with visible content.
-            sendText(topLeftId, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo CMUX_SPLIT_TOPLEFT_\(i); done; printf '\\033[HCMUX_MARKER_TOPLEFT\\n'\r")
-            sendText(topRight.id, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo CMUX_SPLIT_TOPRIGHT_\(i); done; printf '\\033[HCMUX_MARKER_TOPRIGHT\\n'\r")
+            sendText(topLeftId, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo REMUX_SPLIT_TOPLEFT_\(i); done; printf '\\033[HREMUX_MARKER_TOPLEFT\\n'\r")
+            sendText(topRight.id, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo REMUX_SPLIT_TOPRIGHT_\(i); done; printf '\\033[HREMUX_MARKER_TOPRIGHT\\n'\r")
             if let bottomLeft {
-                sendText(bottomLeft.id, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo CMUX_SPLIT_BOTTOMLEFT_\(i); done; printf '\\033[HCMUX_MARKER_BOTTOMLEFT\\n'\r")
+                sendText(bottomLeft.id, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo REMUX_SPLIT_BOTTOMLEFT_\(i); done; printf '\\033[HREMUX_MARKER_BOTTOMLEFT\\n'\r")
             }
             if let bottomRight {
-                sendText(bottomRight.id, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo CMUX_SPLIT_BOTTOMRIGHT_\(i); done; printf '\\033[HCMUX_MARKER_BOTTOMRIGHT\\n'\r")
+                sendText(bottomRight.id, "printf '\\033[2J\\033[H'; for i in {1..200}; do echo REMUX_SPLIT_BOTTOMRIGHT_\(i); done; printf '\\033[HREMUX_MARKER_BOTTOMRIGHT\\n'\r")
             }
             // Give shell output a moment to paint before we start the close timeline.
             try? await Task.sleep(nanoseconds: 180_000_000)
@@ -3283,7 +3283,7 @@ class TabManager: ObservableObject {
 	            }
 	            st.link = link
 
-	            CVDisplayLinkSetOutputCallback(link, cmuxVsyncIOSurfaceTimelineCallback, ctx)
+	            CVDisplayLinkSetOutputCallback(link, remuxVsyncIOSurfaceTimelineCallback, ctx)
 	            CVDisplayLinkStart(link)
 	        }
 
@@ -3312,9 +3312,9 @@ class TabManager: ObservableObject {
         didSetupChildExitSplitUITest = true
 
         let env = ProcessInfo.processInfo.environment
-        guard env["CMUX_UI_TEST_CHILD_EXIT_SPLIT_SETUP"] == "1" else { return }
-        guard let path = env["CMUX_UI_TEST_CHILD_EXIT_SPLIT_PATH"], !path.isEmpty else { return }
-        let requestedIterations = Int(env["CMUX_UI_TEST_CHILD_EXIT_SPLIT_ITERATIONS"] ?? "1") ?? 1
+        guard env["REMUX_UI_TEST_CHILD_EXIT_SPLIT_SETUP"] == "1" else { return }
+        guard let path = env["REMUX_UI_TEST_CHILD_EXIT_SPLIT_PATH"], !path.isEmpty else { return }
+        let requestedIterations = Int(env["REMUX_UI_TEST_CHILD_EXIT_SPLIT_ITERATIONS"] ?? "1") ?? 1
         let iterations = max(1, min(requestedIterations, 20))
 
         func write(_ updates: [String: String]) {
@@ -3456,21 +3456,21 @@ class TabManager: ObservableObject {
         didSetupChildExitKeyboardUITest = true
 
         let env = ProcessInfo.processInfo.environment
-        guard env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_SETUP"] == "1" else { return }
-        guard let path = env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_PATH"], !path.isEmpty else { return }
-        let autoTrigger = env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_AUTO_TRIGGER"] == "1"
-        let strictKeyOnly = env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_STRICT"] == "1"
-        let triggerMode = (env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_TRIGGER_MODE"] ?? "shell_input")
+        guard env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_SETUP"] == "1" else { return }
+        guard let path = env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_PATH"], !path.isEmpty else { return }
+        let autoTrigger = env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_AUTO_TRIGGER"] == "1"
+        let strictKeyOnly = env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_STRICT"] == "1"
+        let triggerMode = (env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_TRIGGER_MODE"] ?? "shell_input")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let useEarlyCtrlShiftTrigger = triggerMode == "early_ctrl_shift_d"
         let useEarlyCtrlDTrigger = triggerMode == "early_ctrl_d"
         let useEarlyTrigger = useEarlyCtrlShiftTrigger || useEarlyCtrlDTrigger
         let triggerUsesShift = triggerMode == "ctrl_shift_d" || useEarlyCtrlShiftTrigger
-        let layout = (env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_LAYOUT"] ?? "lr")
+        let layout = (env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_LAYOUT"] ?? "lr")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let expectedPanelsAfter = max(
             1,
-            Int((env["CMUX_UI_TEST_CHILD_EXIT_KEYBOARD_EXPECTED_PANELS_AFTER"] ?? "1")
+            Int((env["REMUX_UI_TEST_CHILD_EXIT_KEYBOARD_EXPECTED_PANELS_AFTER"] ?? "1")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             ) ?? 1
         )
@@ -3975,17 +3975,17 @@ enum ResizeDirection {
 }
 
 extension Notification.Name {
-    static let commandPaletteToggleRequested = Notification.Name("cmux.commandPaletteToggleRequested")
-    static let commandPaletteRequested = Notification.Name("cmux.commandPaletteRequested")
-    static let commandPaletteSwitcherRequested = Notification.Name("cmux.commandPaletteSwitcherRequested")
-    static let commandPaletteSubmitRequested = Notification.Name("cmux.commandPaletteSubmitRequested")
-    static let commandPaletteDismissRequested = Notification.Name("cmux.commandPaletteDismissRequested")
-    static let commandPaletteRenameTabRequested = Notification.Name("cmux.commandPaletteRenameTabRequested")
-    static let commandPaletteRenameWorkspaceRequested = Notification.Name("cmux.commandPaletteRenameWorkspaceRequested")
-    static let commandPaletteMoveSelection = Notification.Name("cmux.commandPaletteMoveSelection")
-    static let commandPaletteRenameInputInteractionRequested = Notification.Name("cmux.commandPaletteRenameInputInteractionRequested")
-    static let commandPaletteRenameInputDeleteBackwardRequested = Notification.Name("cmux.commandPaletteRenameInputDeleteBackwardRequested")
-    static let feedbackComposerRequested = Notification.Name("cmux.feedbackComposerRequested")
+    static let commandPaletteToggleRequested = Notification.Name("remux.commandPaletteToggleRequested")
+    static let commandPaletteRequested = Notification.Name("remux.commandPaletteRequested")
+    static let commandPaletteSwitcherRequested = Notification.Name("remux.commandPaletteSwitcherRequested")
+    static let commandPaletteSubmitRequested = Notification.Name("remux.commandPaletteSubmitRequested")
+    static let commandPaletteDismissRequested = Notification.Name("remux.commandPaletteDismissRequested")
+    static let commandPaletteRenameTabRequested = Notification.Name("remux.commandPaletteRenameTabRequested")
+    static let commandPaletteRenameWorkspaceRequested = Notification.Name("remux.commandPaletteRenameWorkspaceRequested")
+    static let commandPaletteMoveSelection = Notification.Name("remux.commandPaletteMoveSelection")
+    static let commandPaletteRenameInputInteractionRequested = Notification.Name("remux.commandPaletteRenameInputInteractionRequested")
+    static let commandPaletteRenameInputDeleteBackwardRequested = Notification.Name("remux.commandPaletteRenameInputDeleteBackwardRequested")
+    static let feedbackComposerRequested = Notification.Name("remux.feedbackComposerRequested")
     static let ghosttyDidSetTitle = Notification.Name("ghosttyDidSetTitle")
     static let ghosttyDidFocusTab = Notification.Name("ghosttyDidFocusTab")
     static let ghosttyDidFocusSurface = Notification.Name("ghosttyDidFocusSurface")

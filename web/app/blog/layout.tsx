@@ -5,11 +5,11 @@ import { BlogCTA } from "../components/blog-cta";
 
 export const metadata: Metadata = {
   title: {
-    template: "%s — cmux blog",
-    default: "cmux blog",
+    template: "%s — remux blog",
+    default: "remux blog",
   },
   openGraph: {
-    siteName: "cmux",
+    siteName: "remux",
     type: "article",
   },
   alternates: {

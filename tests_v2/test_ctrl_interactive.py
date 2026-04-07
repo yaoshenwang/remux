@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Interactive test for Ctrl+C and Ctrl+D in cmux terminal.
+Interactive test for Ctrl+C and Ctrl+D in remux terminal.
 
 This script tests that control signals are properly handled.
-Run this script inside the cmux terminal.
+Run this script inside the remux terminal.
 
 Tests:
 1. Ctrl+C (SIGINT) - Should interrupt a running process
@@ -72,10 +72,10 @@ def test_ctrl_d():
 
 def main():
     print("=" * 50)
-    print("cmux Control Signal Test")
+    print("remux Control Signal Test")
     print("=" * 50)
     print("\nThis script tests if Ctrl+C and Ctrl+D work correctly.")
-    print("Run this inside the cmux terminal to verify the fix.\n")
+    print("Run this inside the remux terminal to verify the fix.\n")
 
     # Check if running in a terminal
     if not os.isatty(sys.stdin.fileno()):

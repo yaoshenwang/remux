@@ -15,11 +15,11 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: "/cmuxterm/static/:path*",
+        source: "/remuxterm/static/:path*",
         destination: "https://us-assets.i.posthog.com/static/:path*",
       },
       {
-        source: "/cmuxterm/:path*",
+        source: "/remuxterm/:path*",
         destination: "https://us.i.posthog.com/:path*",
       },
     ];

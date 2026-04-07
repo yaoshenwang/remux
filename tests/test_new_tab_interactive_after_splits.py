@@ -16,10 +16,10 @@ import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _wait_for(pred, timeout_s: float, step_s: float = 0.05) -> None:
@@ -28,10 +28,10 @@ def _wait_for(pred, timeout_s: float, step_s: float = 0.05) -> None:
         if pred():
             return
         time.sleep(step_s)
-    raise cmuxError("Timed out waiting for condition")
+    raise remuxError("Timed out waiting for condition")
 
 
-def _wait_for_terminal_focus(c: cmux, panel_id: str, timeout_s: float = 8.0) -> None:
+def _wait_for_terminal_focus(c: remux, panel_id: str, timeout_s: float = 8.0) -> None:
     start = time.time()
     while time.time() - start < timeout_s:
         try:
@@ -97,13 +97,13 @@ def _wait_for_terminal_focus(c: cmux, panel_id: str, timeout_s: float = 8.0) -> 
     except Exception as e:
         dbg["layout_debug_error"] = repr(e)
 
-    raise cmuxError(
+    raise remuxError(
         "Timed out waiting for terminal focus: "
         f"{panel_id}\nDEBUG:\n{json.dumps(dbg, indent=2, sort_keys=True)}"
     )
 
 
-def _wait_for_text(c: cmux, panel_id: str, needle: str, timeout_s: float = 2.5) -> None:
+def _wait_for_text(c: remux, panel_id: str, needle: str, timeout_s: float = 2.5) -> None:
     start = time.time()
     last = ""
     while time.time() - start < timeout_s:
@@ -112,10 +112,10 @@ def _wait_for_text(c: cmux, panel_id: str, needle: str, timeout_s: float = 2.5) 
             return
         time.sleep(0.05)
     tail = last[-600:].replace("\r", "\\r")
-    raise cmuxError(f"Timed out waiting for token in terminal text: {needle}\nLast tail:\n{tail}")
+    raise remuxError(f"Timed out waiting for token in terminal text: {needle}\nLast tail:\n{tail}")
 
 
-def _type_and_wait_visible(c: cmux, panel_id: str, cmd: str) -> bool:
+def _type_and_wait_visible(c: remux, panel_id: str, cmd: str) -> bool:
     """Type command and verify pre-Enter visibility with recovery paths.
 
     Returns True when pre-Enter text visibility was observed via simulate_type.
@@ -125,7 +125,7 @@ def _type_and_wait_visible(c: cmux, panel_id: str, cmd: str) -> bool:
     try:
         _wait_for_text(c, panel_id, cmd, timeout_s=4.0)
         return True
-    except cmuxError:
+    except remuxError:
         pass
 
     # Recovery path for transient app/window activation lag on VM.
@@ -135,14 +135,14 @@ def _type_and_wait_visible(c: cmux, panel_id: str, cmd: str) -> bool:
     try:
         _wait_for_text(c, panel_id, cmd, timeout_s=3.0)
         return True
-    except cmuxError:
+    except remuxError:
         # Final fallback for v1 in VM mode: direct surface send without asserting
         # key-window text echo timing.
         c.send_surface(panel_id, cmd)
         return False
 
 
-def _wait_for_tmp_write(c: cmux, panel_id: str, tmp: str, token: str) -> None:
+def _wait_for_tmp_write(c: remux, panel_id: str, tmp: str, token: str) -> None:
     """Wait for command side effects with newline and direct-send fallbacks."""
     for attempt in range(2):
         start = time.time()
@@ -175,7 +175,7 @@ def _wait_for_tmp_write(c: cmux, panel_id: str, tmp: str, token: str) -> None:
 
 
 def main() -> int:
-    with cmux(SOCKET_PATH) as c:
+    with remux(SOCKET_PATH) as c:
         c.activate_app()
         time.sleep(0.2)
 
@@ -189,7 +189,7 @@ def main() -> int:
 
         panes = c.list_panes()
         if len(panes) < 2:
-            raise cmuxError(f"expected multiple panes, got: {panes}")
+            raise remuxError(f"expected multiple panes, got: {panes}")
 
         mid = len(panes) // 2
         c.focus_pane(mid)
@@ -215,8 +215,8 @@ def main() -> int:
 
             baseline_present = int(c.render_stats(new_id).get("presentCount", 0) or 0)
 
-            token = f"CMUX_NEW_TAB_OK_{i}_{uuid.uuid4().hex[:10]}"
-            tmp = f"/tmp/cmux_new_tab_{token}.txt"
+            token = f"REMUX_NEW_TAB_OK_{i}_{uuid.uuid4().hex[:10]}"
+            tmp = f"/tmp/remux_new_tab_{token}.txt"
             cmd = f"echo {token} > {tmp}"
             _ = _type_and_wait_visible(c, new_id, cmd)
 

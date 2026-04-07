@@ -8,15 +8,15 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cmux import cmux, cmuxError
+from remux import remux, remuxError
 
 
-SOCKET_PATH = os.environ.get("CMUX_SOCKET", "/tmp/cmux-debug.sock")
+SOCKET_PATH = os.environ.get("REMUX_SOCKET", "/tmp/remux-debug.sock")
 
 
 def _must(cond: bool, msg: str) -> None:
     if not cond:
-        raise cmuxError(msg)
+        raise remuxError(msg)
 
 
 def _wait_until(pred, timeout_s: float, label: str) -> None:
@@ -30,18 +30,18 @@ def _wait_until(pred, timeout_s: float, label: str) -> None:
             last_exc = exc
         time.sleep(0.05)
     if last_exc is not None:
-        raise cmuxError(f"Timed out waiting for {label}: {last_exc}")
-    raise cmuxError(f"Timed out waiting for {label}")
+        raise remuxError(f"Timed out waiting for {label}: {last_exc}")
+    raise remuxError(f"Timed out waiting for {label}")
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="cmux-file-url-") as root:
+    with tempfile.TemporaryDirectory(prefix="remux-file-url-") as root:
         html_path = Path(root) / "local-test.html"
         html_path.write_text(
             """
 <!doctype html>
 <html>
-  <head><meta charset=\"utf-8\"><title>cmux file url load</title></head>
+  <head><meta charset=\"utf-8\"><title>remux file url load</title></head>
   <body>
     <h1 id=\"headline\">local HTML file loaded</h1>
     <p id=\"path\">This page is loaded via file://</p>
@@ -52,7 +52,7 @@ def main() -> int:
         )
         file_url = html_path.resolve().as_uri()
 
-        with cmux(SOCKET_PATH) as c:
+        with remux(SOCKET_PATH) as c:
             opened = c._call("browser.open_split", {"url": "about:blank"}) or {}
             sid = str(opened.get("surface_id") or "")
             _must(bool(sid), f"browser.open_split returned no surface_id: {opened}")
@@ -61,7 +61,7 @@ def main() -> int:
 
             _wait_until(
                 lambda: str((c._call("browser.get.title", {"surface_id": sid}) or {}).get("title") or "")
-                == "cmux file url load",
+                == "remux file url load",
                 timeout_s=5.0,
                 label="browser.get.title(file://)",
             )

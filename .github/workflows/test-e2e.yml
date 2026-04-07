@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           GHOSTTY_SHA=$(git -C ghostty rev-parse HEAD)
           TAG="xcframework-$GHOSTTY_SHA"
-          URL="https://github.com/manaflow-ai/ghostty/releases/download/$TAG/GhosttyKit.xcframework.tar.gz"
+          URL="https://github.com/yaoshenwang/ghostty/releases/download/$TAG/GhosttyKit.xcframework.tar.gz"
           echo "Downloading xcframework for ghostty $GHOSTTY_SHA"
           MAX_RETRIES=30
           RETRY_DELAY=20
@@ -164,7 +164,7 @@ jobs:
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           mkdir -p "$SOURCE_PACKAGES_DIR"
           for attempt in 1 2 3; do
-            if xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
+            if xcodebuild -project GhosttyTabs.xcodeproj -scheme remux-unit -configuration Debug \
               -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
               -resolvePackageDependencies; then
               exit 0
@@ -186,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
-          ONLY_TESTING="-only-testing:cmuxUITests/$TEST_FILTER"
+          ONLY_TESTING="-only-testing:remuxUITests/$TEST_FILTER"
 
           # Start recording right before the test (after build/resolve)
           if [ "$RECORD_VIDEO" = "true" ]; then
@@ -216,7 +216,7 @@ jobs:
           fi
 
           set +e
-          OUTPUT=$(xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
+          OUTPUT=$(xcodebuild -project GhosttyTabs.xcodeproj -scheme remux -configuration Debug \
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
             -disableAutomaticPackageResolution \
             -destination "platform=macOS" \
@@ -297,7 +297,7 @@ jobs:
           path: /tmp/test-recording.mp4
           if-no-files-found: warn
 
-      - name: Post results to cmux-dev-artifacts
+      - name: Post results to remux-dev-artifacts
         if: always()
         env:
           GH_TOKEN: ${{ secrets.DEV_ARTIFACTS_TOKEN }}
@@ -354,7 +354,7 @@ jobs:
           fi
 
           ISSUE_URL=$(gh issue create \
-            --repo manaflow-ai/cmux-dev-artifacts \
+            --repo yaoshenwang/remux-dev-artifacts \
             --title "[$STATUS_EMOJI] $TEST_FILTER @ ${COMMIT_SHA:0:7} ($REF_DISPLAY)" \
             --body "$BODY" \
             --label "$LABEL")

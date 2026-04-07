@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression test: `cmux claude-teams` reuses an existing tmux shim.
+Regression test: `remux claude-teams` reuses an existing tmux shim.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from claude_teams_test_utils import resolve_cmux_cli
+from claude_teams_test_utils import resolve_remux_cli
 
 
 def make_executable(path: Path, content: str) -> None:
@@ -21,25 +21,25 @@ def make_executable(path: Path, content: str) -> None:
 
 def main() -> int:
     try:
-        cli_path = resolve_cmux_cli()
+        cli_path = resolve_remux_cli()
     except Exception as exc:
         print(f"FAIL: {exc}")
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="cmux-claude-teams-shim-") as td:
+    with tempfile.TemporaryDirectory(prefix="remux-claude-teams-shim-") as td:
         tmp = Path(td)
         home = tmp / "home"
         real_bin = tmp / "real-bin"
         home.mkdir(parents=True, exist_ok=True)
         real_bin.mkdir(parents=True, exist_ok=True)
 
-        shim_dir = home / ".cmuxterm" / "claude-teams-bin"
+        shim_dir = home / ".remuxterm" / "claude-teams-bin"
         shim_dir.mkdir(parents=True, exist_ok=True)
         shim_path = shim_dir / "tmux"
         shim_path.write_text(
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
-            "exec \"${CMUX_CLAUDE_TEAMS_CMUX_BIN:-cmux}\" __tmux-compat \"$@\"\n",
+            "exec \"${REMUX_CLAUDE_TEAMS_REMUX_BIN:-remux}\" __tmux-compat \"$@\"\n",
             encoding="utf-8",
         )
         shim_path.chmod(0o555)
@@ -70,7 +70,7 @@ printf 'shim=%s\\n' "$(command -v tmux)"
         shim_path.chmod(0o755)
 
         if proc.returncode != 0:
-            print("FAIL: `cmux claude-teams --version` failed with an existing shim")
+            print("FAIL: `remux claude-teams --version` failed with an existing shim")
             print(f"exit={proc.returncode}")
             print(f"stdout={proc.stdout.strip()}")
             print(f"stderr={proc.stderr.strip()}")
@@ -82,7 +82,7 @@ printf 'shim=%s\\n' "$(command -v tmux)"
             print(f"FAIL: expected existing shim path {expected!r}, got {actual!r}")
             return 1
 
-    print("PASS: cmux claude-teams reuses an existing tmux shim")
+    print("PASS: remux claude-teams reuses an existing tmux shim")
     return 0
 
 
