@@ -2,7 +2,7 @@
 
 All notable changes to remux are documented here.
 
-## [0.63.0] - 2026-04-07
+## [0.63.1] - 2026-04-07
 
 ### Added
 - `remux-agent` for persistent sessions and SSH-backed remote workflows
@@ -16,6 +16,7 @@ All notable changes to remux are documented here.
 - Tagged GitHub releases now publish downloadable `remux-macos.dmg` and `appcast.xml` assets from the current dev branch workflow
 - Ghostty theme preview and debug-log integrations now use remux-specific bundle IDs, environment variables, and file paths consistently
 - Homebrew cask metadata now resolves to the remux app instead of the old cmux package
+- Stable tag releases now use GitHub-hosted macOS runners instead of waiting on Depot capacity
 
 ### Thanks to 1 contributor!
 - [@yaoshenwang](https://github.com/yaoshenwang)
