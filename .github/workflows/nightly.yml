@@ -129,7 +129,17 @@ jobs:
 
       - name: Install build deps
         run: |
+          set -euo pipefail
           npm install --global "create-dmg@${CREATE_DMG_VERSION}"
+          if ! command -v zig >/dev/null 2>&1; then
+            if command -v brew >/dev/null 2>&1; then
+              brew install zig
+            else
+              echo "zig is required to bundle runtime binaries. Install zig and retry." >&2
+              exit 1
+            fi
+          fi
+          zig version
 
       - name: Download pre-built GhosttyKit.xcframework
         run: |
