@@ -22,7 +22,7 @@
   "dependencies": {
     "ghostty-web": "^0.4.0",
     "node-pty": "^1.1.0",
-    "ws": "^8.20.0"
+    "ws": "^8.20.1"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -31,6 +31,6 @@
   },
   "postinstall": "node --input-type=commonjs -e \"var fs=require('fs'),p=require('path');['darwin-arm64','darwin-x64'].forEach(function(d){var f=p.join('node_modules','node-pty','prebuilds',d,'spawn-helper');try{fs.chmodSync(f,0o755)}catch(e){}})\"",
   "devDependencies": {
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.6"
   }
 }
